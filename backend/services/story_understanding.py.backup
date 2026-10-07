@@ -1,0 +1,841 @@
+﻿import importlib.util
+import importlib.machinery
+from pathlib import Path
+
+_PYC = Path(__file__).resolve().parent / "story_understanding.pyc"
+
+_loader = importlib.machinery.SourcelessFileLoader(
+    "_story_understanding_recovered",
+    str(_PYC),
+)
+
+_spec = importlib.util.spec_from_loader(
+    "_story_understanding_recovered",
+    _loader,
+)
+
+_recovered = importlib.util.module_from_spec(_spec)
+_loader.exec_module(_recovered)
+
+for _name in dir(_recovered):
+    if not _name.startswith("__"):
+        globals()[_name] = getattr(_recovered, _name)
+
+
+def verify_candidate(candidate, scenario, bible):
+    text = _norm(
+        " ".join(
+            str(candidate.get(key) or "")
+            for key in (
+                "title",
+                "snippet",
+                "description",
+                "url",
+                "source",
+            )
+        )
+    )
+
+    reasons = []
+    score = 0.0
+
+    subject = str(
+        scenario.get("subject") or ""
+    ).strip()
+
+    event = str(
+        scenario.get("event") or ""
+    ).strip()
+
+    place = str(
+        scenario.get("place")
+        or scenario.get("location")
+        or ""
+    ).strip()
+
+    visual = str(
+        scenario.get("visual") or ""
+    ).strip()
+
+    subject_norm = _norm(subject)
+    event_norm = _norm(event)
+    place_norm = _norm(place)
+
+    subject_hit = False
+    event_hit = False
+    place_hit = False
+
+    # ---------------------------------------------------------
+    # SUBJECT
+    # ---------------------------------------------------------
+    if subject_norm:
+        subject_parts = [
+            _norm(x)
+            for x in subject.split()
+            if len(x) > 2
+        ]
+
+        subject_hit = (
+            subject_norm in text
+            or (
+                bool(subject_parts)
+                and all(
+                    x in text
+                    for x in subject_parts
+                )
+            )
+        )
+
+        if subject_hit:
+            score += 0.45
+            reasons.append(
+                f"mentions subject {subject}"
+            )
+        else:
+            reasons.append(
+                f"missing required subject {subject}"
+            )
+
+    # ---------------------------------------------------------
+    # EVENT
+    #
+    # Do not require the candidate to repeat the script's
+    # exact wording. Real sources routinely use synonyms,
+    # alternate phrasing, headlines, or historical terminology.
+    # ---------------------------------------------------------
+    event_parts = []
+
+    if event_norm:
+        event_parts = [
+            _norm(x)
+            for x in event.split()
+            if len(x) > 2
+        ]
+
+        exact_event = (
+            event_norm in text
+            or (
+                bool(event_parts)
+                and all(
+                    x in text
+                    for x in event_parts
+                )
+            )
+        )
+
+        if exact_event:
+            event_hit = True
+            score += 0.25
+            reasons.append(
+                f"mentions event {event}"
+            )
+
+    # ---------------------------------------------------------
+    # LOCATION
+    # ---------------------------------------------------------
+    if place_norm:
+        place_parts = [
+            _norm(x)
+            for x in place.split()
+            if len(x) > 2
+        ]
+
+        place_hit = (
+            place_norm in text
+            or (
+                bool(place_parts)
+                and all(
+                    x in text
+                    for x in place_parts
+                )
+            )
+        )
+
+        if place_hit:
+            score += 0.20
+            reasons.append(
+                f"mentions location {place}"
+            )
+        else:
+            reasons.append(
+                f"missing required location {place}"
+            )
+
+    # ---------------------------------------------------------
+    # VISUAL / SEARCH TERM OVERLAP
+    # ---------------------------------------------------------
+    wanted = set()
+
+    for term in (
+        scenario.get("search_terms") or []
+    ):
+        wanted |= _content_tokens(term)
+
+    if visual:
+        wanted |= _content_tokens(visual)
+
+    overlap = 0.0
+
+    if wanted:
+        candidate_tokens = {
+            _stem(token)
+            for token in _tokens(text)
+        }
+
+        overlap = (
+            len(wanted & candidate_tokens)
+            / max(1, len(wanted))
+        )
+
+        score += 0.20 * min(
+            1.0,
+            overlap * 1.5,
+        )
+
+        reasons.append(
+            f"visual overlap {overlap:.2f}"
+        )
+
+    # ---------------------------------------------------------
+    # ERA
+    # ---------------------------------------------------------
+    era = _year_or_decade(
+        scenario.get("era")
+    )
+
+    if era and era[:4] in text:
+        score += 0.10
+        reasons.append("era match")
+
+    # ---------------------------------------------------------
+    # SEMANTIC EVENT FALLBACK
+    #
+    # If the exact event wording is absent, strong evidence from
+    # the same subject + location + visual/search vocabulary can
+    # still establish that the source concerns the same event.
+    #
+    # This is intentionally generic. It does not contain
+    # Apollo-specific, crime-specific, war-specific, or
+    # niche-specific aliases.
+    # ---------------------------------------------------------
+    if (
+        not event_hit
+        and event_norm
+        and subject_hit
+    ):
+        semantic_event_evidence = (
+            (place_hit and overlap >= 0.30)
+            or overlap >= 0.55
+        )
+
+        if semantic_event_evidence:
+            event_hit = True
+            reasons.append(
+                "event supported by subject/contextual visual evidence"
+            )
+        else:
+            reasons.append(
+                f"missing required event {event}"
+            )
+    elif event_norm and not event_hit:
+        reasons.append(
+            f"missing required event {event}"
+        )
+
+    specificity = str(
+        scenario.get("specificity")
+        or "representative"
+    ).lower()
+
+    # Exact scenarios still require the subject and location when
+    # those fields are present. Event wording itself may be
+    # semantically represented by the source.
+    if specificity == "exact":
+        if subject_norm and not subject_hit:
+            return {
+                "accepted": False,
+                "score": round(
+                    max(0.0, score),
+                    3,
+                ),
+                "reasons": reasons + [
+                    "exact subject verification failed"
+                ],
+            }
+
+        if place_norm and not place_hit:
+            return {
+                "accepted": False,
+                "score": round(
+                    max(0.0, score),
+                    3,
+                ),
+                "reasons": reasons + [
+                    "exact location verification failed"
+                ],
+            }
+
+        if event_norm and not event_hit:
+            return {
+                "accepted": False,
+                "score": round(
+                    max(0.0, score),
+                    3,
+                ),
+                "reasons": reasons + [
+                    "exact event verification failed"
+                ],
+            }
+
+    threshold = (
+        0.50
+        if specificity == "exact"
+        else 0.40
+    )
+
+    evidence_hit = (
+        subject_hit
+        or event_hit
+        or place_hit
+    )
+
+    if (
+        not evidence_hit
+        and not subject_norm
+        and not event_norm
+        and not place_norm
+    ):
+        evidence_hit = bool(wanted)
+
+    accepted = (
+        score >= threshold
+        and evidence_hit
+    )
+
+    return {
+        "accepted": accepted,
+        "score": round(
+            max(0.0, score),
+            3,
+        ),
+        "reasons": reasons,
+    }
+def _llm_clean_string(value):
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _llm_clean_list(values, limit=8):
+    if not isinstance(values, list):
+        return []
+
+    out = []
+
+    for value in values:
+        value = _llm_clean_string(value)
+
+        if not value:
+            continue
+
+        # Never allow serialized Python dictionaries/lists to become queries.
+        if value.startswith("{") or value.startswith("["):
+            continue
+
+        # Never allow sentence fragments as search queries.
+        if len(value) > 180:
+            continue
+
+        if value not in out:
+            out.append(value)
+
+        if len(out) >= limit:
+            break
+
+    return out
+
+
+def _llm_norm(value):
+    return " ".join(
+        str(value or "")
+        .lower()
+        .replace("’", "'")
+        .split()
+    )
+
+
+def _resolve_llm_entity(entity_name, bible):
+    """
+    Resolve Claude's entity name against the Case Bible.
+    Never invent an entity_id when the Bible does not contain one.
+    """
+    wanted = _llm_norm(entity_name)
+
+    if not wanted:
+        return None
+
+    by_id = bible.get("by_id", {}) or {}
+
+    # Exact canonical match.
+    for entity_id, entity in by_id.items():
+        canonical = _llm_norm(entity.get("canonical"))
+
+        if wanted == canonical:
+            return entity_id
+
+        aliases = entity.get("aliases") or []
+
+        for alias in aliases:
+            if wanted == _llm_norm(alias):
+                return entity_id
+
+    # Controlled containment match.
+    for entity_id, entity in by_id.items():
+        canonical = _llm_norm(entity.get("canonical"))
+
+        if (
+            canonical
+            and (
+                canonical in wanted
+                or wanted in canonical
+            )
+        ):
+            return entity_id
+
+    return None
+
+
+def _llm_entities_for_plan(raw, sentence, bible):
+    """
+    Resolve only entities that actually exist in the Case Bible.
+    """
+    names = []
+
+    subject = raw.get("subject")
+    location = raw.get("location") or raw.get("place")
+
+    if subject:
+        names.append(subject)
+
+    if location:
+        names.append(location)
+
+    for name in raw.get("entities") or []:
+        if isinstance(name, str):
+            names.append(name)
+
+    entity_ids = []
+
+    for name in names:
+        entity_id = _resolve_llm_entity(name, bible)
+
+        if entity_id and entity_id not in entity_ids:
+            entity_ids.append(entity_id)
+
+    return entity_ids
+
+
+def _llm_build_scenario(raw, sentence, bible):
+    subject = _llm_clean_string(raw.get("subject"))
+    event = _llm_clean_string(raw.get("event"))
+    location = _llm_clean_string(
+        raw.get("location") or raw.get("place")
+    )
+    date = _llm_clean_string(
+        raw.get("date") or raw.get("time") or raw.get("era")
+    )
+
+    visual_requirement = _llm_clean_string(
+        raw.get("visual_requirement")
+        or raw.get("visual")
+        or raw.get("visual_description")
+    )
+
+    specificity = _llm_clean_string(
+        raw.get("specificity")
+        or "representative"
+    ).lower()
+
+    if specificity not in {"exact", "representative", "conceptual"}:
+        specificity = "representative"
+
+    visual_type = _llm_clean_string(
+        raw.get("visual_type")
+        or raw.get("kind")
+        or "evidence"
+    ).lower()
+
+    queries = _llm_clean_list(
+        raw.get("search_queries")
+        or raw.get("queries")
+        or [],
+        limit=8,
+    )
+
+    # Build safe fallback queries if Claude didn't provide enough.
+    fallback_queries = []
+
+    if subject:
+        if event and location:
+            fallback_queries.append(
+                f"{subject} {event} {location}"
+            )
+        elif event:
+            fallback_queries.append(
+                f"{subject} {event}"
+            )
+        elif location:
+            fallback_queries.append(
+                f"{subject} {location}"
+            )
+        else:
+            fallback_queries.append(subject)
+
+    if subject and date:
+        fallback_queries.append(
+            f"{subject} {date}"
+        )
+
+    if visual_requirement and subject:
+        fallback_queries.append(
+            f"{subject} {visual_requirement}"
+        )
+
+    for query in fallback_queries:
+        query = _llm_clean_string(query)
+
+        if (
+            query
+            and len(query) <= 180
+            and not query.startswith("{")
+            and not query.startswith("[")
+            and query not in queries
+        ):
+            queries.append(query)
+
+    queries = _llm_clean_list(queries, limit=8)
+
+    search_terms = []
+
+    for value in (
+        subject,
+        event,
+        location,
+        date,
+    ):
+        if value and value not in search_terms:
+            search_terms.append(value)
+
+    search_terms.extend(
+        _llm_clean_list(
+            raw.get("search_terms") or [],
+            limit=8,
+        )
+    )
+
+    search_terms = _llm_clean_list(
+        search_terms,
+        limit=8,
+    )
+
+    kind = visual_type or "evidence"
+
+    return {
+        "kind": kind,
+        "specificity": specificity,
+        "description": visual_requirement or sentence,
+        "visual_requirement": visual_requirement,
+        "subject": subject,
+        "event": event,
+        "place": location,
+        "era": date,
+        "search_terms": search_terms,
+        "queries": queries,
+        "forbidden": [],
+        "required_subject": subject,
+        "priority": "high" if specificity == "exact" else "normal",
+        "fallback": "web",
+    }
+
+
+def _llm_sentence_plan(sentence, bible, llm, previous_subject=""):
+    """
+    Ask Claude to understand ONE sentence using the already verified
+    Case Bible as context.
+
+    The model determines meaning and visual needs.
+    The Case Bible remains authoritative for entity identity.
+    """
+
+    bible_entities = []
+
+    for entity in bible.get("entities") or []:
+        bible_entities.append({
+            "id": entity.get("id"),
+            "canonical": entity.get("canonical"),
+            "type": entity.get("type"),
+            "role": entity.get("role"),
+            "aliases": entity.get("aliases") or [],
+        })
+
+    bible_context = {
+        "title": bible.get("title"),
+        "story_type": bible.get("story_type"),
+        "time_period": bible.get("time_period"),
+        "story_era": bible.get("story_era"),
+        "primary_subject_id": bible.get("primary_subject_id"),
+        "entities": bible_entities,
+    }
+
+    system_prompt = """
+You are the sentence-level visual planning engine for a documentary generator.
+
+Your job is to understand exactly what ONE narration sentence means and determine
+what real-world visual evidence should be searched for.
+
+CRITICAL RULES:
+
+1. Never invent facts.
+2. Never turn a sentence fragment such as "On July", "Then Apollo", or
+   "As Eagle" into the subject.
+3. Resolve the subject from the complete sentence and the Case Bible.
+4. The Case Bible is authoritative for entity identity.
+5. Do not inherit an event from another sentence.
+6. Do not invent an event such as "war" unless this exact sentence actually
+   describes war.
+7. Distinguish the subject from the event.
+8. Distinguish a location from an event.
+9. Dates must come from the sentence or Case Bible.
+10. Search queries must be short, concrete, visual-search queries.
+11. Never output Python dictionaries, serialized objects, or the full sentence
+    as a search query.
+12. Prefer exact historical/event evidence when the sentence describes a
+    specific event.
+13. Use conceptual visuals only when the sentence genuinely describes an
+    abstract concept.
+14. Do not force a person into a sentence if the person is not actually relevant.
+15. Return JSON only.
+
+For every sentence return:
+
+{
+  "subject": "...",
+  "event": "...",
+  "location": "...",
+  "date": "...",
+  "meaning": "...",
+  "role": "...",
+  "visual_type": "...",
+  "specificity": "exact|representative|conceptual",
+  "visual_requirement": "...",
+  "search_queries": ["...", "..."],
+  "search_terms": ["...", "..."],
+  "entities": ["..."]
+}
+
+ROLE must be one of:
+event, action, person, place, organization, object, background, context,
+transition, conclusion.
+
+visual_type should describe the evidence needed, for example:
+historical_event, person, location, archival, document, object,
+infrastructure, geography, data, conceptual.
+
+For an exact historical event, specificity should normally be "exact".
+"""
+
+    user_prompt = f"""
+CASE BIBLE:
+{json.dumps(bible_context, ensure_ascii=False, indent=2)}
+
+PREVIOUS SUBJECT:
+{previous_subject or "(none)"}
+
+SENTENCE:
+{sentence}
+
+Analyze ONLY this sentence in the context of the Case Bible.
+Return JSON only.
+"""
+
+    raw_text = llm(system_prompt, user_prompt)
+
+    raw = parse_json_loose(raw_text)
+
+    if not isinstance(raw, dict):
+        raise ValueError("LLM sentence planner did not return an object")
+
+    subject = _llm_clean_string(raw.get("subject"))
+
+    # Reject obvious sentence-leading garbage.
+    bad_subjects = {
+        "on",
+        "then",
+        "as",
+        "after",
+        "before",
+        "while",
+        "when",
+        "and",
+        "but",
+        "so",
+        "because",
+        "however",
+    }
+
+    first_word = subject.split(" ", 1)[0].lower() if subject else ""
+
+    if first_word in bad_subjects:
+        raw["subject"] = previous_subject or ""
+
+    entity_ids = _llm_entities_for_plan(
+        raw,
+        sentence,
+        bible,
+    )
+
+    # If Claude selected no subject but the sentence clearly belongs to the
+    # primary Case Bible subject, use that subject only when it is actually
+    # mentioned or clearly carried by context.
+    if not entity_ids:
+        primary_id = bible.get("primary_subject_id")
+
+        if (
+            primary_id
+            and previous_subject
+            and _llm_norm(previous_subject) in _llm_norm(sentence)
+        ):
+            entity_ids = [primary_id]
+
+    scenario = _llm_build_scenario(
+        raw,
+        sentence,
+        bible,
+    )
+
+    subject_id = None
+
+    if raw.get("subject"):
+        subject_id = _resolve_llm_entity(
+            raw.get("subject"),
+            bible,
+        )
+
+    if not subject_id and entity_ids:
+        subject_id = entity_ids[0]
+
+    events = []
+
+    event = _llm_clean_string(raw.get("event"))
+
+    if event:
+        events.append(event)
+
+    time = _llm_clean_string(
+        raw.get("date")
+        or raw.get("time")
+    )
+
+    role = _llm_clean_string(
+        raw.get("role")
+        or "background"
+    ).lower()
+
+    allowed_roles = {
+        "event",
+        "action",
+        "person",
+        "place",
+        "organization",
+        "object",
+        "background",
+        "context",
+        "transition",
+        "conclusion",
+    }
+
+    if role not in allowed_roles:
+        role = "background"
+
+    return {
+        "meaning": _llm_clean_string(
+            raw.get("meaning")
+        ),
+        "role": role,
+        "subject_id": subject_id,
+        "entity_ids": entity_ids,
+        "events": events,
+        "time": time,
+        "place": _llm_clean_string(
+            raw.get("location")
+            or raw.get("place")
+        ),
+        "scenarios": [scenario],
+        "degraded": False,
+    }
+
+
+def plan_script(script_text, sentences, llm, cache_path=None):
+    """
+    LLM-first sentence planner.
+
+    The recovered Case Bible remains authoritative.
+    The recovered planner remains the safety fallback.
+    """
+
+    # First build the Case Bible using the proven existing implementation.
+    bible = _recovered.build_case_bible(
+        script_text,
+        llm,
+        sentences,
+    )
+
+    if not isinstance(bible, dict):
+        raise ValueError("Case Bible generation failed")
+
+    plans = []
+
+    previous_subject = ""
+
+    try:
+        for sentence in sentences:
+            plan = _llm_sentence_plan(
+                sentence,
+                bible,
+                llm,
+                previous_subject=previous_subject,
+            )
+
+            plans.append(plan)
+
+            # Carry subject only when it is a real resolved Bible entity.
+            subject_id = plan.get("subject_id")
+
+            if subject_id:
+                entity = (
+                    bible.get("by_id", {}).get(subject_id)
+                    or {}
+                )
+
+                canonical = entity.get("canonical")
+
+                if canonical:
+                    previous_subject = canonical
+
+        return bible, plans, "llm"
+
+    except Exception as exc:
+        # Never destroy the documentary pipeline because of one LLM failure.
+        print(
+            "LLM SENTENCE PLANNER FAILED; "
+            "USING RECOVERED PLANNER FALLBACK:",
+            repr(exc),
+        )
+
+        return _recovered.plan_script(
+            script_text,
+            sentences,
+            llm,
+            cache_path=cache_path,
+        )
+

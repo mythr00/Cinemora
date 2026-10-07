@@ -1,0 +1,1 @@
+drawtext=font='Arial':text='SCENE 01':fontcolor=white:fontsize=28:x=92:y=88:enable='between(t\,0.0\,2.4)'

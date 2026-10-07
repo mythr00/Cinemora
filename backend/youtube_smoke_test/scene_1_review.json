@@ -1,0 +1,117 @@
+[
+  {
+    "beat_id": "beat_01_background_none_none",
+    "role": "background",
+    "searchable": true,
+    "shot_needs": [
+      {
+        "beat_id": "beat_01_background_none_none",
+        "shot_index": 1,
+        "shot_type": "archival",
+        "specificity": "representative",
+        "description": "Apollo 11 approached the Moon during its historic mission.",
+        "required_subject_id": null,
+        "required_subject": "",
+        "required_type": "",
+        "era": "",
+        "place": "",
+        "event": "",
+        "forbidden": [],
+        "priority": 2,
+        "fallback": "same_era_place",
+        "queries": [
+          "Apollo 11 approached Moon historic mission"
+        ]
+      },
+      {
+        "beat_id": "beat_01_background_none_none",
+        "shot_index": 2,
+        "shot_type": "archival",
+        "specificity": "representative",
+        "description": "The astronauts prepared for the lunar landing.",
+        "required_subject_id": null,
+        "required_subject": "",
+        "required_type": "",
+        "era": "",
+        "place": "",
+        "event": "",
+        "forbidden": [],
+        "priority": 2,
+        "fallback": "same_era_place",
+        "queries": [
+          "astronauts prepared lunar landing"
+        ]
+      },
+      {
+        "beat_id": "beat_01_background_none_none",
+        "shot_index": 3,
+        "shot_type": "archival",
+        "specificity": "representative",
+        "description": "The Eagle eventually landed on the Moon.",
+        "required_subject_id": null,
+        "required_subject": "",
+        "required_type": "",
+        "era": "",
+        "place": "",
+        "event": "",
+        "forbidden": [],
+        "priority": 2,
+        "fallback": "same_era_place",
+        "queries": [
+          "Eagle eventually landed Moon"
+        ]
+      }
+    ],
+    "records": [
+      {
+        "shot_index": 1,
+        "queries": [
+          "Apollo 11 approached the Moon during its historic mission."
+        ],
+        "providers": [
+          "youtube",
+          "web"
+        ],
+        "rejected": [
+          {
+            "title": "Apollo 11: Landing on the Moon",
+            "reason": "unrelated_sports"
+          }
+        ],
+        "picked": [
+          "Historic Apollo 11 Moon Landing Footage"
+        ]
+      },
+      {
+        "shot_index": 2,
+        "queries": [
+          "The astronauts prepared for the lunar landing."
+        ],
+        "providers": [
+          "youtube",
+          "web"
+        ],
+        "rejected": [],
+        "picked": [
+          "Historic Apollo 11 Moon Landing Footage",
+          "NASA Astronauts Train for Walking on Lunar Surface"
+        ]
+      },
+      {
+        "shot_index": 3,
+        "queries": [
+          "The Eagle eventually landed on the Moon."
+        ],
+        "providers": [
+          "youtube",
+          "web"
+        ],
+        "rejected": [],
+        "picked": [
+          "NASA Astronauts Train for Walking on Lunar Surface",
+          "Neil Armstrong- \"The Eagle Has Landed\""
+        ]
+      }
+    ]
+  }
+]

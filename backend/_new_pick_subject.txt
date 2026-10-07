@@ -1,0 +1,19 @@
+def _pick_subject(mentions, by_id, sentence, carry):
+    """Choose a subject conservatively in heuristic mode.
+
+    Only carry the previous subject when the sentence explicitly uses
+    a pronoun/reference. Never let an unrelated sentence inherit the
+    previous subject merely because it has no recognized entity.
+    """
+    people = [m for m in mentions if m in by_id and by_id[m]["type"] == "person"]
+    if people:
+        return people[0]
+
+    tokens = _tokens(sentence)
+    if carry and any(t.lower() in PRONOUNS for t in tokens):
+        return carry
+
+    if mentions:
+        return mentions[0]
+
+    return None

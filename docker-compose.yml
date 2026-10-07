@@ -1,0 +1,32 @@
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: documentary-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: documentary
+      POSTGRES_USER: documentary
+      POSTGRES_PASSWORD: documentary_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U documentary -d documentary"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: documentary-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:

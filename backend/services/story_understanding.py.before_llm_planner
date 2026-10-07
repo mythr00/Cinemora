@@ -1,0 +1,252 @@
+﻿import importlib.util
+import importlib.machinery
+from pathlib import Path
+
+_PYC = Path(__file__).resolve().parent / "story_understanding.pyc"
+
+_loader = importlib.machinery.SourcelessFileLoader(
+    "_story_understanding_recovered",
+    str(_PYC),
+)
+
+_spec = importlib.util.spec_from_loader(
+    "_story_understanding_recovered",
+    _loader,
+)
+
+_recovered = importlib.util.module_from_spec(_spec)
+_loader.exec_module(_recovered)
+
+for _name in dir(_recovered):
+    if not _name.startswith("__"):
+        globals()[_name] = getattr(_recovered, _name)
+
+
+def verify_candidate(candidate, scenario, bible):
+    text = _norm(
+        " ".join(
+            str(candidate.get(key) or "")
+            for key in (
+                "title",
+                "snippet",
+                "description",
+                "url",
+                "source",
+            )
+        )
+    )
+
+    reasons = []
+    score = 0.0
+
+    subject = str(
+        scenario.get("subject") or ""
+    ).strip()
+
+    event = str(
+        scenario.get("event") or ""
+    ).strip()
+
+    place = str(
+        scenario.get("place")
+        or scenario.get("location")
+        or ""
+    ).strip()
+
+    visual = str(
+        scenario.get("visual") or ""
+    ).strip()
+
+    subject_norm = _norm(subject)
+    event_norm = _norm(event)
+    place_norm = _norm(place)
+
+    subject_hit = False
+    event_hit = False
+    place_hit = False
+
+    if subject_norm:
+        subject_parts = [
+            _norm(x)
+            for x in subject.split()
+            if len(x) > 2
+        ]
+
+        subject_hit = (
+            subject_norm in text
+            or (
+                bool(subject_parts)
+                and all(
+                    x in text
+                    for x in subject_parts
+                )
+            )
+        )
+
+        if subject_hit:
+            score += 0.45
+            reasons.append(
+                f"mentions subject {subject}"
+            )
+        else:
+            reasons.append(
+                f"missing required subject {subject}"
+            )
+
+    if event_norm:
+        event_parts = [
+            _norm(x)
+            for x in event.split()
+            if len(x) > 2
+        ]
+
+        event_hit = (
+            event_norm in text
+            or (
+                bool(event_parts)
+                and all(
+                    x in text
+                    for x in event_parts
+                )
+            )
+        )
+
+        if event_hit:
+            score += 0.25
+            reasons.append(
+                f"mentions event {event}"
+            )
+        else:
+            reasons.append(
+                f"missing required event {event}"
+            )
+
+    if place_norm:
+        place_parts = [
+            _norm(x)
+            for x in place.split()
+            if len(x) > 2
+        ]
+
+        place_hit = (
+            place_norm in text
+            or (
+                bool(place_parts)
+                and all(
+                    x in text
+                    for x in place_parts
+                )
+            )
+        )
+
+        if place_hit:
+            score += 0.20
+            reasons.append(
+                f"mentions location {place}"
+            )
+        else:
+            reasons.append(
+                f"missing required location {place}"
+            )
+
+    wanted = set()
+
+    for term in (
+        scenario.get("search_terms") or []
+    ):
+        wanted |= _content_tokens(term)
+
+    if visual:
+        wanted |= _content_tokens(visual)
+
+    if wanted:
+        candidate_tokens = {
+            _stem(token)
+            for token in _tokens(text)
+        }
+
+        overlap = (
+            len(wanted & candidate_tokens)
+            / max(1, len(wanted))
+        )
+
+        score += 0.20 * min(
+            1.0,
+            overlap * 1.5,
+        )
+
+        reasons.append(
+            f"visual overlap {overlap:.2f}"
+        )
+
+    era = _year_or_decade(
+        scenario.get("era")
+    )
+
+    if era and era[:4] in text:
+        score += 0.10
+        reasons.append("era match")
+
+    specificity = str(
+        scenario.get("specificity")
+        or "representative"
+    ).lower()
+
+    if specificity == "exact":
+        if subject_norm and not subject_hit:
+            return {
+                "accepted": False,
+                "score": round(max(0.0, score), 3),
+                "reasons": reasons + [
+                    "exact subject verification failed"
+                ],
+            }
+
+        if event_norm and not event_hit:
+            return {
+                "accepted": False,
+                "score": round(max(0.0, score), 3),
+                "reasons": reasons + [
+                    "exact event verification failed"
+                ],
+            }
+
+        if place_norm and not place_hit:
+            return {
+                "accepted": False,
+                "score": round(max(0.0, score), 3),
+                "reasons": reasons + [
+                    "exact location verification failed"
+                ],
+            }
+
+    threshold = (
+        0.50
+        if specificity == "exact"
+        else 0.40
+    )
+
+    evidence_hit = (
+        subject_hit
+        or event_hit
+        or place_hit
+    )
+
+    if (
+        not evidence_hit
+        and not subject_norm
+        and not event_norm
+        and not place_norm
+    ):
+        evidence_hit = bool(wanted)
+
+    accepted = (
+        score >= threshold
+        and evidence_hit
+    )
+
+    return {
+        "accepted": accepted,
+        "score": round(max(0.0, score), 3),
+        "reasons": reasons,
+    }

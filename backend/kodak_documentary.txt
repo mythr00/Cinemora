@@ -1,0 +1,1179 @@
+# KODAK: THE COMPANY THAT INVENTED THE DIGITAL CAMERA — AND LOST EVERYTHING
+
+In 1975, inside a Kodak laboratory in Rochester, New York, a young engineer named Steven Sasson picked up a strange-looking device.
+
+It was not a normal camera.
+
+It had a lens taken from a Super 8 movie camera.
+
+It had a digital sensor.
+
+It had a collection of electronic components.
+
+And it was connected to a cassette recorder.
+
+The device was roughly the size of a toaster.
+
+It weighed several pounds.
+
+And when Sasson pressed the shutter, it took a photograph with a resolution of just 0.01 megapixels.
+
+The image took roughly 23 seconds to record.
+
+There was no film.
+
+No photographic paper.
+
+No chemical development.
+
+The photograph existed entirely as digital data.
+
+Sasson had just built the world's first digital camera.
+
+And he had built it inside Kodak.
+
+That detail is what makes the story so remarkable.
+
+Because Kodak did not fail to invent the future.
+
+Kodak invented it.
+
+The company that had dominated photography for generations created one of the technologies that would eventually destroy its traditional business.
+
+But the story is more complicated than the familiar version.
+
+Kodak did not simply ignore digital photography.
+
+It spent decades developing digital technologies.
+
+It produced digital cameras.
+
+It developed sensors.
+
+It worked on image storage.
+
+It entered consumer electronics.
+
+It experimented with online photo services.
+
+And it repeatedly tried to find a profitable place in the digital world.
+
+The problem was that Kodak's greatest strength had become its greatest vulnerability.
+
+For more than a century, Kodak had built an extraordinary business around something digital photography did not need.
+
+Film.
+
+This is the story of Kodak.
+
+The company that helped make photography a mass-market activity.
+
+The company that became one of the most recognizable brands in the world.
+
+The company that invented the digital camera.
+
+And the company that eventually filed for bankruptcy.
+
+---
+
+# CHAPTER ONE — THE CAMERA COMPANY
+
+To understand Kodak's collapse, you have to understand just how powerful Kodak once was.
+
+At the beginning of the twentieth century, photography was complicated.
+
+Taking a photograph required specialized equipment.
+
+Film had to be handled carefully.
+
+Photographs had to be developed.
+
+The process required knowledge, money, and patience.
+
+George Eastman wanted to change that.
+
+In 1888, Eastman's company introduced a camera designed to make photography dramatically easier.
+
+The marketing message was simple.
+
+You pressed the button.
+
+Kodak did the rest.
+
+The original Kodak camera was loaded with film and designed for ordinary consumers rather than professional photographers.
+
+After customers finished taking photographs, they could send the camera back to Kodak.
+
+Kodak would process the film, make the prints, reload the camera, and return it.
+
+Eastman had done something extremely important.
+
+He had removed complexity from photography.
+
+Kodak was no longer simply selling a camera.
+
+It was creating a system.
+
+The company sold cameras.
+
+It sold film.
+
+It sold photographic paper.
+
+It sold chemicals.
+
+It developed photographs.
+
+And every time people took more pictures, they created another opportunity to sell Kodak something.
+
+The economics were powerful.
+
+The camera introduced the customer to the system.
+
+Film created recurring demand.
+
+Processing created another source of revenue.
+
+And Kodak's brand became associated with photography itself.
+
+The company expanded internationally.
+
+Its yellow-and-red branding became recognizable across the world.
+
+Kodak's business was built around an idea that seems obvious today but was revolutionary at the time:
+
+Photography should be for everyone.
+
+And Kodak became extremely good at making that happen.
+
+---
+
+# CHAPTER TWO — BUILDING THE EMPIRE
+
+For decades, Kodak continued improving the photography experience.
+
+The company invested heavily in research.
+
+It developed new films.
+
+It improved color photography.
+
+It developed cameras that were easier to carry.
+
+It created products for families, professionals, newspapers, filmmakers, scientists, and businesses.
+
+Photography became part of everyday life.
+
+Birthdays.
+
+Vacations.
+
+Weddings.
+
+Graduations.
+
+Family gatherings.
+
+People bought film because they wanted memories.
+
+And Kodak owned an enormous portion of the system that made those memories possible.
+
+By the middle of the twentieth century, Kodak had become much more than a camera manufacturer.
+
+It was a chemical company.
+
+A materials company.
+
+An imaging company.
+
+A manufacturing company.
+
+A research company.
+
+And one of America's most powerful corporations.
+
+Kodak's research laboratories were filled with scientists and engineers working on everything from film chemistry to imaging technology.
+
+And this matters.
+
+Because the story of Kodak is often told as if the company simply stopped innovating.
+
+The historical record doesn't really support that.
+
+Kodak was extremely innovative.
+
+The problem was that innovation could create a difficult question.
+
+What happens when your next great technology threatens your current business?
+
+For Kodak, that question would eventually become impossible to avoid.
+
+---
+
+# CHAPTER THREE — THE MACHINE THAT CHANGED EVERYTHING
+
+In 1975, Steven Sasson was working at Kodak.
+
+He was experimenting with a new electronic imaging technology involving a charge-coupled device, commonly known as a CCD.
+
+The idea was radically different from traditional photography.
+
+Film captured light chemically.
+
+A digital sensor could capture light electronically.
+
+Sasson's prototype used a CCD sensor and electronics to capture an image.
+
+The result was crude.
+
+The image was only 100 by 100 pixels.
+
+It was black and white.
+
+There was no modern display.
+
+The image was stored on a cassette tape.
+
+And the machine took approximately 23 seconds to capture and store the photograph.
+
+By modern standards, it was almost absurd.
+
+But the concept was revolutionary.
+
+For the first time, the photograph could exist without film.
+
+The image could become information.
+
+And once an image became information, it could eventually be copied, transmitted, stored, edited, and displayed electronically.
+
+That was the beginning of a completely different photography industry.
+
+Sasson demonstrated the technology to Kodak executives.
+
+But digital photography still looked primitive.
+
+A digital camera could not compete with film on image quality.
+
+Storage was expensive.
+
+Computer technology was still developing.
+
+Consumers were accustomed to film.
+
+And Kodak's existing business was enormous.
+
+There was no immediate reason for millions of people to abandon film.
+
+The digital future existed.
+
+But it was still far away.
+
+Or so it seemed.
+
+---
+
+# CHAPTER FOUR — KODAK DID NOT IGNORE DIGITAL
+
+Over the following decades, Kodak continued investing in digital imaging.
+
+This is one of the most important parts of the story.
+
+Kodak's laboratories developed technologies that would become increasingly important as photography moved from chemicals toward electronics.
+
+The company developed image sensors.
+
+It worked on digital printing.
+
+It explored digital storage.
+
+It developed systems for scanning and transferring photographs.
+
+And eventually Kodak entered the consumer digital-camera market.
+
+The company understood that digital photography was coming.
+
+But understanding a technological shift and successfully rebuilding a giant corporation around that shift are two very different things.
+
+Kodak had a problem that many successful companies eventually encounter.
+
+Its existing business was not simply profitable.
+
+It was enormous.
+
+The company had factories.
+
+Employees.
+
+Suppliers.
+
+Retail relationships.
+
+Processing laboratories.
+
+Research facilities.
+
+Distribution networks.
+
+And customers who already understood how the Kodak system worked.
+
+Digital photography threatened the economics of that entire ecosystem.
+
+A roll of film could be purchased again and again.
+
+Digital photographs could be taken without buying another roll.
+
+A physical print could be ordered.
+
+A digital image could be viewed on a computer.
+
+A photograph could be stored on a hard drive.
+
+And eventually, it could be uploaded to the internet and shared with thousands of people without ever being printed.
+
+The customer was no longer buying a physical object every time they took a picture.
+
+The economics of photography were changing.
+
+And Kodak was trying to change with them.
+
+---
+
+# CHAPTER FIVE — THE DIGITAL REVOLUTION ARRIVES
+
+During the 1990s, digital technology began moving rapidly into consumers' lives.
+
+Computers became more common.
+
+Storage became cheaper.
+
+Digital sensors improved.
+
+The internet expanded.
+
+And cameras began moving toward electronics.
+
+Kodak experimented with multiple approaches.
+
+The company worked on digital cameras.
+
+It developed products designed to connect photography with computers.
+
+It worked on digital imaging services.
+
+It experimented with ways for consumers to store and print digital photographs.
+
+But digital photography created a problem that no single product could solve.
+
+The entire customer experience was changing.
+
+In the film era, taking a picture created a physical object.
+
+In the digital era, taking a picture created a file.
+
+That sounds like a small difference.
+
+It wasn't.
+
+A physical photograph had to be developed.
+
+A digital photograph could be copied instantly.
+
+A physical photograph had to be carried.
+
+A digital photograph could be emailed.
+
+A physical photograph could be placed in an album.
+
+A digital photograph could eventually be stored in the cloud.
+
+And the more convenient digital photography became, the less necessary the traditional film-processing system became.
+
+Kodak was trying to participate in the new world while still carrying the enormous structure of the old one.
+
+---
+
+# CHAPTER SIX — THE BUSINESS MODEL PROBLEM
+
+This is where the Kodak story becomes more interesting than simply saying:
+
+“Kodak invented digital photography and then refused to use it.”
+
+The real problem was the economics.
+
+Kodak's traditional business was built around recurring consumption.
+
+People bought film.
+
+They took photographs.
+
+They bought more film.
+
+They paid for processing.
+
+They bought prints.
+
+Then they took more photographs.
+
+Digital photography broke that cycle.
+
+The number of photographs people took could increase dramatically while the amount of physical film they purchased could collapse.
+
+And something even more important happened.
+
+Photography started moving into products Kodak did not control.
+
+Computers.
+
+Printers.
+
+Memory cards.
+
+Mobile phones.
+
+Social networks.
+
+Online platforms.
+
+The camera stopped being the center of the experience.
+
+The photograph became the center.
+
+That was a profound change.
+
+Kodak had spent generations building a business around the process of creating photographs.
+
+The digital world increasingly focused on what people did with photographs after they were created.
+
+And new companies were built around those behaviors.
+
+---
+
+# CHAPTER SEVEN — THE CAMERA MOVES INTO YOUR POCKET
+
+Then came another technological shift.
+
+The camera began disappearing into another device.
+
+The mobile phone.
+
+At first, phone cameras were terrible.
+
+The images were small.
+
+The quality was poor.
+
+There was little reason for a serious photographer to use one.
+
+But they had something Kodak's traditional cameras did not have.
+
+They were already with you.
+
+You didn't need to remember to bring a camera.
+
+You didn't need to carry film.
+
+You didn't need to develop anything.
+
+And as phone cameras improved, the convenience became difficult to ignore.
+
+A photograph could be taken and immediately shared.
+
+That changed the meaning of photography again.
+
+A camera was no longer just a device for capturing memories.
+
+It became part of communication.
+
+People could photograph something and send it across the world within seconds.
+
+The photograph was no longer the end product.
+
+It was the beginning of a digital conversation.
+
+Kodak had spent decades mastering photography.
+
+But the center of gravity was moving away from photography as a physical product.
+
+---
+
+# CHAPTER EIGHT — THE COST OF CHANGE
+
+Kodak's problem was not simply technology.
+
+It was also scale.
+
+Large corporations are difficult to transform.
+
+They have thousands of employees.
+
+They have factories.
+
+They have contracts.
+
+They have shareholders.
+
+They have customers.
+
+They have established products.
+
+And they have managers whose job is often to protect businesses that already generate billions of dollars.
+
+Transforming such a company requires more than discovering a new technology.
+
+It requires reallocating money, people, factories, marketing, and management attention toward a future that may initially produce less revenue.
+
+That transition is extremely difficult.
+
+Kodak continued investing in digital products and technologies.
+
+But its traditional film business remained central for years.
+
+As digital adoption accelerated, the company had to deal with the declining economics of its traditional business while attempting to build new businesses quickly enough to replace them.
+
+That created enormous pressure.
+
+The company was not transitioning from one profitable business to another equally established business.
+
+It was trying to build the replacement while the old engine was weakening.
+
+---
+
+# CHAPTER NINE — THE GOLDEN AGE ENDS
+
+By the late 1990s and early 2000s, the transformation was becoming impossible to ignore.
+
+Digital cameras were improving.
+
+Computers were becoming household products.
+
+The internet was becoming part of everyday life.
+
+And film photography was beginning a long decline.
+
+Kodak continued launching digital products.
+
+It developed the EasyShare brand.
+
+The company became a significant participant in consumer digital imaging.
+
+But the economics were different.
+
+A digital camera could generate a sale.
+
+Film could generate repeated purchases.
+
+A customer could buy one digital camera and take thousands of photographs.
+
+The customer could then store those images electronically.
+
+The traditional Kodak cycle had been disrupted.
+
+And Kodak's competition was no longer limited to traditional camera companies.
+
+It now included electronics manufacturers.
+
+Computer companies.
+
+Printer companies.
+
+Software companies.
+
+Internet companies.
+
+And eventually smartphone manufacturers.
+
+The definition of a photography company was changing.
+
+---
+
+# CHAPTER TEN — THE COMPANY TRIES TO REINVENT ITSELF
+
+Kodak began making major strategic changes.
+
+The company moved into digital printing.
+
+Commercial imaging.
+
+Consumer inkjet printers.
+
+Document imaging.
+
+Online photo services.
+
+And other businesses connected to digital technology.
+
+Some of these efforts were significant.
+
+But transformation came with a price.
+
+Kodak had to restructure.
+
+It had to close facilities.
+
+Reduce its workforce.
+
+Sell assets.
+
+Change businesses.
+
+And search for new sources of revenue.
+
+The company was simultaneously fighting the decline of its traditional business and attempting to create something new.
+
+The pressure became increasingly severe.
+
+Kodak had spent decades building an enormous industrial organization around film.
+
+That organization could not simply disappear overnight.
+
+---
+
+# CHAPTER ELEVEN — THE INTERNET CHANGES THE PHOTOGRAPH
+
+There was another development Kodak could not control.
+
+The internet.
+
+The internet changed what people expected from photographs.
+
+A photograph no longer needed to be printed.
+
+It could be uploaded.
+
+Shared.
+
+Copied.
+
+Emailed.
+
+Displayed on a website.
+
+And eventually posted to social media.
+
+The value of photography began shifting from the physical photograph to the digital network surrounding it.
+
+This created enormous opportunities for companies that Kodak had never traditionally competed with.
+
+The winners of the new photography economy were not necessarily the companies making film.
+
+They were increasingly the companies controlling devices, software, platforms, storage, and communication.
+
+Kodak had spent more than a century making photography easier.
+
+But the next generation of companies would make photographs easier to distribute.
+
+That distinction mattered.
+
+---
+
+# CHAPTER TWELVE — THE FILM BUSINESS COLLAPSES
+
+As digital photography became mainstream, film demand deteriorated.
+
+This was not a small decline.
+
+The underlying behavior of consumers was changing.
+
+People who once bought rolls of film could now take hundreds or thousands of digital photographs without buying film.
+
+Photo processing changed too.
+
+There was less need to send a roll to a laboratory.
+
+There was less need to wait.
+
+There was less need to print every photograph.
+
+And the more digital photography improved, the faster this transition could accelerate.
+
+Kodak's traditional economic engine was being dismantled by the very technology it had helped create.
+
+The company tried to respond.
+
+But declining film sales meant declining cash generation from one of its most important businesses.
+
+The company was carrying the cost structure of a giant industrial corporation while its traditional market was shrinking.
+
+And eventually, the financial pressure became overwhelming.
+
+---
+
+# CHAPTER THIRTEEN — JANUARY 19, 2012
+
+On January 19, 2012, Eastman Kodak Company and certain U.S. subsidiaries filed voluntary petitions for protection under Chapter 11 of the United States Bankruptcy Code.
+
+The company entered bankruptcy proceedings in the Southern District of New York.
+
+This was the moment when the collapse of one of America's most famous corporate names became official.
+
+Kodak had survived wars.
+
+Economic crises.
+
+Technological changes.
+
+Generations of consumers.
+
+But it had reached the point where its existing financial structure could no longer support the company as it had been built.
+
+The bankruptcy was not the end of Kodak.
+
+Chapter 11 gave the company a mechanism to reorganize.
+
+But the Kodak that eventually emerged would be dramatically different from the Kodak that entered bankruptcy.
+
+The old empire was being dismantled.
+
+---
+
+# CHAPTER FOURTEEN — SELLING THE OLD KODAK
+
+During the bankruptcy process, Kodak began restructuring its businesses.
+
+The company sold assets.
+
+It pursued financing.
+
+It reduced costs.
+
+And it moved away from some of the consumer businesses that had defined the Kodak brand.
+
+Kodak's personalized imaging and document imaging businesses became part of the restructuring process.
+
+The company also pursued intellectual-property transactions as it attempted to raise capital and strengthen its position.
+
+The objective was no longer to preserve Kodak exactly as it had existed.
+
+The objective was survival.
+
+That distinction is important.
+
+The Kodak of the twentieth century had been built around mass consumer photography.
+
+The Kodak emerging from bankruptcy would be much smaller and more focused on commercial technology and imaging.
+
+---
+
+# CHAPTER FIFTEEN — SEPTEMBER 3, 2013
+
+On September 3, 2013, Kodak emerged from Chapter 11.
+
+The company was no longer the same consumer photography giant.
+
+Kodak described its reorganized business as focused on commercial markets including packaging, functional printing, graphic communications, and professional services.
+
+The company still had technology.
+
+It still had intellectual property.
+
+It still had expertise in imaging and materials science.
+
+And the Kodak brand survived.
+
+But the business had been transformed.
+
+The company that once sold film to millions of consumers was now concentrating on a much narrower collection of businesses.
+
+The transformation had taken decades.
+
+The bankruptcy had made it unavoidable.
+
+---
+
+# CHAPTER SIXTEEN — THE IRONY OF STEVEN SASSON
+
+Now return to that laboratory in 1975.
+
+Steven Sasson was standing beside a machine that barely looked like a camera.
+
+It had a 100-by-100-pixel sensor.
+
+It recorded photographs onto a cassette.
+
+It took approximately 23 seconds.
+
+And it looked nothing like the cameras people would eventually carry in their pockets.
+
+But that machine contained the basic idea that would transform photography.
+
+The photograph could become data.
+
+Once that happened, almost everything else became a matter of technological progress.
+
+Better sensors.
+
+Better processors.
+
+Better storage.
+
+Better screens.
+
+Better networks.
+
+Better software.
+
+Smaller devices.
+
+And eventually, smartphones.
+
+Kodak's engineers could see the technology.
+
+They could build the technology.
+
+They could improve the technology.
+
+But the existence of a technology does not automatically tell a company how to reorganize its entire business around it.
+
+That is the deeper lesson of Kodak.
+
+---
+
+# CHAPTER SEVENTEEN — DID KODAK KILL ITSELF?
+
+For years, the Kodak story has been simplified into a single sentence.
+
+“Kodak invented the digital camera and then killed itself by refusing to embrace digital.”
+
+It makes for a great story.
+
+But reality is more complicated.
+
+Kodak did embrace digital technology.
+
+It developed digital cameras.
+
+It invested in digital imaging.
+
+It developed sensors.
+
+It entered digital printing.
+
+It created consumer digital products.
+
+And it spent enormous resources attempting to adapt.
+
+The problem was not simply that Kodak failed to recognize digital photography.
+
+The problem was that recognizing the future was not enough.
+
+Kodak had to replace an enormous, profitable, mature business with a collection of newer businesses that operated under completely different economics.
+
+And that transition happened while competitors were moving rapidly.
+
+The company had to transform itself while its existing foundation was deteriorating.
+
+That is a much harder problem than simply inventing something new.
+
+---
+
+# CHAPTER EIGHTEEN — THE REAL BUSINESS LESSON
+
+There is a strange paradox at the center of Kodak's story.
+
+The company was one of the world's great innovators.
+
+But innovation and business transformation are not the same thing.
+
+A laboratory can invent the future.
+
+A corporation has to finance it.
+
+Manufacture it.
+
+Market it.
+
+Distribute it.
+
+Sell it.
+
+And most importantly, build a business model around it.
+
+Kodak succeeded spectacularly at the first part.
+
+It struggled with the last part.
+
+The company had spent more than a century becoming extraordinarily efficient at making money from physical photography.
+
+Digital photography attacked the foundation of that system.
+
+The number of photographs could increase while film consumption collapsed.
+
+Photography could become more popular while Kodak's traditional revenue opportunity became smaller.
+
+That is the paradox.
+
+The technology could grow the market while destroying the old business model.
+
+---
+
+# CHAPTER NINETEEN — WHAT HAPPENED TO FILM?
+
+Film did not disappear completely.
+
+Professional photographers continued using it.
+
+Filmmakers continued using film.
+
+Artists continued using it.
+
+Collectors and enthusiasts continued using it.
+
+Kodak itself continued to maintain businesses connected to film and imaging.
+
+But film was no longer the center of everyday consumer photography.
+
+That position had moved.
+
+First to digital cameras.
+
+Then increasingly to smartphones.
+
+The transformation did not happen because people suddenly stopped loving photographs.
+
+The opposite happened.
+
+People took more photographs than ever.
+
+The difference was that the photographs became digital.
+
+The world did not stop taking pictures.
+
+The world stopped needing Kodak's traditional way of making them.
+
+---
+
+# CHAPTER TWENTY — THE COMPANY THAT COULD SEE THE FUTURE
+
+There is something almost poetic about Kodak's story.
+
+The company didn't disappear because it had no scientists.
+
+It didn't disappear because it had no patents.
+
+It didn't disappear because it didn't understand that digital technology mattered.
+
+Its engineers had already demonstrated the future decades earlier.
+
+The difficult question was economic.
+
+How do you replace a business that is still generating enormous value today with a business whose full potential may not arrive for years?
+
+And what happens when your most successful products are the very products that the future makes unnecessary?
+
+Kodak had built an empire around film.
+
+Digital photography did not destroy photography.
+
+It destroyed the need for film.
+
+And once film stopped being essential, the enormous ecosystem surrounding it became vulnerable.
+
+---
+
+# CHAPTER TWENTY-ONE — THE KODAK NAME SURVIVES
+
+Kodak's bankruptcy did not erase the company.
+
+It reorganized it.
+
+After emerging from Chapter 11, Kodak focused on commercial imaging and printing technologies rather than attempting to recreate its old consumer empire.
+
+The company that emerged was smaller.
+
+Different.
+
+And much more specialized.
+
+The yellow-and-red Kodak name, however, remained one of the most recognizable symbols in the history of photography.
+
+That is perhaps the strangest part of the entire story.
+
+Kodak's brand survived the collapse of the business model that made it famous.
+
+The name still immediately means photography to millions of people.
+
+But the company behind that name is no longer the same company that once dominated the world's cameras and film.
+
+---
+
+# CHAPTER TWENTY-TWO — THE FINAL PHOTOGRAPH
+
+Imagine going back to 1975.
+
+Imagine standing in that Kodak laboratory.
+
+Imagine looking at Sasson's strange machine.
+
+A toaster-sized camera.
+
+A cassette recorder.
+
+A tiny black-and-white image.
+
+Twenty-three seconds.
+
+You might have looked at it and thought:
+
+“This will never replace film.”
+
+And at that moment, you would have had a reasonable argument.
+
+The technology was primitive.
+
+The economics were unclear.
+
+The market did not exist.
+
+But technology rarely arrives in its final form.
+
+It starts as something awkward.
+
+Expensive.
+
+Slow.
+
+Unpopular.
+
+And then it improves.
+
+The sensor becomes better.
+
+The computer becomes smaller.
+
+Storage becomes cheaper.
+
+The internet becomes faster.
+
+The phone becomes smarter.
+
+And suddenly the strange prototype from a laboratory decades earlier becomes normal.
+
+That is what happened to digital photography.
+
+The future did not arrive all at once.
+
+It arrived one improvement at a time.
+
+---
+
+# CHAPTER TWENTY-THREE — KODAK'S LEGACY
+
+Today, when someone takes a photograph with a smartphone, there is a good chance they take it for granted.
+
+Press the button.
+
+The image appears instantly.
+
+It can be edited.
+
+Copied.
+
+Stored.
+
+Sent.
+
+Published.
+
+And viewed anywhere in the world.
+
+That experience would have seemed almost impossible in 1975.
+
+But the fundamental idea was already there.
+
+Inside Kodak.
+
+In the hands of Steven Sasson.
+
+The company had invented a piece of the future.
+
+What it could not do was guarantee that the future would preserve the business model of the past.
+
+That is why Kodak remains one of the most fascinating corporate stories in modern history.
+
+Not because Kodak was technologically blind.
+
+But because it demonstrates something much more uncomfortable.
+
+Sometimes a company can see the future coming.
+
+It can invest in it.
+
+It can invent pieces of it.
+
+And it can still struggle to survive the transition.
+
+---
+
+# EPILOGUE — THE COMPANY THAT INVENTED THE DIGITAL CAMERA
+
+Kodak began by making photography easier.
+
+George Eastman's original vision was to take a complicated process and put it into the hands of ordinary people.
+
+For more than a century, Kodak succeeded.
+
+It helped turn photography from a specialized activity into an everyday habit.
+
+Then technology changed the meaning of photography.
+
+The photograph stopped being primarily a piece of film.
+
+It became data.
+
+And once photography became data, the entire industry could change.
+
+Kodak was there at the beginning.
+
+Its scientists helped create the technology.
+
+Its engineers understood digital imaging.
+
+Its products entered the digital market.
+
+But the transition was brutal.
+
+The company's traditional business declined.
+
+Its industrial structure became increasingly difficult to support.
+
+Its finances deteriorated.
+
+And in 2012, the company entered Chapter 11.
+
+In 2013, it emerged as a smaller, transformed business.
+
+Kodak had not literally disappeared.
+
+But the Kodak that had dominated consumer photography was gone.
+
+And that is the irony.
+
+The company that helped invent the digital future could not preserve the world that had made it powerful.
+
+The camera that once required film became a device carried in almost everyone's pocket.
+
+The photograph that once had to be developed became a file created in seconds.
+
+And the company that once stood at the center of photography had to reinvent itself after the very technology it helped create transformed the industry.
+
+Kodak's story is not simply about failure.
+
+It is about the difference between invention and transformation.
+
+Between knowing what is coming...
+
+and being able to build a business around it.
+
+Because sometimes the most dangerous technology for a company isn't the technology it doesn't understand.
+
+It's the technology it understands perfectly.
+
+The technology it invents itself.
+
+And the technology that eventually makes its greatest business obsolete.
+
+That was Kodak.
+
+The company that invented the digital camera.
+
+And then watched the world go digital.

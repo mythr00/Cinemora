@@ -1,0 +1,77 @@
+[
+  {
+    "beat_id": "beat_01_background_none_none",
+    "subject_id": "",
+    "place": "",
+    "role": "background",
+    "searchable": true,
+    "sentence_numbers": [
+      1,
+      2,
+      3
+    ],
+    "text": "Apollo 11 approached the Moon during its historic mission. The astronauts prepared for the lunar landing. The Eagle eventually landed on the Moon.",
+    "shot_needs": [
+      {
+        "beat_id": "beat_01_background_none_none",
+        "shot_index": 1,
+        "shot_type": "archival",
+        "specificity": "representative",
+        "description": "Apollo 11 approached the Moon during its historic mission.",
+        "required_subject_id": null,
+        "required_subject": "",
+        "required_type": "archival",
+        "era": "",
+        "place": "",
+        "event": "",
+        "visual_requirement": "documentary or representative footage matching the sentence",
+        "forbidden": [],
+        "priority": 2,
+        "fallback": "same_era_place",
+        "queries": [
+          "Apollo 11 approached the Moon during its historic mission."
+        ]
+      },
+      {
+        "beat_id": "beat_01_background_none_none",
+        "shot_index": 2,
+        "shot_type": "event",
+        "specificity": "representative",
+        "description": "The astronauts prepared for the lunar landing.",
+        "required_subject_id": null,
+        "required_subject": "",
+        "required_type": "event",
+        "era": "",
+        "place": "",
+        "event": "landing",
+        "visual_requirement": "documentary or representative footage matching the sentence",
+        "forbidden": [],
+        "priority": 2,
+        "fallback": "same_era_place",
+        "queries": [
+          "landing"
+        ]
+      },
+      {
+        "beat_id": "beat_01_background_none_none",
+        "shot_index": 3,
+        "shot_type": "event",
+        "specificity": "representative",
+        "description": "The Eagle eventually landed on the Moon.",
+        "required_subject_id": null,
+        "required_subject": "",
+        "required_type": "event",
+        "era": "",
+        "place": "",
+        "event": "landed",
+        "visual_requirement": "documentary or representative footage matching the sentence",
+        "forbidden": [],
+        "priority": 2,
+        "fallback": "same_era_place",
+        "queries": [
+          "landed"
+        ]
+      }
+    ]
+  }
+]

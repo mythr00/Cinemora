@@ -1,0 +1,5916 @@
+# NUVORI FINANCE — MASTER PROJECT HANDOFF
+
+## 1. PROJECT IDENTITY
+
+Project name: **Nuvori Finance**
+
+Nuvori is being built as a **Universal Financial Operating System** — a single financial platform where a user can see, hold, move, exchange, spend, invest, monitor and manage essentially their entire financial life from one place.
+
+The goal is NOT to build another simple budgeting app, crypto wallet, neobank dashboard, or stock portfolio tracker.
+
+The long-term goal is for Nuvori to become a **bank-like financial platform / financial operating system** capable of bringing together:
+
+* Fiat money
+* Bank accounts
+* Virtual bank accounts
+* Debit/virtual cards
+* Payments
+* Transfers
+* Cash
+* Stablecoins
+* Crypto
+* Stocks
+* ETFs
+* Bonds
+* Gold
+* Other investments
+* Liabilities
+* Loans/debt
+* Recurring payments
+* Subscriptions
+* Business finances
+* Financial documents
+* Tax organization
+* Savings
+* Financial goals
+* Net worth
+* Portfolio exposure
+* Cash flow
+* International transfers
+* Security monitoring
+* Fraud/anomaly detection
+* AI financial intelligence
+
+The user should feel like:
+
+> "Nuvori is the place where my entire financial life exists."
+
+---
+
+# 2. CORE BUSINESS/PRODUCT VISION
+
+Nuvori should eventually behave like an actual financial institution from the user's perspective.
+
+However, the initial strategy is NOT to spend enormous amounts of money becoming a fully licensed bank from day one.
+
+Instead:
+
+**Nuvori = financial intelligence + unified user experience + unified financial ledger + orchestration layer**
+
+while regulated partners/providers provide the underlying regulated infrastructure where necessary.
+
+Examples of potential infrastructure/provider categories:
+
+* Banking-as-a-Service
+* Payment processors
+* Card issuing
+* Crypto infrastructure
+* Brokerage infrastructure
+* Identity/KYC providers
+* AML providers
+* Fiat on/off ramps
+* International payment providers
+* Custody providers
+* Banking partners
+
+Nuvori should abstract these providers away from the user as much as legally/technically possible.
+
+The user interacts with:
+
+**NUVORI**
+
+not with a confusing collection of providers.
+
+---
+
+# 3. THE BIG DIFFERENTIATOR
+
+The most important feature is:
+
+# ALWAYS-ON AI FINANCIAL MONITORING AGENT
+
+This is NOT supposed to be merely a chatbot.
+
+It is a continuously operating financial intelligence system.
+
+The AI should monitor authorized financial data and relevant system events.
+
+It should understand the user's complete financial situation.
+
+It should continuously analyze:
+
+* Bank accounts
+* Cash
+* Cards
+* Transactions
+* Crypto
+* Stablecoins
+* Stocks
+* ETFs
+* Bonds
+* Gold
+* Other investments
+* Liabilities
+* Loans
+* Recurring payments
+* Subscriptions
+* Bills
+* Income
+* Expenses
+* Transfers
+* Financial goals
+* Portfolio exposure
+* Concentration
+* Market/price data where applicable
+* Security events
+* Failed transactions
+* Large transactions
+* Suspicious activity
+* Account balances
+* Upcoming obligations
+
+The AI should continuously look for important events.
+
+Examples:
+
+### Spending anomaly
+
+"Your restaurant spending is 42% higher than your normal monthly average."
+
+### Subscription detection
+
+"You were charged €29.99 by a service you haven't used recently."
+
+### Upcoming obligation
+
+"Your rent payment is due in 3 days."
+
+### Low balance
+
+"Your EUR account may fall below your normal safety balance after the upcoming payments."
+
+### Large transaction
+
+"A €4,800 transfer was detected, significantly above your normal transfer size."
+
+### Portfolio concentration
+
+"Your portfolio exposure to one asset has increased significantly."
+
+### Failed transaction
+
+"Your card payment failed twice at the same merchant."
+
+### Security event
+
+"An unusual login/device event was detected."
+
+### Cash-flow prediction
+
+"Based on your recurring income and obligations, your projected available cash in 14 days is X."
+
+The system should prioritize events based on importance.
+
+---
+
+# 4. AI FINANCIAL COPILOT
+
+The Monitoring Agent and AI Copilot should work together.
+
+The user can ask:
+
+* "How much money do I actually have?"
+* "What's my net worth?"
+* "Where did my money go this month?"
+* "How much did I spend on food?"
+* "How much do I owe?"
+* "What bills are coming?"
+* "Can I afford this?"
+* "What happens if I spend €2,000?"
+* "What happens if BTC falls 20%?"
+* "How much of my portfolio is exposed to crypto?"
+* "Which subscriptions do I have?"
+* "Find unusual transactions."
+* "Show me everything I own."
+* "Show me everything I owe."
+* "How much cash will I have next month?"
+* "How much can I safely move into savings?"
+* "How much am I paying in fees?"
+* "What changed in my finances this month?"
+
+The AI must answer using actual structured financial data whenever possible.
+
+It must NOT simply hallucinate financial information.
+
+---
+
+# 5. AI ACTION MODEL
+
+The AI can prepare actions.
+
+Examples:
+
+* Prepare a bank transfer
+* Prepare a crypto conversion
+* Prepare a currency conversion
+* Prepare a card payment
+* Prepare a bill payment
+* Prepare a recurring payment
+* Prepare an investment order
+* Prepare a transfer between Nuvori accounts
+* Prepare a withdrawal
+* Prepare a deposit
+* Prepare an automation
+
+But there must be a critical separation:
+
+## AI proposes/prepares
+
+↓
+
+## USER CONFIRMS
+
+↓
+
+## NUVORI EXECUTES THROUGH AUTHORIZED PROVIDER
+
+↓
+
+## PROVIDER RETURNS RESULT
+
+↓
+
+## NUVORI LEDGER RECORDS RESULT
+
+↓
+
+## WEBHOOK/RECONCILIATION CONFIRMS STATE
+
+The AI should not silently move money or execute consequential financial actions without the appropriate authorization/confirmation flow.
+
+---
+
+# 6. FINANCIAL X-RAY
+
+Nuvori should have a major AI-powered feature called something like:
+
+**Financial X-Ray**
+
+It gives the user a complete snapshot of their financial life.
+
+Example:
+
+## FINANCIAL X-RAY
+
+### Net Worth
+
+$84,320
+
+### Cash
+
+$18,450
+
+### Investments
+
+$52,300
+
+### Crypto
+
+$8,200
+
+### Gold
+
+$4,100
+
+### Liabilities
+
+-$12,730
+
+### Monthly Income
+
+$7,400
+
+### Monthly Spending
+
+$4,920
+
+### Upcoming Obligations
+
+$2,150
+
+### Subscriptions
+
+$184/month
+
+### Portfolio Exposure
+
+...
+
+### Largest Financial Risks
+
+...
+
+### Major Changes
+
+...
+
+### AI Observations
+
+...
+
+This should become one of Nuvori's signature features.
+
+---
+
+# 7. UNIVERSAL ASSET MODEL
+
+Do NOT architect Nuvori around only "wallets."
+
+The system needs a generalized financial asset model.
+
+Potential asset categories:
+
+* Fiat
+* Bank balance
+* Cash
+* Crypto
+* Stablecoin
+* Stock
+* ETF
+* Bond
+* Gold
+* Other commodity
+* Property
+* Business ownership
+* Other investment
+* Reward balance
+
+Liability categories:
+
+* Credit card
+* Loan
+* Mortgage
+* Personal debt
+* Business debt
+* BNPL
+* Other liability
+
+The architecture should allow new asset/liability types to be added later without rebuilding the entire system.
+
+---
+
+# 8. UNIFIED NET WORTH
+
+Nuvori should calculate:
+
+**TOTAL ASSETS - TOTAL LIABILITIES = NET WORTH**
+
+But it should also understand the composition.
+
+For example:
+
+Assets:
+
+* $20,000 cash
+* $40,000 stocks
+* $10,000 crypto
+* $5,000 gold
+
+Liabilities:
+
+* $8,000 credit card
+* $12,000 loan
+
+Net worth:
+
+$55,000
+
+The user should be able to drill into every number.
+
+---
+
+# 9. UNIFIED FINANCIAL GRAPH
+
+A major architectural concept is a financial graph.
+
+Nuvori should understand relationships between:
+
+User
+→ accounts
+→ wallets
+→ assets
+→ transactions
+→ merchants
+→ subscriptions
+→ liabilities
+→ investments
+→ goals
+→ income
+→ expenses
+→ providers
+→ cards
+→ transfers
+
+This enables the AI to reason across the entire financial system.
+
+---
+
+# 10. CORE LEDGER
+
+The financial system must eventually use a proper **immutable double-entry ledger**.
+
+Do NOT rely on simple balance updates such as:
+
+balance = balance + amount
+
+without a corresponding accounting record.
+
+The ledger should support:
+
+* Accounts
+* Entries
+* Debits
+* Credits
+* Currency
+* Asset type
+* Transaction ID
+* Provider
+* Fees
+* Status
+* Timestamp
+* Reference
+* Metadata
+* Reconciliation
+* Audit trail
+
+Every financial movement should be traceable.
+
+The ledger becomes the financial source of truth.
+
+---
+
+# 11. TRANSACTION ENGINE
+
+Transactions should support states such as:
+
+* pending
+* processing
+* completed
+* failed
+* cancelled
+* reversed
+* refunded
+* disputed
+
+Transactions should also support:
+
+* Amount
+* Currency
+* Source
+* Destination
+* Fee
+* Exchange rate
+* Provider
+* Provider transaction ID
+* Internal transaction ID
+* Timestamp
+* Metadata
+* Audit history
+
+---
+
+# 12. RECONCILIATION
+
+Provider balances and Nuvori's internal ledger must be reconciled.
+
+Examples:
+
+Bank says:
+
+$4,800
+
+Nuvori ledger says:
+
+$4,800
+
+Good.
+
+If provider says:
+
+$4,750
+
+while Nuvori says:
+
+$4,800
+
+the system must detect and investigate the discrepancy.
+
+This is critical for a real financial platform.
+
+---
+
+# 13. EXISTING APPLICATION FOUNDATION
+
+The project already has a working application foundation.
+
+Current frontend direction:
+
+* Next.js
+* React
+* TypeScript
+* Supabase
+* Server-side authentication/session handling
+
+Existing version recorded:
+
+**Next.js 14.2.35**
+
+Database/auth foundation:
+
+**Supabase Auth + PostgreSQL + SSR**
+
+---
+
+# 14. AUTHENTICATION ALREADY BUILT
+
+The application already has the foundation for:
+
+* Signup
+* Email verification
+* Login
+* Logout
+* Protected dashboard
+* Middleware/protected routes
+* User profiles
+* Real-name greeting
+
+The dashboard can identify the authenticated user.
+
+---
+
+# 15. EXISTING DASHBOARD
+
+Current dashboard surfaces include:
+
+* Send
+* Receive
+* Swap
+* Top Up
+* Cards
+* Accounts
+* Profile
+
+These are only the foundation.
+
+They will eventually become full financial modules.
+
+---
+
+# 16. EXISTING DATABASE FOUNDATION
+
+Existing database concepts include:
+
+### profiles
+
+User profile information.
+
+### wallets
+
+Wallet/account foundation.
+
+### wallet_balances
+
+Balances associated with wallets.
+
+### currencies
+
+Initial supported currencies/assets include:
+
+* USD
+* NGN
+* USDT
+* USDC
+* BTC
+* ETH
+
+Row-Level Security foundation has also been established.
+
+This database must evolve into the broader financial architecture rather than remaining a crypto-wallet-only model.
+
+---
+
+# 17. IMPORTANT ARCHITECTURAL EVOLUTION
+
+The current wallet structure was an initial foundation.
+
+Do NOT allow the project to become permanently architected as:
+
+"crypto wallet + dashboard."
+
+The actual target architecture is:
+
+# UNIVERSAL FINANCIAL ACCOUNTING SYSTEM
+
+The wallet model should eventually coexist with:
+
+* bank accounts
+* fiat accounts
+* investment accounts
+* custody accounts
+* cards
+* liabilities
+* financial assets
+* business accounts
+* external linked accounts
+
+---
+
+# 18. FIAT BANKING
+
+Future Nuvori functionality:
+
+* Personal EUR/USD/NGN/etc. accounts
+* Virtual bank accounts
+* Local account numbers where supported
+* International transfers
+* Deposits
+* Withdrawals
+* Internal transfers
+* Bank-to-bank transfers
+* Payment tracking
+* Transfer status
+* Transfer history
+* Fees
+* Exchange rates
+
+Potential infrastructure providers may include banking/payment partners.
+
+Nuvori should be provider-agnostic.
+
+---
+
+# 19. CRYPTO
+
+Crypto should be treated as one part of Nuvori, not the entire product.
+
+Capabilities should eventually include:
+
+* Crypto balances
+* Wallets
+* Deposits
+* Withdrawals
+* Network selection
+* Address management
+* Stablecoins
+* Crypto swaps
+* Crypto/fiat conversion
+* Transaction tracking
+* Fees
+* Network fees
+* Blockchain confirmations
+* Portfolio valuation
+
+Potential providers/exchanges may be integrated behind a provider abstraction layer.
+
+---
+
+# 20. SWAPS / EXCHANGE
+
+Nuvori should eventually support:
+
+* Fiat → fiat
+* Fiat → crypto
+* Crypto → fiat
+* Crypto → crypto
+* Stablecoin conversions
+* Other supported asset conversions
+
+The user should see:
+
+* Amount
+* Exchange rate
+* Fee
+* Slippage where applicable
+* Provider
+* Total received
+* Confirmation
+
+The underlying provider should be abstracted.
+
+---
+
+# 21. CARDS
+
+Future card infrastructure:
+
+### Virtual cards
+
+### Physical cards
+
+### Card controls
+
+Potential capabilities:
+
+* Freeze/unfreeze
+* Spending limits
+* Merchant controls
+* Online/offline controls where supported
+* Country controls
+* Notifications
+* Transaction history
+* Card replacement
+* Virtual card creation
+
+Potential issuing infrastructure can be integrated rather than building card networks from scratch.
+
+---
+
+# 22. INVESTMENTS
+
+Nuvori should eventually support investments such as:
+
+* Stocks
+* ETFs
+* Bonds
+* Other supported securities
+
+The platform should track:
+
+* Holdings
+* Cost basis
+* Current value
+* P/L
+* Allocation
+* Exposure
+* Transactions
+* Dividends where applicable
+* Portfolio history
+
+The AI can then incorporate investments into the user's overall financial picture.
+
+---
+
+# 23. GOLD
+
+Gold is a first-class asset category.
+
+Nuvori should be able to represent:
+
+* Gold holdings
+* Quantity
+* Current value
+* Purchase price
+* Gain/loss
+* Provider/custodian
+* Transaction history
+
+The architecture should eventually allow other commodities/assets without redesigning the system.
+
+---
+
+# 24. LIABILITIES
+
+Nuvori should not only track what users own.
+
+It should track what users owe.
+
+Examples:
+
+* Credit cards
+* Loans
+* Mortgages
+* BNPL
+* Business debt
+* Other liabilities
+
+Each liability should support:
+
+* Principal
+* Current balance
+* Interest
+* Payment schedule
+* Due date
+* Minimum payment
+* Provider
+* Status
+* History
+
+This feeds directly into:
+
+* Net worth
+* Cash-flow forecasting
+* AI monitoring
+* Financial X-Ray
+
+---
+
+# 25. PAYMENTS
+
+Future payment system:
+
+* Person-to-person
+* Merchant payments
+* Bills
+* Recurring payments
+* International payments
+* Card payments
+* Bank transfers
+
+Potential integrations should sit behind a provider abstraction.
+
+---
+
+# 26. RECURRING PAYMENT / SUBSCRIPTION ENGINE
+
+Nuvori should automatically identify recurring transactions.
+
+It should recognize:
+
+* Netflix-type subscriptions
+* Software
+* Phone bills
+* Insurance
+* Rent
+* Utilities
+* Memberships
+* Loans
+* Other recurring obligations
+
+It should detect:
+
+* Price increases
+* Missed payments
+* Duplicate charges
+* Unexpected renewals
+* New subscriptions
+* Cancelled subscriptions
+
+The AI should notify the user about meaningful changes.
+
+---
+
+# 27. CASH-FLOW ENGINE
+
+Nuvori should calculate:
+
+Historical cash flow:
+
+Income - expenses
+
+but also forecast:
+
+Expected income
++
+Expected transfers
+------------------
+
+## Recurring expenses
+
+## Upcoming bills
+
+## Debt obligations
+
+Other expected events
+
+This creates:
+
+**Projected future cash position**
+
+The user should be able to ask:
+
+"How much money will I have in 30 days?"
+
+---
+
+# 28. GOALS
+
+Users should be able to create goals such as:
+
+* Emergency fund
+* House
+* Car
+* Vacation
+* Investment target
+* Debt payoff
+* Savings target
+* Business target
+
+Each goal should include:
+
+* Target amount
+* Current amount
+* Deadline
+* Progress
+* Required contribution
+* Funding source
+* Forecast
+
+The AI should monitor goal progress.
+
+---
+
+# 29. WHAT-IF SIMULATOR
+
+Nuvori should allow users to ask:
+
+"What happens if I spend $3,000?"
+
+"What happens if my income drops 20%?"
+
+"What happens if BTC drops 30%?"
+
+"What happens if I pay off this debt?"
+
+"What happens if I invest $500 every month?"
+
+"What happens if gold rises 10%?"
+
+"What happens if I cancel these subscriptions?"
+
+The system should calculate scenario outcomes based on the user's actual financial state and clearly identify assumptions.
+
+---
+
+# 30. PORTFOLIO INTELLIGENCE
+
+Nuvori should eventually calculate:
+
+* Asset allocation
+* Geographic exposure
+* Currency exposure
+* Crypto exposure
+* Equity exposure
+* Gold exposure
+* Concentration
+* Liquidity
+* Liabilities
+* Risk-related metrics where appropriate
+
+The AI should explain the data rather than simply showing charts.
+
+---
+
+# 31. SECURITY / FRAUD MONITORING
+
+Nuvori should monitor:
+
+* Unusual transactions
+* Unusual locations/devices
+* Failed login attempts
+* New devices
+* Large transfers
+* Rapid transfers
+* Unusual merchant activity
+* Account changes
+* Withdrawal behavior
+* Suspicious patterns
+
+The system should have:
+
+* Security events
+* Risk signals
+* Alerts
+* Audit logs
+* Session/device management
+
+---
+
+# 32. PROVIDER ABSTRACTION
+
+This is extremely important.
+
+Do NOT hard-code Nuvori around one provider.
+
+Create interfaces such as:
+
+BankProvider
+PaymentProvider
+CardProvider
+CryptoProvider
+BrokerProvider
+GoldProvider
+IdentityProvider
+NotificationProvider
+
+Then providers implement those interfaces.
+
+For example:
+
+CryptoProvider
+
+could eventually have:
+
+* Provider A
+* Provider B
+* Provider C
+
+Nuvori's internal application should not care which provider is underneath.
+
+This protects the architecture from provider lock-in.
+
+---
+
+# 33. INITIAL / POTENTIAL PROVIDER ECOSYSTEM
+
+Earlier architecture discussions identified provider categories/integrations such as:
+
+* Binance
+* Flutterwave
+* Anchor
+* Stripe Issuing
+* Smile Identity
+* OpenAI
+* Resend
+* FCM
+
+These should be treated as potential/provider-ready integrations, not assumptions that every provider must be used permanently.
+
+The architecture should make replacement possible.
+
+---
+
+# 34. KYC / KYB / AML
+
+Because Nuvori is intended to interact with real financial infrastructure, eventual compliance architecture must support:
+
+* KYC
+* KYB
+* Identity verification
+* Sanctions screening
+* AML monitoring
+* Transaction monitoring
+* Risk scoring
+* Account restrictions
+* Compliance reviews
+* Audit records
+* Document management
+
+This should be designed into the system rather than bolted on at the end.
+
+---
+
+# 35. BUSINESS ACCOUNTS
+
+Nuvori should eventually support both:
+
+## Personal
+
+and
+
+## Business
+
+financial environments.
+
+Business capabilities can include:
+
+* Business accounts
+* Business cards
+* Expenses
+* Employee spending
+* Invoices
+* Business transfers
+* Business cash flow
+* Business assets
+* Business liabilities
+* Business reporting
+
+---
+
+# 36. DOCUMENT / TAX ORGANIZATION
+
+Nuvori can eventually become a financial document center.
+
+Examples:
+
+* Bank statements
+* Receipts
+* Invoices
+* Tax documents
+* Investment statements
+* Loan documents
+* Insurance documents
+
+The AI should be able to organize and explain these documents.
+
+---
+
+# 37. TIMELINE / FINANCIAL HISTORY
+
+Nuvori should eventually have a unified financial timeline.
+
+Example:
+
+**January 3**
+Salary received
+
+**January 5**
+Rent paid
+
+**January 7**
+Investment purchased
+
+**January 10**
+Crypto deposit
+
+**January 14**
+Card purchase
+
+**January 20**
+Loan payment
+
+This allows the AI to understand the user's financial history chronologically.
+
+---
+
+# 38. NOTIFICATION ENGINE
+
+Notifications should be event-driven.
+
+Examples:
+
+* Large transaction
+* Low balance
+* Upcoming bill
+* Subscription increase
+* Failed payment
+* Investment movement
+* Security event
+* Goal milestone
+* Unusual spending
+* Cash-flow warning
+* Account issue
+
+Notifications should be intelligently prioritized instead of becoming spam.
+
+---
+
+# 39. ADMIN SYSTEM
+
+Eventually Nuvori needs an internal admin system.
+
+Admin capabilities:
+
+* User management
+* Account management
+* Transaction inspection
+* Provider monitoring
+* Compliance cases
+* KYC/KYB status
+* Risk events
+* Fraud cases
+* Support tools
+* Ledger inspection
+* Reconciliation
+* System health
+* Audit logs
+
+Admin actions must themselves be audited.
+
+---
+
+# 40. REWARDS
+
+Earlier product direction also included:
+
+* Rewards
+* Cashback
+* Loyalty
+* Referral systems
+
+These should eventually integrate into the broader financial ecosystem rather than becoming a disconnected rewards feature.
+
+---
+
+# 41. USER EXPERIENCE PRINCIPLE
+
+The application should feel premium and simple even though the backend is extremely complex.
+
+The user should NOT need to understand:
+
+* Banking APIs
+* Blockchain infrastructure
+* Brokerage infrastructure
+* Payment processors
+* Provider IDs
+* Ledger mechanics
+* Webhooks
+
+Nuvori handles that complexity.
+
+The user sees:
+
+# MONEY
+
+# ASSETS
+
+# LIABILITIES
+
+# ACTIONS
+
+# INSIGHTS
+
+---
+
+# 42. CURRENT TECHNICAL FOUNDATION
+
+Current known foundation:
+
+Frontend:
+
+* Next.js 14.2.35
+* React
+* TypeScript
+
+Backend/data:
+
+* Supabase
+* PostgreSQL
+* Supabase Auth
+* SSR authentication/session handling
+
+Security foundation:
+
+* Protected routes
+* Middleware
+* Row-Level Security
+
+The earlier architecture direction also considered:
+
+* Tailwind
+* API/business-logic layer
+* Server-side RBAC
+* Ledger-based architecture
+
+The exact backend structure can evolve as the system becomes more sophisticated.
+
+---
+
+# 43. DEVELOPMENT PHILOSOPHY
+
+Build the product in layers.
+
+Do NOT attempt to connect every real financial provider immediately.
+
+First build the financial operating system itself.
+
+Use:
+
+## MOCK PROVIDERS
+
+to prove the entire system works.
+
+Then replace mocks with:
+
+## REAL PROVIDERS
+
+one category at a time.
+
+This allows the product to be developed without requiring enormous initial infrastructure spending.
+
+---
+
+# 44. CRITICAL DATA PRINCIPLE
+
+Separate:
+
+### USER-FACING BALANCE
+
+from
+
+### LEDGER BALANCE
+
+from
+
+### PROVIDER BALANCE
+
+from
+
+### MARKET VALUE
+
+from
+
+### AVAILABLE BALANCE
+
+These are not necessarily the same thing.
+
+For example:
+
+Crypto:
+
+* Quantity = 1.2 BTC
+* Market value = $X
+* Available = 1.0 BTC
+* Locked = 0.2 BTC
+* Provider reported = X
+* Internal ledger = X
+
+The architecture must represent these distinctions.
+
+---
+
+# 45. FINANCIAL EVENTS
+
+Nuvori should become event-driven.
+
+Examples:
+
+transaction.created
+transaction.pending
+transaction.completed
+transaction.failed
+transaction.reversed
+
+account.created
+account.updated
+
+card.created
+card.transaction
+
+deposit.created
+withdrawal.created
+
+price.updated
+
+holding.updated
+
+liability.updated
+
+subscription.detected
+
+security.event
+
+goal.updated
+
+provider.webhook
+
+reconciliation.mismatch
+
+These events feed:
+
+* Ledger
+* Notifications
+* AI Monitoring Agent
+* Audit system
+* Analytics
+* Dashboard
+
+---
+
+# 46. AI SHOULD BE EVENT-AWARE
+
+The AI agent should not only wake up when the user opens the chat.
+
+Example:
+
+A transaction arrives.
+
+↓
+
+Event generated.
+
+↓
+
+Monitoring engine evaluates it.
+
+↓
+
+AI/rules determine whether it matters.
+
+↓
+
+If important:
+
+Create alert.
+
+↓
+
+AI explains why it matters.
+
+This is what makes the system "always-on."
+
+---
+
+# 47. RULES + AI
+
+Do not make everything depend on an LLM.
+
+Use deterministic financial rules for things like:
+
+* Balance thresholds
+* Transaction limits
+* Duplicate detection
+* Reconciliation
+* Exact calculations
+* Accounting
+* Payment status
+* Provider state
+* Compliance state
+
+Use AI for:
+
+* Explanation
+* Pattern interpretation
+* Natural language
+* Cross-domain reasoning
+* Scenario explanation
+* Financial summaries
+* User interaction
+* Insight generation
+
+This creates a much more reliable system.
+
+---
+
+# 48. AI SAFETY / EXECUTION MODEL
+
+Financial AI must be grounded.
+
+The AI should have access to structured tools/functions such as:
+
+get_accounts()
+get_balances()
+get_transactions()
+get_holdings()
+get_liabilities()
+get_cashflow()
+get_goals()
+get_subscriptions()
+get_prices()
+get_security_events()
+
+Then actions:
+
+prepare_transfer()
+prepare_swap()
+prepare_payment()
+prepare_trade()
+prepare_withdrawal()
+
+Execution should require the appropriate confirmation/authentication.
+
+---
+
+# 49. NUVORI'S ULTIMATE USER EXPERIENCE
+
+A user opens Nuvori.
+
+Instead of seeing 10 disconnected apps:
+
+Bank app
+Crypto app
+Broker app
+Gold app
+Credit card app
+Budgeting app
+Investment tracker
+Payment app
+Tax app
+Finance chatbot
+
+they see:
+
+# NUVORI
+
+One financial identity.
+
+One financial dashboard.
+
+One financial timeline.
+
+One financial intelligence layer.
+
+One financial operating system.
+
+---
+
+# 50. CURRENT STATE — ALREADY DONE
+
+Known completed foundation:
+
+* Nuvori product concept established
+* Universal Financial Operating System vision established
+* Bank-like platform strategy established
+* Partner/provider infrastructure strategy established
+* Next.js foundation
+* React/TypeScript foundation
+* Supabase integration
+* PostgreSQL foundation
+* Authentication foundation
+* Signup
+* Email verification
+* Login
+* Logout
+* Protected dashboard
+* Middleware/protected routes
+* User profiles
+* Real-name greeting
+* Dashboard foundation
+* Send UI surface
+* Receive UI surface
+* Swap UI surface
+* Top Up UI surface
+* Cards UI surface
+* Accounts UI surface
+* Profile UI surface
+* Wallet foundation
+* Wallet balances
+* Currency foundation
+* USD
+* NGN
+* USDT
+* USDC
+* BTC
+* ETH
+* RLS foundation
+
+---
+
+# 51. IMPORTANT NEW FEATURE — ALWAYS-ON FINANCIAL MONITORING AGENT
+
+This has now been elevated to a **CORE NUVORI PRODUCT CAPABILITY**, not an optional chatbot feature.
+
+It should monitor authorized financial data and system events across:
+
+* Bank accounts
+* Cards
+* Cash
+* Crypto
+* Investments
+* Gold
+* Liabilities
+* Recurring payments
+* Goals
+* Market/price data
+* Security events
+* Other supported financial assets
+
+It continuously detects meaningful events such as:
+
+* Anomalies
+* Unusual spending
+* Subscription changes
+* Low balances
+* Upcoming obligations
+* Portfolio concentration/exposure changes
+* Large transactions
+* Failed transactions
+* Suspicious activity
+* Financial changes
+
+This agent should become one of the primary reasons someone uses Nuvori.
+
+---
+
+# 52. WHAT STILL NEEDS TO BE BUILT
+
+Major remaining areas:
+
+## Financial core
+
+* Universal accounts
+* Generalized assets
+* Generalized liabilities
+* Double-entry ledger
+* Transaction engine
+* Fees
+* Exchange rates
+* Reconciliation
+* Audit system
+
+## Banking
+
+* Fiat accounts
+* Bank connections
+* Deposits
+* Withdrawals
+* Transfers
+* International payments
+
+## Crypto
+
+* Real wallet infrastructure
+* Networks
+* Deposits
+* Withdrawals
+* Swaps
+* Stablecoins
+
+## Cards
+
+* Virtual cards
+* Physical cards
+* Card controls
+* Card transaction processing
+
+## Investments
+
+* Stocks
+* ETFs
+* Bonds
+* Portfolio tracking
+* Brokerage integrations
+
+## Gold
+
+* Gold holdings
+* Pricing
+* Custody/provider integration
+
+## Liabilities
+
+* Credit
+* Loans
+* Debt tracking
+* Repayment schedules
+
+## AI
+
+* Financial Monitoring Agent
+* Financial Copilot
+* Financial X-Ray
+* Cash-flow forecasting
+* What-if simulator
+* Scenario engine
+* Subscription intelligence
+* Spending intelligence
+* Portfolio intelligence
+* Security intelligence
+
+## Compliance
+
+* KYC
+* KYB
+* AML
+* Sanctions
+* Transaction monitoring
+* Compliance cases
+
+## Business
+
+* Business accounts
+* Business cards
+* Expenses
+* Invoices
+* Business analytics
+
+## Documents
+
+* Financial documents
+* Receipts
+* Tax documents
+* Statements
+* AI document understanding
+
+## Infrastructure
+
+* Provider abstraction
+* Webhooks
+* Event bus
+* Background workers
+* Notifications
+* Monitoring
+* Reconciliation
+
+## Admin
+
+* Admin dashboard
+* User management
+* Compliance
+* Transactions
+* Ledger
+* Providers
+* Risk
+* Support
+* Audit logs
+
+---
+
+# 53. RECOMMENDED BUILD ORDER
+
+The next development phase should NOT randomly build features.
+
+Build the foundation in this order:
+
+## PHASE 1 — FINANCIAL CORE
+
+Build:
+
+1. Universal account model
+2. Asset model
+3. Liability model
+4. Double-entry ledger
+5. Transaction model
+6. Transaction statuses
+7. Fees
+8. Internal transfers
+9. Audit events
+10. Reconciliation foundation
+
+This is the foundation everything else depends on.
+
+---
+
+## PHASE 2 — MOCK FINANCIAL INFRASTRUCTURE
+
+Build mock providers for:
+
+* Bank
+* Crypto
+* Card
+* Brokerage
+* Gold
+* Payments
+
+This allows the complete Nuvori experience to be tested before expensive integrations.
+
+---
+
+## PHASE 3 — UNIVERSAL DASHBOARD
+
+Dashboard should show:
+
+### Net Worth
+
+### Total Assets
+
+### Total Liabilities
+
+### Cash
+
+### Investments
+
+### Crypto
+
+### Gold
+
+### Spending
+
+### Income
+
+### Upcoming Obligations
+
+### Goals
+
+### AI Alerts
+
+### Recent Activity
+
+---
+
+## PHASE 4 — ALWAYS-ON AI AGENT
+
+Build:
+
+1. Event ingestion
+2. Financial monitoring rules
+3. Anomaly engine
+4. Subscription detection
+5. Cash-flow engine
+6. Alert prioritization
+7. AI explanation layer
+8. Financial X-Ray
+9. Copilot
+10. Scenario engine
+
+---
+
+## PHASE 5 — REAL PROVIDER INTEGRATIONS
+
+Start replacing mocks with real regulated/provider infrastructure.
+
+Build provider adapters rather than embedding provider-specific logic throughout the application.
+
+---
+
+## PHASE 6 — CARDS / PAYMENTS
+
+Build real card and payment flows through appropriate infrastructure.
+
+---
+
+## PHASE 7 — INVESTMENTS / GOLD
+
+Add:
+
+* Stocks
+* ETFs
+* Bonds
+* Gold
+* Portfolio tracking
+
+---
+
+## PHASE 8 — BUSINESS FINANCE
+
+Add business accounts and business financial tools.
+
+---
+
+## PHASE 9 — COMPLIANCE / SCALE
+
+Strengthen:
+
+* KYC
+* KYB
+* AML
+* Fraud
+* Risk
+* Audit
+* Reconciliation
+* Provider monitoring
+* Admin
+
+---
+
+# 54. IMMEDIATE NEXT STEP
+
+The immediate priority should be:
+
+# BUILD THE UNIVERSAL FINANCIAL CORE
+
+Before adding more flashy UI, establish the correct data architecture.
+
+The next AI should inspect the current Nuvori codebase and determine:
+
+1. Current folder structure
+2. Existing Supabase schema
+3. Existing authentication
+4. Existing dashboard
+5. Existing wallet implementation
+6. Existing API/server logic
+7. Existing RLS policies
+8. Existing environment variables
+9. Existing components
+10. Existing migrations
+
+Then design the next schema around the Universal Financial Operating System.
+
+Do NOT throw away working authentication/dashboard functionality unnecessarily.
+
+Extend the current system.
+
+---
+
+# 55. CRITICAL INSTRUCTION FOR ANY AI CONTINUING THIS PROJECT
+
+Do not reinterpret Nuvori as:
+
+* A budgeting app
+* A crypto wallet
+* A stock tracker
+* A banking dashboard
+* A chatbot
+* A payment app
+
+Those are components.
+
+The actual product is:
+
+# NUVORI = UNIVERSAL FINANCIAL OPERATING SYSTEM
+
+It combines:
+
+**Money + Assets + Liabilities + Banking + Payments + Investing + Crypto + Gold + Business Finance + Security + AI**
+
+into one system.
+
+---
+
+# 56. CORE PRODUCT LOOP
+
+The complete Nuvori loop should eventually be:
+
+USER FINANCIAL DATA
+
+↓
+
+UNIFIED DATA MODEL
+
+↓
+
+LEDGER + FINANCIAL GRAPH
+
+↓
+
+EVENT STREAM
+
+↓
+
+MONITORING ENGINE
+
+↓
+
+AI FINANCIAL AGENT
+
+↓
+
+INSIGHT / ALERT / RECOMMENDATION
+
+↓
+
+USER DECISION
+
+↓
+
+AUTHORIZED ACTION
+
+↓
+
+PROVIDER
+
+↓
+
+WEBHOOK
+
+↓
+
+LEDGER
+
+↓
+
+RECONCILIATION
+
+↓
+
+UPDATED FINANCIAL STATE
+
+↓
+
+AI MONITORING AGAIN
+
+This creates a continuously operating financial system.
+
+---
+
+# 57. LONG-TERM VISION
+
+Nuvori should eventually answer a simple question:
+
+> "What is happening with my entire financial life right now, what is likely to happen next, and what can I do about it?"
+
+The user should not have to manually calculate everything.
+
+Nuvori should understand the financial picture continuously.
+
+The ultimate experience should feel like having:
+
+* A bank
+* A broker
+* A crypto wallet
+* A payment system
+* A financial dashboard
+* A financial analyst
+* A financial monitoring system
+* A financial assistant
+
+inside one product.
+
+That product is:
+
+# NUVORI FINANCE
+
+## The Universal Financial Operating System
+# NUVORI FINANCE — MASTER PROJECT HANDOFF
+
+## 1. PROJECT IDENTITY
+
+Project name: **Nuvori Finance**
+
+Nuvori is being built as a **Universal Financial Operating System** — a single financial platform where a user can see, hold, move, exchange, spend, invest, monitor and manage essentially their entire financial life from one place.
+
+The goal is NOT to build another simple budgeting app, crypto wallet, neobank dashboard, or stock portfolio tracker.
+
+The long-term goal is for Nuvori to become a **bank-like financial platform / financial operating system** capable of bringing together:
+
+* Fiat money
+* Bank accounts
+* Virtual bank accounts
+* Debit/virtual cards
+* Payments
+* Transfers
+* Cash
+* Stablecoins
+* Crypto
+* Stocks
+* ETFs
+* Bonds
+* Gold
+* Other investments
+* Liabilities
+* Loans/debt
+* Recurring payments
+* Subscriptions
+* Business finances
+* Financial documents
+* Tax organization
+* Savings
+* Financial goals
+* Net worth
+* Portfolio exposure
+* Cash flow
+* International transfers
+* Security monitoring
+* Fraud/anomaly detection
+* AI financial intelligence
+
+The user should feel like:
+
+> "Nuvori is the place where my entire financial life exists."
+
+---
+
+# 2. CORE BUSINESS/PRODUCT VISION
+
+Nuvori should eventually behave like an actual financial institution from the user's perspective.
+
+However, the initial strategy is NOT to spend enormous amounts of money becoming a fully licensed bank from day one.
+
+Instead:
+
+**Nuvori = financial intelligence + unified user experience + unified financial ledger + orchestration layer**
+
+while regulated partners/providers provide the underlying regulated infrastructure where necessary.
+
+Examples of potential infrastructure/provider categories:
+
+* Banking-as-a-Service
+* Payment processors
+* Card issuing
+* Crypto infrastructure
+* Brokerage infrastructure
+* Identity/KYC providers
+* AML providers
+* Fiat on/off ramps
+* International payment providers
+* Custody providers
+* Banking partners
+
+Nuvori should abstract these providers away from the user as much as legally/technically possible.
+
+The user interacts with:
+
+**NUVORI**
+
+not with a confusing collection of providers.
+
+---
+
+# 3. THE BIG DIFFERENTIATOR
+
+The most important feature is:
+
+# ALWAYS-ON AI FINANCIAL MONITORING AGENT
+
+This is NOT supposed to be merely a chatbot.
+
+It is a continuously operating financial intelligence system.
+
+The AI should monitor authorized financial data and relevant system events.
+
+It should understand the user's complete financial situation.
+
+It should continuously analyze:
+
+* Bank accounts
+* Cash
+* Cards
+* Transactions
+* Crypto
+* Stablecoins
+* Stocks
+* ETFs
+* Bonds
+* Gold
+* Other investments
+* Liabilities
+* Loans
+* Recurring payments
+* Subscriptions
+* Bills
+* Income
+* Expenses
+* Transfers
+* Financial goals
+* Portfolio exposure
+* Concentration
+* Market/price data where applicable
+* Security events
+* Failed transactions
+* Large transactions
+* Suspicious activity
+* Account balances
+* Upcoming obligations
+
+The AI should continuously look for important events.
+
+Examples:
+
+### Spending anomaly
+
+"Your restaurant spending is 42% higher than your normal monthly average."
+
+### Subscription detection
+
+"You were charged €29.99 by a service you haven't used recently."
+
+### Upcoming obligation
+
+"Your rent payment is due in 3 days."
+
+### Low balance
+
+"Your EUR account may fall below your normal safety balance after the upcoming payments."
+
+### Large transaction
+
+"A €4,800 transfer was detected, significantly above your normal transfer size."
+
+### Portfolio concentration
+
+"Your portfolio exposure to one asset has increased significantly."
+
+### Failed transaction
+
+"Your card payment failed twice at the same merchant."
+
+### Security event
+
+"An unusual login/device event was detected."
+
+### Cash-flow prediction
+
+"Based on your recurring income and obligations, your projected available cash in 14 days is X."
+
+The system should prioritize events based on importance.
+
+---
+
+# 4. AI FINANCIAL COPILOT
+
+The Monitoring Agent and AI Copilot should work together.
+
+The user can ask:
+
+* "How much money do I actually have?"
+* "What's my net worth?"
+* "Where did my money go this month?"
+* "How much did I spend on food?"
+* "How much do I owe?"
+* "What bills are coming?"
+* "Can I afford this?"
+* "What happens if I spend €2,000?"
+* "What happens if BTC falls 20%?"
+* "How much of my portfolio is exposed to crypto?"
+* "Which subscriptions do I have?"
+* "Find unusual transactions."
+* "Show me everything I own."
+* "Show me everything I owe."
+* "How much cash will I have next month?"
+* "How much can I safely move into savings?"
+* "How much am I paying in fees?"
+* "What changed in my finances this month?"
+
+The AI must answer using actual structured financial data whenever possible.
+
+It must NOT simply hallucinate financial information.
+
+---
+
+# 5. AI ACTION MODEL
+
+The AI can prepare actions.
+
+Examples:
+
+* Prepare a bank transfer
+* Prepare a crypto conversion
+* Prepare a currency conversion
+* Prepare a card payment
+* Prepare a bill payment
+* Prepare a recurring payment
+* Prepare an investment order
+* Prepare a transfer between Nuvori accounts
+* Prepare a withdrawal
+* Prepare a deposit
+* Prepare an automation
+
+But there must be a critical separation:
+
+## AI proposes/prepares
+
+↓
+
+## USER CONFIRMS
+
+↓
+
+## NUVORI EXECUTES THROUGH AUTHORIZED PROVIDER
+
+↓
+
+## PROVIDER RETURNS RESULT
+
+↓
+
+## NUVORI LEDGER RECORDS RESULT
+
+↓
+
+## WEBHOOK/RECONCILIATION CONFIRMS STATE
+
+The AI should not silently move money or execute consequential financial actions without the appropriate authorization/confirmation flow.
+
+---
+
+# 6. FINANCIAL X-RAY
+
+Nuvori should have a major AI-powered feature called something like:
+
+**Financial X-Ray**
+
+It gives the user a complete snapshot of their financial life.
+
+Example:
+
+## FINANCIAL X-RAY
+
+### Net Worth
+
+$84,320
+
+### Cash
+
+$18,450
+
+### Investments
+
+$52,300
+
+### Crypto
+
+$8,200
+
+### Gold
+
+$4,100
+
+### Liabilities
+
+-$12,730
+
+### Monthly Income
+
+$7,400
+
+### Monthly Spending
+
+$4,920
+
+### Upcoming Obligations
+
+$2,150
+
+### Subscriptions
+
+$184/month
+
+### Portfolio Exposure
+
+...
+
+### Largest Financial Risks
+
+...
+
+### Major Changes
+
+...
+
+### AI Observations
+
+...
+
+This should become one of Nuvori's signature features.
+
+---
+
+# 7. UNIVERSAL ASSET MODEL
+
+Do NOT architect Nuvori around only "wallets."
+
+The system needs a generalized financial asset model.
+
+Potential asset categories:
+
+* Fiat
+* Bank balance
+* Cash
+* Crypto
+* Stablecoin
+* Stock
+* ETF
+* Bond
+* Gold
+* Other commodity
+* Property
+* Business ownership
+* Other investment
+* Reward balance
+
+Liability categories:
+
+* Credit card
+* Loan
+* Mortgage
+* Personal debt
+* Business debt
+* BNPL
+* Other liability
+
+The architecture should allow new asset/liability types to be added later without rebuilding the entire system.
+
+---
+
+# 8. UNIFIED NET WORTH
+
+Nuvori should calculate:
+
+**TOTAL ASSETS - TOTAL LIABILITIES = NET WORTH**
+
+But it should also understand the composition.
+
+For example:
+
+Assets:
+
+* $20,000 cash
+* $40,000 stocks
+* $10,000 crypto
+* $5,000 gold
+
+Liabilities:
+
+* $8,000 credit card
+* $12,000 loan
+
+Net worth:
+
+$55,000
+
+The user should be able to drill into every number.
+
+---
+
+# 9. UNIFIED FINANCIAL GRAPH
+
+A major architectural concept is a financial graph.
+
+Nuvori should understand relationships between:
+
+User
+→ accounts
+→ wallets
+→ assets
+→ transactions
+→ merchants
+→ subscriptions
+→ liabilities
+→ investments
+→ goals
+→ income
+→ expenses
+→ providers
+→ cards
+→ transfers
+
+This enables the AI to reason across the entire financial system.
+
+---
+
+# 10. CORE LEDGER
+
+The financial system must eventually use a proper **immutable double-entry ledger**.
+
+Do NOT rely on simple balance updates such as:
+
+balance = balance + amount
+
+without a corresponding accounting record.
+
+The ledger should support:
+
+* Accounts
+* Entries
+* Debits
+* Credits
+* Currency
+* Asset type
+* Transaction ID
+* Provider
+* Fees
+* Status
+* Timestamp
+* Reference
+* Metadata
+* Reconciliation
+* Audit trail
+
+Every financial movement should be traceable.
+
+The ledger becomes the financial source of truth.
+
+---
+
+# 11. TRANSACTION ENGINE
+
+Transactions should support states such as:
+
+* pending
+* processing
+* completed
+* failed
+* cancelled
+* reversed
+* refunded
+* disputed
+
+Transactions should also support:
+
+* Amount
+* Currency
+* Source
+* Destination
+* Fee
+* Exchange rate
+* Provider
+* Provider transaction ID
+* Internal transaction ID
+* Timestamp
+* Metadata
+* Audit history
+
+---
+
+# 12. RECONCILIATION
+
+Provider balances and Nuvori's internal ledger must be reconciled.
+
+Examples:
+
+Bank says:
+
+$4,800
+
+Nuvori ledger says:
+
+$4,800
+
+Good.
+
+If provider says:
+
+$4,750
+
+while Nuvori says:
+
+$4,800
+
+the system must detect and investigate the discrepancy.
+
+This is critical for a real financial platform.
+
+---
+
+# 13. EXISTING APPLICATION FOUNDATION
+
+The project already has a working application foundation.
+
+Current frontend direction:
+
+* Next.js
+* React
+* TypeScript
+* Supabase
+* Server-side authentication/session handling
+
+Existing version recorded:
+
+**Next.js 14.2.35**
+
+Database/auth foundation:
+
+**Supabase Auth + PostgreSQL + SSR**
+
+---
+
+# 14. AUTHENTICATION ALREADY BUILT
+
+The application already has the foundation for:
+
+* Signup
+* Email verification
+* Login
+* Logout
+* Protected dashboard
+* Middleware/protected routes
+* User profiles
+* Real-name greeting
+
+The dashboard can identify the authenticated user.
+
+---
+
+# 15. EXISTING DASHBOARD
+
+Current dashboard surfaces include:
+
+* Send
+* Receive
+* Swap
+* Top Up
+* Cards
+* Accounts
+* Profile
+
+These are only the foundation.
+
+They will eventually become full financial modules.
+
+---
+
+# 16. EXISTING DATABASE FOUNDATION
+
+Existing database concepts include:
+
+### profiles
+
+User profile information.
+
+### wallets
+
+Wallet/account foundation.
+
+### wallet_balances
+
+Balances associated with wallets.
+
+### currencies
+
+Initial supported currencies/assets include:
+
+* USD
+* NGN
+* USDT
+* USDC
+* BTC
+* ETH
+
+Row-Level Security foundation has also been established.
+
+This database must evolve into the broader financial architecture rather than remaining a crypto-wallet-only model.
+
+---
+
+# 17. IMPORTANT ARCHITECTURAL EVOLUTION
+
+The current wallet structure was an initial foundation.
+
+Do NOT allow the project to become permanently architected as:
+
+"crypto wallet + dashboard."
+
+The actual target architecture is:
+
+# UNIVERSAL FINANCIAL ACCOUNTING SYSTEM
+
+The wallet model should eventually coexist with:
+
+* bank accounts
+* fiat accounts
+* investment accounts
+* custody accounts
+* cards
+* liabilities
+* financial assets
+* business accounts
+* external linked accounts
+
+---
+
+# 18. FIAT BANKING
+
+Future Nuvori functionality:
+
+* Personal EUR/USD/NGN/etc. accounts
+* Virtual bank accounts
+* Local account numbers where supported
+* International transfers
+* Deposits
+* Withdrawals
+* Internal transfers
+* Bank-to-bank transfers
+* Payment tracking
+* Transfer status
+* Transfer history
+* Fees
+* Exchange rates
+
+Potential infrastructure providers may include banking/payment partners.
+
+Nuvori should be provider-agnostic.
+
+---
+
+# 19. CRYPTO
+
+Crypto should be treated as one part of Nuvori, not the entire product.
+
+Capabilities should eventually include:
+
+* Crypto balances
+* Wallets
+* Deposits
+* Withdrawals
+* Network selection
+* Address management
+* Stablecoins
+* Crypto swaps
+* Crypto/fiat conversion
+* Transaction tracking
+* Fees
+* Network fees
+* Blockchain confirmations
+* Portfolio valuation
+
+Potential providers/exchanges may be integrated behind a provider abstraction layer.
+
+---
+
+# 20. SWAPS / EXCHANGE
+
+Nuvori should eventually support:
+
+* Fiat → fiat
+* Fiat → crypto
+* Crypto → fiat
+* Crypto → crypto
+* Stablecoin conversions
+* Other supported asset conversions
+
+The user should see:
+
+* Amount
+* Exchange rate
+* Fee
+* Slippage where applicable
+* Provider
+* Total received
+* Confirmation
+
+The underlying provider should be abstracted.
+
+---
+
+# 21. CARDS
+
+Future card infrastructure:
+
+### Virtual cards
+
+### Physical cards
+
+### Card controls
+
+Potential capabilities:
+
+* Freeze/unfreeze
+* Spending limits
+* Merchant controls
+* Online/offline controls where supported
+* Country controls
+* Notifications
+* Transaction history
+* Card replacement
+* Virtual card creation
+
+Potential issuing infrastructure can be integrated rather than building card networks from scratch.
+
+---
+
+# 22. INVESTMENTS
+
+Nuvori should eventually support investments such as:
+
+* Stocks
+* ETFs
+* Bonds
+* Other supported securities
+
+The platform should track:
+
+* Holdings
+* Cost basis
+* Current value
+* P/L
+* Allocation
+* Exposure
+* Transactions
+* Dividends where applicable
+* Portfolio history
+
+The AI can then incorporate investments into the user's overall financial picture.
+
+---
+
+# 23. GOLD
+
+Gold is a first-class asset category.
+
+Nuvori should be able to represent:
+
+* Gold holdings
+* Quantity
+* Current value
+* Purchase price
+* Gain/loss
+* Provider/custodian
+* Transaction history
+
+The architecture should eventually allow other commodities/assets without redesigning the system.
+
+---
+
+# 24. LIABILITIES
+
+Nuvori should not only track what users own.
+
+It should track what users owe.
+
+Examples:
+
+* Credit cards
+* Loans
+* Mortgages
+* BNPL
+* Business debt
+* Other liabilities
+
+Each liability should support:
+
+* Principal
+* Current balance
+* Interest
+* Payment schedule
+* Due date
+* Minimum payment
+* Provider
+* Status
+* History
+
+This feeds directly into:
+
+* Net worth
+* Cash-flow forecasting
+* AI monitoring
+* Financial X-Ray
+
+---
+
+# 25. PAYMENTS
+
+Future payment system:
+
+* Person-to-person
+* Merchant payments
+* Bills
+* Recurring payments
+* International payments
+* Card payments
+* Bank transfers
+
+Potential integrations should sit behind a provider abstraction.
+
+---
+
+# 26. RECURRING PAYMENT / SUBSCRIPTION ENGINE
+
+Nuvori should automatically identify recurring transactions.
+
+It should recognize:
+
+* Netflix-type subscriptions
+* Software
+* Phone bills
+* Insurance
+* Rent
+* Utilities
+* Memberships
+* Loans
+* Other recurring obligations
+
+It should detect:
+
+* Price increases
+* Missed payments
+* Duplicate charges
+* Unexpected renewals
+* New subscriptions
+* Cancelled subscriptions
+
+The AI should notify the user about meaningful changes.
+
+---
+
+# 27. CASH-FLOW ENGINE
+
+Nuvori should calculate:
+
+Historical cash flow:
+
+Income - expenses
+
+but also forecast:
+
+Expected income
++
+Expected transfers
+------------------
+
+## Recurring expenses
+
+## Upcoming bills
+
+## Debt obligations
+
+Other expected events
+
+This creates:
+
+**Projected future cash position**
+
+The user should be able to ask:
+
+"How much money will I have in 30 days?"
+
+---
+
+# 28. GOALS
+
+Users should be able to create goals such as:
+
+* Emergency fund
+* House
+* Car
+* Vacation
+* Investment target
+* Debt payoff
+* Savings target
+* Business target
+
+Each goal should include:
+
+* Target amount
+* Current amount
+* Deadline
+* Progress
+* Required contribution
+* Funding source
+* Forecast
+
+The AI should monitor goal progress.
+
+---
+
+# 29. WHAT-IF SIMULATOR
+
+Nuvori should allow users to ask:
+
+"What happens if I spend $3,000?"
+
+"What happens if my income drops 20%?"
+
+"What happens if BTC drops 30%?"
+
+"What happens if I pay off this debt?"
+
+"What happens if I invest $500 every month?"
+
+"What happens if gold rises 10%?"
+
+"What happens if I cancel these subscriptions?"
+
+The system should calculate scenario outcomes based on the user's actual financial state and clearly identify assumptions.
+
+---
+
+# 30. PORTFOLIO INTELLIGENCE
+
+Nuvori should eventually calculate:
+
+* Asset allocation
+* Geographic exposure
+* Currency exposure
+* Crypto exposure
+* Equity exposure
+* Gold exposure
+* Concentration
+* Liquidity
+* Liabilities
+* Risk-related metrics where appropriate
+
+The AI should explain the data rather than simply showing charts.
+
+---
+
+# 31. SECURITY / FRAUD MONITORING
+
+Nuvori should monitor:
+
+* Unusual transactions
+* Unusual locations/devices
+* Failed login attempts
+* New devices
+* Large transfers
+* Rapid transfers
+* Unusual merchant activity
+* Account changes
+* Withdrawal behavior
+* Suspicious patterns
+
+The system should have:
+
+* Security events
+* Risk signals
+* Alerts
+* Audit logs
+* Session/device management
+
+---
+
+# 32. PROVIDER ABSTRACTION
+
+This is extremely important.
+
+Do NOT hard-code Nuvori around one provider.
+
+Create interfaces such as:
+
+BankProvider
+PaymentProvider
+CardProvider
+CryptoProvider
+BrokerProvider
+GoldProvider
+IdentityProvider
+NotificationProvider
+
+Then providers implement those interfaces.
+
+For example:
+
+CryptoProvider
+
+could eventually have:
+
+* Provider A
+* Provider B
+* Provider C
+
+Nuvori's internal application should not care which provider is underneath.
+
+This protects the architecture from provider lock-in.
+
+---
+
+# 33. INITIAL / POTENTIAL PROVIDER ECOSYSTEM
+
+Earlier architecture discussions identified provider categories/integrations such as:
+
+* Binance
+* Flutterwave
+* Anchor
+* Stripe Issuing
+* Smile Identity
+* OpenAI
+* Resend
+* FCM
+
+These should be treated as potential/provider-ready integrations, not assumptions that every provider must be used permanently.
+
+The architecture should make replacement possible.
+
+---
+
+# 34. KYC / KYB / AML
+
+Because Nuvori is intended to interact with real financial infrastructure, eventual compliance architecture must support:
+
+* KYC
+* KYB
+* Identity verification
+* Sanctions screening
+* AML monitoring
+* Transaction monitoring
+* Risk scoring
+* Account restrictions
+* Compliance reviews
+* Audit records
+* Document management
+
+This should be designed into the system rather than bolted on at the end.
+
+---
+
+# 35. BUSINESS ACCOUNTS
+
+Nuvori should eventually support both:
+
+## Personal
+
+and
+
+## Business
+
+financial environments.
+
+Business capabilities can include:
+
+* Business accounts
+* Business cards
+* Expenses
+* Employee spending
+* Invoices
+* Business transfers
+* Business cash flow
+* Business assets
+* Business liabilities
+* Business reporting
+
+---
+
+# 36. DOCUMENT / TAX ORGANIZATION
+
+Nuvori can eventually become a financial document center.
+
+Examples:
+
+* Bank statements
+* Receipts
+* Invoices
+* Tax documents
+* Investment statements
+* Loan documents
+* Insurance documents
+
+The AI should be able to organize and explain these documents.
+
+---
+
+# 37. TIMELINE / FINANCIAL HISTORY
+
+Nuvori should eventually have a unified financial timeline.
+
+Example:
+
+**January 3**
+Salary received
+
+**January 5**
+Rent paid
+
+**January 7**
+Investment purchased
+
+**January 10**
+Crypto deposit
+
+**January 14**
+Card purchase
+
+**January 20**
+Loan payment
+
+This allows the AI to understand the user's financial history chronologically.
+
+---
+
+# 38. NOTIFICATION ENGINE
+
+Notifications should be event-driven.
+
+Examples:
+
+* Large transaction
+* Low balance
+* Upcoming bill
+* Subscription increase
+* Failed payment
+* Investment movement
+* Security event
+* Goal milestone
+* Unusual spending
+* Cash-flow warning
+* Account issue
+
+Notifications should be intelligently prioritized instead of becoming spam.
+
+---
+
+# 39. ADMIN SYSTEM
+
+Eventually Nuvori needs an internal admin system.
+
+Admin capabilities:
+
+* User management
+* Account management
+* Transaction inspection
+* Provider monitoring
+* Compliance cases
+* KYC/KYB status
+* Risk events
+* Fraud cases
+* Support tools
+* Ledger inspection
+* Reconciliation
+* System health
+* Audit logs
+
+Admin actions must themselves be audited.
+
+---
+
+# 40. REWARDS
+
+Earlier product direction also included:
+
+* Rewards
+* Cashback
+* Loyalty
+* Referral systems
+
+These should eventually integrate into the broader financial ecosystem rather than becoming a disconnected rewards feature.
+
+---
+
+# 41. USER EXPERIENCE PRINCIPLE
+
+The application should feel premium and simple even though the backend is extremely complex.
+
+The user should NOT need to understand:
+
+* Banking APIs
+* Blockchain infrastructure
+* Brokerage infrastructure
+* Payment processors
+* Provider IDs
+* Ledger mechanics
+* Webhooks
+
+Nuvori handles that complexity.
+
+The user sees:
+
+# MONEY
+
+# ASSETS
+
+# LIABILITIES
+
+# ACTIONS
+
+# INSIGHTS
+
+---
+
+# 42. CURRENT TECHNICAL FOUNDATION
+
+Current known foundation:
+
+Frontend:
+
+* Next.js 14.2.35
+* React
+* TypeScript
+
+Backend/data:
+
+* Supabase
+* PostgreSQL
+* Supabase Auth
+* SSR authentication/session handling
+
+Security foundation:
+
+* Protected routes
+* Middleware
+* Row-Level Security
+
+The earlier architecture direction also considered:
+
+* Tailwind
+* API/business-logic layer
+* Server-side RBAC
+* Ledger-based architecture
+
+The exact backend structure can evolve as the system becomes more sophisticated.
+
+---
+
+# 43. DEVELOPMENT PHILOSOPHY
+
+Build the product in layers.
+
+Do NOT attempt to connect every real financial provider immediately.
+
+First build the financial operating system itself.
+
+Use:
+
+## MOCK PROVIDERS
+
+to prove the entire system works.
+
+Then replace mocks with:
+
+## REAL PROVIDERS
+
+one category at a time.
+
+This allows the product to be developed without requiring enormous initial infrastructure spending.
+
+---
+
+# 44. CRITICAL DATA PRINCIPLE
+
+Separate:
+
+### USER-FACING BALANCE
+
+from
+
+### LEDGER BALANCE
+
+from
+
+### PROVIDER BALANCE
+
+from
+
+### MARKET VALUE
+
+from
+
+### AVAILABLE BALANCE
+
+These are not necessarily the same thing.
+
+For example:
+
+Crypto:
+
+* Quantity = 1.2 BTC
+* Market value = $X
+* Available = 1.0 BTC
+* Locked = 0.2 BTC
+* Provider reported = X
+* Internal ledger = X
+
+The architecture must represent these distinctions.
+
+---
+
+# 45. FINANCIAL EVENTS
+
+Nuvori should become event-driven.
+
+Examples:
+
+transaction.created
+transaction.pending
+transaction.completed
+transaction.failed
+transaction.reversed
+
+account.created
+account.updated
+
+card.created
+card.transaction
+
+deposit.created
+withdrawal.created
+
+price.updated
+
+holding.updated
+
+liability.updated
+
+subscription.detected
+
+security.event
+
+goal.updated
+
+provider.webhook
+
+reconciliation.mismatch
+
+These events feed:
+
+* Ledger
+* Notifications
+* AI Monitoring Agent
+* Audit system
+* Analytics
+* Dashboard
+
+---
+
+# 46. AI SHOULD BE EVENT-AWARE
+
+The AI agent should not only wake up when the user opens the chat.
+
+Example:
+
+A transaction arrives.
+
+↓
+
+Event generated.
+
+↓
+
+Monitoring engine evaluates it.
+
+↓
+
+AI/rules determine whether it matters.
+
+↓
+
+If important:
+
+Create alert.
+
+↓
+
+AI explains why it matters.
+
+This is what makes the system "always-on."
+
+---
+
+# 47. RULES + AI
+
+Do not make everything depend on an LLM.
+
+Use deterministic financial rules for things like:
+
+* Balance thresholds
+* Transaction limits
+* Duplicate detection
+* Reconciliation
+* Exact calculations
+* Accounting
+* Payment status
+* Provider state
+* Compliance state
+
+Use AI for:
+
+* Explanation
+* Pattern interpretation
+* Natural language
+* Cross-domain reasoning
+* Scenario explanation
+* Financial summaries
+* User interaction
+* Insight generation
+
+This creates a much more reliable system.
+
+---
+
+# 48. AI SAFETY / EXECUTION MODEL
+
+Financial AI must be grounded.
+
+The AI should have access to structured tools/functions such as:
+
+get_accounts()
+get_balances()
+get_transactions()
+get_holdings()
+get_liabilities()
+get_cashflow()
+get_goals()
+get_subscriptions()
+get_prices()
+get_security_events()
+
+Then actions:
+
+prepare_transfer()
+prepare_swap()
+prepare_payment()
+prepare_trade()
+prepare_withdrawal()
+
+Execution should require the appropriate confirmation/authentication.
+
+---
+
+# 49. NUVORI'S ULTIMATE USER EXPERIENCE
+
+A user opens Nuvori.
+
+Instead of seeing 10 disconnected apps:
+
+Bank app
+Crypto app
+Broker app
+Gold app
+Credit card app
+Budgeting app
+Investment tracker
+Payment app
+Tax app
+Finance chatbot
+
+they see:
+
+# NUVORI
+
+One financial identity.
+
+One financial dashboard.
+
+One financial timeline.
+
+One financial intelligence layer.
+
+One financial operating system.
+
+---
+
+# 50. CURRENT STATE — ALREADY DONE
+
+Known completed foundation:
+
+* Nuvori product concept established
+* Universal Financial Operating System vision established
+* Bank-like platform strategy established
+* Partner/provider infrastructure strategy established
+* Next.js foundation
+* React/TypeScript foundation
+* Supabase integration
+* PostgreSQL foundation
+* Authentication foundation
+* Signup
+* Email verification
+* Login
+* Logout
+* Protected dashboard
+* Middleware/protected routes
+* User profiles
+* Real-name greeting
+* Dashboard foundation
+* Send UI surface
+* Receive UI surface
+* Swap UI surface
+* Top Up UI surface
+* Cards UI surface
+* Accounts UI surface
+* Profile UI surface
+* Wallet foundation
+* Wallet balances
+* Currency foundation
+* USD
+* NGN
+* USDT
+* USDC
+* BTC
+* ETH
+* RLS foundation
+
+---
+
+# 51. IMPORTANT NEW FEATURE — ALWAYS-ON FINANCIAL MONITORING AGENT
+
+This has now been elevated to a **CORE NUVORI PRODUCT CAPABILITY**, not an optional chatbot feature.
+
+It should monitor authorized financial data and system events across:
+
+* Bank accounts
+* Cards
+* Cash
+* Crypto
+* Investments
+* Gold
+* Liabilities
+* Recurring payments
+* Goals
+* Market/price data
+* Security events
+* Other supported financial assets
+
+It continuously detects meaningful events such as:
+
+* Anomalies
+* Unusual spending
+* Subscription changes
+* Low balances
+* Upcoming obligations
+* Portfolio concentration/exposure changes
+* Large transactions
+* Failed transactions
+* Suspicious activity
+* Financial changes
+
+This agent should become one of the primary reasons someone uses Nuvori.
+
+---
+
+# 52. WHAT STILL NEEDS TO BE BUILT
+
+Major remaining areas:
+
+## Financial core
+
+* Universal accounts
+* Generalized assets
+* Generalized liabilities
+* Double-entry ledger
+* Transaction engine
+* Fees
+* Exchange rates
+* Reconciliation
+* Audit system
+
+## Banking
+
+* Fiat accounts
+* Bank connections
+* Deposits
+* Withdrawals
+* Transfers
+* International payments
+
+## Crypto
+
+* Real wallet infrastructure
+* Networks
+* Deposits
+* Withdrawals
+* Swaps
+* Stablecoins
+
+## Cards
+
+* Virtual cards
+* Physical cards
+* Card controls
+* Card transaction processing
+
+## Investments
+
+* Stocks
+* ETFs
+* Bonds
+* Portfolio tracking
+* Brokerage integrations
+
+## Gold
+
+* Gold holdings
+* Pricing
+* Custody/provider integration
+
+## Liabilities
+
+* Credit
+* Loans
+* Debt tracking
+* Repayment schedules
+
+## AI
+
+* Financial Monitoring Agent
+* Financial Copilot
+* Financial X-Ray
+* Cash-flow forecasting
+* What-if simulator
+* Scenario engine
+* Subscription intelligence
+* Spending intelligence
+* Portfolio intelligence
+* Security intelligence
+
+## Compliance
+
+* KYC
+* KYB
+* AML
+* Sanctions
+* Transaction monitoring
+* Compliance cases
+
+## Business
+
+* Business accounts
+* Business cards
+* Expenses
+* Invoices
+* Business analytics
+
+## Documents
+
+* Financial documents
+* Receipts
+* Tax documents
+* Statements
+* AI document understanding
+
+## Infrastructure
+
+* Provider abstraction
+* Webhooks
+* Event bus
+* Background workers
+* Notifications
+* Monitoring
+* Reconciliation
+
+## Admin
+
+* Admin dashboard
+* User management
+* Compliance
+* Transactions
+* Ledger
+* Providers
+* Risk
+* Support
+* Audit logs
+
+---
+
+# 53. RECOMMENDED BUILD ORDER
+
+The next development phase should NOT randomly build features.
+
+Build the foundation in this order:
+
+## PHASE 1 — FINANCIAL CORE
+
+Build:
+
+1. Universal account model
+2. Asset model
+3. Liability model
+4. Double-entry ledger
+5. Transaction model
+6. Transaction statuses
+7. Fees
+8. Internal transfers
+9. Audit events
+10. Reconciliation foundation
+
+This is the foundation everything else depends on.
+
+---
+
+## PHASE 2 — MOCK FINANCIAL INFRASTRUCTURE
+
+Build mock providers for:
+
+* Bank
+* Crypto
+* Card
+* Brokerage
+* Gold
+* Payments
+
+This allows the complete Nuvori experience to be tested before expensive integrations.
+
+---
+
+## PHASE 3 — UNIVERSAL DASHBOARD
+
+Dashboard should show:
+
+### Net Worth
+
+### Total Assets
+
+### Total Liabilities
+
+### Cash
+
+### Investments
+
+### Crypto
+
+### Gold
+
+### Spending
+
+### Income
+
+### Upcoming Obligations
+
+### Goals
+
+### AI Alerts
+
+### Recent Activity
+
+---
+
+## PHASE 4 — ALWAYS-ON AI AGENT
+
+Build:
+
+1. Event ingestion
+2. Financial monitoring rules
+3. Anomaly engine
+4. Subscription detection
+5. Cash-flow engine
+6. Alert prioritization
+7. AI explanation layer
+8. Financial X-Ray
+9. Copilot
+10. Scenario engine
+
+---
+
+## PHASE 5 — REAL PROVIDER INTEGRATIONS
+
+Start replacing mocks with real regulated/provider infrastructure.
+
+Build provider adapters rather than embedding provider-specific logic throughout the application.
+
+---
+
+## PHASE 6 — CARDS / PAYMENTS
+
+Build real card and payment flows through appropriate infrastructure.
+
+---
+
+## PHASE 7 — INVESTMENTS / GOLD
+
+Add:
+
+* Stocks
+* ETFs
+* Bonds
+* Gold
+* Portfolio tracking
+
+---
+
+## PHASE 8 — BUSINESS FINANCE
+
+Add business accounts and business financial tools.
+
+---
+
+## PHASE 9 — COMPLIANCE / SCALE
+
+Strengthen:
+
+* KYC
+* KYB
+* AML
+* Fraud
+* Risk
+* Audit
+* Reconciliation
+* Provider monitoring
+* Admin
+
+---
+
+# 54. IMMEDIATE NEXT STEP
+
+The immediate priority should be:
+
+# BUILD THE UNIVERSAL FINANCIAL CORE
+
+Before adding more flashy UI, establish the correct data architecture.
+
+The next AI should inspect the current Nuvori codebase and determine:
+
+1. Current folder structure
+2. Existing Supabase schema
+3. Existing authentication
+4. Existing dashboard
+5. Existing wallet implementation
+6. Existing API/server logic
+7. Existing RLS policies
+8. Existing environment variables
+9. Existing components
+10. Existing migrations
+
+Then design the next schema around the Universal Financial Operating System.
+
+Do NOT throw away working authentication/dashboard functionality unnecessarily.
+
+Extend the current system.
+
+---
+
+# 55. CRITICAL INSTRUCTION FOR ANY AI CONTINUING THIS PROJECT
+
+Do not reinterpret Nuvori as:
+
+* A budgeting app
+* A crypto wallet
+* A stock tracker
+* A banking dashboard
+* A chatbot
+* A payment app
+
+Those are components.
+
+The actual product is:
+
+# NUVORI = UNIVERSAL FINANCIAL OPERATING SYSTEM
+
+It combines:
+
+**Money + Assets + Liabilities + Banking + Payments + Investing + Crypto + Gold + Business Finance + Security + AI**
+
+into one system.
+
+---
+
+# 56. CORE PRODUCT LOOP
+
+The complete Nuvori loop should eventually be:
+
+USER FINANCIAL DATA
+
+↓
+
+UNIFIED DATA MODEL
+
+↓
+
+LEDGER + FINANCIAL GRAPH
+
+↓
+
+EVENT STREAM
+
+↓
+
+MONITORING ENGINE
+
+↓
+
+AI FINANCIAL AGENT
+
+↓
+
+INSIGHT / ALERT / RECOMMENDATION
+
+↓
+
+USER DECISION
+
+↓
+
+AUTHORIZED ACTION
+
+↓
+
+PROVIDER
+
+↓
+
+WEBHOOK
+
+↓
+
+LEDGER
+
+↓
+
+RECONCILIATION
+
+↓
+
+UPDATED FINANCIAL STATE
+
+↓
+
+AI MONITORING AGAIN
+
+This creates a continuously operating financial system.
+
+---
+
+# 57. LONG-TERM VISION
+
+Nuvori should eventually answer a simple question:
+
+> "What is happening with my entire financial life right now, what is likely to happen next, and what can I do about it?"
+
+The user should not have to manually calculate everything.
+
+Nuvori should understand the financial picture continuously.
+
+The ultimate experience should feel like having:
+
+* A bank
+* A broker
+* A crypto wallet
+* A payment system
+* A financial dashboard
+* A financial analyst
+* A financial monitoring system
+* A financial assistant
+
+inside one product.
+
+That product is:
+
+# NUVORI FINANCE
+
+## The Universal Financial Operating System
+# NUVORI FINANCE — MASTER PROJECT HANDOFF
+
+## 1. PROJECT IDENTITY
+
+Project name: **Nuvori Finance**
+
+Nuvori is being built as a **Universal Financial Operating System** — a single financial platform where a user can see, hold, move, exchange, spend, invest, monitor and manage essentially their entire financial life from one place.
+
+The goal is NOT to build another simple budgeting app, crypto wallet, neobank dashboard, or stock portfolio tracker.
+
+The long-term goal is for Nuvori to become a **bank-like financial platform / financial operating system** capable of bringing together:
+
+* Fiat money
+* Bank accounts
+* Virtual bank accounts
+* Debit/virtual cards
+* Payments
+* Transfers
+* Cash
+* Stablecoins
+* Crypto
+* Stocks
+* ETFs
+* Bonds
+* Gold
+* Other investments
+* Liabilities
+* Loans/debt
+* Recurring payments
+* Subscriptions
+* Business finances
+* Financial documents
+* Tax organization
+* Savings
+* Financial goals
+* Net worth
+* Portfolio exposure
+* Cash flow
+* International transfers
+* Security monitoring
+* Fraud/anomaly detection
+* AI financial intelligence
+
+The user should feel like:
+
+> "Nuvori is the place where my entire financial life exists."
+
+---
+
+# 2. CORE BUSINESS/PRODUCT VISION
+
+Nuvori should eventually behave like an actual financial institution from the user's perspective.
+
+However, the initial strategy is NOT to spend enormous amounts of money becoming a fully licensed bank from day one.
+
+Instead:
+
+**Nuvori = financial intelligence + unified user experience + unified financial ledger + orchestration layer**
+
+while regulated partners/providers provide the underlying regulated infrastructure where necessary.
+
+Examples of potential infrastructure/provider categories:
+
+* Banking-as-a-Service
+* Payment processors
+* Card issuing
+* Crypto infrastructure
+* Brokerage infrastructure
+* Identity/KYC providers
+* AML providers
+* Fiat on/off ramps
+* International payment providers
+* Custody providers
+* Banking partners
+
+Nuvori should abstract these providers away from the user as much as legally/technically possible.
+
+The user interacts with:
+
+**NUVORI**
+
+not with a confusing collection of providers.
+
+---
+
+# 3. THE BIG DIFFERENTIATOR
+
+The most important feature is:
+
+# ALWAYS-ON AI FINANCIAL MONITORING AGENT
+
+This is NOT supposed to be merely a chatbot.
+
+It is a continuously operating financial intelligence system.
+
+The AI should monitor authorized financial data and relevant system events.
+
+It should understand the user's complete financial situation.
+
+It should continuously analyze:
+
+* Bank accounts
+* Cash
+* Cards
+* Transactions
+* Crypto
+* Stablecoins
+* Stocks
+* ETFs
+* Bonds
+* Gold
+* Other investments
+* Liabilities
+* Loans
+* Recurring payments
+* Subscriptions
+* Bills
+* Income
+* Expenses
+* Transfers
+* Financial goals
+* Portfolio exposure
+* Concentration
+* Market/price data where applicable
+* Security events
+* Failed transactions
+* Large transactions
+* Suspicious activity
+* Account balances
+* Upcoming obligations
+
+The AI should continuously look for important events.
+
+Examples:
+
+### Spending anomaly
+
+"Your restaurant spending is 42% higher than your normal monthly average."
+
+### Subscription detection
+
+"You were charged €29.99 by a service you haven't used recently."
+
+### Upcoming obligation
+
+"Your rent payment is due in 3 days."
+
+### Low balance
+
+"Your EUR account may fall below your normal safety balance after the upcoming payments."
+
+### Large transaction
+
+"A €4,800 transfer was detected, significantly above your normal transfer size."
+
+### Portfolio concentration
+
+"Your portfolio exposure to one asset has increased significantly."
+
+### Failed transaction
+
+"Your card payment failed twice at the same merchant."
+
+### Security event
+
+"An unusual login/device event was detected."
+
+### Cash-flow prediction
+
+"Based on your recurring income and obligations, your projected available cash in 14 days is X."
+
+The system should prioritize events based on importance.
+
+---
+
+# 4. AI FINANCIAL COPILOT
+
+The Monitoring Agent and AI Copilot should work together.
+
+The user can ask:
+
+* "How much money do I actually have?"
+* "What's my net worth?"
+* "Where did my money go this month?"
+* "How much did I spend on food?"
+* "How much do I owe?"
+* "What bills are coming?"
+* "Can I afford this?"
+* "What happens if I spend €2,000?"
+* "What happens if BTC falls 20%?"
+* "How much of my portfolio is exposed to crypto?"
+* "Which subscriptions do I have?"
+* "Find unusual transactions."
+* "Show me everything I own."
+* "Show me everything I owe."
+* "How much cash will I have next month?"
+* "How much can I safely move into savings?"
+* "How much am I paying in fees?"
+* "What changed in my finances this month?"
+
+The AI must answer using actual structured financial data whenever possible.
+
+It must NOT simply hallucinate financial information.
+
+---
+
+# 5. AI ACTION MODEL
+
+The AI can prepare actions.
+
+Examples:
+
+* Prepare a bank transfer
+* Prepare a crypto conversion
+* Prepare a currency conversion
+* Prepare a card payment
+* Prepare a bill payment
+* Prepare a recurring payment
+* Prepare an investment order
+* Prepare a transfer between Nuvori accounts
+* Prepare a withdrawal
+* Prepare a deposit
+* Prepare an automation
+
+But there must be a critical separation:
+
+## AI proposes/prepares
+
+↓
+
+## USER CONFIRMS
+
+↓
+
+## NUVORI EXECUTES THROUGH AUTHORIZED PROVIDER
+
+↓
+
+## PROVIDER RETURNS RESULT
+
+↓
+
+## NUVORI LEDGER RECORDS RESULT
+
+↓
+
+## WEBHOOK/RECONCILIATION CONFIRMS STATE
+
+The AI should not silently move money or execute consequential financial actions without the appropriate authorization/confirmation flow.
+
+---
+
+# 6. FINANCIAL X-RAY
+
+Nuvori should have a major AI-powered feature called something like:
+
+**Financial X-Ray**
+
+It gives the user a complete snapshot of their financial life.
+
+Example:
+
+## FINANCIAL X-RAY
+
+### Net Worth
+
+$84,320
+
+### Cash
+
+$18,450
+
+### Investments
+
+$52,300
+
+### Crypto
+
+$8,200
+
+### Gold
+
+$4,100
+
+### Liabilities
+
+-$12,730
+
+### Monthly Income
+
+$7,400
+
+### Monthly Spending
+
+$4,920
+
+### Upcoming Obligations
+
+$2,150
+
+### Subscriptions
+
+$184/month
+
+### Portfolio Exposure
+
+...
+
+### Largest Financial Risks
+
+...
+
+### Major Changes
+
+...
+
+### AI Observations
+
+...
+
+This should become one of Nuvori's signature features.
+
+---
+
+# 7. UNIVERSAL ASSET MODEL
+
+Do NOT architect Nuvori around only "wallets."
+
+The system needs a generalized financial asset model.
+
+Potential asset categories:
+
+* Fiat
+* Bank balance
+* Cash
+* Crypto
+* Stablecoin
+* Stock
+* ETF
+* Bond
+* Gold
+* Other commodity
+* Property
+* Business ownership
+* Other investment
+* Reward balance
+
+Liability categories:
+
+* Credit card
+* Loan
+* Mortgage
+* Personal debt
+* Business debt
+* BNPL
+* Other liability
+
+The architecture should allow new asset/liability types to be added later without rebuilding the entire system.
+
+---
+
+# 8. UNIFIED NET WORTH
+
+Nuvori should calculate:
+
+**TOTAL ASSETS - TOTAL LIABILITIES = NET WORTH**
+
+But it should also understand the composition.
+
+For example:
+
+Assets:
+
+* $20,000 cash
+* $40,000 stocks
+* $10,000 crypto
+* $5,000 gold
+
+Liabilities:
+
+* $8,000 credit card
+* $12,000 loan
+
+Net worth:
+
+$55,000
+
+The user should be able to drill into every number.
+
+---
+
+# 9. UNIFIED FINANCIAL GRAPH
+
+A major architectural concept is a financial graph.
+
+Nuvori should understand relationships between:
+
+User
+→ accounts
+→ wallets
+→ assets
+→ transactions
+→ merchants
+→ subscriptions
+→ liabilities
+→ investments
+→ goals
+→ income
+→ expenses
+→ providers
+→ cards
+→ transfers
+
+This enables the AI to reason across the entire financial system.
+
+---
+
+# 10. CORE LEDGER
+
+The financial system must eventually use a proper **immutable double-entry ledger**.
+
+Do NOT rely on simple balance updates such as:
+
+balance = balance + amount
+
+without a corresponding accounting record.
+
+The ledger should support:
+
+* Accounts
+* Entries
+* Debits
+* Credits
+* Currency
+* Asset type
+* Transaction ID
+* Provider
+* Fees
+* Status
+* Timestamp
+* Reference
+* Metadata
+* Reconciliation
+* Audit trail
+
+Every financial movement should be traceable.
+
+The ledger becomes the financial source of truth.
+
+---
+
+# 11. TRANSACTION ENGINE
+
+Transactions should support states such as:
+
+* pending
+* processing
+* completed
+* failed
+* cancelled
+* reversed
+* refunded
+* disputed
+
+Transactions should also support:
+
+* Amount
+* Currency
+* Source
+* Destination
+* Fee
+* Exchange rate
+* Provider
+* Provider transaction ID
+* Internal transaction ID
+* Timestamp
+* Metadata
+* Audit history
+
+---
+
+# 12. RECONCILIATION
+
+Provider balances and Nuvori's internal ledger must be reconciled.
+
+Examples:
+
+Bank says:
+
+$4,800
+
+Nuvori ledger says:
+
+$4,800
+
+Good.
+
+If provider says:
+
+$4,750
+
+while Nuvori says:
+
+$4,800
+
+the system must detect and investigate the discrepancy.
+
+This is critical for a real financial platform.
+
+---
+
+# 13. EXISTING APPLICATION FOUNDATION
+
+The project already has a working application foundation.
+
+Current frontend direction:
+
+* Next.js
+* React
+* TypeScript
+* Supabase
+* Server-side authentication/session handling
+
+Existing version recorded:
+
+**Next.js 14.2.35**
+
+Database/auth foundation:
+
+**Supabase Auth + PostgreSQL + SSR**
+
+---
+
+# 14. AUTHENTICATION ALREADY BUILT
+
+The application already has the foundation for:
+
+* Signup
+* Email verification
+* Login
+* Logout
+* Protected dashboard
+* Middleware/protected routes
+* User profiles
+* Real-name greeting
+
+The dashboard can identify the authenticated user.
+
+---
+
+# 15. EXISTING DASHBOARD
+
+Current dashboard surfaces include:
+
+* Send
+* Receive
+* Swap
+* Top Up
+* Cards
+* Accounts
+* Profile
+
+These are only the foundation.
+
+They will eventually become full financial modules.
+
+---
+
+# 16. EXISTING DATABASE FOUNDATION
+
+Existing database concepts include:
+
+### profiles
+
+User profile information.
+
+### wallets
+
+Wallet/account foundation.
+
+### wallet_balances
+
+Balances associated with wallets.
+
+### currencies
+
+Initial supported currencies/assets include:
+
+* USD
+* NGN
+* USDT
+* USDC
+* BTC
+* ETH
+
+Row-Level Security foundation has also been established.
+
+This database must evolve into the broader financial architecture rather than remaining a crypto-wallet-only model.
+
+---
+
+# 17. IMPORTANT ARCHITECTURAL EVOLUTION
+
+The current wallet structure was an initial foundation.
+
+Do NOT allow the project to become permanently architected as:
+
+"crypto wallet + dashboard."
+
+The actual target architecture is:
+
+# UNIVERSAL FINANCIAL ACCOUNTING SYSTEM
+
+The wallet model should eventually coexist with:
+
+* bank accounts
+* fiat accounts
+* investment accounts
+* custody accounts
+* cards
+* liabilities
+* financial assets
+* business accounts
+* external linked accounts
+
+---
+
+# 18. FIAT BANKING
+
+Future Nuvori functionality:
+
+* Personal EUR/USD/NGN/etc. accounts
+* Virtual bank accounts
+* Local account numbers where supported
+* International transfers
+* Deposits
+* Withdrawals
+* Internal transfers
+* Bank-to-bank transfers
+* Payment tracking
+* Transfer status
+* Transfer history
+* Fees
+* Exchange rates
+
+Potential infrastructure providers may include banking/payment partners.
+
+Nuvori should be provider-agnostic.
+
+---
+
+# 19. CRYPTO
+
+Crypto should be treated as one part of Nuvori, not the entire product.
+
+Capabilities should eventually include:
+
+* Crypto balances
+* Wallets
+* Deposits
+* Withdrawals
+* Network selection
+* Address management
+* Stablecoins
+* Crypto swaps
+* Crypto/fiat conversion
+* Transaction tracking
+* Fees
+* Network fees
+* Blockchain confirmations
+* Portfolio valuation
+
+Potential providers/exchanges may be integrated behind a provider abstraction layer.
+
+---
+
+# 20. SWAPS / EXCHANGE
+
+Nuvori should eventually support:
+
+* Fiat → fiat
+* Fiat → crypto
+* Crypto → fiat
+* Crypto → crypto
+* Stablecoin conversions
+* Other supported asset conversions
+
+The user should see:
+
+* Amount
+* Exchange rate
+* Fee
+* Slippage where applicable
+* Provider
+* Total received
+* Confirmation
+
+The underlying provider should be abstracted.
+
+---
+
+# 21. CARDS
+
+Future card infrastructure:
+
+### Virtual cards
+
+### Physical cards
+
+### Card controls
+
+Potential capabilities:
+
+* Freeze/unfreeze
+* Spending limits
+* Merchant controls
+* Online/offline controls where supported
+* Country controls
+* Notifications
+* Transaction history
+* Card replacement
+* Virtual card creation
+
+Potential issuing infrastructure can be integrated rather than building card networks from scratch.
+
+---
+
+# 22. INVESTMENTS
+
+Nuvori should eventually support investments such as:
+
+* Stocks
+* ETFs
+* Bonds
+* Other supported securities
+
+The platform should track:
+
+* Holdings
+* Cost basis
+* Current value
+* P/L
+* Allocation
+* Exposure
+* Transactions
+* Dividends where applicable
+* Portfolio history
+
+The AI can then incorporate investments into the user's overall financial picture.
+
+---
+
+# 23. GOLD
+
+Gold is a first-class asset category.
+
+Nuvori should be able to represent:
+
+* Gold holdings
+* Quantity
+* Current value
+* Purchase price
+* Gain/loss
+* Provider/custodian
+* Transaction history
+
+The architecture should eventually allow other commodities/assets without redesigning the system.
+
+---
+
+# 24. LIABILITIES
+
+Nuvori should not only track what users own.
+
+It should track what users owe.
+
+Examples:
+
+* Credit cards
+* Loans
+* Mortgages
+* BNPL
+* Business debt
+* Other liabilities
+
+Each liability should support:
+
+* Principal
+* Current balance
+* Interest
+* Payment schedule
+* Due date
+* Minimum payment
+* Provider
+* Status
+* History
+
+This feeds directly into:
+
+* Net worth
+* Cash-flow forecasting
+* AI monitoring
+* Financial X-Ray
+
+---
+
+# 25. PAYMENTS
+
+Future payment system:
+
+* Person-to-person
+* Merchant payments
+* Bills
+* Recurring payments
+* International payments
+* Card payments
+* Bank transfers
+
+Potential integrations should sit behind a provider abstraction.
+
+---
+
+# 26. RECURRING PAYMENT / SUBSCRIPTION ENGINE
+
+Nuvori should automatically identify recurring transactions.
+
+It should recognize:
+
+* Netflix-type subscriptions
+* Software
+* Phone bills
+* Insurance
+* Rent
+* Utilities
+* Memberships
+* Loans
+* Other recurring obligations
+
+It should detect:
+
+* Price increases
+* Missed payments
+* Duplicate charges
+* Unexpected renewals
+* New subscriptions
+* Cancelled subscriptions
+
+The AI should notify the user about meaningful changes.
+
+---
+
+# 27. CASH-FLOW ENGINE
+
+Nuvori should calculate:
+
+Historical cash flow:
+
+Income - expenses
+
+but also forecast:
+
+Expected income
++
+Expected transfers
+------------------
+
+## Recurring expenses
+
+## Upcoming bills
+
+## Debt obligations
+
+Other expected events
+
+This creates:
+
+**Projected future cash position**
+
+The user should be able to ask:
+
+"How much money will I have in 30 days?"
+
+---
+
+# 28. GOALS
+
+Users should be able to create goals such as:
+
+* Emergency fund
+* House
+* Car
+* Vacation
+* Investment target
+* Debt payoff
+* Savings target
+* Business target
+
+Each goal should include:
+
+* Target amount
+* Current amount
+* Deadline
+* Progress
+* Required contribution
+* Funding source
+* Forecast
+
+The AI should monitor goal progress.
+
+---
+
+# 29. WHAT-IF SIMULATOR
+
+Nuvori should allow users to ask:
+
+"What happens if I spend $3,000?"
+
+"What happens if my income drops 20%?"
+
+"What happens if BTC drops 30%?"
+
+"What happens if I pay off this debt?"
+
+"What happens if I invest $500 every month?"
+
+"What happens if gold rises 10%?"
+
+"What happens if I cancel these subscriptions?"
+
+The system should calculate scenario outcomes based on the user's actual financial state and clearly identify assumptions.
+
+---
+
+# 30. PORTFOLIO INTELLIGENCE
+
+Nuvori should eventually calculate:
+
+* Asset allocation
+* Geographic exposure
+* Currency exposure
+* Crypto exposure
+* Equity exposure
+* Gold exposure
+* Concentration
+* Liquidity
+* Liabilities
+* Risk-related metrics where appropriate
+
+The AI should explain the data rather than simply showing charts.
+
+---
+
+# 31. SECURITY / FRAUD MONITORING
+
+Nuvori should monitor:
+
+* Unusual transactions
+* Unusual locations/devices
+* Failed login attempts
+* New devices
+* Large transfers
+* Rapid transfers
+* Unusual merchant activity
+* Account changes
+* Withdrawal behavior
+* Suspicious patterns
+
+The system should have:
+
+* Security events
+* Risk signals
+* Alerts
+* Audit logs
+* Session/device management
+
+---
+
+# 32. PROVIDER ABSTRACTION
+
+This is extremely important.
+
+Do NOT hard-code Nuvori around one provider.
+
+Create interfaces such as:
+
+BankProvider
+PaymentProvider
+CardProvider
+CryptoProvider
+BrokerProvider
+GoldProvider
+IdentityProvider
+NotificationProvider
+
+Then providers implement those interfaces.
+
+For example:
+
+CryptoProvider
+
+could eventually have:
+
+* Provider A
+* Provider B
+* Provider C
+
+Nuvori's internal application should not care which provider is underneath.
+
+This protects the architecture from provider lock-in.
+
+---
+
+# 33. INITIAL / POTENTIAL PROVIDER ECOSYSTEM
+
+Earlier architecture discussions identified provider categories/integrations such as:
+
+* Binance
+* Flutterwave
+* Anchor
+* Stripe Issuing
+* Smile Identity
+* OpenAI
+* Resend
+* FCM
+
+These should be treated as potential/provider-ready integrations, not assumptions that every provider must be used permanently.
+
+The architecture should make replacement possible.
+
+---
+
+# 34. KYC / KYB / AML
+
+Because Nuvori is intended to interact with real financial infrastructure, eventual compliance architecture must support:
+
+* KYC
+* KYB
+* Identity verification
+* Sanctions screening
+* AML monitoring
+* Transaction monitoring
+* Risk scoring
+* Account restrictions
+* Compliance reviews
+* Audit records
+* Document management
+
+This should be designed into the system rather than bolted on at the end.
+
+---
+
+# 35. BUSINESS ACCOUNTS
+
+Nuvori should eventually support both:
+
+## Personal
+
+and
+
+## Business
+
+financial environments.
+
+Business capabilities can include:
+
+* Business accounts
+* Business cards
+* Expenses
+* Employee spending
+* Invoices
+* Business transfers
+* Business cash flow
+* Business assets
+* Business liabilities
+* Business reporting
+
+---
+
+# 36. DOCUMENT / TAX ORGANIZATION
+
+Nuvori can eventually become a financial document center.
+
+Examples:
+
+* Bank statements
+* Receipts
+* Invoices
+* Tax documents
+* Investment statements
+* Loan documents
+* Insurance documents
+
+The AI should be able to organize and explain these documents.
+
+---
+
+# 37. TIMELINE / FINANCIAL HISTORY
+
+Nuvori should eventually have a unified financial timeline.
+
+Example:
+
+**January 3**
+Salary received
+
+**January 5**
+Rent paid
+
+**January 7**
+Investment purchased
+
+**January 10**
+Crypto deposit
+
+**January 14**
+Card purchase
+
+**January 20**
+Loan payment
+
+This allows the AI to understand the user's financial history chronologically.
+
+---
+
+# 38. NOTIFICATION ENGINE
+
+Notifications should be event-driven.
+
+Examples:
+
+* Large transaction
+* Low balance
+* Upcoming bill
+* Subscription increase
+* Failed payment
+* Investment movement
+* Security event
+* Goal milestone
+* Unusual spending
+* Cash-flow warning
+* Account issue
+
+Notifications should be intelligently prioritized instead of becoming spam.
+
+---
+
+# 39. ADMIN SYSTEM
+
+Eventually Nuvori needs an internal admin system.
+
+Admin capabilities:
+
+* User management
+* Account management
+* Transaction inspection
+* Provider monitoring
+* Compliance cases
+* KYC/KYB status
+* Risk events
+* Fraud cases
+* Support tools
+* Ledger inspection
+* Reconciliation
+* System health
+* Audit logs
+
+Admin actions must themselves be audited.
+
+---
+
+# 40. REWARDS
+
+Earlier product direction also included:
+
+* Rewards
+* Cashback
+* Loyalty
+* Referral systems
+
+These should eventually integrate into the broader financial ecosystem rather than becoming a disconnected rewards feature.
+
+---
+
+# 41. USER EXPERIENCE PRINCIPLE
+
+The application should feel premium and simple even though the backend is extremely complex.
+
+The user should NOT need to understand:
+
+* Banking APIs
+* Blockchain infrastructure
+* Brokerage infrastructure
+* Payment processors
+* Provider IDs
+* Ledger mechanics
+* Webhooks
+
+Nuvori handles that complexity.
+
+The user sees:
+
+# MONEY
+
+# ASSETS
+
+# LIABILITIES
+
+# ACTIONS
+
+# INSIGHTS
+
+---
+
+# 42. CURRENT TECHNICAL FOUNDATION
+
+Current known foundation:
+
+Frontend:
+
+* Next.js 14.2.35
+* React
+* TypeScript
+
+Backend/data:
+
+* Supabase
+* PostgreSQL
+* Supabase Auth
+* SSR authentication/session handling
+
+Security foundation:
+
+* Protected routes
+* Middleware
+* Row-Level Security
+
+The earlier architecture direction also considered:
+
+* Tailwind
+* API/business-logic layer
+* Server-side RBAC
+* Ledger-based architecture
+
+The exact backend structure can evolve as the system becomes more sophisticated.
+
+---
+
+# 43. DEVELOPMENT PHILOSOPHY
+
+Build the product in layers.
+
+Do NOT attempt to connect every real financial provider immediately.
+
+First build the financial operating system itself.
+
+Use:
+
+## MOCK PROVIDERS
+
+to prove the entire system works.
+
+Then replace mocks with:
+
+## REAL PROVIDERS
+
+one category at a time.
+
+This allows the product to be developed without requiring enormous initial infrastructure spending.
+
+---
+
+# 44. CRITICAL DATA PRINCIPLE
+
+Separate:
+
+### USER-FACING BALANCE
+
+from
+
+### LEDGER BALANCE
+
+from
+
+### PROVIDER BALANCE
+
+from
+
+### MARKET VALUE
+
+from
+
+### AVAILABLE BALANCE
+
+These are not necessarily the same thing.
+
+For example:
+
+Crypto:
+
+* Quantity = 1.2 BTC
+* Market value = $X
+* Available = 1.0 BTC
+* Locked = 0.2 BTC
+* Provider reported = X
+* Internal ledger = X
+
+The architecture must represent these distinctions.
+
+---
+
+# 45. FINANCIAL EVENTS
+
+Nuvori should become event-driven.
+
+Examples:
+
+transaction.created
+transaction.pending
+transaction.completed
+transaction.failed
+transaction.reversed
+
+account.created
+account.updated
+
+card.created
+card.transaction
+
+deposit.created
+withdrawal.created
+
+price.updated
+
+holding.updated
+
+liability.updated
+
+subscription.detected
+
+security.event
+
+goal.updated
+
+provider.webhook
+
+reconciliation.mismatch
+
+These events feed:
+
+* Ledger
+* Notifications
+* AI Monitoring Agent
+* Audit system
+* Analytics
+* Dashboard
+
+---
+
+# 46. AI SHOULD BE EVENT-AWARE
+
+The AI agent should not only wake up when the user opens the chat.
+
+Example:
+
+A transaction arrives.
+
+↓
+
+Event generated.
+
+↓
+
+Monitoring engine evaluates it.
+
+↓
+
+AI/rules determine whether it matters.
+
+↓
+
+If important:
+
+Create alert.
+
+↓
+
+AI explains why it matters.
+
+This is what makes the system "always-on."
+
+---
+
+# 47. RULES + AI
+
+Do not make everything depend on an LLM.
+
+Use deterministic financial rules for things like:
+
+* Balance thresholds
+* Transaction limits
+* Duplicate detection
+* Reconciliation
+* Exact calculations
+* Accounting
+* Payment status
+* Provider state
+* Compliance state
+
+Use AI for:
+
+* Explanation
+* Pattern interpretation
+* Natural language
+* Cross-domain reasoning
+* Scenario explanation
+* Financial summaries
+* User interaction
+* Insight generation
+
+This creates a much more reliable system.
+
+---
+
+# 48. AI SAFETY / EXECUTION MODEL
+
+Financial AI must be grounded.
+
+The AI should have access to structured tools/functions such as:
+
+get_accounts()
+get_balances()
+get_transactions()
+get_holdings()
+get_liabilities()
+get_cashflow()
+get_goals()
+get_subscriptions()
+get_prices()
+get_security_events()
+
+Then actions:
+
+prepare_transfer()
+prepare_swap()
+prepare_payment()
+prepare_trade()
+prepare_withdrawal()
+
+Execution should require the appropriate confirmation/authentication.
+
+---
+
+# 49. NUVORI'S ULTIMATE USER EXPERIENCE
+
+A user opens Nuvori.
+
+Instead of seeing 10 disconnected apps:
+
+Bank app
+Crypto app
+Broker app
+Gold app
+Credit card app
+Budgeting app
+Investment tracker
+Payment app
+Tax app
+Finance chatbot
+
+they see:
+
+# NUVORI
+
+One financial identity.
+
+One financial dashboard.
+
+One financial timeline.
+
+One financial intelligence layer.
+
+One financial operating system.
+
+---
+
+# 50. CURRENT STATE — ALREADY DONE
+
+Known completed foundation:
+
+* Nuvori product concept established
+* Universal Financial Operating System vision established
+* Bank-like platform strategy established
+* Partner/provider infrastructure strategy established
+* Next.js foundation
+* React/TypeScript foundation
+* Supabase integration
+* PostgreSQL foundation
+* Authentication foundation
+* Signup
+* Email verification
+* Login
+* Logout
+* Protected dashboard
+* Middleware/protected routes
+* User profiles
+* Real-name greeting
+* Dashboard foundation
+* Send UI surface
+* Receive UI surface
+* Swap UI surface
+* Top Up UI surface
+* Cards UI surface
+* Accounts UI surface
+* Profile UI surface
+* Wallet foundation
+* Wallet balances
+* Currency foundation
+* USD
+* NGN
+* USDT
+* USDC
+* BTC
+* ETH
+* RLS foundation
+
+---
+
+# 51. IMPORTANT NEW FEATURE — ALWAYS-ON FINANCIAL MONITORING AGENT
+
+This has now been elevated to a **CORE NUVORI PRODUCT CAPABILITY**, not an optional chatbot feature.
+
+It should monitor authorized financial data and system events across:
+
+* Bank accounts
+* Cards
+* Cash
+* Crypto
+* Investments
+* Gold
+* Liabilities
+* Recurring payments
+* Goals
+* Market/price data
+* Security events
+* Other supported financial assets
+
+It continuously detects meaningful events such as:
+
+* Anomalies
+* Unusual spending
+* Subscription changes
+* Low balances
+* Upcoming obligations
+* Portfolio concentration/exposure changes
+* Large transactions
+* Failed transactions
+* Suspicious activity
+* Financial changes
+
+This agent should become one of the primary reasons someone uses Nuvori.
+
+---
+
+# 52. WHAT STILL NEEDS TO BE BUILT
+
+Major remaining areas:
+
+## Financial core
+
+* Universal accounts
+* Generalized assets
+* Generalized liabilities
+* Double-entry ledger
+* Transaction engine
+* Fees
+* Exchange rates
+* Reconciliation
+* Audit system
+
+## Banking
+
+* Fiat accounts
+* Bank connections
+* Deposits
+* Withdrawals
+* Transfers
+* International payments
+
+## Crypto
+
+* Real wallet infrastructure
+* Networks
+* Deposits
+* Withdrawals
+* Swaps
+* Stablecoins
+
+## Cards
+
+* Virtual cards
+* Physical cards
+* Card controls
+* Card transaction processing
+
+## Investments
+
+* Stocks
+* ETFs
+* Bonds
+* Portfolio tracking
+* Brokerage integrations
+
+## Gold
+
+* Gold holdings
+* Pricing
+* Custody/provider integration
+
+## Liabilities
+
+* Credit
+* Loans
+* Debt tracking
+* Repayment schedules
+
+## AI
+
+* Financial Monitoring Agent
+* Financial Copilot
+* Financial X-Ray
+* Cash-flow forecasting
+* What-if simulator
+* Scenario engine
+* Subscription intelligence
+* Spending intelligence
+* Portfolio intelligence
+* Security intelligence
+
+## Compliance
+
+* KYC
+* KYB
+* AML
+* Sanctions
+* Transaction monitoring
+* Compliance cases
+
+## Business
+
+* Business accounts
+* Business cards
+* Expenses
+* Invoices
+* Business analytics
+
+## Documents
+
+* Financial documents
+* Receipts
+* Tax documents
+* Statements
+* AI document understanding
+
+## Infrastructure
+
+* Provider abstraction
+* Webhooks
+* Event bus
+* Background workers
+* Notifications
+* Monitoring
+* Reconciliation
+
+## Admin
+
+* Admin dashboard
+* User management
+* Compliance
+* Transactions
+* Ledger
+* Providers
+* Risk
+* Support
+* Audit logs
+
+---
+
+# 53. RECOMMENDED BUILD ORDER
+
+The next development phase should NOT randomly build features.
+
+Build the foundation in this order:
+
+## PHASE 1 — FINANCIAL CORE
+
+Build:
+
+1. Universal account model
+2. Asset model
+3. Liability model
+4. Double-entry ledger
+5. Transaction model
+6. Transaction statuses
+7. Fees
+8. Internal transfers
+9. Audit events
+10. Reconciliation foundation
+
+This is the foundation everything else depends on.
+
+---
+
+## PHASE 2 — MOCK FINANCIAL INFRASTRUCTURE
+
+Build mock providers for:
+
+* Bank
+* Crypto
+* Card
+* Brokerage
+* Gold
+* Payments
+
+This allows the complete Nuvori experience to be tested before expensive integrations.
+
+---
+
+## PHASE 3 — UNIVERSAL DASHBOARD
+
+Dashboard should show:
+
+### Net Worth
+
+### Total Assets
+
+### Total Liabilities
+
+### Cash
+
+### Investments
+
+### Crypto
+
+### Gold
+
+### Spending
+
+### Income
+
+### Upcoming Obligations
+
+### Goals
+
+### AI Alerts
+
+### Recent Activity
+
+---
+
+## PHASE 4 — ALWAYS-ON AI AGENT
+
+Build:
+
+1. Event ingestion
+2. Financial monitoring rules
+3. Anomaly engine
+4. Subscription detection
+5. Cash-flow engine
+6. Alert prioritization
+7. AI explanation layer
+8. Financial X-Ray
+9. Copilot
+10. Scenario engine
+
+---
+
+## PHASE 5 — REAL PROVIDER INTEGRATIONS
+
+Start replacing mocks with real regulated/provider infrastructure.
+
+Build provider adapters rather than embedding provider-specific logic throughout the application.
+
+---
+
+## PHASE 6 — CARDS / PAYMENTS
+
+Build real card and payment flows through appropriate infrastructure.
+
+---
+
+## PHASE 7 — INVESTMENTS / GOLD
+
+Add:
+
+* Stocks
+* ETFs
+* Bonds
+* Gold
+* Portfolio tracking
+
+---
+
+## PHASE 8 — BUSINESS FINANCE
+
+Add business accounts and business financial tools.
+
+---
+
+## PHASE 9 — COMPLIANCE / SCALE
+
+Strengthen:
+
+* KYC
+* KYB
+* AML
+* Fraud
+* Risk
+* Audit
+* Reconciliation
+* Provider monitoring
+* Admin
+
+---
+
+# 54. IMMEDIATE NEXT STEP
+
+The immediate priority should be:
+
+# BUILD THE UNIVERSAL FINANCIAL CORE
+
+Before adding more flashy UI, establish the correct data architecture.
+
+The next AI should inspect the current Nuvori codebase and determine:
+
+1. Current folder structure
+2. Existing Supabase schema
+3. Existing authentication
+4. Existing dashboard
+5. Existing wallet implementation
+6. Existing API/server logic
+7. Existing RLS policies
+8. Existing environment variables
+9. Existing components
+10. Existing migrations
+
+Then design the next schema around the Universal Financial Operating System.
+
+Do NOT throw away working authentication/dashboard functionality unnecessarily.
+
+Extend the current system.
+
+---
+
+# 55. CRITICAL INSTRUCTION FOR ANY AI CONTINUING THIS PROJECT
+
+Do not reinterpret Nuvori as:
+
+* A budgeting app
+* A crypto wallet
+* A stock tracker
+* A banking dashboard
+* A chatbot
+* A payment app
+
+Those are components.
+
+The actual product is:
+
+# NUVORI = UNIVERSAL FINANCIAL OPERATING SYSTEM
+
+It combines:
+
+**Money + Assets + Liabilities + Banking + Payments + Investing + Crypto + Gold + Business Finance + Security + AI**
+
+into one system.
+
+---
+
+# 56. CORE PRODUCT LOOP
+
+The complete Nuvori loop should eventually be:
+
+USER FINANCIAL DATA
+
+↓
+
+UNIFIED DATA MODEL
+
+↓
+
+LEDGER + FINANCIAL GRAPH
+
+↓
+
+EVENT STREAM
+
+↓
+
+MONITORING ENGINE
+
+↓
+
+AI FINANCIAL AGENT
+
+↓
+
+INSIGHT / ALERT / RECOMMENDATION
+
+↓
+
+USER DECISION
+
+↓
+
+AUTHORIZED ACTION
+
+↓
+
+PROVIDER
+
+↓
+
+WEBHOOK
+
+↓
+
+LEDGER
+
+↓
+
+RECONCILIATION
+
+↓
+
+UPDATED FINANCIAL STATE
+
+↓
+
+AI MONITORING AGAIN
+
+This creates a continuously operating financial system.
+
+---
+
+# 57. LONG-TERM VISION
+
+Nuvori should eventually answer a simple question:
+
+> "What is happening with my entire financial life right now, what is likely to happen next, and what can I do about it?"
+
+The user should not have to manually calculate everything.
+
+Nuvori should understand the financial picture continuously.
+
+The ultimate experience should feel like having:
+
+* A bank
+* A broker
+* A crypto wallet
+* A payment system
+* A financial dashboard
+* A financial analyst
+* A financial monitoring system
+* A financial assistant
+
+inside one product.
+
+That product is:
+
+# NUVORI FINANCE
+
+## The Universal Financial Operating System
