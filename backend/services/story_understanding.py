@@ -1,4 +1,4 @@
-﻿"""
+"""
 Universal story-understanding layer for the documentary pipeline.
 
 SCRIPT -> CASE BIBLE -> SENTENCE MEANING/ROLE -> VISUAL SCENARIOS
@@ -82,7 +82,7 @@ def _content_tokens(text, min_len=4):
     return {_stem(t) for t in _norm(text).split() if len(t) >= min_len}
 
 
-def _call_llm_json(llm, system, user, retries=1):
+def _call_llm_json(llm, system, user, retries=0):
     if llm is None:
         return None
     for _ in range(retries + 1):

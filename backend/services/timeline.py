@@ -1,4 +1,4 @@
-﻿import json
+import json
 import re
 from pathlib import Path
 
@@ -8,7 +8,7 @@ from pathlib import Path
 # ============================================================
 
 DEFAULT_DURATION = 10.0
-MIN_SENTENCE_DURATION = 0.25
+MIN_SENTENCE_DURATION = 2.0
 
 
 # ============================================================
@@ -993,15 +993,38 @@ def build_scene_timeline(
                     duration,
                 )
 
+            # Keep visual assets sequential; narration timing remains untouched.
+            visual_start = start
+            if items:
+                visual_start = max(
+                    visual_start,
+                    float(items[-1]["end"]),
+                )
+
             sentence_duration = max(
-                visual_end - start,
+                visual_end - visual_start,
                 MIN_SENTENCE_DURATION,
             )
 
-            visual = visuals[
-                sentence_index
-                % len(visuals)
+            # Visuals must never flash for a fraction of a second.
+            # Keep narration timing untouched; extend only the visual window.
+            visual_end = min(
+                duration,
+                visual_start + sentence_duration,
+            )
+            # Prefer a motion graphic explicitly assigned to this sentence.
+            assigned_graphics = [
+                v for v in visuals
+                if v.get("motion_graphic")
+                and v.get("sentence_index") == sentence_index
             ]
+            if assigned_graphics:
+                visual = assigned_graphics[0]
+            else:
+                visual = visuals[
+                    sentence_index
+                    % len(visuals)
+                ]
 
             visual_type = get_visual_type(
                 visual
@@ -1033,13 +1056,13 @@ def build_scene_timeline(
 
                 "start":
                     round(
-                        start,
+                        visual_start,
                         3,
                     ),
 
                 "end":
                     round(
-                        end,
+                        visual_end,
                         3,
                     ),
 
@@ -1866,3 +1889,5 @@ def build_project_timeline(
         "status":
             "timeline_created",
     }
+
+

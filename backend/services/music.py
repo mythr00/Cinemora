@@ -288,6 +288,150 @@ def add_background_music(
     }
 
 
+
+# ==================================================
+# PREPARE STANDALONE SOUNDTRACK
+# ==================================================
+
+def prepare_soundtrack(
+    narration_file,
+    output_file,
+    music_file=None,
+    music_volume=MUSIC_VOLUME,
+):
+    """
+    Build the documentary soundtrack independently of video.
+
+    This is the Sound Designer stage.
+
+    Output:
+        narration + optional background music
+        as a standalone WAV soundtrack.
+
+    The Video Editor later muxes this soundtrack into
+    the rendered visual timeline.
+    """
+
+    narration_file = Path(narration_file)
+    output_file = Path(output_file)
+
+    if not narration_file.exists():
+        raise FileNotFoundError(
+            f"Narration not found: {narration_file}"
+        )
+
+    if music_file:
+        music_file = Path(music_file)
+        if not music_file.exists():
+            print(
+                f"WARNING: music file not found: {music_file}. "
+                "Continuing with narration only."
+            )
+            music_file = None
+
+    output_file.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    print("\n========================================")
+    print("SOUND DESIGNER")
+    print("========================================")
+    print(f"Narration: {narration_file}")
+    print(f"Music: {music_file or 'none'}")
+    print(f"Output: {output_file}")
+
+    if music_file:
+        filter_complex = (
+            f"[0:a]"
+            "aresample=48000,"
+            "asetpts=N/SR/TB"
+            "[voice];"
+
+            f"[1:a]"
+            f"volume={music_volume},"
+            "aresample=48000,"
+            "asetpts=N/SR/TB"
+            "[music];"
+
+            "[music][voice]"
+            "sidechaincompress="
+            "threshold=0.03:"
+            f"ratio={DUCK_RATIO}:"
+            f"attack={DUCK_ATTACK}:"
+            f"release={DUCK_RELEASE}:"
+            "makeup=1"
+            "[ducked_music];"
+
+            "[voice][ducked_music]"
+            "amix="
+            "inputs=2:"
+            "duration=first:"
+            "dropout_transition=2:"
+            "normalize=0"
+            "[aout]"
+        )
+
+        command = [
+            "ffmpeg",
+            "-y",
+
+            "-i",
+            str(narration_file),
+
+            "-stream_loop",
+            "-1",
+
+            "-i",
+            str(music_file),
+
+            "-filter_complex",
+            filter_complex,
+
+            "-map",
+            "[aout]",
+
+            "-c:a",
+            "pcm_s16le",
+
+            str(output_file),
+        ]
+
+    else:
+        command = [
+            "ffmpeg",
+            "-y",
+
+            "-i",
+            str(narration_file),
+
+            "-map",
+            "0:a:0",
+
+            "-c:a",
+            "pcm_s16le",
+
+            str(output_file),
+        ]
+
+    run_ffmpeg(command)
+
+    if not output_file.exists():
+        raise RuntimeError(
+            f"Soundtrack was not created: {output_file}"
+        )
+
+    print("\n========================================")
+    print("SOUNDTRACK COMPLETE")
+    print("========================================")
+    print(f"Output: {output_file}")
+
+    return {
+        "status": "soundtrack_created",
+        "output_file": str(output_file),
+    }
+
+
 # ==================================================
 # COMMAND LINE
 # ==================================================

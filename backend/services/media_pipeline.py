@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 import re
 import subprocess
@@ -1632,11 +1632,141 @@ def _uve_safe_filename(value, max_length=70):
 
 _yt_segment_uses = {}
 
+_youtube_metadata_cache = {}
+_youtube_transcript_cache = {}
 
-_yt_segment_uses = {}
+# =====================================================================
+# YouTube source intelligence: ONE yt-dlp call per URL, persistent cache.
+# (added by patch_youtube_info.py)
+# =====================================================================
+import threading as _threading
+import time as _time
+from urllib.error import HTTPError as _HTTPError
+
+try:
+    from services import source_cache
+except ImportError:  # flat-layout fallback
+    import source_cache
+
+YT_INFO_TIMEOUT = 40
+_yt_info_failed = set()
+_yt_transcript_failed = set()
+_yt_info_locks = {}
+_yt_info_guard = _threading.Lock()
 
 
-_yt_segment_uses = {}
+def _youtube_info(key):
+    """
+    Full yt-dlp info for a URL. One subprocess per URL per process, and
+    the useful parts (duration, title, description, chapters) are written
+    to the persistent source profile so later runs need no yt-dlp call.
+    """
+    info = _youtube_metadata_cache.get(key)
+    if isinstance(info, dict) and info.get("_full"):
+        return info
+
+    if key in _yt_info_failed:
+        return None
+
+    with _yt_info_guard:
+        lock = _yt_info_locks.setdefault(key, _threading.Lock())
+
+    with lock:
+        info = _youtube_metadata_cache.get(key)
+        if isinstance(info, dict) and info.get("_full"):
+            return info
+
+        if source_cache.yt_breaker_open():
+            print(
+                f"YOUTUBE INFO SKIPPED (429 cooldown "
+                f"{source_cache.yt_breaker_remaining():.0f}s): {key}"
+            )
+            return None
+
+        source_cache.bump("ytdlp_calls")
+        started = _time.time()
+
+        try:
+            code, stdout, stderr = run_command_safe(
+                [
+                    sys.executable,
+                    "-m",
+                    "yt_dlp",
+                    "--no-warnings",
+                    "--dump-single-json",
+                    "--skip-download",
+                    key,
+                ],
+                YT_INFO_TIMEOUT,
+                "yt-dlp info",
+            )
+        except Exception as exc:
+            print(f"YOUTUBE INFO FAILED: {key}: {exc}")
+            _yt_info_failed.add(key)
+            return None
+
+        elapsed = _time.time() - started
+
+        if code != 0 or not stdout:
+            if "429" in str(stderr or ""):
+                source_cache.yt_breaker_trip(90)
+                print(f"YOUTUBE INFO 429: {key} ({elapsed:.1f}s) - pausing YouTube calls")
+            else:
+                _yt_info_failed.add(key)
+                print(f"YOUTUBE INFO FAILED: {key} ({elapsed:.1f}s)")
+            return None
+
+        try:
+            info = json.loads(stdout)
+        except Exception as exc:
+            print(f"YOUTUBE INFO PARSE FAILED: {key}: {exc}")
+            _yt_info_failed.add(key)
+            return None
+
+        info["_full"] = True
+        _youtube_metadata_cache[key] = info
+
+        source_cache.profile_upsert(
+            key,
+            status="ok",
+            duration=info.get("duration"),
+            title=str(info.get("title") or ""),
+            channel=str(info.get("channel") or info.get("uploader") or ""),
+            description=str(info.get("description") or "")[:4000],
+            chapters=info.get("chapters") or [],
+        )
+
+        print(f"YOUTUBE INFO: {key} ({elapsed:.1f}s)")
+        return info
+
+
+def _youtube_slim(key):
+    """duration / chapters / title / description without a yt-dlp call
+    when the URL was analysed before (this run or an earlier one)."""
+    info = _youtube_metadata_cache.get(key)
+
+    if not (isinstance(info, dict) and info.get("_full")):
+        persisted = source_cache.profile_get(key)
+
+        if persisted and persisted.get("duration"):
+            return {
+                "duration": persisted["duration"],
+                "chapters": persisted.get("chapters") or [],
+                "title": persisted.get("title") or "",
+                "description": persisted.get("description") or "",
+            }
+
+        info = _youtube_info(key)
+
+    if not info:
+        return None
+
+    return {
+        "duration": info.get("duration"),
+        "chapters": info.get("chapters") or [],
+        "title": info.get("title") or "",
+        "description": info.get("description") or "",
+    }
 
 
 def _youtube_transcript_segment(
@@ -1695,98 +1825,133 @@ def _youtube_transcript_segment(
     if not terms:
         return None
 
-    try:
-        code, stdout, _ = run_command_safe(
-            [
-                sys.executable,
-                "-m",
-                "yt_dlp",
-                "--no-warnings",
-                "--dump-single-json",
-                "--skip-download",
-                key,
-            ],
-            40,
-            "yt-dlp transcript metadata",
-        )
+    # ---------------------------------------------------------
+    # Transcript: memory cache -> persistent cache -> one download.
+    # Failures (no captions, HTTP 429) are cached, never retried
+    # per shot.
+    # ---------------------------------------------------------
 
-        if code != 0 or not stdout:
+    transcript = _youtube_transcript_cache.get(key)
+
+    if transcript is None:
+        if key in _yt_transcript_failed:
             return None
 
-        info = json.loads(stdout)
+        persisted = source_cache.profile_get(key)
 
-    except Exception as exc:
-        print(
-            f"YOUTUBE TRANSCRIPT METADATA FAILED: {exc}"
-        )
-        return None
-
-    captions = (
-        info.get("automatic_captions")
-        or {}
-    )
-
-    tracks = (
-        captions.get("en")
-        or captions.get("en-orig")
-        or []
-    )
-
-    if not tracks:
-        print(
-            f"YOUTUBE TRANSCRIPT UNAVAILABLE: {key}"
-        )
-        return None
-
-    json_track = next(
-        (
-            track
-            for track in tracks
-            if str(track.get("ext") or "").lower()
-            == "json3"
-        ),
-        None,
-    )
-
-    if not json_track:
-        return None
-
-    caption_url = str(
-        json_track.get("url") or ""
-    ).strip()
-
-    if not caption_url:
-        return None
-
-    try:
-        from urllib.request import Request, urlopen
-
-        request = Request(
-            caption_url,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-            },
-        )
-
-        with urlopen(
-            request,
-            timeout=30,
-        ) as response:
-            raw = response.read()
-
-        transcript = json.loads(
-            raw.decode(
-                "utf-8",
-                errors="replace",
+        if persisted and persisted.get("transcript"):
+            transcript = persisted["transcript"]
+            _youtube_transcript_cache[key] = transcript
+        elif persisted and persisted.get("transcript_status") in (
+            "unavailable",
+            "rate_limited",
+        ):
+            print(
+                f"YOUTUBE TRANSCRIPT SKIPPED "
+                f"(cached {persisted['transcript_status']}): {key}"
             )
+            return None
+
+    if transcript is None:
+        info = _youtube_info(key)
+
+        if not info:
+            return None
+
+        manual = info.get("subtitles") or {}
+        auto = info.get("automatic_captions") or {}
+
+        tracks = (
+            manual.get("en")
+            or auto.get("en")
+            or auto.get("en-orig")
+            or []
         )
 
-    except Exception as exc:
-        print(
-            f"YOUTUBE TRANSCRIPT DOWNLOAD FAILED: "
-            f"{exc}"
+        json_track = next(
+            (
+                track
+                for track in tracks
+                if str(track.get("ext") or "").lower() == "json3"
+            ),
+            None,
         )
-        return None
+
+        caption_url = str(
+            (json_track or {}).get("url") or ""
+        ).strip()
+
+        if not caption_url:
+            print(
+                f"YOUTUBE TRANSCRIPT UNAVAILABLE: {key}"
+            )
+            _yt_transcript_failed.add(key)
+            source_cache.profile_upsert(
+                key,
+                transcript_status="unavailable",
+                fail_reason="no english json3 caption track",
+            )
+            return None
+
+        try:
+            from urllib.request import Request, urlopen
+
+            request = Request(
+                caption_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                },
+            )
+
+            source_cache.bump("transcript_downloads")
+
+            with urlopen(
+                request,
+                timeout=30,
+            ) as response:
+                raw = response.read()
+
+            transcript = json.loads(
+                raw.decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            )
+
+            _youtube_transcript_cache[key] = transcript
+
+            source_cache.profile_upsert(
+                key,
+                transcript_status="ok",
+                transcript=transcript,
+            )
+
+        except _HTTPError as exc:
+            if exc.code == 429:
+                source_cache.yt_breaker_trip(90)
+                source_cache.profile_upsert(
+                    key,
+                    transcript_status="rate_limited",
+                    fail_reason="HTTP 429",
+                    retry_after=_time.time() + 600,
+                )
+
+            print(
+                f"YOUTUBE TRANSCRIPT DOWNLOAD FAILED: "
+                f"{exc}"
+            )
+            _yt_transcript_failed.add(key)
+            return None
+
+        except Exception as exc:
+            print(
+                f"YOUTUBE TRANSCRIPT DOWNLOAD FAILED: "
+                f"{exc}"
+            )
+            _yt_transcript_failed.add(key)
+            return None
+
+    info = _youtube_metadata_cache.get(key) or {}
 
     events = transcript.get("events") or []
 
@@ -2202,6 +2367,86 @@ def _youtube_transcript_segment(
     return None
 
 
+# =====================================================================
+# Evidence-based timestamp fallback helpers.
+# (added by patch_youtube_fallback.py)
+# =====================================================================
+# Set False to reject sources instead of ever using a low-confidence window.
+YT_LOW_CONFIDENCE_FALLBACK = True
+# Fractions of the video (0..1) tried, in order, for low-confidence windows.
+# The intro (first 20%) and outro (last 20%) are skipped on purpose.
+YT_LOW_CONFIDENCE_WINDOWS = (0.2, 0.4, 0.6, 0.8)
+
+_YT_TS_LINE = re.compile(
+    r"^\s*[-*\u2022]?\s*\(?((?:\d{1,2}:)?\d{1,2}:\d{2})\)?\s*[-:.)\u2013\u2014]*\s*(.+?)\s*$"
+)
+
+
+def _yt_norm_text(value):
+    return " ".join(str(value or "").split()).strip().lower()
+
+
+def _yt_term_score(text, terms):
+    """Same scoring idea as the chapter scorer: exact term +10,
+    individual words +2 each."""
+    text = _yt_norm_text(text)
+    score = 0
+    matched = []
+
+    for term in terms:
+        if not term:
+            continue
+
+        if term in text:
+            score += 10
+            matched.append(term)
+            continue
+
+        words = [w for w in term.split() if len(w) >= 3]
+        hits = sum(1 for w in words if w in text)
+
+        if words and hits:
+            score += hits * 2
+            matched.append(term)
+
+    return score, matched
+
+
+def _yt_phrase_present(text, phrase):
+    text = _yt_norm_text(text)
+    phrase = _yt_norm_text(phrase)
+
+    if not phrase:
+        return False
+
+    if phrase in text:
+        return True
+
+    words = [w for w in phrase.split() if len(w) >= 3]
+
+    return bool(words) and all(w in text for w in words)
+
+
+def _youtube_description_moments(description):
+    """Parse '12:34 Something happens' lines -> [(seconds, text), ...]."""
+    moments = []
+
+    for line in str(description or "").splitlines():
+        match = _YT_TS_LINE.match(line)
+
+        if not match:
+            continue
+
+        seconds = 0
+
+        for part in match.group(1).split(":"):
+            seconds = seconds * 60 + int(part)
+
+        moments.append((seconds, match.group(2)))
+
+    return moments
+
+
 def _youtube_start(
     url,
     subject="",
@@ -2273,34 +2518,18 @@ def _youtube_start(
     # Get the real YouTube duration.
     # ---------------------------------------------------------
 
+    slim = _youtube_slim(key)
+
     video_duration = None
 
-    try:
-        code, stdout, _ = run_command_safe(
-            [
-                sys.executable,
-                "-m",
-                "yt_dlp",
-                "--no-warnings",
-                "--dump-single-json",
-                "--skip-download",
-                key,
-            ],
-            40,
-            "yt-dlp duration",
-        )
+    if slim and slim.get("duration"):
+        try:
+            video_duration = int(float(slim["duration"]))
+        except (TypeError, ValueError):
+            video_duration = None
 
-        if code == 0 and stdout:
-            info = json.loads(stdout)
-            raw_duration = info.get("duration")
-
-            if raw_duration is not None:
-                video_duration = int(float(raw_duration))
-
-    except Exception as exc:
-        print(
-            f"YOUTUBE DURATION LOOKUP FAILED: {exc}"
-        )
+    # Chapters come from the same single lookup as duration.
+    chapters = list((slim or {}).get("chapters") or [])
 
     if not video_duration or video_duration <= 0:
         print(
@@ -2365,94 +2594,76 @@ def _youtube_start(
     # Read YouTube chapters.
     # ---------------------------------------------------------
 
-    chapters = []
+    # Chapters were loaded above together with the duration
+    # (one yt-dlp call per URL, persisted).
 
-    try:
-        code, stdout, _ = run_command_safe(
-            [
-                sys.executable,
-                "-m",
-                "yt_dlp",
-                "--no-warnings",
-                "--dump-json",
-                "--skip-download",
-                key,
-            ],
-            40,
-            "yt-dlp chapters",
-        )
+    scored_chapters = []
 
-        if code == 0 and stdout:
-            info = json.loads(stdout)
+    for chapter in chapters:
+        title = str(
+            chapter.get("title") or ""
+        ).strip()
 
-            for chapter in info.get("chapters") or []:
-                title = str(
-                    chapter.get("title") or ""
-                ).strip()
+        if not title:
+            continue
 
-                if not title:
-                    continue
+        try:
+            start_time = int(
+                float(
+                    chapter.get("start_time") or 0
+                )
+            )
+        except (TypeError, ValueError):
+            continue
 
-                try:
-                    start_time = int(
-                        float(
-                            chapter.get("start_time") or 0
-                        )
-                    )
-                except (TypeError, ValueError):
-                    continue
+        if not valid_start(start_time):
+            continue
 
-                if not valid_start(start_time):
-                    continue
+        title_normalized = normalize(title)
 
-                title_normalized = normalize(title)
+        # -------------------------------------------------
+        # Generic contract scoring.
+        #
+        # Exact multi-word terms are strongest.
+        # Individual words provide secondary matching.
+        # -------------------------------------------------
 
-                # -------------------------------------------------
-                # Generic contract scoring.
-                #
-                # Exact multi-word terms are strongest.
-                # Individual words provide secondary matching.
-                # -------------------------------------------------
+        score = 0
+        matched_terms = []
 
-                score = 0
-                matched_terms = []
+        for term in contract_terms:
+            if not term:
+                continue
 
-                for term in contract_terms:
-                    if not term:
-                        continue
+            if term in title_normalized:
+                score += 10
+                matched_terms.append(term)
+                continue
 
-                    if term in title_normalized:
-                        score += 10
-                        matched_terms.append(term)
-                        continue
+            words = [
+                word
+                for word in term.split()
+                if len(word) >= 3
+            ]
 
-                    words = [
-                        word
-                        for word in term.split()
-                        if len(word) >= 3
-                    ]
+            word_matches = sum(
+                1
+                for word in words
+                if word in title_normalized
+            )
 
-                    word_matches = sum(
-                        1
-                        for word in words
-                        if word in title_normalized
-                    )
+            if words and word_matches:
+                score += word_matches * 2
+                matched_terms.append(term)
 
-                    if words and word_matches:
-                        score += word_matches * 2
-                        matched_terms.append(term)
+        scored_chapters.append({
+            "score": score,
+            "start": start_time,
+            "title": title,
+            "matched_terms": matched_terms,
+        })
 
-                chapters.append({
-                    "score": score,
-                    "start": start_time,
-                    "title": title,
-                    "matched_terms": matched_terms,
-                })
-
-    except Exception as exc:
-        print(
-            f"YOUTUBE CHAPTER LOOKUP FAILED: {exc}"
-        )
+    chapters = scored_chapters
 
     chapters.sort(
         key=lambda item: (
@@ -2542,57 +2753,103 @@ def _youtube_start(
     # ---------------------------------------------------------
 
     if strict_contract:
-        for chapter in chapters:
-            start_time = chapter["start"]
+        # -----------------------------------------------------
+        # Evidence-based fallback.
+        #
+        # Replaces "any unused chapter, then the first free slot
+        # from 0". A segment is only chosen when there is a reason:
+        #
+        #   1. a timestamp listed in the video description matches
+        #      the contract
+        #   2. low-confidence spaced window, only when the source
+        #      itself is about the most specific contract term
+        #
+        # Otherwise the source is rejected for this shot and the
+        # caller can try a better source.
+        # -----------------------------------------------------
 
-            if not valid_start(start_time):
+        source_title = str((slim or {}).get("title") or "")
+        source_description = str((slim or {}).get("description") or "")
+
+        description_hits = []
+
+        for moment_start, moment_text in _youtube_description_moments(
+            source_description
+        ):
+            moment_score, moment_matched = _yt_term_score(
+                moment_text,
+                contract_terms,
+            )
+
+            if moment_score > 0:
+                description_hits.append(
+                    (moment_score, moment_start, moment_text, moment_matched)
+                )
+
+        description_hits.sort(
+            key=lambda item: (-item[0], item[1])
+        )
+
+        for moment_score, moment_start, moment_text, moment_matched in description_hits:
+            if not valid_start(moment_start):
                 continue
 
-            register(start_time)
+            register(moment_start)
 
             print(
                 f"YOUTUBE SEGMENT: {key} "
-                f"start={start_time}s "
-                f"end={start_time + duration}s "
-                f"chapter='{chapter['title']}' "
-                f"fallback=True "
-                f"score={chapter['score']}"
+                f"start={moment_start}s "
+                f"end={moment_start + duration}s "
+                f"source=description "
+                f"line='{moment_text[:80]}' "
+                f"score={moment_score} "
+                f"matched={moment_matched}"
             )
 
-            return start_time
+            return moment_start
 
-        # -----------------------------------------------------
-        # No unused chapter remains.
-        #
-        # The source itself was already verified upstream, so
-        # use the next unused position in the long video rather
-        # than throwing the entire source away.
-        # -----------------------------------------------------
+        most_specific = event or place or subject
 
-        candidate = 0
+        source_has_evidence = _yt_phrase_present(
+            f"{source_title} {source_description[:1500]}",
+            most_specific,
+        )
 
-        while candidate <= max_start:
-            if valid_start(candidate):
+        if YT_LOW_CONFIDENCE_FALLBACK and source_has_evidence:
+            minimum_gap = max(duration * 3, 24)
+
+            for fraction in YT_LOW_CONFIDENCE_WINDOWS:
+                candidate = int(max_start * fraction)
+
+                if not valid_start(candidate):
+                    continue
+
+                if any(
+                    abs(candidate - used_start) < minimum_gap
+                    for used_start, _used_end in used
+                ):
+                    continue
+
                 register(candidate)
 
                 print(
                     f"YOUTUBE SEGMENT: {key} "
                     f"start={candidate}s "
                     f"end={candidate + duration}s "
-                    f"fallback=representative "
+                    f"fallback=low_confidence "
+                    f"window={fraction} "
+                    f"evidence='{most_specific}' "
                     f"subject='{subject}' "
                     f"place='{place}' "
-                    f"event='{event}' "
-                    f"era='{era}'"
+                    f"event='{event}'"
                 )
 
                 return candidate
 
-            candidate += duration
-
         print(
-            f"YOUTUBE SOURCE EXHAUSTED: {key} "
-            f"duration={video_duration}s "
+            f"YOUTUBE SEGMENT REJECTED: no timestamp evidence: {key} "
+            f"subject='{subject}' place='{place}' event='{event}' "
+            f"source_evidence={source_has_evidence} "
             f"used_segments={len(used)}"
         )
 
@@ -2908,7 +3165,63 @@ def _uve_scenario_search(
     seen_video_urls = set()
     seen_web_urls = set()
 
-    for query in queries[:6]:
+    # Remove duplicate / near-duplicate search queries before
+    # spending Serper calls. Keep the first useful wording.
+    unique_queries = []
+    query_signatures = []
+
+    for raw_query in queries:
+        query = " ".join(
+            str(raw_query or "").split()
+        ).strip()
+
+        if not query:
+            continue
+
+        words = sorted(
+            {
+                word.lower()
+                for word in query.split()
+                if len(word) >= 3
+            }
+        )
+
+        signature = " ".join(words)
+
+        if not signature:
+            continue
+
+        duplicate = False
+
+        for existing in query_signatures:
+            existing_words = set(existing.split())
+            current_words = set(signature.split())
+
+            if not existing_words or not current_words:
+                continue
+
+            overlap = (
+                len(existing_words & current_words)
+                / max(
+                    len(existing_words | current_words),
+                    1,
+                )
+            )
+
+            if overlap >= 0.75:
+                duplicate = True
+                break
+
+        if duplicate:
+            continue
+
+        query_signatures.append(signature)
+        unique_queries.append(query)
+
+        if len(unique_queries) >= 4:
+            break
+
+    for query in unique_queries:
         query = " ".join(
             str(query or "").split()
         ).strip()
@@ -2938,7 +3251,7 @@ def _uve_scenario_search(
         try:
             found_videos = search_youtube_videos(
                 query,
-                limit=8,
+                limit=5,
             )
         except Exception as error:
             print(
@@ -2950,7 +3263,7 @@ def _uve_scenario_search(
         try:
             found_web = search_web_sources(
                 query,
-                limit=8,
+                limit=5,
             )
         except Exception as error:
             print(
@@ -2999,20 +3312,59 @@ def _uve_scenario_search(
 
     return videos, web_sources
 
-def _uve_verify_all(candidates, scenario, bible):
+def _uve_verify_all(candidates, scenario, bible, shot_need=None):
     scored, seen = [], set()
+
     for candidate in candidates:
         key = _uve_candidate_key(candidate)
+
         if not key or key in seen:
             continue
+
         seen.add(key)
-        verdict = story.verify_candidate(candidate, scenario, bible)
+
+        # Cheap metadata gate BEFORE expensive LLM verification.
+        ok, reason = gate_shot_need(
+            candidate,
+            shot_need,
+        )
+
+        if not ok:
+            item = dict(candidate)
+            source_cache.bump("gate_rejects")
+            item["reject_reason"] = reason
+            item["verification"] = {
+                "accepted": False,
+                "score": 0,
+            }
+            item["universal_score"] = 0
+            item["relevance_score"] = 0
+            scored.append(item)
+
+            print(
+                f"      REJECT {reason}: "
+                f"{result_title(candidate)[:80]}"
+            )
+            continue
+
+        source_cache.bump("llm_verify_calls")
+        verdict = story.verify_candidate(
+            candidate,
+            scenario,
+            bible,
+        )
+
         item = dict(candidate)
         item["verification"] = verdict
         item["universal_score"] = verdict["score"]
         item["relevance_score"] = verdict["score"]
         scored.append(item)
-    scored.sort(key=lambda c: c["universal_score"], reverse=True)
+
+    scored.sort(
+        key=lambda c: c["universal_score"],
+        reverse=True,
+    )
+
     return scored
 
 
@@ -3262,8 +3614,34 @@ def _uve_pick(
                 pool.append(candidate)
 
     picked = []
+    youtube_source_counts = {}
+
 
     for candidate in pool:
+        # Enforce a maximum of 3 clips from the same YouTube source.
+        candidate_url = str(
+            candidate.get("url")
+            or candidate.get("video_url")
+            or candidate.get("link")
+            or ""
+        ).strip().split("&", 1)[0]
+
+        is_youtube_candidate = (
+            "youtube.com" in candidate_url.lower()
+            or "youtu.be" in candidate_url.lower()
+        )
+
+        if is_youtube_candidate:
+            batch_uses = youtube_source_counts.get(candidate_url.lower(), 0)
+            try:
+                existing_uses = registry.source_usage_count(candidate_url)
+            except Exception:
+                existing_uses = 0
+
+            if existing_uses + batch_uses >= registry.max_source_uses:
+                candidate["reject_reason"] = "source_usage_limit"
+                continue
+
         key = _uve_candidate_key(candidate)
 
         if not key:
@@ -3307,6 +3685,10 @@ def _uve_pick(
         )
 
         picked.append(item)
+
+        if is_youtube_candidate:
+            source_key = candidate_url.lower()
+            youtube_source_counts[source_key] = youtube_source_counts.get(source_key, 0) + 1
 
         if len(picked) >= limit:
             break
@@ -3503,8 +3885,18 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     scenario["queries"] = shot_need["queries"]
                 print("      routed=youtube,web")
                 raw_videos, raw_web_sources = _uve_scenario_search(scenario, search_cache, project_id, shot_need)
-                scored_videos = _uve_verify_all(raw_videos, scenario, bible)
-                scored_web_sources = _uve_verify_all(raw_web_sources, scenario, bible)
+                scored_videos = _uve_verify_all(
+                    raw_videos,
+                    scenario,
+                    bible,
+                    shot_need=shot_need,
+                )
+                scored_web_sources = _uve_verify_all(
+                    raw_web_sources,
+                    scenario,
+                    bible,
+                    shot_need=shot_need,
+                )
                 print(f"      candidates: videos={len(scored_videos)} web={len(scored_web_sources)}")
 
                 if videos_left > 0:
@@ -3674,6 +4066,8 @@ def apply_review_decisions(result, project_dir):
     return result
 def process_scene_media(scene, project_dir, image_count=3, video_count=3):
     return _uve_process_scene_media(scene, project_dir, image_count=image_count, video_count=video_count)
+
+
 
 
 

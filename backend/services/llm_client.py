@@ -16,7 +16,7 @@ BREWKEG_BASE_URL = os.getenv(
 
 BREWKEG_MODEL = os.getenv(
     "BREWKEG_MODEL",
-    "claude-opus-5",
+    "gpt-5-mini",
 )
 
 
@@ -30,28 +30,56 @@ def _request(
     *,
     model=None,
     temperature=0.1,
-    max_tokens=1200,
+    max_tokens=16000,
 ):
     payload = {
         "model": model or BREWKEG_MODEL,
-        "instructions": str(system_prompt),
-        "input": str(user_prompt),
-        "max_output_tokens": max_tokens,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "system": str(system_prompt),
+        "messages": [
+            {
+                "role": "user",
+                "content": str(user_prompt),
+            }
+        ],
     }
 
-    response = requests.post(
-        f"{BREWKEG_BASE_URL}/responses",
-        headers={
-            "Authorization": f"Bearer {BREWKEG_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=120,
-    )
+    import time
+
+    last_response = None
+
+    for attempt in range(4):
+        response = requests.post(
+            f"{BREWKEG_BASE_URL}/messages",
+            headers={
+                "Authorization": f"Bearer {BREWKEG_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=None,
+        )
+
+        last_response = response
+
+        if response.ok:
+            break
+
+        if response.status_code not in {429, 500, 502, 503, 504}:
+            raise RuntimeError(
+                f"BrewKeg request failed "
+                f"(HTTP {response.status_code}): "
+                f"{response.text[:3000]}"
+            )
+
+        if attempt < 3:
+            time.sleep(3 * (attempt + 1))
+
+    response = last_response
 
     if not response.ok:
         raise RuntimeError(
-            f"BrewKeg request failed "
+            f"BrewKeg request failed after 4 attempts "
             f"(HTTP {response.status_code}): "
             f"{response.text[:3000]}"
         )
@@ -150,7 +178,7 @@ def llm_text(
     *,
     model=None,
     temperature=0.1,
-    max_tokens=1200,
+    max_tokens=16000,
 ):
     data = _request(
         system_prompt,
@@ -258,8 +286,10 @@ def get_llm():
             user_prompt,
             model=BREWKEG_MODEL,
             temperature=0.0,
-            max_tokens=4000,
+            max_tokens=16000,
         )
 
     return _llm
+
+
 

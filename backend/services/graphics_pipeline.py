@@ -629,3 +629,630 @@ if __name__ == "__main__":
         timeline_file=project_dir / "timeline.json",
         output_file=project_dir / "motion_designed.mp4",
     )
+# =========================================================
+# STANDALONE MOTION GRAPHIC ASSETS
+# =========================================================
+
+def _graphic_slug(value):
+    value = clean_text(value).lower()
+    value = re.sub(r"[^a-z0-9]+", "_", value).strip("_")
+    return value[:60] or "graphic"
+
+
+def _graphic_duration(start, end, minimum=2.5, maximum=8.0):
+    try:
+        value = float(end) - float(start)
+    except (TypeError, ValueError):
+        value = minimum
+    return max(minimum, min(maximum, value))
+
+
+def _ffmpeg_text_filter(
+    text,
+    x,
+    y,
+    fontsize=58,
+    fontcolor="white",
+    alpha=1.0,
+):
+    text = escape_drawtext(shorten(text, 64))
+    return (
+        f"drawtext=text='{text}':"
+        f"x={x}:y={y}:"
+        f"fontsize={fontsize}:"
+        f"fontcolor={fontcolor}@{alpha}:"
+        "borderw=2:"
+        "bordercolor=black@0.45:"
+        "shadowx=3:"
+        "shadowy=3:"
+        "shadowcolor=black@0.65"
+    )
+
+
+def _graphic_background():
+    return [
+        "format=yuv420p",
+        "drawgrid="
+        "width=120:"
+        "height=120:"
+        "thickness=1:"
+        "color=white@0.035",
+        "drawbox="
+        "x=0:"
+        "y=0:"
+        "w=1920:"
+        "h=1080:"
+        "color=0x080b10@0.18:"
+        "t=fill",
+    ]
+
+
+def _render_stat_graphic(
+    output_file,
+    headline,
+    subtext="",
+    duration=4.0,
+):
+    duration = _graphic_duration(0, duration, 3.0, 8.0)
+
+    filters = _graphic_background()
+
+    filters += [
+        "drawbox="
+        "x=100:"
+        "y=120:"
+        "w=1720:"
+        "h=840:"
+        "color=0x111722@0.92:"
+        "t=fill",
+
+        "drawbox="
+        "x=100:"
+        "y=120:"
+        "w=1720:"
+        "h=5:"
+        "color=white@0.85:"
+        "t=fill",
+
+        "drawbox="
+        "x=145:"
+        "y=185:"
+        "w=7:"
+        "h=650:"
+        "color=white@0.85:"
+        "t=fill",
+
+        _ffmpeg_text_filter(
+            "DATA / VERIFIED",
+            "190",
+            "235",
+            24,
+            "white",
+            0.65,
+        ),
+
+        _ffmpeg_text_filter(
+            headline,
+            "190",
+            "445",
+            100,
+            "white",
+            1.0,
+        ),
+    ]
+
+    if subtext:
+        filters += [
+            _ffmpeg_text_filter(
+                subtext,
+                "195",
+                "535",
+                30,
+                "white",
+                0.72,
+            )
+        ]
+
+    # Animated analytical bars.
+    filters += [
+        "drawbox="
+        "x=195:"
+        "y=670:"
+        "w=1250:"
+        "h=3:"
+        "color=white@0.25:"
+        "t=fill",
+
+        "drawbox="
+        "x=195:"
+        "y=670:"
+        "w='min(1250,1250*t/4)':"
+        "h=3:"
+        "color=white@0.9:"
+        "t=fill",
+
+        "drawbox="
+        "x=195:"
+        "y=720:"
+        "w=760:"
+        "h=8:"
+        "color=white@0.12:"
+        "t=fill",
+
+        "drawbox="
+        "x=195:"
+        "y=720:"
+        "w='min(760,760*t/4)':"
+        "h=8:"
+        "color=white@0.65:"
+        "t=fill",
+
+        _ffmpeg_text_filter(
+            "CINEMORA / ANALYSIS",
+            "195",
+            "805",
+            21,
+            "white",
+            0.45,
+        ),
+    ]
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-f", "lavfi",
+        "-i",
+        f"color=c=0x07090d:s=1920x1080:r={FPS}",
+        "-t", f"{duration:.3f}",
+        "-vf", ",".join(filters),
+        "-an",
+        "-c:v", "libx264",
+        "-preset", PRESET,
+        "-crf", str(CRF),
+        "-pix_fmt", "yuv420p",
+        str(output_file),
+    ]
+
+    run_ffmpeg(command)
+
+
+def _render_timeline_graphic(
+    output_file,
+    events,
+    duration=6.0,
+):
+    duration = _graphic_duration(0, duration, 4.0, 10.0)
+
+    filters = _graphic_background()
+
+    filters += [
+        _ffmpeg_text_filter(
+            "CHRONOLOGY",
+            "120",
+            "150",
+            28,
+            "white",
+            0.65,
+        ),
+        "drawbox="
+        "x=120:"
+        "y=500:"
+        "w=1680:"
+        "h=4:"
+        "color=white@0.35:"
+        "t=fill",
+    ]
+
+    usable = events[:6]
+
+    if not usable:
+        usable = [
+            {
+                "when": "NOW",
+                "what": "EVENT",
+            }
+        ]
+
+    spacing = 1540 / max(len(usable) - 1, 1)
+
+    for index, event in enumerate(usable):
+        x = int(190 + index * spacing)
+
+        when = shorten(
+            event.get("when", ""),
+            20,
+        )
+
+        what = shorten(
+            event.get("what", ""),
+            34,
+        )
+
+        # Timeline node.
+        filters += [
+            f"drawbox="
+            f"x={x}:"
+            f"y=465:"
+            f"w=70:"
+            f"h=70:"
+            f"color=white@0.08:"
+            f"t=fill",
+
+            f"drawbox="
+            f"x={x + 12}:"
+            f"y=477:"
+            f"w=46:"
+            f"h=46:"
+            f"color=white@0.92:"
+            f"t=fill",
+
+            _ffmpeg_text_filter(
+                when,
+                str(x - 20),
+                "405",
+                27,
+                "white",
+                0.85,
+            ),
+
+            _ffmpeg_text_filter(
+                what,
+                str(max(80, x - 45)),
+                "585",
+                22,
+                "white",
+                0.68,
+            ),
+        ]
+
+    # Moving scan line gives the timeline actual motion.
+    filters += [
+        "drawbox="
+        "x='120+1680*t/6':"
+        "y=495:"
+        "w=8:"
+        "h=14:"
+        "color=white@0.95:"
+        "t=fill",
+    ]
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-f", "lavfi",
+        "-i",
+        f"color=c=0x070a10:s=1920x1080:r={FPS}",
+        "-t", f"{duration:.3f}",
+        "-vf", ",".join(filters),
+        "-an",
+        "-c:v", "libx264",
+        "-preset", PRESET,
+        "-crf", str(CRF),
+        "-pix_fmt", "yuv420p",
+        str(output_file),
+    ]
+
+    run_ffmpeg(command)
+
+
+def _render_process_graphic(
+    output_file,
+    steps,
+    duration=5.0,
+):
+    duration = _graphic_duration(0, duration, 3.5, 9.0)
+
+    filters = _graphic_background()
+
+    filters += [
+        _ffmpeg_text_filter(
+            "PROCESS / TRANSFORMATION",
+            "120",
+            "145",
+            27,
+            "white",
+            0.65,
+        )
+    ]
+
+    usable = steps[:5]
+
+    if not usable:
+        usable = ["START", "CHANGE", "RESULT"]
+
+    spacing = 1500 / max(len(usable), 1)
+
+    for index, step in enumerate(usable):
+        x = int(170 + index * spacing)
+
+        label = shorten(
+            step if isinstance(step, str)
+            else step.get("label", ""),
+            25,
+        )
+
+        # Outer card.
+        filters += [
+            f"drawbox="
+            f"x={x}:"
+            f"y=405:"
+            f"w=250:"
+            f"h=170:"
+            f"color=0x151b25@0.94:"
+            f"t=fill",
+
+            f"drawbox="
+            f"x={x}:"
+            f"y=405:"
+            f"w=250:"
+            f"h=4:"
+            f"color=white@0.8:"
+            f"t=fill",
+
+            _ffmpeg_text_filter(
+                f"{index + 1:02d}",
+                str(x + 20),
+                "430",
+                23,
+                "white",
+                0.45,
+            ),
+
+            _ffmpeg_text_filter(
+                label,
+                str(x + 20),
+                "490",
+                25,
+                "white",
+                0.92,
+            ),
+        ]
+
+        if index < len(usable) - 1:
+            arrow_x = x + 265
+
+            filters += [
+                _ffmpeg_text_filter(
+                    "?",
+                    str(arrow_x),
+                    "460",
+                    48,
+                    "white",
+                    0.8,
+                )
+            ]
+
+    # Animated horizontal sweep.
+    filters += [
+        "drawbox="
+        "x='120+1500*t/5':"
+        "y=620:"
+        "w=220:"
+        "h=3:"
+        "color=white@0.65:"
+        "t=fill"
+    ]
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-f", "lavfi",
+        "-i",
+        f"color=c=0x090c12:s=1920x1080:r={FPS}",
+        "-t", f"{duration:.3f}",
+        "-vf", ",".join(filters),
+        "-an",
+        "-c:v", "libx264",
+        "-preset", PRESET,
+        "-crf", str(CRF),
+        "-pix_fmt", "yuv420p",
+        str(output_file),
+    ]
+
+    run_ffmpeg(command)
+
+
+def build_motion_graphics_assets(
+    data,
+    output_dir,
+    mode="balanced",
+):
+    """
+    Generate real standalone MP4 motion-graphic assets.
+
+    These are visual assets, not post-render overlays.
+    Each returned record can later be inserted into the
+    documentary timeline just like normal video footage.
+    """
+
+    if mode in {"off", "none", "disabled"}:
+        return []
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    case_bible = data.get("case_bible") or {}
+    timeline_events = case_bible.get("timeline") or []
+
+    assets = []
+    index = 0
+
+    def register_asset(
+        path,
+        graphic_type,
+        purpose,
+        duration,
+        text="",
+        subtext="",
+    ):
+        nonlocal index
+        index += 1
+
+        record = {
+            "motion_graphic_id": f"mg_{index:04d}",
+            "type": "motion_graphic",
+            "graphic_type": graphic_type,
+            "graphic_style": graphic_type,
+            "purpose": purpose,
+            "file_path": str(path),
+            "path": str(path),
+            "duration": round(float(duration), 3),
+            "source": "cinemora_motion_graphics",
+            "title": clean_text(text),
+            "text": clean_text(text),
+            "subtext": clean_text(subtext),
+            "included": True,
+        }
+
+        assets.append(record)
+
+    # -----------------------------------------------------
+    # STORY TIMELINE
+    # -----------------------------------------------------
+
+    if timeline_events and mode in {"balanced", "heavy"}:
+        path = output_dir / "motion_graphic_timeline_001.mp4"
+        _render_timeline_graphic(
+            path,
+            timeline_events,
+            duration=6.0,
+        )
+        register_asset(
+            path,
+            "timeline",
+            "chronology",
+            6.0,
+            "STORY TIMELINE",
+        )
+
+    # -----------------------------------------------------
+    # NUMERICAL / SCALE GRAPHICS
+    # -----------------------------------------------------
+
+    scenes = data.get("scenes") or []
+
+    money_re = re.compile(
+        r"\$\s?\d[\d,]*(?:\.\d+)?"
+        r"(?:\s*(?:million|billion|trillion))?",
+        re.I,
+    )
+
+    number_re = re.compile(
+        r"\b\d[\d,]*(?:\.\d+)?\s*"
+        r"(?:tons?|feet|miles?|years?|vehicles?)\b",
+        re.I,
+    )
+
+    stats_created = 0
+
+    for scene in scenes:
+        scene_number = scene.get("scene_number")
+
+        for sentence_index, sentence in enumerate(
+            scene.get("sentences") or []
+        ):
+            if not isinstance(sentence, dict):
+                continue
+
+            text = clean_text(
+                sentence.get("text")
+                or sentence.get("sentence_text")
+                or ""
+            )
+
+            match = money_re.search(text) or number_re.search(text)
+
+            if not match:
+                continue
+
+            value = clean_text(match.group(0))
+
+            path = (
+                output_dir
+                / f"motion_graphic_stat_{index + 1:03d}.mp4"
+            )
+
+            _render_stat_graphic(
+                path,
+                value.upper(),
+                shorten(text, 72),
+                duration=4.0,
+            )
+
+            register_asset(
+                path,
+                "stat",
+                "quantitative_explanation",
+                4.0,
+                value.upper(),
+                text,
+            )
+
+            assets[-1]["scene_number"] = scene_number
+            assets[-1]["sentence_index"] = sentence_index
+            assets[-1]["sentence_number"] = (
+                sentence.get("sentence_number")
+                or sentence_index + 1
+            )
+
+            stats_created += 1
+
+            if mode == "balanced" and stats_created >= 3:
+                break
+
+        if mode == "balanced" and stats_created >= 3:
+            break
+    # -----------------------------------------------------
+    # PROCESS / TRANSFORMATION GRAPHIC
+    # -----------------------------------------------------
+
+    if mode in {"balanced", "heavy"}:
+        steps = []
+
+        for event in timeline_events[:5]:
+            label = clean_text(event.get("when", ""))
+            if label:
+                steps.append(label)
+
+        if len(steps) >= 3:
+            path = (
+                output_dir
+                / "motion_graphic_process_001.mp4"
+            )
+
+            _render_process_graphic(
+                path,
+                steps,
+                duration=5.0,
+            )
+
+            register_asset(
+                path,
+                "process",
+                "process_or_transformation",
+                5.0,
+                "PROCESS",
+            )
+
+    manifest = output_dir / "motion_graphics.json"
+
+    manifest.write_text(
+        json.dumps(
+            {
+                "mode": mode,
+                "count": len(assets),
+                "assets": assets,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    print(
+        f"MOTION GRAPHICS ASSETS: {len(assets)} generated"
+    )
+
+    return assets
+
+
