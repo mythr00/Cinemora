@@ -159,3 +159,44 @@ body { color: var(--ink); background: #fff; font-family: Arial, Helvetica, sans-
   .app-brand .brand-word { font-size: 17px; }
 }
 @media (prefers-reduced-motion: reduce) { .niche-card { transition: none; } }
+
+/* Stage 4: production plan review, provenance certificate, project overview. */
+.plan-content { width: min(1240px, calc(100% - 64px)); margin: 0 auto; padding: 34px 0 72px; }
+.plan-content h1 { margin: 10px 0 12px; color: #101828; font-size: clamp(30px, 4vw, 44px); font-weight: 620; letter-spacing: -.05em; line-height: 1.08; }
+.plan-content h2 { color: #101828; font-size: 20px; font-weight: 620; letter-spacing: -.02em; }
+.plan-intro { max-width: 760px; margin: 0 0 18px; color: var(--muted); font-size: 15px; line-height: 1.7; }
+.plan-status-line { margin: 0 0 16px; color: var(--ink-soft); font-size: 14px; }
+.plan-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 18px 0 8px; }
+.plan-actions-note { color: var(--muted); font-size: 13px; }
+.plan-message { margin: 10px 0; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
+.plan-error { color: #b42318; }
+.plan-empty { max-width: 640px; padding: 26px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-low); }
+.plan-empty p { color: var(--muted); font-size: 14px; line-height: 1.7; }
+.plan-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0 10px; }
+.plan-summary > div { min-width: 118px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.plan-summary span { display: block; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .11em; }
+.plan-summary strong { display: block; margin-top: 5px; color: #101828; font-size: 22px; font-weight: 620; }
+.plan-meta { margin: 6px 0 18px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.plan-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.plan-table { width: 100%; min-width: 1080px; border-collapse: collapse; font-size: 13.5px; line-height: 1.55; }
+.plan-table th { padding: 11px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-align: left; text-transform: uppercase; white-space: nowrap; }
+.plan-table td { padding: 12px; border-bottom: 1px solid #eef1f5; color: var(--ink-soft); vertical-align: top; }
+.plan-table tbody tr:last-child td { border-bottom: 0; }
+.plan-sentence-text { min-width: 220px; color: #101828; }
+.plan-coverage { display: inline-block; padding: 2px 9px; border: 1px solid var(--line); border-radius: 20px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.plan-coverage-verified { border-color: #a6f4c5; color: #027a48; background: #ecfdf3; }
+.plan-coverage-rotation { border-color: #fedf89; color: #b54708; background: #fffaeb; }
+.plan-coverage-graphic { border-color: #b6c5ff; color: #244ce6; background: #eef3ff; }
+.plan-coverage-missing { border-color: #fecdca; color: #b42318; background: #fef3f2; }
+.plan-coverage-uncovered { color: var(--muted); background: var(--surface-low); }
+.plan-row-actions { display: flex; min-width: 230px; flex-direction: column; gap: 7px; }
+.plan-row-actions > button, .plan-replace button { padding: 6px 11px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-soft); background: var(--paper); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.plan-row-actions > button:hover, .plan-replace button:hover { border-color: #b6c5ff; color: var(--accent); }
+.plan-row-actions > button:disabled, .plan-replace button:disabled { opacity: .45; cursor: default; }
+.plan-replace { display: flex; gap: 6px; }
+.plan-replace input { min-width: 0; flex: 1; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; font-size: 12.5px; }
+.plan-decision-note { color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+.certificate-disclaimers { margin-top: 30px; max-width: 820px; }
+.certificate-disclaimers ul { margin: 10px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 14px; line-height: 1.75; }
+.overview-outputs, .overview-runs { margin: 8px 0 20px; padding-left: 20px; color: var(--ink-soft); font-size: 14.5px; line-height: 1.8; }
+@media (max-width: 700px) { .plan-content { width: calc(100% - 40px); } }

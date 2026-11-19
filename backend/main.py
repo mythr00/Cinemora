@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,6 +20,9 @@ from jobs import (
 
 from services import media_paths
 
+from api_v1 import register_error_handlers
+from api_v1 import router as api_v1_router
+
 
 app = FastAPI(
     title="Documentary Studio API",
@@ -26,16 +30,33 @@ app = FastAPI(
 )
 
 
+# CORS origins come from the environment (Stage 4, AUD-04):
+# CINEMORA_CORS_ORIGINS is a comma-separated list, never a wildcard.
+# Unset, the historical localhost pair is preserved so the legacy
+# routes behave exactly as before.
+_cors_origins = [
+    origin.strip()
+    for origin in os.environ.get("CINEMORA_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+] or [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Stage 4: the /api/v1 studio contract (api_v1.py). The legacy
+# routes below are unchanged; the v1 error handlers only reshape
+# errors for /api/v1 paths.
+app.include_router(api_v1_router, prefix="/api/v1")
+register_error_handlers(app)
 
 
 Base.metadata.create_all(bind=engine)

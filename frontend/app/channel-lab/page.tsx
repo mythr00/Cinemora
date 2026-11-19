@@ -3,8 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { legacyRequest } from "@/lib/api";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 type Video = { id: string; title: string; url: string; duration_seconds?: number | null; view_count?: number | null; upload_date?: string | null };
 type Channel = { channel_title: string; channel_url: string; videos: Video[]; topic_signals: string[]; detected_niche: string; niche_confidence: number; result_limit: number };
 type ResearchSource = { id: string; title: string; url: string; snippet: string };
@@ -26,9 +26,7 @@ export default function ChannelLab() {
   async function inspect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setMessage("Reading public channel and video metadata…"); setScript(""); setScriptTopic("");
     try {
-      const response = await fetch(`${API_URL}/channel-research`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel_url: channelUrl }) });
-      const data = await response.json() as Channel & { detail?: string };
-      if (!response.ok) throw new Error(data.detail || "Script workspace could not inspect that channel.");
+      const data = await legacyRequest<Channel>("/channel-research", { method: "POST", body: JSON.stringify({ channel_url: channelUrl }) });
       setChannel(data); setSelected([]); setSources([]); setMessage(`${data.videos.length} public video entries found. Select up to three.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Script workspace could not inspect that channel."); }
     finally { setBusy(false); }
@@ -38,9 +36,7 @@ export default function ChannelLab() {
     if (!channel) return;
     setBusy(true); setMessage(`Finding a fresh ${channel.detected_niche} topic, researching sources, and drafting about ${durationMinutes} minutes…`);
     try {
-      const response = await fetch(`${API_URL}/channel-research/script`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel_url: channel.channel_url, video_ids: selected, audience, angle, duration_minutes: durationMinutes }) });
-      const data = await response.json() as { script?: string; research_sources?: ResearchSource[]; topic?: string; actual_word_count?: number; target_word_count?: number; duration_warning?: string | null; detail?: string };
-      if (!response.ok) throw new Error(data.detail || "Script generation failed.");
+      const data = await legacyRequest<{ script?: string; research_sources?: ResearchSource[]; topic?: string; actual_word_count?: number; target_word_count?: number; duration_warning?: string | null }>("/channel-research/script", { method: "POST", body: JSON.stringify({ channel_url: channel.channel_url, video_ids: selected, audience, angle, duration_minutes: durationMinutes }) });
       if (!data.script?.trim()) throw new Error("The research service returned an empty draft. Check the backend API and model configuration, then try again.");
       setScript(data.script); setScriptTopic(data.topic || ""); setSources(data.research_sources || []); setMessage(`Draft ready: ${data.actual_word_count?.toLocaleString() || data.script.trim().split(/\s+/).length.toLocaleString()} narration words (target ~${data.target_word_count?.toLocaleString() || (durationMinutes * 135).toLocaleString()} for ${durationMinutes} min).${data.duration_warning ? ` ${data.duration_warning}` : ""} Search snippets are research leads; review linked sources before publishing.`);
     } catch (error) { setScript(""); setSources([]); setMessage(error instanceof Error ? error.message : "Script generation failed."); }

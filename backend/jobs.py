@@ -426,7 +426,7 @@ def test_job(project_id: str):
     return {"project_id": project_id, "status": "completed"}
 
 
-def enqueue_full_pipeline(project_id: str, script: str, options=None):
+def enqueue_full_pipeline(project_id: str, script: str, options=None, run_id=None):
     # Stage 3 options plumbing: caller options (recognised keys:
     # "music_file", "voice_id", "captions") are merged into the
     # ledger/manifest options snapshot next to the entrypoint.
@@ -441,11 +441,18 @@ def enqueue_full_pipeline(project_id: str, script: str, options=None):
     # failure marks the run failed rather than orphaning it silently.
     # When the ledger is unavailable the enqueue proceeds without a
     # run_id (the pipeline then begins an ad-hoc run, also fail-soft).
-    submission = run_ledger.submit_production(
-        project_id,
-        script,
-        options=run_options,
-    )
+    # Stage 4: a caller may pass an EXISTING run_id to release it
+    # directly (plan approval releasing the run its analysis phase
+    # parked in 'awaiting_approval'); the submission step is then
+    # skipped because the run already exists by design.
+    if run_id is not None:
+        submission = {"run_id": run_id, "deduplicated": False}
+    else:
+        submission = run_ledger.submit_production(
+            project_id,
+            script,
+            options=run_options,
+        )
     if submission and submission.get("deduplicated"):
         print(
             f"Duplicate submission for project {project_id}: active "
@@ -471,6 +478,112 @@ def enqueue_full_pipeline(project_id: str, script: str, options=None):
         raise
     print(f"Queued full pipeline job: {job.id} (run {run_id})")
     return job.id
+
+
+def enqueue_analysis_phase(project_id: str, script: str, run_id: str, options=None):
+    """Queue ONLY the analysis phase of a plan-gated run (Stage 4).
+    The run row already exists (created by the caller's
+    run_ledger.submit_production); an enqueue failure marks it
+    failed rather than orphaning it, mirroring enqueue_full_pipeline."""
+    try:
+        job = video_queue.enqueue(
+            run_analysis_phase,
+            project_id,
+            script,
+            run_id=run_id,
+            options=options,
+            at_front=True,
+        )
+    except Exception as error:
+        if run_id:
+            run_ledger.finish_run(
+                run_id, "failed", error=f"enqueue failed: {error}"
+            )
+        raise
+    print(f"Queued analysis-phase job: {job.id} (run {run_id})")
+    return job.id
+
+
+def run_analysis_phase(project_id: str, script: str, run_id: str = None, options=None):
+    """Stage 4 plan gate, phase 1: story analysis ONLY.
+
+    Runs the same analysis the full pipeline's script_analysis stage
+    runs (build_production_scenes → analyze_script, which caches by
+    script content), persists the plan document (plan.json — the
+    studio's review surface), then parks the ledger run in
+    "awaiting_approval". No asset retrieval, no narration, no render.
+
+    Release path: POST /api/v1/projects/{id}/plan/approve enqueues
+    run_full_pipeline with the same run_id and options
+    {"plan_approved": True}; the pipeline claims the run from
+    "awaiting_approval" and its analysis stage reuses the persisted
+    story_understanding_cache.json instead of re-analysing.
+    """
+    print()
+    print("=" * 70)
+    print("DOCUMENTARY STUDIO — ANALYSIS PHASE (plan gate)")
+    print("=" * 70)
+    print(f"Project: {project_id}")
+    print("=" * 70)
+    print()
+
+    project_dir = media_paths.project_dir(project_id)
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    if run_id is not None:
+        claimed = run_ledger.claim_run(run_id)
+        if claimed is None:
+            existing = run_ledger.get_run(run_id)
+            if existing is not None:
+                print(
+                    f"Run {run_id} not claimable (status: "
+                    f"{existing['status']}); analysis phase not executed."
+                )
+                return {
+                    "project_id": project_id,
+                    "status": existing["status"],
+                    "run_id": run_id,
+                    "deduplicated_execution": True,
+                }
+
+    _set_project_status(project_id, "running")
+    try:
+        production_data = build_production_scenes(
+            script,
+            project_id=project_id,
+            project_dir=project_dir,
+        )
+    except Exception as error:
+        if run_id:
+            run_ledger.finish_run(
+                run_id,
+                "failed",
+                error=f"analysis phase: {error}",
+                stage="script_analysis",
+            )
+        _set_project_status(project_id, "failed")
+        raise
+
+    from services import plan_document
+
+    plan_document.write_plan_document(
+        project_dir, production_data["analysis"], project_id
+    )
+    if run_id:
+        run_ledger.set_run_status(
+            run_id, "awaiting_approval", stage="script_analysis"
+        )
+    _set_project_status(project_id, "awaiting_approval")
+    print(
+        f"Analysis phase complete: run {run_id} is awaiting plan approval."
+    )
+    return {
+        "project_id": project_id,
+        "status": "awaiting_approval",
+        "run_id": run_id,
+        "sentence_count": len(production_data["sentences"]),
+        "scene_count": len(production_data["scenes"]),
+    }
 
 
 def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=None):
@@ -510,7 +623,16 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     # BEFORE any status write-back so an aborted duplicate never
     # marks the project "running".
     if run_id is not None:
-        claimed = run_ledger.claim_run(run_id)
+        # Stage 4: a plan-approved run is claimed from
+        # "awaiting_approval" (its analysis phase already ran and the
+        # approval released it); any other caller-carried run claims
+        # from "queued" as before.
+        _claim_from = (
+            ("awaiting_approval",)
+            if options.get("plan_approved")
+            else ("queued",)
+        )
+        claimed = run_ledger.claim_run(run_id, from_statuses=_claim_from)
         if claimed is None:
             existing = run_ledger.get_run(run_id)
             if existing is not None:
@@ -641,6 +763,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 f"Scene {scene['scene_number']}: "
                 f"{scene['sentence_count']} sentences"
             )
+        # Stage 4: persist the plan document (fail-soft) so the
+        # studio can serve this run's production plan.
+        from services import plan_document as _plan_document
+
+        _plan_document.write_plan_document(project_dir, analysis, project_id)
         finish_stage(state, "script_analysis", project_dir)
     except Exception as error:
         fail_pipeline(state, "script_analysis", error, project_dir)

@@ -33,6 +33,20 @@ class Project(Base):
         nullable=False,
     )
 
+    # Stage 4 (API v1): the studio contract carries a human title and
+    # the production options chosen at creation. Both are nullable so
+    # every pre-v1 row stays valid; schema authority is
+    # migrations/versions/0003_project_title_options.py (AUD-09).
+    title: Mapped[str] = mapped_column(
+        String(300),
+        nullable=True,
+    )
+
+    options: Mapped[dict] = mapped_column(
+        JSONVariant,
+        nullable=True,
+    )
+
     category: Mapped[str] = mapped_column(
         String(100),
         nullable=False,

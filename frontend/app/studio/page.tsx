@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { apiUrl, listProjects, type ProjectSummary } from "@/lib/api";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
-type Project = { id: string; category: string; status: string; current_stage?: string | null; created_at: string; script_preview: string; video_url?: string | null };
+type Project = ProjectSummary;
 
 function label(value: string) { return value.replaceAll("_", " "); }
 
@@ -17,9 +17,7 @@ export default function StudioPage() {
   const load = useCallback(async (signal?: AbortSignal) => {
     setError("");
     try {
-      const response = await fetch(`${API_URL}/projects`, { cache: "no-store", signal });
-      const data = await response.json() as { projects?: Project[]; detail?: string };
-      if (!response.ok) throw new Error(data.detail || "Your projects could not be loaded.");
+      const data = await listProjects(signal);
       setProjects(data.projects || []);
     } catch (cause) {
       if (!signal?.aborted) setError(cause instanceof Error ? cause.message : "Your projects could not be loaded.");
@@ -32,7 +30,7 @@ export default function StudioPage() {
     return () => { clearTimeout(timer); controller.abort(); };
   }, [load]);
 
-  const activeCount = projects.filter((project) => ["queued", "running", "pipeline_queued"].includes(project.status)).length;
+  const activeCount = projects.filter((project) => ["queued", "running", "pipeline_queued", "awaiting_approval"].includes(project.status)).length;
   const completeCount = projects.filter((project) => project.status === "completed").length;
   const recent = projects.slice(0, 4);
 
@@ -58,10 +56,10 @@ export default function StudioPage() {
         {!busy && !error && recent.length === 0 && <div className="dashboard-empty"><div className="empty-reel" aria-hidden="true"><span /><span /><span /></div><p className="eyebrow">A CLEAR FIRST FRAME</p><h3>Your next film starts here.</h3><p>Create a project from a script. Its real production state and export will appear in this space.</p><Link className="button button-primary" href="/create">Create your first film <span aria-hidden="true">↗</span></Link></div>}
         {!busy && !error && recent.length > 0 && <div className="dashboard-project-grid">{recent.map((project) => <article className="dashboard-project-card" key={project.id}>
           <Link className={`project-art ${project.video_url ? "has-video" : ""}`} href={`/projects/${project.id}`} aria-label={`Open ${project.category} project`}>
-            {project.video_url ? <video src={`${API_URL}${project.video_url}`} preload="metadata" muted playsInline /> : <span className="project-art-mark"><span className="reel-glyph" /></span>}
+            {project.video_url ? <video src={apiUrl(project.video_url)} preload="metadata" muted playsInline /> : <span className="project-art-mark"><span className="reel-glyph" /></span>}
             <span className={`project-state project-state-${project.status}`}>{label(project.status)}</span>
           </Link>
-          <div className="dashboard-project-info"><div><p>{project.category}</p><time dateTime={project.created_at}>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(project.created_at))}</time></div><h3>{project.script_preview || "Untitled production"}</h3><p className="project-stage">{project.current_stage ? `Stage · ${label(project.current_stage)}` : project.video_url ? "Export available" : "Production status available"}</p><Link href={`/projects/${project.id}`}>Open project <span aria-hidden="true">↗</span></Link></div>
+          <div className="dashboard-project-info"><div><p>{project.category}</p><time dateTime={project.created_at}>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(project.created_at))}</time></div><h3>{project.title || project.script_preview || "Untitled production"}</h3><p className="project-stage">{project.current_stage ? `Stage · ${label(project.current_stage)}` : project.video_url ? "Export available" : "Production status available"}</p><Link href={`/projects/${project.id}`}>Open project <span aria-hidden="true">↗</span></Link></div>
         </article>)}</div>}
       </section>
 

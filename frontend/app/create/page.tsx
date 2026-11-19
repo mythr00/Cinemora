@@ -3,8 +3,17 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { BrandLockup } from "@/components/brand-lockup";
+import {
+  apiUrl,
+  createProject as apiCreateProject,
+  getHealth,
+  getProjectStatus,
+  legacyRequest,
+  submitRun,
+  type ProjectStatus,
+} from "@/lib/api";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 const categories = [
   "Documentary",
   "History",
@@ -17,14 +26,15 @@ const categories = [
   "Custom",
 ];
 
+// The pipeline's six real stages (backend production_state
+// PRODUCTION_STAGES). Earlier versions of this page also listed a
+// "timeline_builder" and a "renderer" stage that do not exist.
 const stageOrder = [
   ["voice_actor", "Narration"],
   ["script_analysis", "Story analysis"],
   ["asset_manager", "Visual research"],
   ["motion_designer", "Motion design"],
   ["sound_designer", "Sound mix"],
-  ["timeline_builder", "Timeline"],
-  ["renderer", "Render"],
   ["video_editor", "Final edit"],
 ] as const;
 
@@ -46,17 +56,11 @@ type BackgroundLook = {
 type NarrationVoice = { id: string; name: string; installed: boolean; locale?: string; quality?: string; license_url?: string; voice_type?: string; provider?: string };
 type NarrationLanguage = { code: string; name: string };
 
-type ProjectStatus = {
-  status: string;
-  current_stage?: string | null;
-  error?: string | null;
-  video_url?: string | null;
-  stages?: Record<string, { status?: string; error?: string | null }>;
-};
-
 export default function Home() {
   const [script, setScript] = useState("");
+  const [title, setTitle] = useState("");
   const [category, setCategory] = useState("Documentary");
+  const [requirePlanApproval, setRequirePlanApproval] = useState(false);
   const [loading, setLoading] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [jobId, setJobId] = useState("");
@@ -95,10 +99,8 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${API_URL}/render-options/defaults`, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) return;
-        const defaults = await response.json() as { graphics?: boolean; music?: boolean; music_percent?: number; captions?: boolean; sfx?: boolean };
+    legacyRequest<{ graphics?: boolean; music?: boolean; music_percent?: number; captions?: boolean; sfx?: boolean }>("/render-options/defaults", { signal: controller.signal })
+      .then((defaults) => {
         setIncludeMotion(defaults.graphics ?? false);
         setIncludeMusic(defaults.music ?? true);
         setMusicPercent(Math.min(100, Math.max(0, defaults.music_percent ?? 3)));
@@ -119,18 +121,16 @@ export default function Home() {
         setMessage("Script draft loaded. Review it before starting production.");
       }
     }, 0);
-    fetch(`${API_URL}/health`, { signal: controller.signal })
-      .then((response) => setApiOnline(response.ok))
+    getHealth(controller.signal)
+      .then(() => setApiOnline(true))
       .catch(() => setApiOnline(false));
     return () => { controller.abort(); clearTimeout(draftTimer); };
   }, []);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${API_URL}/voices`, { signal: controller.signal })
-      .then(async (response) => {
-        const data = await response.json() as { voices?: NarrationVoice[]; catalog?: NarrationVoice[]; languages?: NarrationLanguage[] };
-        if (!response.ok) throw new Error("Could not load installed voices.");
+    legacyRequest<{ voices?: NarrationVoice[]; catalog?: NarrationVoice[]; languages?: NarrationLanguage[] }>("/voices", { signal: controller.signal })
+      .then((data) => {
         setVoiceCatalog(data.catalog || []);
         setNarrationLanguages(data.languages || []);
         if (data.voices?.length) setVoiceId((current) => data.voices!.some((voice) => voice.id === current) ? current : data.voices![0].id);
@@ -141,10 +141,8 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${API_URL}/backgrounds`, { signal: controller.signal })
-      .then(async (response) => {
-        const data = await response.json() as { backgrounds?: BackgroundLook[] };
-        if (!response.ok) throw new Error("Could not load background looks.");
+    legacyRequest<{ backgrounds?: BackgroundLook[] }>("/backgrounds", { signal: controller.signal })
+      .then((data) => {
         setBackgrounds(data.backgrounds || []);
       })
       .catch(() => {
@@ -155,10 +153,8 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${API_URL}/music`, { signal: controller.signal })
-      .then(async (response) => {
-        const data = await response.json() as { detail?: string; tracks?: MusicTrack[] };
-        if (!response.ok) throw new Error(data.detail || "Could not load music tracks.");
+    legacyRequest<{ tracks?: MusicTrack[] }>("/music", { signal: controller.signal })
+      .then((data) => {
         setMusicTracks(data.tracks || []);
       })
       .catch(() => {
@@ -178,15 +174,15 @@ export default function Home() {
 
     async function pollStatus() {
       try {
-        const response = await fetch(`${API_URL}/projects/${projectId}/status`, { cache: "no-store" });
-        const data = (await response.json()) as ProjectStatus;
-        if (!response.ok) throw new Error((data as ProjectStatus & { detail?: string }).detail || "Could not read project status.");
+        const data = await getProjectStatus(projectId);
         if (stopped) return;
         setStatus(data);
         if (data.status === "completed" && data.video_url) {
           setMessage("Your documentary is ready to review.");
         } else if (data.status === "failed") {
           setMessage(data.error || "Production stopped before completion.");
+        } else if (data.status === "awaiting_approval") {
+          setMessage("The production plan is ready. Review it and approve to start the full production.");
         } else {
           setMessage(data.current_stage ? `${stageLabel(data.current_stage)} in progress` : "Waiting for a worker to start production");
         }
@@ -223,30 +219,51 @@ export default function Home() {
     setMessage("Creating your project…");
 
     try {
-      const createResponse = await fetch(`${API_URL}/projects`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ script: script.trim(), category, render_options: { schema_version: 1, graphics: includeMotion, music: includeMusic, music_percent: musicPercent, captions: includeCaptions, sfx: includeSfx, music_track_id: selectedMusic, voice_id: voiceId, format: "mp4", language: outputLanguage } }),
+      // API v1 (MA-40): the project is created with the options the
+      // pipeline actually consumes, persisted on the project row —
+      // the old flow posted a render_options body to endpoints that
+      // silently discarded it, plus query parameters the analyze
+      // handler never read.
+      const created = await apiCreateProject({
+        title: title.trim() || undefined,
+        script: script.trim(),
+        category,
+        options: {
+          genre: category,
+          voice_id: voiceId,
+          captions: includeCaptions ? "burn" : "off",
+          require_plan_approval: requirePlanApproval,
+          // Recorded production preferences (kept in the run's
+          // options snapshot; the pipeline consumes voice_id /
+          // captions / music_file directly).
+          music: includeMusic,
+          music_track_id: selectedMusic,
+          graphics: includeMotion,
+          sfx: includeSfx,
+          language: outputLanguage,
+          background_id: backgroundId,
+        },
       });
-      const created = await createResponse.json();
-      if (!createResponse.ok) throw new Error(created.detail || "Could not create the project.");
 
       setProjectId(created.id);
       setMessage("Project created. Adding it to the production queue…");
       if (useUploadedVoice && voiceFile && voiceTranscribed) {
         const voiceBody = new FormData();
         voiceBody.append("file", voiceFile);
-        const voiceResponse = await fetch(`${API_URL}/projects/${created.id}/voiceover`, { method: "POST", body: voiceBody });
-        const voiceResult = await voiceResponse.json();
-        if (!voiceResponse.ok) throw new Error(voiceResult.detail || "Could not attach your voice recording to the project.");
+        await legacyRequest(`/projects/${created.id}/voiceover`, { method: "POST", body: voiceBody });
       }
-      const renderOptions = { schema_version: 1, graphics: includeMotion, music: includeMusic, music_percent: musicPercent, captions: includeCaptions, sfx: includeSfx, music_track_id: selectedMusic, voice_id: voiceId, format: "mp4", language: outputLanguage };
-      const startResponse = await fetch(`${API_URL}/projects/${created.id}/analyze?background_id=${encodeURIComponent(backgroundId)}&use_uploaded_voice=${useUploadedVoice && voiceTranscribed}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(renderOptions) });
-      const started = await startResponse.json();
-      if (!startResponse.ok) throw new Error(started.detail || "The project was created, but production could not be started.");
+      const started = await submitRun(created.id, {
+        use_uploaded_voice: Boolean(useUploadedVoice && voiceTranscribed),
+      });
 
-      setJobId(started.job_id || "");
-      setMessage("Project created and added to the production queue.");
+      setJobId(started.job_id || started.run?.run_id || "");
+      setMessage(
+        started.phase === "analysis"
+          ? "Project created. Its production plan is being prepared for your review."
+          : started.deduplicated
+            ? "An identical production is already in progress for this script."
+            : "Project created and added to the production queue.",
+      );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not start documentary production.");
     } finally {
@@ -261,9 +278,7 @@ export default function Home() {
     try {
       const body = new FormData();
       body.append("file", voiceFile);
-      const response = await fetch(`${API_URL}/transcribe-upload`, { method: "POST", body });
-      const data = await response.json() as { transcript?: string; language?: string; detail?: string };
-      if (!response.ok) throw new Error(data.detail || "Transcription failed.");
+      const data = await legacyRequest<{ transcript?: string; language?: string }>("/transcribe-upload", { method: "POST", body });
       setScript(data.transcript || "");
       setVoiceTranscribed(true);
       setUseUploadedVoice(true);
@@ -281,14 +296,11 @@ export default function Home() {
     setThumbnailBusy(true);
     setMessage("Creating a thumbnail from a frame in your finished video…");
     try {
-      const response = await fetch(`${API_URL}/projects/${projectId}/thumbnail`, {
+      const data = await legacyRequest<{ thumbnail_url?: string }>(`/projects/${projectId}/thumbnail`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: thumbnailTitle.trim(), background_id: backgroundId }),
       });
-      const data = await response.json() as { detail?: string; thumbnail_url?: string };
-      if (!response.ok) throw new Error(data.detail || "Could not create thumbnail.");
-      setThumbnailUrl(`${API_URL}${data.thumbnail_url}?v=${Date.now()}`);
+      setThumbnailUrl(`${apiUrl(data.thumbnail_url || "")}?v=${Date.now()}`);
       setMessage("Thumbnail created from your selected video frame.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not create thumbnail.");
@@ -299,7 +311,7 @@ export default function Home() {
 
   function previewVoice(id: string) {
     setVoiceId(id);
-    setVoicePreviewUrl(`${API_URL}/voices/preview?voice_id=${encodeURIComponent(id)}`);
+    setVoicePreviewUrl(apiUrl(`/voices/preview?voice_id=${encodeURIComponent(id)}`));
   }
 
   const effectiveLanguage = useCustomLanguage ? (customLanguage.trim().split(/[-_]/, 1)[0].toLowerCase() || "auto") : selectedLanguage;
@@ -308,13 +320,13 @@ export default function Home() {
     && `${voice.name} ${voice.id}`.toLowerCase().includes(voiceSearch.toLowerCase())
   ).slice(0, 12);
 
-  const videoUrl = status?.video_url ? new URL(status.video_url, `${API_URL}/`).toString() : "";
+  const videoUrl = status?.video_url ? apiUrl(status.video_url) : "";
 
   return (
     <main className="studio-shell">
       <aside className="sidebar">
         <Link className="brand" href="/" aria-label="Cinemora home">
-          <Image className="cinemora-wordmark" src="/cinemora-logo.png" alt="CINEMORA" width={190} height={50} priority />
+          <BrandLockup priority />
         </Link>
 
         <div className="side-label">WORKSPACE</div>
@@ -334,7 +346,7 @@ export default function Home() {
           <div><strong>Production tools</strong><p>Script, research, narration, and edit.</p></div>
         </div>
         <div className="connection"><span className={`connection-dot ${apiOnline === false ? "offline" : ""}`} /><span>{apiOnline === null ? "Connecting to studio" : apiOnline ? "Studio API connected" : "Studio API unavailable"}</span></div>
-        <div className="sidebar-footer"><span className="avatar"><Image src="/cinemora-symbol.png" alt="" width={25} height={25} /></span><span><strong>Cinemora</strong><small>Production workspace</small></span></div>
+        <div className="sidebar-footer"><span className="avatar"><Image src="/cinemora-mark.svg" alt="" width={25} height={25} /></span><span><strong>Cinemora</strong><small>Production workspace</small></span></div>
       </aside>
 
       <section className="workspace" id="create">
@@ -368,6 +380,9 @@ export default function Home() {
                   <div className="panel-title"><h2>Project details</h2><p>Choose a category and check the estimated runtime.</p></div>
                 </div>
                 <div className="form-fields">
+                  <label className="field-label" htmlFor="project-title">TITLE
+                    <input id="project-title" className="thumbnail-input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} placeholder="e.g. The Yangtze Incident" />
+                  </label>
                   <label className="field-label" htmlFor="category">STORY CATEGORY
                     <span className="select-wrap"><select id="category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select><Icon name="chevron" /></span>
                   </label>
@@ -433,7 +448,7 @@ export default function Home() {
                         <input type="radio" name="music-track" value={track.id} checked={selectedMusic === track.id} onChange={() => setSelectedMusic(track.id)} />
                         <span><strong>{track.title}</strong><small>{track.mood}</small></span>
                       </label>
-                      <audio controls preload="none" src={`${API_URL}${track.preview_url}`} aria-label={`Preview ${track.title}`} />
+                      <audio controls preload="none" src={apiUrl(track.preview_url)} aria-label={`Preview ${track.title}`} />
                     </div>
                   ))}
                 </div>}
@@ -444,7 +459,7 @@ export default function Home() {
                 {includeMusic && musicLoadError && <p className="music-error" role="status">{musicLoadError}</p>}
               </section>
 
-              <section className="panel motion-option-panel"><div className="panel-heading compact-heading"><div className="step-marker">06</div><div className="panel-title"><h2>Generation options</h2><p>Captions are independent of template-based motion graphics.</p></div></div><label className="motion-toggle"><input type="checkbox" checked={includeMotion} onChange={(event) => setIncludeMotion(event.target.checked)} /><span><strong>Motion graphics</strong><small>Off by default. Planned template graphics only; never used to cover an unresolved passage.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={includeCaptions} onChange={(event) => setIncludeCaptions(event.target.checked)} /><span><strong>Word-synced captions</strong><small>Captions remain available when graphics are off.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={includeSfx} onChange={(event) => setIncludeSfx(event.target.checked)} /><span><strong>Sound effects</strong><small>Separate from the background music option.</small></span></label><div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy. A downloaded asset is not automatically cleared for publication; review its source and license before publishing.</p></div></section>
+              <section className="panel motion-option-panel"><div className="panel-heading compact-heading"><div className="step-marker">06</div><div className="panel-title"><h2>Generation options</h2><p>Captions are independent of template-based motion graphics.</p></div></div><label className="motion-toggle"><input type="checkbox" checked={includeMotion} onChange={(event) => setIncludeMotion(event.target.checked)} /><span><strong>Motion graphics</strong><small>Off by default. Planned template graphics only; never used to cover an unresolved passage.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={includeCaptions} onChange={(event) => setIncludeCaptions(event.target.checked)} /><span><strong>Word-synced captions</strong><small>Captions remain available when graphics are off.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={includeSfx} onChange={(event) => setIncludeSfx(event.target.checked)} /><span><strong>Sound effects</strong><small>Separate from the background music option.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis. You review the per-sentence plan — proposed visuals, evidence and rights — and approve it before any footage is retrieved or rendered.</small></span></label><div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy. A downloaded asset is not automatically cleared for publication; review its source and license before publishing.</p></div></section>
 
             </div>
 
@@ -464,6 +479,7 @@ export default function Home() {
                 <div className="status-heading"><span className={`status-indicator ${status?.status === "failed" ? "status-error" : status?.status === "completed" ? "status-done" : projectId ? "status-active" : ""}`} /><div><span className="eyebrow">PRODUCTION STATUS</span><h3>{statusTitle(status?.status, !!projectId, loading)}</h3></div></div>
                 {projectId ? <>
                   <p className="status-message">{message || "Waiting for production status…"}</p>
+                  {status?.status === "awaiting_approval" && <p className="status-message"><Link className="text-link" href={`/projects/${projectId}/plan`}>Review the production plan</Link></p>}
                   <div className="stage-list">{stageOrder.map(([key, label]) => {
                     const stageStatus = status?.stages?.[key]?.status || (status?.current_stage === key ? "running" : "pending");
                     return <div className={`stage-row ${stageStatus}`} key={key}><span className="stage-check">{stageStatus === "completed" ? "✓" : stageStatus === "running" ? <span /> : stageStatus === "failed" ? "!" : ""}</span><span>{label}</span>{stageStatus === "running" && <small>NOW</small>}{stageStatus === "skipped" && <small>SKIPPED</small>}{stageStatus === "failed" && <small>FAILED</small>}</div>;
@@ -499,6 +515,7 @@ function statusTitle(status: string | undefined, hasProject: boolean, loading: b
   if (loading) return "Creating your project";
   if (status === "completed") return "Documentary complete";
   if (status === "failed") return "Production needs attention";
+  if (status === "awaiting_approval") return "Plan ready for your review";
   if (status === "running") return "Your film is in production";
   if (status === "queued" || status === "created" || status === "pipeline_queued") return "Waiting in the queue";
   return hasProject ? "Checking production…" : "Ready when you are";

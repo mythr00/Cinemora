@@ -2,19 +2,18 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { apiUrl, listProjects, type ProjectSummary } from "@/lib/api";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
-type Project = { id: string; category: string; status: string; script_preview: string; video_url?: string | null };
-const team = ["Voice actor", "Asset manager", "Motion designer", "Sound designer", "Video editor"];
+type Project = ProjectSummary;
+const team = ["Voice actor", "Script analysis", "Asset manager", "Motion designer", "Sound designer", "Video editor"];
 
 export function ProductionTeamShowcase() {
   const [project, setProject] = useState<Project | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      fetch(`${API_URL}/projects`, { cache: "no-store", signal: controller.signal })
-        .then((response) => response.ok ? response.json() : null)
-        .then((data: { projects?: Project[] } | null) => {
+      listProjects(controller.signal)
+        .then((data) => {
           const completed = data?.projects?.find((item) => item.status === "completed" && item.video_url);
           if (completed) setProject(completed);
         })
@@ -28,7 +27,7 @@ export function ProductionTeamShowcase() {
     <div className="team-stage">
       {team.map((role, index) => <div className={`team-role team-role-${index + 1}`} key={role}><span className="team-role-index">0{index + 1}</span><span>{role}</span></div>)}
       <div className="team-preview">
-        {project?.video_url ? <><video src={`${API_URL}${project.video_url}`} controls playsInline preload="metadata" aria-label={`Completed film preview: ${project.script_preview || project.category}`} /><div className="team-preview-caption"><span>COMPLETED PROJECT</span><strong>{project.script_preview || project.category}</strong></div></> : <div className="team-preview-empty"><span className="preview-symbol" aria-hidden="true"><i /></span><strong>Your film preview appears here</strong><p>Once a project is completed, you can play it from your library.</p><Link href="/projects">View projects <span aria-hidden="true">↗</span></Link></div>}
+        {project?.video_url ? <><video src={apiUrl(project.video_url)} controls playsInline preload="metadata" aria-label={`Completed film preview: ${project.title || project.script_preview || project.category}`} /><div className="team-preview-caption"><span>COMPLETED PROJECT</span><strong>{project.script_preview || project.category}</strong></div></> : <div className="team-preview-empty"><span className="preview-symbol" aria-hidden="true"><i /></span><strong>Your film preview appears here</strong><p>Once a project is completed, you can play it from your library.</p><Link href="/projects">View projects <span aria-hidden="true">↗</span></Link></div>}
       </div>
       <div className="team-stage-note"><span className="team-stage-line" /><span>STORY → RESEARCH → PRODUCTION → REVIEW</span></div>
     </div>

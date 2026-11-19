@@ -3,9 +3,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import Image from "next/image";
 import { AppNavigation } from "@/components/app-navigation";
+import { apiUrl, legacyRequest, listProjects, type ProjectSummary } from "@/lib/api";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
-type Project = { id: string; category: string; script_preview: string };
+type Project = Pick<ProjectSummary, "id" | "category" | "script_preview">;
 type Thumbnail = { id: string; title: string; width: number; height: number; url: string; project_id?: string | null; prompt?: string; created_at?: string };
 
 export default function ThumbnailPage() {
@@ -20,12 +20,8 @@ export default function ThumbnailPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(`${API_URL}/projects`, { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        const data = await response.json() as { projects?: Project[]; detail?: string };
-        if (!response.ok) throw new Error(data.detail || "Projects could not be loaded.");
-        setProjects(data.projects || []);
-      })
+    void listProjects(controller.signal)
+      .then((data) => { setProjects(data.projects || []); })
       .catch((error: unknown) => { if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Projects could not be loaded."); });
     return () => controller.abort();
   }, []);
@@ -33,12 +29,8 @@ export default function ThumbnailPage() {
   useEffect(() => {
     const controller = new AbortController();
     const query = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
-    void fetch(`${API_URL}/thumbnails${query}`, { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        const data = await response.json() as { thumbnails?: Thumbnail[]; detail?: string };
-        if (!response.ok) throw new Error(data.detail || "Saved thumbnails could not be loaded.");
-        setResults(data.thumbnails || []);
-      })
+    void legacyRequest<{ thumbnails?: Thumbnail[] }>(`/thumbnails${query}`, { signal: controller.signal })
+      .then((data) => { setResults(data.thumbnails || []); })
       .catch((error: unknown) => { if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Saved thumbnails could not be loaded."); });
     return () => controller.abort();
   }, [projectId]);
@@ -46,12 +38,10 @@ export default function ThumbnailPage() {
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setResults([]); setMessage("Generating and validating thumbnail images…");
     try {
-      const response = await fetch(`${API_URL}/thumbnails/generate`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+      const data = await legacyRequest<{ thumbnails?: Thumbnail[] }>("/thumbnails/generate", {
+        method: "POST",
         body: JSON.stringify({ title, prompt, project_id: projectId || null, variations }),
       });
-      const data = await response.json() as { thumbnails?: Thumbnail[]; detail?: string };
-      if (!response.ok) throw new Error(data.detail || "Thumbnail generation failed.");
       if (!data.thumbnails?.length) throw new Error("The image provider returned no validated thumbnail files.");
       setResults((previous) => [...data.thumbnails!, ...previous]); setMessage(`${data.thumbnails.length} thumbnail${data.thumbnails.length === 1 ? "" : "s"} generated and saved.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Thumbnail generation failed."); }
@@ -74,8 +64,8 @@ export default function ThumbnailPage() {
       </form>
       <p className="thumbnail-status" role="status" aria-live="polite">{message}</p>
       {results.length > 0 && <section className="thumbnail-results" aria-label="Generated thumbnails">{results.map((image) => <article className="thumbnail-result" key={image.id}>
-        <Image src={`${API_URL}${image.url}`} alt={`Generated thumbnail: ${image.title}`} width={1280} height={720} unoptimized />
-        <div><strong>{image.title}</strong><span>{image.width} × {image.height}{image.project_id ? ` · ${image.project_id.slice(0, 8)}` : " · standalone"}</span><a className="button button-secondary" href={`${API_URL}${image.url}?download=true`} download={`cinemora-thumbnail-${image.id}.jpg`}>Download image</a></div>
+        <Image src={apiUrl(image.url)} alt={`Generated thumbnail: ${image.title}`} width={1280} height={720} unoptimized />
+        <div><strong>{image.title}</strong><span>{image.width} × {image.height}{image.project_id ? ` · ${image.project_id.slice(0, 8)}` : " · standalone"}</span><a className="button button-secondary" href={apiUrl(image.url)} download={`cinemora-thumbnail-${image.id}.jpg`}>Download image</a></div>
       </article>)}</section>}
       <p className="thumbnail-note">Generated images are stored as real files. Review factual details and image rights before publishing.</p>
     </section>

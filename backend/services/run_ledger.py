@@ -158,6 +158,82 @@ def finish_run(run_id, status, error=None, execution=None,
         return False
 
 
+def set_run_status(run_id, status, stage=None):
+    """Move a non-terminal run to a lifecycle status (Stage 4).
+
+    Used by the plan-approval gate: an analysis-phase run is parked
+    in "awaiting_approval" until the studio releases it. Terminal
+    runs are never moved by this helper (finish_run owns those
+    transitions). Fail-soft like everything in this module.
+    """
+    if not run_id or not status:
+        return False
+    try:
+        from models import ProductionRun
+
+        db = _session()
+        try:
+            row = db.get(ProductionRun, str(run_id))
+            if row is None or row.status in TERMINAL_STATUSES:
+                return False
+            row.status = str(status)
+            if stage is not None:
+                row.stage = str(stage)
+            db.commit()
+            return True
+        finally:
+            db.close()
+    except Exception as error:
+        print(f"WARNING: run status update failed: {error}")
+        return False
+
+
+def latest_run_for(project_id, script_hash=None):
+    """The most recent run dict for a project (optionally restricted
+    to one script hash), or None. Read-only; fail-soft."""
+    try:
+        from models import ProductionRun
+
+        db = _session()
+        try:
+            query = db.query(ProductionRun).filter(
+                ProductionRun.project_id == str(project_id)
+            )
+            if script_hash:
+                query = query.filter(
+                    ProductionRun.script_hash == str(script_hash)
+                )
+            row = query.order_by(ProductionRun.created_at.desc()).first()
+            if row is None:
+                return None
+            return get_run(row.id)
+        finally:
+            db.close()
+    except Exception:
+        return None
+
+
+def list_runs_for(project_id):
+    """All run dicts for a project, newest first (fail-soft: [])."""
+    try:
+        from models import ProductionRun
+
+        db = _session()
+        try:
+            rows = (
+                db.query(ProductionRun)
+                .filter(ProductionRun.project_id == str(project_id))
+                .order_by(ProductionRun.created_at.desc())
+                .all()
+            )
+            ids = [row.id for row in rows]
+        finally:
+            db.close()
+        return [run for run in (get_run(i) for i in ids) if run]
+    except Exception:
+        return []
+
+
 def set_run_stage(run_id, stage):
     """Record the run's current stage (observability only)."""
     if not run_id:
@@ -259,9 +335,11 @@ def submit_production(project_id, script_text, options=None):
     return _insert_run(project_id, script_text, options, "queued")
 
 
-def _claim_row(row_id):
-    """Atomically move one queued run to running (conditional UPDATE
-    guarded on status='queued' — exactly one claimant can win)."""
+def _claim_row(row_id, from_statuses=("queued",)):
+    """Atomically move one run to running (conditional UPDATE
+    guarded on the expected status — exactly one claimant can win).
+    The default claim source is 'queued'; the Stage 4 plan-approval
+    release claims from 'awaiting_approval' instead."""
     from models import ProductionRun
     from sqlalchemy import update
 
@@ -271,7 +349,7 @@ def _claim_row(row_id):
             update(ProductionRun)
             .where(
                 ProductionRun.id == row_id,
-                ProductionRun.status == "queued",
+                ProductionRun.status.in_(tuple(from_statuses)),
             )
             .values(status="running", started_at=_now())
         )
@@ -281,7 +359,7 @@ def _claim_row(row_id):
         db.close()
 
 
-def claim_run(run_id):
+def claim_run(run_id, from_statuses=("queued",)):
     """Claim a specific queued run (used when an enqueue carries its
     run_id). Returns the run dict when this caller won the claim,
     else None (already claimed / cancelled / finished / unknown)."""
@@ -289,7 +367,7 @@ def claim_run(run_id):
         return None
     for attempt in range(3):
         try:
-            if _claim_row(str(run_id)):
+            if _claim_row(str(run_id), from_statuses=from_statuses):
                 return get_run(run_id)
             return None
         except Exception as error:
@@ -850,6 +928,164 @@ def decision_counts(run_id):
             "total": len(rows),
         }
     except Exception:
+        return None
+
+
+def list_decisions(run_id, limit=100, offset=0):
+    """One page of a run's asset decisions, oldest first (the order
+    they were recorded). Returns (rows, total) with rows as plain
+    dicts; ([], 0) when the ledger is unavailable."""
+    if not run_id:
+        return [], 0
+    try:
+        from models import AssetDecision
+
+        db = _session()
+        try:
+            query = db.query(AssetDecision).filter(
+                AssetDecision.run_id == str(run_id)
+            )
+            total = query.count()
+            rows = (
+                query.order_by(AssetDecision.created_at.asc())
+                .offset(max(0, int(offset)))
+                .limit(max(1, int(limit)))
+                .all()
+            )
+            return (
+                [
+                    {
+                        "id": row.id,
+                        "run_id": row.run_id,
+                        "project_id": row.project_id,
+                        "asset_key": row.asset_key,
+                        "content_hash": row.content_hash,
+                        "source_url": row.source_url,
+                        "provider": row.provider,
+                        "scene_number": row.scene_number,
+                        "sentence_number": row.sentence_number,
+                        "interval_start": row.interval_start,
+                        "interval_duration": row.interval_duration,
+                        "evidence_class": row.evidence_class,
+                        "verification": row.verification,
+                        "rights": row.rights,
+                        "decision_type": row.decision_type,
+                        "previous_decision_id": row.previous_decision_id,
+                        "created_at": row.created_at,
+                    }
+                    for row in rows
+                ],
+                total,
+            )
+        finally:
+            db.close()
+    except Exception:
+        return [], 0
+
+
+def record_swap_decisions(run_id, project_id, *, scene_number,
+                          sentence_number, original, refreshed):
+    """Append the swapped_out / swapped_in pair for a post-run
+    review swap (Stage 4 plan decisions, on top of Stage 1's MA-33
+    machinery). The swapped_out row carries ONLY the replaced
+    asset's identity — its evidence stays in its own original
+    decision rows — and the swapped_in row carries the replacement's
+    FRESH probe / verdict / rights from the refreshed record the
+    caller built via _refresh_swapped_asset. Returns the new
+    swapped_in row id, or None (fail-soft)."""
+    if not run_id:
+        return None
+    try:
+        from models import AssetDecision
+
+        hash_cache: dict = {}
+        original_path = str(
+            (original or {}).get("file_path")
+            or (original or {}).get("path")
+            or ""
+        )
+        refreshed_path = str(
+            (refreshed or {}).get("file_path")
+            or (refreshed or {}).get("path")
+            or ""
+        )
+        db = _session()
+        try:
+            out_row = AssetDecision(
+                id=_new_uuid(),
+                run_id=str(run_id),
+                project_id=str(project_id),
+                asset_key=(
+                    (original or {}).get("candidate_id")
+                    or _file_sha256(original_path, hash_cache)
+                    or original_path
+                    or None
+                ),
+                content_hash=_file_sha256(original_path, hash_cache),
+                source_url=(
+                    (original or {}).get("source_url")
+                    or (original or {}).get("video_url")
+                    or (original or {}).get("image_url")
+                    or None
+                ),
+                provider=str(
+                    (original or {}).get("provider")
+                    or (original or {}).get("source")
+                    or "unknown"
+                ),
+                scene_number=scene_number,
+                sentence_number=sentence_number,
+                interval_start=(original or {}).get("clip_start"),
+                interval_duration=(original or {}).get("duration_seconds"),
+                evidence_class=None,
+                verification=None,
+                rights=None,
+                decision_type="swapped_out",
+                previous_decision_id=None,
+                created_at=_now(),
+            )
+            db.add(out_row)
+            db.flush()
+            in_row = AssetDecision(
+                id=_new_uuid(),
+                run_id=str(run_id),
+                project_id=str(project_id),
+                asset_key=(
+                    (refreshed or {}).get("candidate_id")
+                    or _file_sha256(refreshed_path, hash_cache)
+                    or refreshed_path
+                    or None
+                ),
+                content_hash=_file_sha256(refreshed_path, hash_cache),
+                source_url=(
+                    (refreshed or {}).get("source_url")
+                    or (refreshed or {}).get("video_url")
+                    or (refreshed or {}).get("image_url")
+                    or None
+                ),
+                provider=str(
+                    (refreshed or {}).get("provider")
+                    or (refreshed or {}).get("source")
+                    or "unknown"
+                ),
+                scene_number=scene_number,
+                sentence_number=sentence_number,
+                interval_start=(refreshed or {}).get("clip_start"),
+                interval_duration=(refreshed or {}).get("duration_seconds"),
+                evidence_class=(refreshed or {}).get("segment_evidence"),
+                verification=_asset_verification(refreshed or {}),
+                rights=_asset_rights(refreshed or {}),
+                decision_type="swapped_in",
+                previous_decision_id=out_row.id,
+                created_at=_now(),
+            )
+            db.add(in_row)
+            db.commit()
+            return in_row.id
+        finally:
+            db.close()
+    except Exception as error:
+        print(f"WARNING: swap decision recording failed: {error}")
         return None
 
 

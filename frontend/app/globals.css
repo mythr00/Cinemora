@@ -1,16 +1,43 @@
 @import "tailwindcss";
 
+/* MA-43 consolidation: this file previously declared :root custom
+   properties in four stacked blocks (plus the dark one-line block),
+   with appearance depending on cascade order. They are merged here
+   into ONE block carrying, for each property, the value the LAST
+   block set — which is exactly the value every var() reference in
+   the file already resolved to, so computed styles are unchanged.
+   app/cinemora-design.css loads after this file and still overrides
+   the properties it declares. */
 :root {
   color-scheme: light;
-  --ink: #17191c;
-  --ink-soft: #34373b;
-  --muted: #666b71;
-  --line: #cfd2d6;
+  --ink: #101828;
+  --ink-soft: #344054;
+  --ink-muted: #5f6d80;
+  --ink-dim: #74776e;
+  --muted: #59677c;
+  --line: #dce3ed;
+  --line-soft: #e6ebf2;
   --paper: #ffffff;
   --surface: #ffffff;
-  --surface-low: #f4f7fb;
+  --surface-raised: #1e211d;
+  --surface-soft: #f4f7fc;
+  --surface-low: #f5f7fb;
+  --night: #ffffff;
   --accent: #315cff;
-  --danger: #9c3030;
+  --accent-strong: #1946e8;
+  --accent-hover: #2149cf;
+  --accent-soft: #eef3ff;
+  --green: #315cff;
+  --positive: #18794e;
+  --warning: #a15c00;
+  --danger: #b42336;
+  --information: #315cff;
+  --focus: #315cff;
+  --type-display: clamp(3rem, 6vw, 5.125rem);
+  --type-section: clamp(2.25rem, 4.5vw, 3.75rem);
+  --type-body: 1rem;
+  --space-page: clamp(1.125rem, 4vw, 4rem);
+  --space-section: clamp(4rem, 9vw, 7.5rem);
 }
 
 * { box-sizing: border-box; }
@@ -396,7 +423,8 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
 @media (max-width: 560px) { .background-grid, .lab-fields { grid-template-columns: 1fr; } .voice-panel { padding: 15px 13px 12px; } .lab-content { padding: 28px 0; } .lab-url-row { align-items: stretch; flex-direction: column; } .lab-url-row button { width: 100%; } .lab-form, .lab-results, .lab-script { padding: 14px; } }
 
 /* Cinemora editorial system */
-:root { color-scheme: dark; --night: #10120f; --surface: #171a16; --surface-raised: #1e211d; --surface-soft: #242822; --ink: #f1eee5; --ink-muted: #a4a69c; --ink-dim: #74776e; --line: #343830; --line-soft: #292d27; --accent: #e39a68; --accent-strong: #efa978; --green: #9bc2a2; --danger: #ef9990; }
+/* (The dark :root block that stood here was consolidated into the
+   single :root block at the top of this file — MA-43.) */
 html, body { background: var(--night); color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
 body { min-height: 100vh; }
 button, a, input, textarea, select { transition: color .18s ease, background-color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
@@ -823,23 +851,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 /* Cinemora blue / white production system */
-:root {
-  color-scheme: light;
-  --ink: #101828;
-  --ink-soft: #273449;
-  --ink-muted: #5f6d80;
-  --line: #d6deea;
-  --line-soft: #e6ebf2;
-  --paper: #ffffff;
-  --surface: #ffffff;
-  --surface-soft: #f4f7fc;
-  --surface-low: #eef3fa;
-  --night: #ffffff;
-  --accent: #315cff;
-  --accent-strong: #1946e8;
-  --green: #315cff;
-  --danger: #bb2939;
-}
+/* (This :root block was consolidated into the single :root block
+   at the top of this file — MA-43.) */
 html, body { background: #fff; color: #101828; }
 body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid #315cff; outline-offset: 3px; }
@@ -1109,28 +1122,8 @@ button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visi
 }
 
 /* White-first system and product storytelling additions. */
-:root {
-  --paper: #ffffff;
-  --surface: #ffffff;
-  --surface-low: #f5f7fb;
-  --ink: #101828;
-  --ink-soft: #344054;
-  --muted: #59677c;
-  --line: #dce3ed;
-  --accent: #315cff;
-  --accent-hover: #2149cf;
-  --accent-soft: #eef3ff;
-  --focus: #315cff;
-  --positive: #18794e;
-  --warning: #a15c00;
-  --danger: #b42336;
-  --information: #315cff;
-  --type-display: clamp(3rem, 6vw, 5.125rem);
-  --type-section: clamp(2.25rem, 4.5vw, 3.75rem);
-  --type-body: 1rem;
-  --space-page: clamp(1.125rem, 4vw, 4rem);
-  --space-section: clamp(4rem, 9vw, 7.5rem);
-}
+/* (This :root block was consolidated into the single :root block
+   at the top of this file — MA-43.) */
 
 html, body { background: #fff; }
 body { color: #101828; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
