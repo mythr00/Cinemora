@@ -83,11 +83,56 @@ def _footer(draw, tokens, label="CINEMORA / GENERATED GRAPHIC"):
 def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
     style_name, tokens = resolve_style(style)
     data = data or {}
-    regions = data.get("regions") or []
-    valid = [r for r in regions if isinstance(r, dict) and len(r.get("points") or []) >= 3]
+    raw_regions = [r for r in (data.get("regions") or []) if isinstance(r, dict)]
+
+    # Stage 5C: a region may name a dataset country ("country" or
+    # "name") instead of supplying points. All dataset regions on
+    # one map share ONE projection (union bbox, aspect-preserved)
+    # so their relative positions stay true. Caller points always
+    # win when both are present; a country missing from the dataset
+    # is skipped — never approximated.
+    valid = []
+    outline_sources = []
+    dataset_projection = None
+    country_names_req = [
+        r.get("country") or r.get("name")
+        for r in raw_regions
+        if len(r.get("points") or []) < 3 and (r.get("country") or r.get("name"))
+    ]
+    if country_names_req:
+        try:
+            from services.motion_engine import geography
+
+            dataset_projection = geography.fit_projection(country_names_req)
+        except Exception:
+            dataset_projection = None
+    for region in raw_regions:
+        points = region.get("points") or []
+        if len(points) >= 3:
+            valid.append({**region, "_polygons": [[points]], "_source": "caller"})
+            outline_sources.append("caller")
+            continue
+        cname = region.get("country") or region.get("name")
+        if cname and dataset_projection is not None:
+            try:
+                from services.motion_engine import geography
+
+                polygons = geography.outline_for(cname, dataset_projection)
+            except Exception:
+                polygons = []
+            if polygons:
+                entry = {**region, "_polygons": polygons, "_source": "dataset"}
+                if not _clean(entry.get("label")):
+                    entry["label"] = str(cname)
+                valid.append(entry)
+                outline_sources.append("dataset")
     if not valid:
         return None, {"reason": "no_polygon_data"}
     routes = [r for r in (data.get("routes") or []) if isinstance(r, dict) and len(r.get("points") or []) >= 2]
+    markers = [
+        m for m in (data.get("markers") or [])
+        if isinstance(m, dict) and isinstance(m.get("at"), (list, tuple)) and len(m.get("at")) >= 2
+    ]
     title = _clean(data.get("title"))
     bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=11)
     fonts = {
@@ -107,8 +152,9 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
         d = ImageDraw.Draw(layer.image, "RGBA")
         sweep = ease_in_out(clamp01(progress * 1.15))
         for region in valid:
-            pts = px(region["points"])
-            xs = [p[0] for p in pts]
+            polygons_px = [[px(ring) for ring in poly] for poly in region["_polygons"]]
+            all_pts = [p for poly in polygons_px for ring in poly for p in ring]
+            xs = [p[0] for p in all_pts]
             fill = region.get("fill") or tokens["accent"]
             if isinstance(fill, (list, tuple)):
                 fill_rgb = tuple(fill[:3])
@@ -118,30 +164,57 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
             reveal_x = min(xs) + (max(xs) - min(xs)) * sweep if max(xs) > min(xs) else max(xs)
             region_img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
             rd = ImageDraw.Draw(region_img)
-            rd.polygon(pts, fill=fill_rgb + (178,))
+            for poly in polygons_px:
+                if poly:
+                    rd.polygon(poly[0], fill=fill_rgb + (178,))
             mask = Image.new("L", (WIDTH, HEIGHT), 0)
             ImageDraw.Draw(mask).rectangle([0, 0, reveal_x, HEIGHT], fill=255)
             layer.image.paste(region_img, (0, 0), Image.composite(region_img, Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0)), mask))
-            # Glow outline + white outline.
-            for wdt, alpha in ((10, 60), (4, 160)):
-                d.line(pts + [pts[0]], fill=fill_rgb + (alpha,), width=wdt, joint="curve")
-            d.line(pts + [pts[0]], fill=(255, 255, 255, 235), width=2, joint="curve")
+            # Glow outline + white outline (every ring).
+            for poly in polygons_px:
+                for ring in poly:
+                    for wdt, alpha in ((10, 60), (4, 160)):
+                        d.line(ring + [ring[0]], fill=fill_rgb + (alpha,), width=wdt, joint="curve")
+                    d.line(ring + [ring[0]], fill=(255, 255, 255, 235), width=2, joint="curve")
             label = _clean(region.get("label"))
-            if label and sweep > 0.55:
-                cx = sum(xs) / len(xs)
-                ys = [p[1] for p in pts]
-                cy = sum(ys) / len(ys)
+            if label and sweep > 0.55 and polygons_px and polygons_px[0]:
+                main_ring = polygons_px[0][0]
+                cx = sum(p[0] for p in main_ring) / len(main_ring)
+                cy = sum(p[1] for p in main_ring) / len(main_ring)
                 tw = d.textlength(label.upper(), font=fonts["label"])
                 d.text((cx - tw / 2, cy - 20), label.upper(), font=fonts["label"], fill=(255, 255, 255, 255))
+        route_frac = ease_in_out(clamp01(progress * 1.3 - 0.1))
         for route in routes:
             pts = px(route["points"])
-            progressive_polyline(d, pts, ease_in_out(clamp01(progress * 1.3 - 0.1)),
-                                 fill=tokens["accent2"] + (255,), width=6)
+            if route.get("dashed"):
+                core.dashed_polyline(d, pts, route_frac,
+                                     fill=(255, 255, 255, 240), width=5, dash=30, gap=20)
+            else:
+                progressive_polyline(d, pts, route_frac,
+                                     fill=tokens["accent2"] + (255,), width=6)
             for (x, y) in pts:
                 d.ellipse([x - 8, y - 8, x + 8, y + 8], fill=(255, 255, 255, 255))
             rlabel = _clean(route.get("label"))
             if rlabel and pts:
                 d.text((pts[0][0] + 14, pts[0][1] - 34), rlabel, font=fonts["small"], fill=tokens["text"] + (255,))
+            dist_label = _clean(route.get("distance_label"))
+            if dist_label and pts and route_frac > 0.9:
+                mx = sum(p[0] for p in pts) / len(pts)
+                my = sum(p[1] for p in pts) / len(pts)
+                dw = d.textlength(dist_label, font=fonts["label"])
+                d.rectangle([mx - dw / 2 - 14, my + 16, mx + dw / 2 + 14, my + 66],
+                            fill=(0, 0, 0, 150))
+                d.text((mx - dw / 2, my + 24), dist_label, font=fonts["label"],
+                       fill=(255, 255, 255, 255))
+        if sweep > 0.5:
+            for marker in markers:
+                mx, my = marker["at"][0] * WIDTH, marker["at"][1] * HEIGHT
+                d.ellipse([mx - 9, my - 9, mx + 9, my + 9], fill=(255, 255, 255, 255),
+                          outline=tokens["accent"] + (255,), width=3)
+                mlabel = _clean(marker.get("label"))
+                if mlabel:
+                    d.text((mx + 18, my - 14), mlabel, font=fonts["small"],
+                           fill=tokens["text"] + (255,))
         top = canvas.new_layer("text")
         td = ImageDraw.Draw(top.image, "RGBA")
         if title:
@@ -151,7 +224,9 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
 
     path = core.render_template(draw_frame, out_path, duration=duration)
     return path, _meta("territory_map", style_name, duration, sentence_index, scene_number,
-                       {"regions": len(valid), "routes": len(routes), "title": bool(title)})
+                       {"regions": len(valid), "routes": len(routes), "title": bool(title),
+                        "outline_sources": outline_sources, "markers": len(markers),
+                        "dashed_routes": sum(1 for r in routes if r.get("dashed"))})
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +534,19 @@ def outcome_path(data, style, out_path, duration=5.0, sentence_index=None, scene
 # 6. Stat comparison
 # ---------------------------------------------------------------------------
 
+def _stat_bar_width(value, max_value, local, max_w=1050, min_w=30):
+    """Bar width for stat_comparison. Proportional to the value,
+    with a minimum visible stub for small-but-nonzero values: at
+    extreme ratios (101 vs 2) a purely proportional bar is ~20px
+    and reads as absent (v1 benchmark gap). The printed value next
+    to the bar always carries the exact number, so the floor is a
+    legibility device, not a data distortion. Zero stays zero."""
+    if not value or not max_value:
+        return 0
+    proportional = int(max_w * (abs(value) / max_value) * local)
+    return max(proportional, int(min_w * local))
+
+
 def stat_comparison(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
     style_name, tokens = resolve_style(style)
     data = data or {}
@@ -499,7 +587,7 @@ def stat_comparison(data, style, out_path, duration=5.0, sentence_index=None, sc
             d.text((110, y), item["label"][:36], font=fonts["label"], fill=tokens["text"] + (255,))
             bar_x, bar_max_w = 560, 1050
             d.rectangle([bar_x, y + 2, bar_x + bar_max_w, y + 36], fill=(255, 255, 255, 28))
-            wdt = int(bar_max_w * (abs(item["value"]) / max_value) * local)
+            wdt = _stat_bar_width(item["value"], max_value, local, max_w=bar_max_w)
             colour = tokens["accent"] if i == 0 else tokens["accent2"]
             d.rectangle([bar_x, y + 2, bar_x + wdt, y + 36], fill=colour + (255,))
             if local >= 0.98 and item["display"]:
@@ -587,3 +675,10 @@ TEMPLATES = {
     "stat_comparison": stat_comparison,
     "document_presentation": document_presentation,
 }
+
+# Stage 5B: the v2 template family (reference set 2) registers into
+# this dict from templates_v2 itself (one lookup point for the
+# graphics chain). Registration lives there — not in a bottom
+# import here — so importing templates_v2 first cannot deadlock
+# on a partially initialised module; the package __init__ imports
+# both modules in order.

@@ -376,18 +376,21 @@ def dry_run_case_bible(script, project_dir, project_id="dry_run", llm="auto"):
     }
 
 
-def analyze_script(script, project_id="", cache_path=None, llm="auto"):
+def analyze_script(script, project_id="", cache_path=None, llm="auto", genre_pack=None):
     """
     llm="auto" -> use configured provider (services.llm_client.get_llm()).
     llm=None   -> force degraded (no-LLM) mode.
     llm=callable(system, user) -> use that.
+    genre_pack: a services.genre_packs pack dict (Stage 5A) shaping
+    the research pass's query construction; None = Stage 3A behaviour.
     """
     sentence_texts = split_sentences(script)
     if llm == "auto":
         llm = get_llm()
 
     bible, plans, mode = story.plan_script(
-        clean_text(script), sentence_texts, llm, cache_path=cache_path
+        clean_text(script), sentence_texts, llm, cache_path=cache_path,
+        genre_pack=genre_pack,
     )
 
     analyzed = [

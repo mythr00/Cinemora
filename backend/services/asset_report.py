@@ -95,7 +95,7 @@ def _timeline_items(timeline_result) -> list:
     return items
 
 
-def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None) -> dict:
+def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None, genre_pack=None) -> dict:
     """Build the report from real pipeline outputs.
 
     processed_scenes: scene result dicts from the media pipeline.
@@ -372,6 +372,12 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "execution": execution,
         # Stage 3H: soundtrack honesty record (see docstring).
         "soundtrack": soundtrack,
+        # Stage 5A: the active genre pack for this run as
+        # {"id", "source"} (services.genre_packs) — the pack shaped
+        # research queries, graphics template order and engine
+        # style; the report records which one was active. None when
+        # the caller resolved no pack.
+        "genre_pack": genre_pack,
         # VA-09: the four verification dimensions, kept separate —
         # technical validity, metadata relevance, segment evidence
         # and rights are different judgements and are never merged

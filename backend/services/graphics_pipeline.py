@@ -1006,12 +1006,22 @@ def _parse_event_date(when):
     return value
 
 
+# Stage 5 (Motion Graphics V2): the scan sweep completes in this
+# fraction of the graphic's duration and then rests at the line's
+# end. At 1.0 the final node (x=1730) only appeared at t=95.8% of
+# the duration — the v1 benchmark's "final node missing at 90%"
+# defect. At 0.85 the last reveal lands at ~81%.
+TIMELINE_SCAN_FRACTION = 0.85
+
+
 def _timeline_node_positions(usable, duration):
     """Stage B: node x positions PROPORTIONAL to the events' actual
     dates when at least two distinct dates parse; otherwise the
     historical even spacing. Returns (positions, spacing_mode) where
     spacing_mode is 'proportional' or 'even_fallback'. The reveal
-    time of node i is when the scan line reaches its x position."""
+    time of node i is when the scan line reaches its x position;
+    the scan sweeps on the compressed TIMELINE_SCAN_FRACTION clock
+    so the final node is revealed well before the graphic ends."""
     line_start = 120.0
     line_span = 1680.0
     dates = [_parse_event_date(event.get("when", "")) for event in usable]
@@ -1055,7 +1065,8 @@ def _timeline_node_positions(usable, duration):
                 positions[i] = positions[i - 1] + min_gap
 
     reveals = [
-        duration * ((x - line_start) / line_span) for x in positions
+        duration * TIMELINE_SCAN_FRACTION * ((x - line_start) / line_span)
+        for x in positions
     ]
     return positions, mode, reveals
 
@@ -1191,11 +1202,13 @@ def _render_timeline_graphic(
         ]
 
     # Moving scan line gives the timeline actual motion. It sweeps
-    # the line across the graphic's own duration so node reveals
-    # stay synchronised with it.
+    # the line on the compressed TIMELINE_SCAN_FRACTION clock (and
+    # rests at the end) so node reveals stay synchronised with it
+    # and the final node lands well before the graphic ends.
+    sweep = duration * TIMELINE_SCAN_FRACTION
     filters += [
         "drawbox="
-        f"x='120+1680*t/{duration:.3f}':"
+        f"x='120+1680*min(1\\,t/{sweep:.3f})':"
         "y=495:"
         "w=8:"
         "h=14:"
@@ -1557,6 +1570,7 @@ def build_motion_graphics_assets(
     mode="balanced",
     targets=None,
     max_stats=None,
+    genre_pack=None,
 ):
     """
     Generate real standalone MP4 motion-graphic assets.
@@ -2081,6 +2095,43 @@ def build_motion_graphics_assets(
     covered = set()
     targeted_generated = 0
 
+    # Stage 5A: genre-pack influence on the targeted chain. The
+    # pack (services.genre_packs data) contributes an ordered motif
+    # preference list and a motion-engine style family. With no
+    # pack, the chain keeps its exact Stage 3 behaviour — same
+    # candidate sets, same order, same per-template styles.
+    _pack = genre_pack if isinstance(genre_pack, dict) else {}
+    _pack_id = _pack.get("id")
+    _motifs = [m for m in (_pack.get("graphics_motifs") or []) if isinstance(m, str)]
+    _pack_style = _pack.get("style_family") or None
+
+    def _style_for(default):
+        return _pack_style or default
+
+    def _order_by_motif(candidates):
+        """Stable-sort (name, data, style) candidates by the pack's
+        motif preference; unlisted templates keep their relative
+        order after the listed ones."""
+        if not _motifs:
+            return candidates
+
+        def _key(item):
+            try:
+                return (0, _motifs.index(item[0]))
+            except ValueError:
+                return (1, 0)
+
+        return sorted(candidates, key=_key)
+
+    def _badges_from_items(items, limit=3):
+        return [
+            {
+                "value": item.get("display") or f"{item.get('value'):g}",
+                "label": item.get("label") or "",
+            }
+            for item in items[:limit]
+        ]
+
     # Stage 3D targeted fallback chain. Each target is routed, in
     # order: stat -> chronology/timeline -> process -> event
     # schematic -> Motion Engine templates -> recorded skip.
@@ -2140,25 +2191,59 @@ def build_motion_graphics_assets(
 
         def _engine_alternative():
             """An engine template that fits this sentence, or None.
-            Used by the variety rule and the engine stage itself."""
+            Used by the variety rule and the engine stage itself.
+            With a genre pack, every fitting template is a candidate
+            and the pack's motif order picks the first; without one,
+            the Stage 3 first-fit order applies unchanged."""
+            if _pack_id is None:
+                if percent is not None:
+                    return ("data_gauge", {
+                        "percent": percent, "label": shorten(text, 52),
+                        "sublabel": text,
+                    }, "editorial")
+                if comparison:
+                    return ("stat_comparison", {
+                        "items": comparison, "title": shorten(text, 60),
+                    }, "editorial")
+                if has_document:
+                    return ("document_presentation", {
+                        "title": shorten(text, 52),
+                        "source_label": "Narration sentence",
+                        "date_label": detect_date(text) or "",
+                        "body": text,
+                        "highlight": "",
+                    }, "history")
+                return None
+            candidates = []
             if percent is not None:
-                return ("data_gauge", {
+                candidates.append(("data_gauge", {
                     "percent": percent, "label": shorten(text, 52),
                     "sublabel": text,
-                }, "editorial")
+                }, _style_for("editorial")))
+                candidates.append(("ring_badges", {
+                    "badges": [{"value": f"{percent:g}%", "label": shorten(text, 44)}],
+                }, _style_for("editorial")))
             if comparison:
-                return ("stat_comparison", {
+                candidates.append(("bar_chart", {
                     "items": comparison, "title": shorten(text, 60),
-                }, "editorial")
+                }, _style_for("editorial")))
+                candidates.append(("stat_comparison", {
+                    "items": comparison, "title": shorten(text, 60),
+                }, _style_for("editorial")))
+                candidates.append(("ring_badges", {
+                    "badges": _badges_from_items(comparison),
+                }, _style_for("editorial")))
             if has_document:
-                return ("document_presentation", {
+                candidates.append(("document_presentation", {
                     "title": shorten(text, 52),
                     "source_label": "Narration sentence",
                     "date_label": detect_date(text) or "",
                     "body": text,
                     "highlight": "",
-                }, "history")
-            return None
+                }, _style_for("history")))
+            if not candidates:
+                return None
+            return _order_by_motif(candidates)[0]
 
         produced_family = None
         produced_reason = ""
@@ -2223,22 +2308,53 @@ def build_motion_graphics_assets(
         # render failure).
         if produced_family is None:
             _candidates = []
-            if comparison:
-                _candidates.append(("stat_comparison", {
-                    "items": comparison, "title": shorten(text, 60),
-                }, "editorial"))
-            if has_document:
-                _candidates.append(("document_presentation", {
-                    "title": shorten(text, 52),
-                    "source_label": "Narration sentence",
-                    "date_label": detect_date(text) or "",
-                    "body": text, "highlight": "",
-                }, "history"))
-            if percent is not None:
-                _candidates.append(("data_gauge", {
-                    "percent": percent, "label": shorten(text, 52),
-                    "sublabel": text,
-                }, "editorial"))
+            if _pack_id is not None:
+                # Stage 5A/5B: pack-ordered candidates, including
+                # the v2 bar_chart (multi-value comparisons) and
+                # ring_badges; styles come from the pack's family.
+                if comparison:
+                    _candidates.append(("bar_chart", {
+                        "items": comparison, "title": shorten(text, 60),
+                    }, _style_for("editorial")))
+                    _candidates.append(("stat_comparison", {
+                        "items": comparison, "title": shorten(text, 60),
+                    }, _style_for("editorial")))
+                    _candidates.append(("ring_badges", {
+                        "badges": _badges_from_items(comparison),
+                    }, _style_for("editorial")))
+                if has_document:
+                    _candidates.append(("document_presentation", {
+                        "title": shorten(text, 52),
+                        "source_label": "Narration sentence",
+                        "date_label": detect_date(text) or "",
+                        "body": text, "highlight": "",
+                    }, _style_for("history")))
+                if percent is not None:
+                    _candidates.append(("data_gauge", {
+                        "percent": percent, "label": shorten(text, 52),
+                        "sublabel": text,
+                    }, _style_for("editorial")))
+                    _candidates.append(("ring_badges", {
+                        "badges": [{"value": f"{percent:g}%", "label": shorten(text, 44)}],
+                    }, _style_for("editorial")))
+                _candidates = _order_by_motif(_candidates)
+            else:
+                if comparison:
+                    _candidates.append(("stat_comparison", {
+                        "items": comparison, "title": shorten(text, 60),
+                    }, "editorial"))
+                if has_document:
+                    _candidates.append(("document_presentation", {
+                        "title": shorten(text, 52),
+                        "source_label": "Narration sentence",
+                        "date_label": detect_date(text) or "",
+                        "body": text, "highlight": "",
+                    }, "history"))
+                if percent is not None:
+                    _candidates.append(("data_gauge", {
+                        "percent": percent, "label": shorten(text, 52),
+                        "sublabel": text,
+                    }, "editorial"))
             for _name, _data, _style in _candidates:
                 if _make_engine_graphic(target, _name, _data, style=_style):
                     produced_family = "motion_engine"
@@ -2369,6 +2485,7 @@ def build_motion_graphics_assets(
             {
                 "mode": mode,
                 "max_stats": max_stats,
+                "genre_pack": _pack_id,
                 "count": len(assets),
                 "assets": assets,
                 "targets": {

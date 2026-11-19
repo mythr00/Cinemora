@@ -26,6 +26,7 @@ from services.asset_report import (
 )
 from services.visual_registry import reset_registry
 
+from services import genre_packs
 from services import media_paths
 from services import run_context
 from services import run_ledger
@@ -194,6 +195,7 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
             ),
             run_failure={"stage": stage, "error": str(error)},
             execution=run_metrics.snapshot(),
+            genre_pack=state.get("genre_pack"),
         )
         write_asset_report(project_dir, failure_report)
         print("Asset report (failure): written from partial state.")
@@ -313,7 +315,7 @@ def _planned_scenes_if_sane(planned, sentences, project_id, script_hash, bible, 
     return scenes
 
 
-def build_production_scenes(script: str, project_id: str = "", project_dir=None):
+def build_production_scenes(script: str, project_id: str = "", project_dir=None, genre_pack=None):
     project_dir = Path(project_dir) if project_dir else (
         media_paths.project_dir(project_id) if project_id else None
     )
@@ -326,6 +328,7 @@ def build_production_scenes(script: str, project_id: str = "", project_dir=None)
         script,
         project_id=project_id,
         cache_path=cache_path,
+        genre_pack=genre_pack,
     )
 
     if not isinstance(analysis, dict):
@@ -548,10 +551,15 @@ def run_analysis_phase(project_id: str, script: str, run_id: str = None, options
 
     _set_project_status(project_id, "running")
     try:
+        # Stage 5A: the analysis phase resolves the genre pack the
+        # same way the full pipeline does, so a gated run's research
+        # is shaped by the same pack its production will record.
+        _genre_info = genre_packs.resolve_genre_pack(options, script)
         production_data = build_production_scenes(
             script,
             project_id=project_id,
             project_dir=project_dir,
+            genre_pack=_genre_info["pack"],
         )
     except Exception as error:
         if run_id:
@@ -613,6 +621,19 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     if captions_mode not in ("burn", "sidecar", "off"):
         captions_mode = "burn"
 
+    # Stage 5A: resolve the genre pack (explicit "genre" option,
+    # else the conservative script detector, else "general") BEFORE
+    # the ledger run begins, so the resolved pack id lands in the
+    # run's options snapshot and therefore in the run manifest.
+    _genre_info = genre_packs.resolve_genre_pack(options, script)
+    _genre_pack = _genre_info["pack"]
+    options["genre_pack"] = _genre_info["pack_id"]
+    options["genre_source"] = _genre_info["source"]
+    print(
+        f"Genre pack: {_genre_info['pack_id']} "
+        f"(source: {_genre_info['source']})"
+    )
+
     # Stage 2: claim or begin the ledger run. All fail-soft — the
     # ledger records the run; it never gates it. When the caller
     # carries a run_id (the enqueue path), the queued run is claimed
@@ -655,6 +676,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         )
 
     state = create_production_state()
+    state["genre_pack"] = {
+        "id": _genre_info["pack_id"],
+        "source": _genre_info["source"],
+        "requested": _genre_info["requested"],
+    }
     save_production_state(project_dir, state)
     _set_project_status(project_id, "running")
 
@@ -740,6 +766,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             script,
             project_id=project_id,
             project_dir=project_dir,
+            genre_pack=_genre_pack,
         )
         analysis = production_data["analysis"]
         # VA-07: keep references to the accumulating run state so a
@@ -910,6 +937,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             mode="balanced",
             targets=graphic_targets,
             max_stats=MOTION_GRAPHIC_MAX_STATS,
+            genre_pack=_genre_pack,
         )
 
         # Attach each standalone motion graphic to its target scene/sentence
@@ -1261,6 +1289,10 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 if isinstance(soundtrack_record, dict)
                 else None
             ),
+            genre_pack={
+                "id": _genre_info["pack_id"],
+                "source": _genre_info["source"],
+            },
         )
         write_asset_report(project_dir, asset_report)
 

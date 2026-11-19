@@ -323,7 +323,7 @@ def _fake_analysis():
 def _stub_analysis(monkeypatch):
     analysis = _fake_analysis()
 
-    def fake_build(script, project_id="", project_dir=None):
+    def fake_build(script, project_id="", project_dir=None, genre_pack=None):
         return {
             "analysis": analysis,
             "sentences": analysis["sentences"],

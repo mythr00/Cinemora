@@ -14,6 +14,7 @@ no content of its own and invents nothing.
 """
 
 import math
+import random
 import subprocess
 from pathlib import Path
 
@@ -183,6 +184,62 @@ def progressive_polyline(draw, points, fraction, fill, width=4):
     return endpoint
 
 
+def dashed_polyline(draw, points, fraction, fill, width=4, dash=30.0, gap=20.0):
+    """Draw a dashed polyline, revealed progressively by length
+    (the first `fraction` of the total path length). The dash
+    pattern is anchored at the path start so the reveal grows the
+    pattern instead of sliding it. Returns the revealed endpoint."""
+    if not points or fraction <= 0:
+        return None
+    fraction = clamp01(fraction)
+    if len(points) == 1:
+        draw.ellipse(
+            [points[0][0] - width, points[0][1] - width,
+             points[0][0] + width, points[0][1] + width], fill=fill)
+        return points[0]
+    lengths = []
+    total = 0.0
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        seg = math.hypot(x1 - x0, y1 - y0)
+        lengths.append(seg)
+        total += seg
+    if total <= 0:
+        return points[-1]
+    target = total * fraction
+    walked = 0.0
+    endpoint = points[-1]
+    for idx, seg in enumerate(lengths):
+        if walked >= target:
+            break
+        x0, y0 = points[idx]
+        x1, y1 = points[idx + 1]
+        seg_end = min(walked + seg, target)
+        # Walk this segment in dash/gap steps (pattern anchored at
+        # the global walked distance).
+        cursor = walked
+        while cursor < seg_end:
+            phase = cursor % (dash + gap)
+            if phase < dash:
+                step_end = min(cursor + (dash - phase), seg_end)
+            else:
+                step_end = min(cursor + (dash + gap - phase), seg_end)
+                cursor = step_end
+                continue
+            f0 = 0.0 if seg == 0 else (cursor - walked) / seg
+            f1 = 0.0 if seg == 0 else (step_end - walked) / seg
+            draw.line(
+                [(x0 + (x1 - x0) * f0, y0 + (y1 - y0) * f0),
+                 (x0 + (x1 - x0) * f1, y0 + (y1 - y0) * f1)],
+                fill=fill, width=width,
+            )
+            cursor = step_end
+        if seg > 0:
+            f = (seg_end - walked) / seg
+            endpoint = (x0 + (x1 - x0) * f, y0 + (y1 - y0) * f)
+        walked += seg
+    return endpoint
+
+
 def reveal_wipe(base_image, overlay_image, fraction, direction="left"):
     """Return overlay revealed over base by a straight wipe."""
     fraction = clamp01(fraction)
@@ -326,3 +383,110 @@ def render_video(draw_frame_fn, out_path, duration=5.0, fps=FPS):
 # render_template is the template-facing name for the same verified path.
 def render_template(draw_frame_fn, out_path, duration=5.0, fps=FPS):
     return render_video(draw_frame_fn, out_path, duration=duration, fps=fps)
+
+
+# ---------------------------------------------------------------------------
+# Layout: safe areas, camera mapping, label placement (Stage 5,
+# Motion Graphics V2 brief — the v1 benchmark's multilayer piece
+# cropped its title and stat panel at the frame edges, and the
+# technical diagram's labels collided; this machinery is the fix)
+# ---------------------------------------------------------------------------
+
+# 5% title-safe margins for the 1920x1080 canvas. Content that must
+# survive a centre zoom is composed inside this rect.
+SAFE_MARGIN_X = 96
+SAFE_MARGIN_Y = 54
+
+
+def safe_rect():
+    """(x0, y0, x1, y1) of the title-safe area."""
+    return (SAFE_MARGIN_X, SAFE_MARGIN_Y,
+            WIDTH - SAFE_MARGIN_X, HEIGHT - SAFE_MARGIN_Y)
+
+
+def rect_after_camera(rect, scale=1.0, cam_x=0.0, cam_y=0.0, parallax=1.0):
+    """Map a layer-space rect through Canvas.composite's camera
+    transform (the layer is scaled about the frame centre; the
+    camera x/y shift is scaled by the layer's parallax). Returns
+    the frame-space rect the content lands in."""
+    x0, y0, x1, y1 = rect
+    off_x = (WIDTH - WIDTH * scale) / 2 + cam_x * parallax
+    off_y = (HEIGHT - HEIGHT * scale) / 2 + cam_y * parallax
+    return (x0 * scale + off_x, y0 * scale + off_y,
+            x1 * scale + off_x, y1 * scale + off_y)
+
+
+def rect_in_frame(rect, width=WIDTH, height=HEIGHT):
+    x0, y0, x1, y1 = rect
+    return x0 >= 0 and y0 >= 0 and x1 <= width and y1 <= height
+
+
+def max_centre_zoom(rect):
+    """Largest centre zoom (no camera translation) under which a
+    layer-space rect stays inside the frame. For the safe rect
+    this is ~1.11 — content composed inside the safe area survives
+    the zooms the engine actually uses (<= 1.10)."""
+    x0, y0, x1, y1 = rect
+    dx = max(abs(x0 - WIDTH / 2), abs(x1 - WIDTH / 2))
+    dy = max(abs(y0 - HEIGHT / 2), abs(y1 - HEIGHT / 2))
+    limits = []
+    if dx > 0:
+        limits.append((WIDTH / 2) / dx)
+    if dy > 0:
+        limits.append((HEIGHT / 2) / dy)
+    return min(limits) if limits else float("inf")
+
+
+def _boxes_overlap(a, b, gap=0.0):
+    return not (
+        a[2] + gap <= b[0] or b[2] + gap <= a[0]
+        or a[3] + gap <= b[1] or b[3] + gap <= a[1]
+    )
+
+
+def place_labels(items, bounds=None, gap=10.0):
+    """Collision-resolving label placement.
+
+    items: [{"key", "cx", "cy", "w", "h"}] — desired centre and
+    box size per label. Returns {key: (x0, y0, x1, y1)} with every
+    box clamped inside `bounds` (default: the safe rect) and no
+    two boxes overlapping. Boxes are NEVER resized — collisions
+    are resolved by offsetting/stacking only, so text is never
+    shrunk to fit. Deterministic: input order is preserved and
+    the offset search order is fixed (down, up, then sideways,
+    in growing steps)."""
+    bounds = bounds or safe_rect()
+    bx0, by0, bx1, by1 = (float(v) for v in bounds)
+    placed = []
+    result = {}
+    for item in items:
+        w, h = float(item["w"]), float(item["h"])
+        cx, cy = float(item["cx"]), float(item["cy"])
+
+        def box_at(centre_x, centre_y):
+            x0 = min(max(centre_x - w / 2, bx0), bx1 - w)
+            y0 = min(max(centre_y - h / 2, by0), by1 - h)
+            return (x0, y0, x0 + w, y0 + h)
+
+        candidates = [box_at(cx, cy)]
+        step = h + gap
+        for k in range(1, 7):
+            candidates.append(box_at(cx, cy + k * step))
+            candidates.append(box_at(cx, cy - k * step))
+        for k in range(1, 5):
+            candidates.append(box_at(cx + k * (w / 2 + gap), cy))
+            candidates.append(box_at(cx - k * (w / 2 + gap), cy))
+        chosen = None
+        for candidate in candidates:
+            if not any(_boxes_overlap(candidate, other, gap)
+                       for other in placed):
+                chosen = candidate
+                break
+        if chosen is None:
+            # No free slot in the search pattern: keep the clamped
+            # anchor position (still inside bounds, size intact).
+            chosen = candidates[0]
+        placed.append(chosen)
+        result[item["key"]] = chosen
+    return result
+

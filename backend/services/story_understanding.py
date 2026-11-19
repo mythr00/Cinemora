@@ -360,10 +360,17 @@ def _year_tokens(text):
     return set(_YEAR_RE.findall(str(text or "")))
 
 
-def _research_queries_for(bible, entity):
+def _research_queries_for(bible, entity, genre_pack=None):
     """1–2 queries for a subject: its canonical name, plus the name
     with a distinguishing term from the bible (era first, then a
-    place from the bible, then the entity's role)."""
+    place from the bible, then the entity's role).
+
+    Stage 5A: when a genre pack is supplied, its
+    research_query_templates are formatted per entity
+    ({name}/{era}/{place}/{role}) and appended — a template whose
+    placeholders cannot all be filled is skipped rather than
+    emitting a dangling query. The total stays bounded (<= 5:
+    the <= 2 base queries plus at most 3 pack templates)."""
     canonical = str(entity.get("canonical") or "").strip()
     if not canonical:
         return []
@@ -380,6 +387,35 @@ def _research_queries_for(bible, entity):
         term = str(entity.get("role") or "").strip()
     if term and term.lower() not in canonical.lower():
         queries.append(f"{canonical} {term}")
+    if isinstance(genre_pack, dict):
+        era = _year_or_decade(bible.get("time_period")) or _year_or_decade(
+            entity.get("description")
+        ) or ""
+        place = ""
+        for other in bible.get("entities") or []:
+            if other.get("type") == "place" and other.get("id") != entity.get("id"):
+                place = str(other.get("canonical") or "").strip()
+                break
+        values = {
+            "name": canonical,
+            "era": era,
+            "place": place,
+            "role": str(entity.get("role") or "").strip(),
+        }
+        for template in genre_pack.get("research_query_templates") or []:
+            if not isinstance(template, str):
+                continue
+            needed = set(re.findall(r"\{(\w+)\}", template))
+            if any(not values.get(key) for key in needed):
+                continue  # unfilled placeholder -> skip, never dangle
+            try:
+                query = " ".join(template.format(**values).split())
+            except (KeyError, IndexError, ValueError):
+                continue
+            if query and query not in queries:
+                queries.append(query)
+            if len(queries) >= 5:
+                break
     return queries
 
 
@@ -490,8 +526,13 @@ def _label_bible_facts(bible, by_id):
     return conflicts
 
 
-def enrich_bible_with_research(bible, script_text, sentences=None):
+def enrich_bible_with_research(bible, script_text, sentences=None, genre_pack=None):
     """Stage 3A research pass over a built bible (mutates and returns it).
+
+    Stage 5A: `genre_pack` (a services.genre_packs pack dict, or
+    None) shapes query construction via its
+    research_query_templates and is recorded in research_meta.
+    None keeps the exact Stage 3A behaviour.
 
     Subjects are identified across the WHOLE script (alias index +
     find_mentions over the full text and every sentence), ranked by
@@ -516,6 +557,7 @@ def enrich_bible_with_research(bible, script_text, sentences=None):
         "subjects_researched": 0,
         "sources_attached": 0,
         "conflicts_found": 0,
+        "genre_pack": (genre_pack or {}).get("id"),
     }
     try:
         alias_index = build_alias_index(entities)
@@ -544,7 +586,7 @@ def enrich_bible_with_research(bible, script_text, sentences=None):
                 seen_urls = {
                     s.get("url") for s in entity.get("sources") or []
                 }
-                for query in _research_queries_for(bible, entity):
+                for query in _research_queries_for(bible, entity, genre_pack=genre_pack):
                     if failures >= _RESEARCH_FAILURE_LIMIT:
                         break
                     try:
@@ -577,6 +619,7 @@ def enrich_bible_with_research(bible, script_text, sentences=None):
             "subjects_researched": subjects_researched,
             "sources_attached": sources_attached,
             "conflicts_found": len(conflicts),
+            "genre_pack": (genre_pack or {}).get("id"),
         }
     except Exception as error:  # research must never crash a production
         print(f"STORY RESEARCH: pass failed ({error}) — facts stay script_asserted.")
@@ -1161,7 +1204,7 @@ def _analysis_mode(bible, plans):
     return "partial_llm"
 
 
-def plan_script(script_text, sentences, llm, cache_path=None):
+def plan_script(script_text, sentences, llm, cache_path=None, genre_pack=None):
     """
     Returns (bible, plans, mode). mode is "llm", "partial_llm" or
     "degraded" (MA-27: derived from the bible AND the sentence plans
@@ -1192,7 +1235,7 @@ def plan_script(script_text, sentences, llm, cache_path=None):
     # heuristic bible paths land here) and stamp every plan with its
     # research_ref. Runs after sentence analysis so source snippets
     # never leak into the LLM's sentence prompts. Fail-soft by design.
-    enrich_bible_with_research(bible, script_text, sentences=sentences)
+    enrich_bible_with_research(bible, script_text, sentences=sentences, genre_pack=genre_pack)
     _attach_research_refs(plans, bible)
     mode = _analysis_mode(bible, plans)
     if llm is None:
