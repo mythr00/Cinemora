@@ -245,6 +245,30 @@ def main():
         "auditor consumed the report",
         audit.get("authentic") == report["authentic"],
     )
+    _card_assets = [
+        a
+        for s in processed_scenes
+        for a in list(s.get("videos") or []) + list(s.get("images") or [])
+        if a.get("source") == "text_card"
+        or a.get("type") == "text_card"
+        or a.get("visual_format") == "text_card"
+        or a.get("asset_scope") == "fallback_card"
+    ]
+    check(
+        "NO text-card placeholders anywhere (assets, report, renderer)",
+        not _card_assets
+        and report["text_cards"] == 0
+        and report["placeholder_clips"] == 0,
+        f"(card assets: {len(_card_assets)}, report cards: {report['text_cards']}, "
+        f"renderer placeholders: {report['placeholder_clips']}, "
+        f"holdovers of genuine media: {report.get('holdover_clips')})",
+    )
+    check(
+        "missing visuals explicitly reported, never substituted",
+        isinstance(report.get("missing_visuals"), list)
+        and report.get("missing_visual_count") == len(report["missing_visuals"]),
+        f"(missing: {report.get('missing_visual_count')})",
+    )
     check(
         "rights manifest covers every accepted asset",
         len(manifest) == report["total_accepted_assets"],

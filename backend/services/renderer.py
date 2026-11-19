@@ -349,60 +349,6 @@ def build_video_filter():
     )
 
 
-def create_placeholder_clip(duration, output_path, label="", frame_count=None):
-    if frame_count is None:
-        frame_count = duration_to_frames(duration)
-    frame_count = max(int(frame_count), 1)
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    safe_label = (label or "VISUAL UNAVAILABLE")[:48]
-    safe_label = (
-        safe_label
-        .replace("\\", "\\\\")
-        .replace(":", "\\:")
-        .replace("'", "")
-    )
-
-    vf = (
-        f"drawtext=font='Arial':"
-        f"text='{safe_label}':"
-        "fontcolor=white@0.85:"
-        "fontsize=36:"
-        "x=(w-text_w)/2:"
-        "y=(h-text_h)/2"
-    )
-
-    command = [
-        "ffmpeg", "-y",
-        "-f", "lavfi",
-        "-i", f"color=c=0x101010:s={WIDTH}x{HEIGHT}:r={FPS}",
-        "-vf", vf,
-        "-frames:v", str(frame_count),
-        "-fps_mode", "cfr",
-        "-c:v", VIDEO_CODEC,
-        "-preset", PRESET,
-        "-crf", CRF,
-        "-pix_fmt", "yuv420p",
-        "-an",
-        "-movflags", "+faststart",
-        str(output_path),
-    ]
-
-    success = run_ffmpeg(command)
-    if not success or not valid_media(output_path):
-        print(f"PLACEHOLDER FAILED: {output_path}")
-        return False
-
-    print(
-        f"PLACEHOLDER CLIP: {output_path} "
-        f"frames={frame_count} "
-        f"duration={exact_duration_from_frames(frame_count):.3f}s"
-    )
-    return True
-
-
 def create_image_clip(image_path, duration, output_path, frame_count=None):
     if not valid_media(image_path):
         print(f"Skipping invalid image: {image_path}")
@@ -568,6 +514,8 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
             "status": "empty",
             "placeholder_count": 0,
             "placeholder_items": [],
+            "holdover_count": 0,
+            "holdover_items": [],
         }
 
     clips_dir = Path(project_dir) / "clips" / f"scene_{scene_number}"
@@ -575,11 +523,26 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
 
     rendered_clips = []
     audits = []
-    # AUD-16: placeholder clips are substitutions, not footage. Every use
-    # is recorded here and surfaced in the scene audit, the renderer timing
-    # audit and the project asset report — a placeholder must never pass
-    # silently as genuine documentary footage.
-    placeholder_items = []
+    # Placeholder clips were removed permanently (founder directive):
+    # the renderer never fabricates a labelled stand-in card. When an
+    # item's media is missing or fails to render, the slot is covered
+    # by HOLDOVER — re-rendering a genuine visual from this scene
+    # (the most recent good one, else the scene's first valid media)
+    # for the item's exact duration — and every holdover is recorded
+    # here and surfaced in the scene audit, the renderer timing audit
+    # and the project asset report. If the scene has no genuine media
+    # at all, rendering fails loudly instead of shipping a card.
+    holdover_items = []
+    scene_fallback_media = None
+    for _candidate in items:
+        _candidate_path = _candidate.get("file_path") or _candidate.get("path") or ""
+        if _candidate_path and valid_media(_candidate_path):
+            scene_fallback_media = (
+                (_candidate.get("type") or "").lower(),
+                _candidate_path,
+            )
+            break
+    last_good_media = None
     allocations, scene_end_frame = allocate_item_frames(
         items,
         starting_frame,
@@ -631,37 +594,44 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
         else:
             print(
                 f"Item {index + 1}: missing or invalid media "
-                "— using exact-frame placeholder."
+                "— covering with a holdover of genuine scene media."
             )
 
-        used_placeholder = False
+        used_holdover = False
+        holdover_path = None
         if not success:
-            label = item.get("sentence") or item.get("title") or f"Scene {scene_number} · {index + 1}"
-            success = create_placeholder_clip(
-                duration,
-                output_path,
-                label=str(label)[:48],
-                frame_count=frame_count,
-            )
-            used_placeholder = bool(success)
-
-        if not success:
-            print(f"CRITICAL: visual {index + 1} failed.")
-            success = create_placeholder_clip(
-                duration,
-                output_path,
-                label="HOLD",
-                frame_count=frame_count,
-            )
-            used_placeholder = bool(success)
+            holdover = last_good_media or scene_fallback_media
+            if holdover is None:
+                raise RuntimeError(
+                    f"Scene {scene_number} item {index + 1}: media missing "
+                    "or failed to render and the scene has no genuine "
+                    "visual to hold over — refusing to substitute a "
+                    "placeholder."
+                )
+            holdover_type, holdover_path = holdover
+            if holdover_type == "video":
+                success = create_video_clip(
+                    holdover_path,
+                    duration,
+                    output_path,
+                    frame_count=frame_count,
+                )
+            else:
+                success = create_image_clip(
+                    holdover_path,
+                    duration,
+                    output_path,
+                    frame_count=frame_count,
+                )
+            used_holdover = bool(success)
 
         if not success:
             raise RuntimeError(
                 f"Unable to create timing-preserving clip scene={scene_number} item={index + 1}"
             )
 
-        if used_placeholder:
-            placeholder_items.append(
+        if used_holdover:
+            holdover_items.append(
                 {
                     "item_index": index + 1,
                     "sentence_index": item.get("sentence_index"),
@@ -671,8 +641,11 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                         if not media_ok
                         else "clip_creation_failed"
                     ),
+                    "held_from": holdover_path,
                 }
             )
+        elif media_ok:
+            last_good_media = (media_type, media_path)
 
         audit = audit_clip(
             output_path,
@@ -720,8 +693,13 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
         "timeline_item_count": len(items),
         "status": status,
         "items": audits,
-        "placeholder_count": len(placeholder_items),
-        "placeholder_items": placeholder_items,
+        # Placeholder clips no longer exist in the renderer; the
+        # count is reported as a true 0 (not "unknown") so the asset
+        # report's authenticity accounting stays exact.
+        "placeholder_count": 0,
+        "placeholder_items": [],
+        "holdover_count": len(holdover_items),
+        "holdover_items": holdover_items,
     }
 
     print()
@@ -916,9 +894,13 @@ def render_timeline(scenes, project_dir, expected_duration=None):
         "clip_count": len(all_clips),
         "scenes": scene_audits,
         "status": "pre_concat_pass",
-        # AUD-16: total placeholder substitutions across all scenes.
+        # Placeholder substitutions no longer exist (always 0);
+        # holdovers of genuine media are totalled alongside.
         "placeholder_count": sum(
             int(audit.get("placeholder_count") or 0) for audit in scene_audits
+        ),
+        "holdover_count": sum(
+            int(audit.get("holdover_count") or 0) for audit in scene_audits
         ),
     }
     with open(audit_file, "w", encoding="utf-8") as file:

@@ -112,6 +112,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     provider_funnel: dict[str, Counter] = {}
     kind_funnel: dict[str, Counter] = {}
     download_failures: list = []
+    missing_visuals: list = []
 
     for scene in processed_scenes or []:
         if not isinstance(scene, dict):
@@ -137,6 +138,14 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 except (TypeError, ValueError):
                     pass
         download_failures.extend(scene_stats.get("download_failures") or [])
+        # Sentences for which retrieval produced no verified visual.
+        # Since the text-card fallback was removed, these are reported
+        # explicitly here instead of being silently substituted.
+        for missing in scene_stats.get("missing_visuals") or []:
+            if isinstance(missing, dict):
+                missing_visuals.append(
+                    {"scene": scene.get("scene_number"), **missing}
+                )
         for asset in list(scene.get("videos") or []) + list(scene.get("images") or []):
             if not isinstance(asset, dict):
                 continue
@@ -197,11 +206,16 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         if is_repeat or loops:
             repeated += 1
 
-    # ---- renderer placeholders ---------------------------------------
+    # ---- renderer placeholders / holdovers ---------------------------
     if isinstance(renderer_audit, dict) and renderer_audit.get("placeholder_count") is not None:
         placeholder_clips = int(renderer_audit.get("placeholder_count") or 0)
     else:
         placeholder_clips = None  # unknown — never claim zero
+    holdover_clips = (
+        int(renderer_audit.get("holdover_count") or 0)
+        if isinstance(renderer_audit, dict)
+        else 0
+    )
 
     # ---- source reuse --------------------------------------------------
     source_counter = Counter(_source_name(a) for a in real_assets)
@@ -285,6 +299,9 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "generated_graphics": len(graphics),
         "text_cards": len(cards),
         "placeholder_clips": placeholder_clips,
+        "holdover_clips": holdover_clips,
+        "missing_visuals": missing_visuals,
+        "missing_visual_count": len(missing_visuals),
         "repeated_footage": repeated,
         "failed_downloads": stats["downloads_failed"],
         "low_confidence_selections": len(low_confidence),

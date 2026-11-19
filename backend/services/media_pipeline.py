@@ -4518,39 +4518,6 @@ def _uve_prepare_sentence_result(sentence, sentence_number, images, videos, stor
         },
     }
 
-def _write_text_card(scene_dir, beat, shot_need=None):
-    need = shot_need or {}
-    title = str(need.get("required_subject") or beat.get("label") or "Documentary").strip()
-    place = str(need.get("place") or "").strip()
-    era = str(need.get("era") or "").strip()
-    subtitle = " ".join(part for part in (place, era) if part) or str(beat.get("text") or "")[:90]
-    safe = _uve_safe_filename(title or "card")
-    path = Path(scene_dir) / f"card_{safe}.jpg"
-    image = Image.new("RGB", (1920, 1080), (18, 22, 28))
-    try:
-        from PIL import ImageDraw
-        draw = ImageDraw.Draw(image)
-        draw.text((120, 420), title[:80], fill=(245, 245, 245))
-        draw.text((120, 520), subtitle[:110], fill=(180, 180, 180))
-    except Exception:
-        pass
-    image.save(path, "JPEG", quality=90)
-    return {
-        "file_path": str(path),
-        "path": str(path),
-        "title": title,
-        "type": "image",
-        "visual_type": "image",
-        "source": "text_card",
-        "asset_scope": "fallback_card",
-        "verification_status": "graphic_fallback",
-        "reject_reason": "no_verified_clip",
-        # Format honesty: a generated card — identified as generated.
-        "generated": True,
-        "visual_format": "text_card",
-        "visual_format_evidence": "generated_in_house",
-    }
-
 def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
     if not isinstance(scene, dict):
         scene = {}
@@ -4801,12 +4768,29 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                 })
 
         if beat.get("searchable", True) and not beat_videos and not beat_images:
+            # NO placeholder is created here. The generated text-card
+            # fallback was removed permanently (founder directive):
+            # a sentence with no verified visual is recorded
+            # explicitly in scene_stats["missing_visuals"] and flows
+            # into the asset report; the timeline covers the slot
+            # with a genuine scene visual (rotation) or a renderer
+            # holdover of real media — never a fabricated card.
             need = (beat.get("shot_needs") or [{}])[0]
-            if str(need.get("specificity") or "") == "exact" or not need:
-                card = _write_text_card(scene_dir, beat, need)
-                beat_images.append(card)
-                scene_stats["text_cards"] += 1
-                print(f"  FALLBACK CARD: {card['title']}")
+            numbers = beat.get("sentence_numbers") or []
+            for offset in range(len(beat.get("sentences") or [])):
+                scene_stats.setdefault("missing_visuals", []).append(
+                    {
+                        "sentence_number": (
+                            numbers[offset] if offset < len(numbers) else None
+                        ),
+                        "reason": "no_verified_asset",
+                        "specificity": str(need.get("specificity") or ""),
+                    }
+                )
+            print(
+                "  MISSING VISUAL: no verified asset for this beat "
+                "— recorded in the asset report, no placeholder created"
+            )
 
         write_review_log(project_dir, scene_number, beat, review_records)
 

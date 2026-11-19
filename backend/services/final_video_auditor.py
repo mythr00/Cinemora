@@ -127,6 +127,23 @@ def validate_final_video(
         }
         result["authentic"] = bool(authenticity.get("authentic"))
         result["format_mix"] = (asset_report.get("format_mix") or {}).get("accepted")
+        # Missing visuals are an incompleteness fact, not an
+        # authenticity failure: since the placeholder fallback was
+        # removed, uncovered sentences are reported, never disguised.
+        result["missing_visuals"] = asset_report.get("missing_visuals") or []
+        if result["missing_visuals"]:
+            print()
+            print("!" * 70)
+            print(
+                "VISUAL COVERAGE: "
+                f"{len(result['missing_visuals'])} sentence(s) had no verified "
+                "visual (reported in the asset report; no placeholder used): "
+                + ", ".join(
+                    f"sentence {m.get('sentence_number')}"
+                    for m in result["missing_visuals"][:12]
+                )
+            )
+            print("!" * 70)
         if not result["authentic"]:
             result["authenticity_warnings"] = [
                 f"{name}={count}"
