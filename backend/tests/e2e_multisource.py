@@ -5,8 +5,9 @@ Runs the REAL production path with YOUTUBE DISCOVERY DISABLED
 (CINEMORA_DISABLED_PROVIDERS=youtube) and NO search substitutions of
 any kind:
 
-  narration (Piper) -> story analysis (degraded mode, llm=None — no
-  BrewKeg key exists here) -> production scenes -> media engine
+  narration (Piper) -> story analysis (the configured LLM when a
+  BrewKeg key is present in the environment, degraded heuristic
+  mode otherwise) -> production scenes -> media engine
   (multi-source discovery: Serper [fails closed without a key],
   archive.org, Wikimedia Commons images + video, targeted
   institutional search -> gate -> verify -> unified format selection
@@ -82,12 +83,19 @@ def main():
     from services.timeline import build_project_timeline
     from services.visual_registry import reset_registry
 
-    # Degraded analysis only (no LLM key in this environment). Discovery
-    # is NOT patched: every provider runs for real.
-    real_analyze = jobs.analyze_script
-    jobs.analyze_script = lambda script, project_id="", cache_path=None, **kw: real_analyze(
-        script, project_id=project_id, cache_path=cache_path, llm=None
-    )
+    # Analysis runs exactly as production configures it: the real LLM
+    # when a BrewKeg key is present in the environment, degraded
+    # heuristic mode otherwise (forced explicitly so the substitution
+    # is visible, never silent). Discovery is NOT patched: every
+    # provider runs for real.
+    if os.environ.get("BREWKEG_API_KEY", "e2e-no-key") == "e2e-no-key":
+        real_analyze = jobs.analyze_script
+        jobs.analyze_script = lambda script, project_id="", cache_path=None, **kw: real_analyze(
+            script, project_id=project_id, cache_path=cache_path, llm=None
+        )
+        print("E2E-MS analysis: DEGRADED (no BrewKeg key in environment)")
+    else:
+        print("E2E-MS analysis: configured LLM (production default)")
 
     reset_registry(PROJECT_ID)
     reset_media_caches()

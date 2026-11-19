@@ -180,24 +180,38 @@ def llm_text(
     temperature=0.1,
     max_tokens=16000,
 ):
-    data = _request(
-        system_prompt,
-        user_prompt,
-        model=model,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+    # The backing model is a reasoning model served through the
+    # BrewKeg proxy: it intermittently spends its entire output
+    # budget on a "thinking" content block and returns a successful
+    # response with NO text block at all (observed live: usage
+    # output_tokens == max_tokens, content = [thinking] only).
+    # That response carries no answer, but the identical call
+    # usually succeeds on a fresh attempt — so retry a bounded
+    # number of times before giving up, instead of degrading the
+    # whole analysis because one response had no text output.
+    last_data = None
 
-    text = _extract_text(data)
-
-    if not text:
-        raise RuntimeError(
-            "BrewKeg returned no text output.\n"
-            f"Response keys: {list(data.keys())}\n"
-            f"Response: {json.dumps(data)[:3000]}"
+    for _attempt in range(3):
+        data = _request(
+            system_prompt,
+            user_prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
-    return text
+        text = _extract_text(data)
+
+        if text:
+            return text
+
+        last_data = data
+
+    raise RuntimeError(
+        "BrewKeg returned no text output.\n"
+        f"Response keys: {list(last_data.keys())}\n"
+        f"Response: {json.dumps(last_data)[:3000]}"
+    )
 
 
 def llm_json(
