@@ -22,9 +22,19 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# MA-13: fail fast like database.py. The old fallback silently
+# migrated a throwaway sqlite:///unused.db when DATABASE_URL was
+# unset, so a migration run without env "succeeded" against nothing.
+_database_url = os.environ.get("DATABASE_URL")
+if not _database_url:
+    raise RuntimeError(
+        "DATABASE_URL is not configured; refusing to run migrations "
+        "against a fallback database."
+    )
+
 config.set_main_option(
     "sqlalchemy.url",
-    os.environ.get("DATABASE_URL", "sqlite:///unused.db"),
+    _database_url,
 )
 
 target_metadata = Base.metadata

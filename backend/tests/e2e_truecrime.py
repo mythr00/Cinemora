@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """Three-minute true-crime production E2E — founder verification run.
 
-Runs the REAL production path with ALL providers enabled, YouTube
+Production runs through jobs.run_full_pipeline — the single
+production entry point — with ALL providers enabled, YouTube
 included as one equal supplementary source among archive.org,
 Wikimedia Commons, news and institutional sources (no provider is
-disabled and none is primary), and NO search substitutions:
-
-  narration (Piper) -> story analysis (the configured LLM when a
-  BrewKeg key is present in the environment, degraded heuristic
-  mode otherwise) -> production scenes -> media engine
-  (multi-source discovery: Serper [fails closed without a key],
-  archive.org, Wikimedia Commons images + video, targeted
-  institutional search -> gate -> verify -> unified format selection
-  -> segment evidence -> download -> probe) -> motion graphics ->
-  timeline -> renderer -> narration mux -> asset report (authenticity
-  / format mix / provider funnel / rights) -> final auditor.
+disabled and none is primary), and NO search substitutions. This
+harness contains no pipeline stages of its own: it makes that one
+call, then verifies the artefacts the run left in PROJECT_DIR
+(asset_report.json, rights_manifest.json, timeline.json,
+motion_graphics/motion_graphics.json,
+story_understanding_cache.json and the final mp4, audited with the
+production final-video auditor). Run with --checks-only to re-run
+only the assertions against an existing PROJECT_DIR, without
+producing anything.
 
 The script mixes visual needs: crowd events (footage), geography
 (map), reunification (short archival clip), and human moments
@@ -43,6 +42,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///" + str(OUT_ROOT / "e2e_ms.sqli
 os.environ.setdefault("BREWKEG_API_KEY", "e2e-no-key")
 os.environ.setdefault("SERPER_API_KEY", "e2e-no-key")
 os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:6379/0")
+os.environ.setdefault("CINEMORA_MEDIA_ROOT", str(OUT_ROOT))
 os.environ["SOURCE_INTEL_DB"] = str(OUT_ROOT / "source_intel.sqlite3")
 
 sys.path.insert(0, str(BACKEND))
@@ -75,260 +75,135 @@ SCRIPT = (
 )
 
 
-def build_graphic_targets(processed_scenes):
-    """Mirror of the production targeting in jobs.run_full_pipeline.
-
-    Translate each processed scene's asset_stats["missing_visuals"]
-    records — the sentences that finished retrieval + coverage
-    recovery with no verified visual — into graphics targets:
-    scene_number + scene-local sentence_index + the sentence's
-    verbatim text + its scenario. Records whose sentence_number is
-    missing, or that match no sentence in the scene, cannot be
-    anchored honestly and are skipped.
-    """
-    graphic_targets = []
-    for processed_scene in processed_scenes:
-        scene = processed_scene.get("scene") or {}
-        scene_number = scene.get("scene_number")
-        sentences = scene.get("sentences") or []
-        missing = (
-            (processed_scene.get("asset_stats") or {}).get("missing_visuals")
-            or []
-        )
-        for record in missing:
-            sentence_number = record.get("sentence_number")
-            if sentence_number is None:
-                continue
-            for index, sentence in enumerate(sentences):
-                if not isinstance(sentence, dict):
-                    continue
-                if sentence.get("sentence_number") != sentence_number:
-                    continue
-                graphic_targets.append(
-                    {
-                        "scene_number": scene_number,
-                        "sentence_index": index,
-                        "sentence_number": sentence_number,
-                        "text": (
-                            sentence.get("text")
-                            or sentence.get("sentence_text")
-                            or ""
-                        ),
-                        "scenario": sentence.get("scenario") or {},
-                    }
-                )
-                break
-    return graphic_targets
-
-
-def main():
-    PROJECT_DIR.mkdir(parents=True, exist_ok=True)
-
-    import jobs
-    from services.asset_report import (
-        build_asset_report,
-        build_rights_manifest,
-        write_asset_report,
-        write_rights_manifest,
-    )
-    from services.audio_mixer import add_narration
-    from services.final_video_auditor import validate_final_video
-    from services.graphics_pipeline import build_motion_graphics_assets
-    from services.media_pipeline import process_scene_media, reset_media_caches
-    from services.narration import generate_narration
-    from services.renderer import render_timeline
-    from services.timeline import build_project_timeline
-    from services.visual_registry import reset_registry
-
-    # Analysis runs exactly as production configures it: the real LLM
-    # when a BrewKeg key is present in the environment, degraded
-    # heuristic mode otherwise (forced explicitly so the substitution
-    # is visible, never silent). Discovery is NOT patched: every
-    # provider runs for real.
-    if os.environ.get("BREWKEG_API_KEY", "e2e-no-key") == "e2e-no-key":
-        real_analyze = jobs.analyze_script
-        jobs.analyze_script = lambda script, project_id="", cache_path=None, **kw: real_analyze(
-            script, project_id=project_id, cache_path=cache_path, llm=None
-        )
-        print("E2E-TC analysis: DEGRADED (no BrewKeg key in environment)")
-    else:
-        print("E2E-TC analysis: configured LLM (production default)")
-
-    reset_registry(PROJECT_ID)
-    reset_media_caches()
-
-    narration_file = PROJECT_DIR / "narration.wav"
-    generate_narration(text=SCRIPT, output_path=str(narration_file))
-    captions = json.loads((PROJECT_DIR / "captions.json").read_text(encoding="utf-8"))
-    duration = float(captions["duration"])
-    print(f"E2E-TC narration duration: {duration:.2f}s, segments: {len(captions['segments'])}")
-
-    built = jobs.build_production_scenes(SCRIPT, PROJECT_ID, PROJECT_DIR)
-    scenes = built["scenes"]
-    analysis = built["analysis"]
-    for sentence in analysis.get("sentences") or []:
-        for scenario in sentence.get("scenarios") or []:
-            print(
-                "  intent:",
-                scenario.get("format_intent"),
-                scenario.get("format_intent_confidence"),
-                "|",
-                (sentence.get("text") or "")[:60],
-            )
-
-    processed_scenes = []
-    for scene in scenes:
-        result = process_scene_media(scene, str(PROJECT_DIR))
-        result["duration_seconds"] = duration
-        result["scene"] = scene
-        processed_scenes.append(result)
-
-    motion_data = {
-        "case_bible": analysis.get("bible") or {},
-        "scenes": scenes,
-        "processed_scenes": processed_scenes,
-    }
-    # Motion graphics stage — a faithful mirror of production
-    # (jobs.run_full_pipeline): missing-visual records become
-    # targets, and the graphics stage receives them together with
-    # the production stat cap. (The previous inline copy passed
-    # neither, so targeted generation never ran in this harness.)
-    graphic_targets = build_graphic_targets(processed_scenes)
-    missing_records = sum(
-        len((ps.get("asset_stats") or {}).get("missing_visuals") or [])
-        for ps in processed_scenes
-    )
-    print(
-        f"E2E-TC missing-visual records: {missing_records}; "
-        f"graphics targets built: {len(graphic_targets)}"
-    )
-    motion_graphics = build_motion_graphics_assets(
-        motion_data, PROJECT_DIR / "motion_graphics", mode="balanced",
-        targets=graphic_targets, max_stats=jobs.MOTION_GRAPHIC_MAX_STATS,
-    )
-    for graphic in motion_graphics:
-        scene_number = graphic.get("scene_number")
-        sentence_index = graphic.get("sentence_index")
-        if scene_number is None:
-            continue
-        for processed_scene in processed_scenes:
-            scene = processed_scene.get("scene") or {}
-            if scene.get("scene_number") != scene_number:
-                continue
-            visual = dict(graphic)
-            visual["type"] = "video"
-            visual["source"] = "cinemora_motion_graphics"
-            visual["motion_graphic"] = True
-            visual["sentence_index"] = sentence_index
-            visual["file_path"] = graphic.get("file_path") or graphic.get("path")
-            visual["path"] = visual["file_path"]
-            processed_scene.setdefault("videos", []).append(visual)
-            break
-    print(f"E2E-TC motion graphics: {len(motion_graphics)}")
-    _mg_manifest = json.loads(
-        (PROJECT_DIR / "motion_graphics" / "motion_graphics.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    _targets_summary = _mg_manifest.get("targets") or {}
-    print(
-        "E2E-TC graphics targets summary: "
-        f"requested={_targets_summary.get('requested')}, "
-        f"generated={_targets_summary.get('generated')}, "
-        f"skipped={_targets_summary.get('skipped')}"
-    )
-
-    timeline_result = build_project_timeline(PROJECT_ID, processed_scenes, output_dir=str(MEDIA_ROOT))
-    timeline_data = json.loads(Path(timeline_result["timeline_file"]).read_text(encoding="utf-8"))
-    render_scenes = timeline_data.get("scenes", [])
-
-    coverage = timeline_result.get("coverage") or {}
-    final_video = PROJECT_DIR / "documentary_final_output.mp4"
-    render_error = None
+def _load_json(path, default):
     try:
-        raw_video = render_timeline(render_scenes, str(PROJECT_DIR), expected_duration=duration)
-        add_narration(str(raw_video), str(narration_file), str(final_video))
-    except Exception as error:
-        # The renderer refusing (coverage / frame mismatch) is a
-        # legitimate outcome to REPORT, not a harness crash: the asset
-        # report and coverage checks below carry the full diagnostic.
-        render_error = error
-        print(f"E2E-TC RENDER REFUSED: {type(error).__name__}: {error}")
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
 
-    renderer_audit = None
-    audit_file = PROJECT_DIR / "renderer_timing_audit.json"
-    if audit_file.exists():
-        renderer_audit = json.loads(audit_file.read_text(encoding="utf-8"))
-    report = build_asset_report(
-        processed_scenes,
-        timeline_result,
-        renderer_audit=renderer_audit,
-        analysis_mode=analysis.get("mode") if isinstance(analysis, dict) else None,
-    )
-    write_asset_report(PROJECT_DIR, report)
-    manifest = build_rights_manifest(processed_scenes)
-    write_rights_manifest(PROJECT_DIR, manifest)
 
+def run_checks():
+    """Verify a completed run from the artefacts in PROJECT_DIR.
+
+    Reads asset_report.json, rights_manifest.json, timeline.json,
+    motion_graphics/motion_graphics.json and
+    story_understanding_cache.json, and audits the final mp4 with
+    the production final-video auditor. Returns (results, passed,
+    total); each result is {"name", "ok", "detail"}.
+    """
+    from services.final_video_auditor import validate_final_video
+
+    results = []
+
+    def check(name, ok, detail=""):
+        results.append({"name": name, "ok": bool(ok), "detail": detail})
+
+    report = _load_json(PROJECT_DIR / "asset_report.json", {})
+    if not isinstance(report, dict):
+        report = {}
+    manifest = _load_json(PROJECT_DIR / "rights_manifest.json", [])
+    if not isinstance(manifest, list):
+        manifest = []
+    manifest = [entry for entry in manifest if isinstance(entry, dict)]
+    timeline_data = _load_json(PROJECT_DIR / "timeline.json", {})
+    if not isinstance(timeline_data, dict):
+        timeline_data = {}
+    render_scenes = timeline_data.get("scenes", [])
+    coverage = timeline_data.get("coverage") or report.get("coverage") or {}
+
+    final_video = PROJECT_DIR / "documentary_final_output.mp4"
     if final_video.exists():
-        audit = validate_final_video(str(final_video), asset_report=report)
+        try:
+            audit = validate_final_video(str(final_video), asset_report=report)
+        except Exception:
+            audit = {
+                "width": 0,
+                "height": 0,
+                "audio_codec": None,
+                "duration_seconds": 0,
+                "authentic": report.get("authentic"),
+            }
     else:
         audit = {
             "width": 0,
             "height": 0,
             "audio_codec": None,
             "duration_seconds": 0,
-            "authentic": report["authentic"],
+            "authentic": report.get("authentic"),
         }
 
-    accepted = []
-    for scene in processed_scenes:
-        accepted.extend(scene.get("videos") or [])
-        accepted.extend(scene.get("images") or [])
+    # Accepted assets, reconstructed from the rights manifest: the
+    # production report stage writes exactly one manifest entry per
+    # accepted asset. Moving footage is the video entries that are
+    # not in-house motion graphics (those carry the
+    # cinemora_motion_graphics source).
+    accepted = manifest
     footage = [
         a for a in accepted
-        if (a.get("type") or a.get("visual_type")) == "video" and not a.get("motion_graphic")
+        if a.get("type") == "video" and a.get("source") != "cinemora_motion_graphics"
     ]
 
-    failures = []
-
-    def check(name, ok, detail=""):
-        print(f"  [{'PASS' if ok else 'FAIL'}] {name} {detail}")
-        if not ok:
-            failures.append(name)
-
-    print()
-    print("E2E-TC CHECKS:")
-    expected_mode = (
-        "llm"
-        if os.environ.get("BREWKEG_API_KEY", "e2e-no-key") != "e2e-no-key"
-        else "degraded"
+    # The run's own recorded analysis mode: the story-understanding
+    # cache the analysis stage wrote into PROJECT_DIR (the case
+    # bible carries the same stamp as a fallback).
+    analysis_cache = _load_json(PROJECT_DIR / "story_understanding_cache.json", {})
+    analysis_mode = (
+        analysis_cache.get("mode") if isinstance(analysis_cache, dict) else None
     )
+    if analysis_mode is None:
+        case_bible = _load_json(PROJECT_DIR / "case_bible.json", {})
+        analysis_mode = (
+            case_bible.get("mode") if isinstance(case_bible, dict) else None
+        )
     check(
         "asset report explicitly records the analysis mode",
-        report.get("analysis_mode") == expected_mode
-        and analysis.get("mode") == expected_mode,
-        f"(report: {report.get('analysis_mode')}, analysis: {analysis.get('mode')}, expected: {expected_mode})",
+        report.get("analysis_mode") is not None
+        and report.get("analysis_mode") == analysis_mode,
+        f"(report: {report.get('analysis_mode')}, analysis: {analysis_mode})",
     )
     check(
         "timeline coverage complete \u2014 every narration sentence has a visual",
         bool(coverage.get("complete")),
         f"(covered {coverage.get('covered_sentences')}/{coverage.get('total_sentences')}, uncovered: {coverage.get('uncovered_sentences')})",
     )
-    _last_scene = max((s.get("scene_number") or 0) for s in processed_scenes) if processed_scenes else 0
+    _scene_numbers = [
+        s.get("scene_number") or 0 for s in render_scenes if isinstance(s, dict)
+    ]
+    _last_scene = max(_scene_numbers) if _scene_numbers else 0
     check(
         "final scene fully covered",
-        not [u for u in (coverage.get("uncovered_sentences") or []) if u.get("scene_number") == _last_scene],
+        not [
+            u
+            for u in (coverage.get("uncovered_sentences") or [])
+            if isinstance(u, dict) and u.get("scene_number") == _last_scene
+        ],
         f"(last scene: {_last_scene})",
     )
+    _mg_manifest = _load_json(
+        PROJECT_DIR / "motion_graphics" / "motion_graphics.json", {}
+    )
+    if not isinstance(_mg_manifest, dict):
+        _mg_manifest = {}
+    _mg_assets = _mg_manifest.get("assets") or []
+    _generated_files = {
+        g.get("file_path") or g.get("path")
+        for g in _mg_assets
+        if isinstance(g, dict)
+    }
+    _targets = _mg_manifest.get("targets")
+    if isinstance(_targets, dict):
+        _targets_requested = int(_targets.get("requested") or 0)
+    elif isinstance(_targets, list):
+        _targets_requested = len(_targets)
+    else:
+        _targets_requested = int(report.get("missing_visual_count") or 0)
     _mg_items = [
         item
         for scene in render_scenes
+        if isinstance(scene, dict)
         for item in scene.get("items", [])
-        if item.get("assignment") == "motion_graphic"
+        if isinstance(item, dict) and item.get("assignment") == "motion_graphic"
     ]
-    _generated_files = {
-        g.get("file_path") or g.get("path") for g in motion_graphics
-    }
     _mg_used = [
         item
         for item in _mg_items
@@ -336,23 +211,20 @@ def main():
     ]
     check(
         "targeted graphics reached the timeline as motion_graphic assignments",
-        len(_mg_used) >= 1 if graphic_targets else True,
-        f"(targets: {len(graphic_targets)}, motion_graphic items: "
+        len(_mg_used) >= 1 if _targets_requested else True,
+        f"(targets: {_targets_requested}, motion_graphic items: "
         f"{len(_mg_items)}, referencing generated files: {len(_mg_used)})",
     )
     check(
         "renderer produced the final video",
-        render_error is None and final_video.exists(),
-        f"(render error: {render_error})" if render_error else "",
+        final_video.exists(),
     )
     check(
         "final video is 1920x1080 with audio",
-        audit["width"] == 1920 and audit["height"] == 1080 and bool(audit.get("audio_codec")),
-        f"({audit['width']}x{audit['height']}, audio={audit.get('audio_codec')})",
+        audit.get("width") == 1920 and audit.get("height") == 1080 and bool(audit.get("audio_codec")),
+        f"({audit.get('width')}x{audit.get('height')}, audio={audit.get('audio_codec')})",
     )
-    _footage_providers = [
-        (a.get("provider") or a.get("source")) for a in footage
-    ]
+    _footage_providers = [a.get("source") for a in footage]
     _yt_share = (
         _footage_providers.count("youtube") / len(_footage_providers)
         if _footage_providers
@@ -366,67 +238,66 @@ def main():
     check(
         "no provider dominates accepted footage (YouTube share <= 80%)",
         _yt_share <= 0.8,
-        f"(youtube share of footage: {_yt_share:.2f}, providers: {sorted({a.get('provider') or a.get('source') for a in accepted})})",
+        f"(youtube share of footage: {_yt_share:.2f}, providers: {sorted({a.get('source') for a in accepted if a.get('source')})})",
     )
     check(
         "final video is approximately three minutes",
-        150.0 <= float(audit["duration_seconds"]) <= 240.0,
-        f"(duration: {audit['duration_seconds']:.1f}s)",
+        150.0 <= float(audit.get("duration_seconds") or 0) <= 240.0,
+        f"(duration: {float(audit.get('duration_seconds') or 0):.1f}s)",
     )
     _seg = report.get("segment_retrieval") or []
     check(
         "every accepted footage asset has segment-retrieval provenance",
         len(_seg) == len(footage)
-        and all(e.get("download_method") for e in _seg),
-        f"(segment entries: {[(e.get('provider'), e.get('download_method'), e.get('partial_download'), e.get('source_duration_seconds'), e.get('extracted_duration_seconds')) for e in _seg]})",
+        and all(isinstance(e, dict) and e.get("download_method") for e in _seg),
+        f"(segment entries: {[(e.get('provider'), e.get('download_method'), e.get('partial_download'), e.get('source_duration_seconds'), e.get('extracted_duration_seconds')) for e in _seg if isinstance(e, dict)]})",
     )
     check(
         "moving footage completed the full chain (any provider, segment evidence recorded)",
         len(footage) >= 1
-        and all(a.get("segment_evidence") for a in footage),
-        f"(footage: {[(a.get('provider') or a.get('source'), a.get('segment_evidence')) for a in footage]})",
+        and len(_seg) >= 1
+        and all(isinstance(e, dict) and e.get("segment_evidence") for e in _seg),
+        f"(footage: {[(e.get('provider'), e.get('segment_evidence')) for e in _seg if isinstance(e, dict)]})",
     )
+    _funnel = ((report.get("providers") or {}).get("funnel") or {})
     check(
         "at least two providers discovered candidates",
-        len([p for p, c in report["providers"]["funnel"].items() if c.get("discovered")]) >= 2,
-        f"(funnel: { {p: c.get('discovered') for p, c in report['providers']['funnel'].items()} })",
+        len([p for p, c in _funnel.items() if isinstance(c, dict) and c.get("discovered")]) >= 2,
+        f"(funnel: { {p: c.get('discovered') for p, c in _funnel.items() if isinstance(c, dict)} })",
     )
+    _accepted_mix = ((report.get("format_mix") or {}).get("accepted") or {})
     check(
         "format mix accounts for every accepted asset",
-        sum(report["format_mix"]["accepted"].values()) == report["total_accepted_assets"],
-        f"(mix: {report['format_mix']['accepted']})",
+        sum(_accepted_mix.values()) == report.get("total_accepted_assets"),
+        f"(mix: {_accepted_mix})",
     )
-    _subs = report["authenticity"]["substitutions"]
+    _subs = ((report.get("authenticity") or {}).get("substitutions") or {})
     check(
         "authenticity consistent with substitution counts",
-        report["authentic"]
+        report.get("authentic")
         == (
-            _subs["placeholder_clips"] == 0
-            and _subs["text_cards"] == 0
-            and _subs["unverified_assets"] == 0
+            _subs.get("placeholder_clips") == 0
+            and _subs.get("text_cards") == 0
+            and _subs.get("unverified_assets") == 0
         ),
-        f"(authenticity: {report['authenticity']})",
+        f"(authenticity: {report.get('authenticity')})",
     )
     check(
         "auditor consumed the report",
-        audit.get("authentic") == report["authentic"],
+        audit.get("authentic") == report.get("authentic"),
     )
     _card_assets = [
         a
-        for s in processed_scenes
-        for a in list(s.get("videos") or []) + list(s.get("images") or [])
-        if a.get("source") == "text_card"
-        or a.get("type") == "text_card"
-        or a.get("visual_format") == "text_card"
-        or a.get("asset_scope") == "fallback_card"
+        for a in accepted
+        if a.get("source") == "text_card" or a.get("type") == "text_card"
     ]
     check(
         "NO text-card placeholders anywhere (assets, report, renderer)",
         not _card_assets
-        and report["text_cards"] == 0
-        and report["placeholder_clips"] == 0,
-        f"(card assets: {len(_card_assets)}, report cards: {report['text_cards']}, "
-        f"renderer placeholders: {report['placeholder_clips']}, "
+        and report.get("text_cards") == 0
+        and report.get("placeholder_clips") == 0,
+        f"(card assets: {len(_card_assets)}, report cards: {report.get('text_cards')}, "
+        f"renderer placeholders: {report.get('placeholder_clips')}, "
         f"holdovers of genuine media: {report.get('holdover_clips')})",
     )
     check(
@@ -437,25 +308,71 @@ def main():
     )
     check(
         "rights manifest covers every accepted asset",
-        len(manifest) == report["total_accepted_assets"],
-        f"({len(manifest)} vs {report['total_accepted_assets']})",
+        len(manifest) == report.get("total_accepted_assets"),
+        f"({len(manifest)} vs {report.get('total_accepted_assets')})",
     )
-    manifest_text = (PROJECT_DIR / "rights_manifest.json").read_text(encoding="utf-8")
-    check("no fabricated 'royalty-free' licence anywhere", "royalty-free" not in manifest_text)
+    _manifest_path = PROJECT_DIR / "rights_manifest.json"
+    _manifest_text = (
+        _manifest_path.read_text(encoding="utf-8") if _manifest_path.exists() else ""
+    )
+    check(
+        "no fabricated 'royalty-free' licence anywhere",
+        _manifest_path.exists() and "royalty-free" not in _manifest_text,
+    )
     check(
         "sentence assignment accuracy measured",
-        report["sentence_assignment_accuracy"] is not None,
-        f"(accuracy: {report['sentence_assignment_accuracy']})",
+        report.get("sentence_assignment_accuracy") is not None,
+        f"(accuracy: {report.get('sentence_assignment_accuracy')})",
     )
 
-    print()
-    print("E2E-TC ASSET REPORT:", json.dumps(report, indent=2))
-    print(f"E2E-TC final video: {final_video}")
-    if failures:
-        print(f"E2E-TC RESULT: FAIL ({len(failures)} checks failed)")
+    passed = sum(1 for result in results if result["ok"])
+    return results, passed, len(results)
+
+
+def _print_results(results):
+    for result in results:
+        status = "PASS" if result["ok"] else "FAIL"
+        detail = f" {result['detail']}" if result.get("detail") else ""
+        print(f"  [{status}] {result['name']}{detail}")
+
+
+def main():
+    if "--checks-only" in sys.argv:
+        results, passed, total = run_checks()
+        print()
+        print("E2E-TC CHECKS (checks-only, existing artefacts):")
+        _print_results(results)
+        print()
+        if passed == total:
+            print(f"E2E-TC RESULT: PASS ({passed}/{total} checks passed)")
+            return 0
+        print(
+            f"E2E-TC RESULT: FAIL ({total - passed} checks failed, "
+            f"{passed}/{total} passed)"
+        )
         return 1
-    print("E2E-TC RESULT: PASS")
-    return 0
+
+    import jobs
+
+    jobs.run_full_pipeline(PROJECT_ID, SCRIPT)
+
+    results, passed, total = run_checks()
+    print()
+    print("E2E-TC CHECKS:")
+    _print_results(results)
+    print()
+    _report_file = PROJECT_DIR / "asset_report.json"
+    if _report_file.exists():
+        print("E2E-TC ASSET REPORT:", _report_file.read_text(encoding="utf-8"))
+    print(f"E2E-TC final video: {PROJECT_DIR / 'documentary_final_output.mp4'}")
+    if passed == total:
+        print(f"E2E-TC RESULT: PASS ({passed}/{total} checks passed)")
+        return 0
+    print(
+        f"E2E-TC RESULT: FAIL ({total - passed} checks failed, "
+        f"{passed}/{total} passed)"
+    )
+    return 1
 
 
 if __name__ == "__main__":

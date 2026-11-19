@@ -32,6 +32,11 @@ from services import story_understanding as story
 from services.media_probe import probe_image, probe_video
 from services.http_retry import request_with_retry
 
+try:
+    from services import process_utils
+except ImportError:  # flat-layout fallback
+    import process_utils
+
 
 # ==========================================================================
 # EVIDENCE CLASSIFICATION
@@ -1590,18 +1595,11 @@ def is_direct_media_url(url):
 
 
 def kill_process_tree(process):
-    if process is None:
-        return
-    pid = getattr(process, "pid", None)
-    if not pid:
-        return
-    try:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
-    except Exception:
-        try:
-            process.kill()
-        except Exception:
-            pass
+    # Stage 2G-a: delegate to the portable implementation (Windows
+    # keeps taskkill; POSIX kills the child's process group when it
+    # is in a different group than us). Kept as a module-level name
+    # because run_command_safe calls it.
+    process_utils.kill_process_tree(process)
 
 
 def run_command_safe(command, timeout, label):
@@ -2152,6 +2150,70 @@ def reset_media_caches():
     _SEGMENT_BASIS.clear()
     _SEGMENT_ATTEMPTS.clear()
     _SEGMENT_FAILURE_CAUSE.clear()
+
+
+# =====================================================================
+# Stage 2C — RunContext binding for the per-run globals above.
+#
+# The containers below are rebound (NOT copied) to the active
+# RunContext's containers on activation, so every existing read/write
+# site in this module lands in the active context with no logic
+# changes. The DEFAULT context wraps the ORIGINAL container objects
+# created at import time, so behaviour before any activation is
+# bit-identical to the old module-global behaviour.
+#
+# NOT migrated, deliberately:
+# - _yt_info_locks / _yt_info_guard: synchronization primitives —
+#   swapping lock identity mid-flight would break mutual exclusion.
+# - services.source_cache: SQLite profiles are cross-project BY
+#   DESIGN (the persistent cross-run memory).
+# - services.run_metrics: already run-scoped.
+# - visual_registry: project-keyed.
+# =====================================================================
+try:
+    from services import run_context
+except ImportError:  # flat-layout fallback
+    import run_context
+
+_RUN_CONTEXT_BINDINGS = {
+    "_FAILED_DOWNLOAD_URLS": "failed_download_urls",
+    "_DISCOVERY_FAILURES": "discovery_failures",
+    "_SEGMENT_BASIS": "segment_basis",
+    "_SEGMENT_ATTEMPTS": "segment_attempts",
+    "_SEGMENT_FAILURE_CAUSE": "segment_failure_cause",
+    "_yt_segment_uses": "yt_segment_uses",
+    "_youtube_metadata_cache": "youtube_metadata_cache",
+    "_youtube_transcript_cache": "youtube_transcript_cache",
+    "_yt_info_failed": "yt_info_failed",
+    "_yt_transcript_failed": "yt_transcript_failed",
+    "_search_failure_state": "search_failure_state",
+}
+
+
+def _bind_run_context(ctx):
+    """Rebind this module's per-run globals to *ctx*'s containers."""
+    if ctx is None:
+        return
+    module_globals = globals()
+    for global_name, context_attr in _RUN_CONTEXT_BINDINGS.items():
+        module_globals[global_name] = getattr(ctx, context_attr)
+
+
+_DEFAULT_RUN_CONTEXT = run_context.RunContext(
+    failed_download_urls=_FAILED_DOWNLOAD_URLS,
+    discovery_failures=_DISCOVERY_FAILURES,
+    segment_basis=_SEGMENT_BASIS,
+    segment_attempts=_SEGMENT_ATTEMPTS,
+    segment_failure_cause=_SEGMENT_FAILURE_CAUSE,
+    yt_segment_uses=_yt_segment_uses,
+    youtube_metadata_cache=_youtube_metadata_cache,
+    youtube_transcript_cache=_youtube_transcript_cache,
+    yt_info_failed=_yt_info_failed,
+    yt_transcript_failed=_yt_transcript_failed,
+    search_failure_state=_search_failure_state,
+)
+run_context.set_default(_DEFAULT_RUN_CONTEXT)
+run_context.register_binder(_bind_run_context)
 
 
 def _youtube_info(key):
@@ -5530,6 +5592,7 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                         "recovery_rounds": recovery_rounds_done,
                     }
                 )
+                run_context.note_missing_visual()
             print(
                 "  MISSING VISUAL: no verified asset for this beat "
                 "— recorded in the asset report, no placeholder created"

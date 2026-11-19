@@ -26,6 +26,9 @@ from services.asset_report import (
 )
 from services.visual_registry import reset_registry
 
+from services import media_paths
+from services import run_context
+from services import run_ledger
 from services import run_metrics
 from services.production_state import (
     create_production_state,
@@ -135,6 +138,18 @@ def _set_project_status(project_id, status: str):
 
 
 def run_stage(state: dict, stage: str, project_dir: Path):
+    # Stage 2B: cooperative cancellation + ledger stage tracking.
+    # Both are fail-soft (a ledger problem never wedges a run); only
+    # an actual cancellation request interrupts the pipeline, via
+    # RunCancelled, which the stage's except block routes into
+    # fail_pipeline like any other stage error.
+    run_id = state.get("_run_id") if isinstance(state, dict) else None
+    if run_id:
+        if run_ledger.is_cancel_requested(run_id):
+            raise run_ledger.RunCancelled(
+                f"Run {run_id} was cancelled before stage '{stage}'."
+            )
+        run_ledger.set_run_stage(run_id, stage)
     start_stage(state, stage)
     run_metrics.stage_started(stage)
     save_production_state(project_dir, state)
@@ -165,6 +180,7 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
     # from whatever partial state the pipeline had accumulated, so a
     # failure is diagnosable from the report alone. A problem writing
     # the report never masks the original error.
+    failure_report = None
     try:
         partial = state.get("_partial") or {}
         partial_analysis = partial.get("analysis")
@@ -183,6 +199,44 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
         print("Asset report (failure): written from partial state.")
     except Exception as report_error:
         print(f"Asset report (failure) could not be written: {report_error}")
+    # Stage 2: close the ledger run (failed, or cancelled when the
+    # error is a cooperative cancellation), record whatever decisions
+    # the partial state supports, finish the run manifest, and restore
+    # the previous run context. All fail-soft (run_ledger never
+    # raises for database problems).
+    run_id = state.get("_run_id") if isinstance(state, dict) else None
+    if run_id:
+        cancelled = isinstance(error, run_ledger.RunCancelled)
+        if failure_report is not None:
+            partial = state.get("_partial") or {}
+            run_ledger.record_decisions(
+                run_id,
+                Path(project_dir).name,
+                failure_report,
+                partial.get("timeline_result"),
+                processed_scenes=partial.get("processed_scenes"),
+            )
+        manifest_path = None
+        manifest = state.get("_manifest")
+        if isinstance(manifest, dict):
+            enriched = run_ledger.enrich_manifest(
+                manifest,
+                status="cancelled" if cancelled else "failed",
+                execution=run_metrics.snapshot(),
+                asset_report=failure_report,
+            )
+            written = run_ledger.write_manifest(project_dir, enriched)
+            manifest_path = str(written) if written else None
+        run_ledger.finish_run(
+            run_id,
+            "cancelled" if cancelled else "failed",
+            error="cancelled" if cancelled else str(error),
+            execution=run_metrics.snapshot(),
+            manifest_path=manifest_path,
+            stage=stage,
+        )
+    if isinstance(state, dict) and "_run_context_previous" in state:
+        run_context.deactivate(state.pop("_run_context_previous"))
     print()
     print("========================================")
     print("PIPELINE FAILED")
@@ -197,9 +251,22 @@ def script_hash_for(script: str) -> str:
     return hashlib.sha256(str(script or "").encode("utf-8")).hexdigest()[:16]
 
 
+def _script_sentence_count(script: str):
+    """Sentence count for the run manifest, using narration's own
+    sentence split so the number means the same thing everywhere.
+    None when it cannot be determined (the manifest records it
+    honestly as null rather than guessing)."""
+    try:
+        from services.narration import _split_sentences
+
+        return len(_split_sentences(script))
+    except Exception:
+        return None
+
+
 def build_production_scenes(script: str, project_id: str = "", project_dir=None):
     project_dir = Path(project_dir) if project_dir else (
-        Path("media") / project_id if project_id else None
+        media_paths.project_dir(project_id) if project_id else None
     )
     cache_path = None
     if project_dir:
@@ -285,17 +352,45 @@ def test_job(project_id: str):
 
 
 def enqueue_full_pipeline(project_id: str, script: str):
-    job = video_queue.enqueue(
-        run_full_pipeline,
+    # Stage 2B (AUD-07/10): the submission is recorded in the run
+    # ledger FIRST and deduplicated — a second submission of the same
+    # script for the same project while a run is active returns that
+    # run instead of queueing a duplicate production. An enqueue
+    # failure marks the run failed rather than orphaning it silently.
+    # When the ledger is unavailable the enqueue proceeds without a
+    # run_id (the pipeline then begins an ad-hoc run, also fail-soft).
+    submission = run_ledger.submit_production(
         project_id,
         script,
-        at_front=True,
+        options={"entrypoint": "enqueue_full_pipeline"},
     )
-    print(f"Queued full pipeline job: {job.id}")
+    if submission and submission.get("deduplicated"):
+        print(
+            f"Duplicate submission for project {project_id}: active "
+            f"run {submission['run_id']} already covers this script; "
+            "no new job queued."
+        )
+        return submission["run_id"]
+    run_id = submission["run_id"] if submission else None
+    try:
+        job = video_queue.enqueue(
+            run_full_pipeline,
+            project_id,
+            script,
+            run_id=run_id,
+            at_front=True,
+        )
+    except Exception as error:
+        if run_id:
+            run_ledger.finish_run(
+                run_id, "failed", error=f"enqueue failed: {error}"
+            )
+        raise
+    print(f"Queued full pipeline job: {job.id} (run {run_id})")
     return job.id
 
 
-def run_full_pipeline(project_id: str, script: str):
+def run_full_pipeline(project_id: str, script: str, run_id: str = None):
     print()
     print("=" * 70)
     print("DOCUMENTARY STUDIO")
@@ -305,17 +400,67 @@ def run_full_pipeline(project_id: str, script: str):
     print("=" * 70)
     print()
 
-    project_dir = Path("media") / project_id
+    project_dir = media_paths.project_dir(project_id)
     project_dir.mkdir(parents=True, exist_ok=True)
 
     run_metrics.begin_run()
+
+    # Stage 2: claim or begin the ledger run. All fail-soft — the
+    # ledger records the run; it never gates it. When the caller
+    # carries a run_id (the enqueue path), the queued run is claimed
+    # atomically; a run whose state is KNOWN to be non-claimable
+    # (cancelled while queued, claimed by another delivery, already
+    # finished) is not executed twice. When the ledger cannot be
+    # read, the run proceeds (availability first). The claim happens
+    # BEFORE any status write-back so an aborted duplicate never
+    # marks the project "running".
+    if run_id is not None:
+        claimed = run_ledger.claim_run(run_id)
+        if claimed is None:
+            existing = run_ledger.get_run(run_id)
+            if existing is not None:
+                print(
+                    f"Run {run_id} not claimable (status: "
+                    f"{existing['status']}); not executing."
+                )
+                return {
+                    "project_id": project_id,
+                    "status": existing["status"],
+                    "run_id": run_id,
+                    "deduplicated_execution": True,
+                }
+        _run_id = run_id
+    else:
+        _run_id = run_ledger.begin_run(
+            project_id,
+            script,
+            options={"entrypoint": "run_full_pipeline"},
+        )
+
     state = create_production_state()
     save_production_state(project_dir, state)
     _set_project_status(project_id, "running")
 
+    # Stage 2 (continued): per-run context (2C) + run manifest (2E).
+    state["_run_id"] = _run_id
+    _run_context = run_context.RunContext(
+        run_id=_run_id, project_id=str(project_id)
+    )
+    state["_run_context_previous"] = run_context.activate(_run_context)
+    _manifest = run_ledger.build_initial_manifest(
+        _run_id,
+        project_id,
+        script,
+        options={"entrypoint": "run_full_pipeline"},
+        sentence_count=_script_sentence_count(script),
+    )
+    state["_manifest"] = _manifest
+    run_ledger.write_manifest(project_dir, _manifest)
+
     processed_scenes = []
     scenes = []
     sentences = []
+    asset_report = None
     script_hash = script_hash_for(script)
 
     narration_file = project_dir / "narration.wav"
@@ -607,7 +752,7 @@ def run_full_pipeline(project_id: str, script: str):
         timeline_result = build_project_timeline(
             project_id,
             processed_scenes,
-            output_dir="media",
+            output_dir=str(media_paths.media_root()),
         )
 
         if not isinstance(timeline_result, dict):
@@ -940,6 +1085,53 @@ def run_full_pipeline(project_id: str, script: str):
     with open(result_file, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
 
+    # Stage 2: record the run's decisions in the ledger, finish the
+    # run manifest, close the ledger run as completed, and restore
+    # the previous run context. All fail-soft.
+    if _run_id:
+        if asset_report is not None:
+            run_ledger.record_decisions(
+                _run_id,
+                project_id,
+                asset_report,
+                timeline_result,
+                processed_scenes=processed_scenes,
+            )
+        manifest_path = None
+        if isinstance(_manifest, dict):
+            stage_outputs = [
+                name
+                for name in (
+                    "narration.wav",
+                    "captions.json",
+                    "case_bible.json",
+                    "timeline.json",
+                    "documentary_final_output.mp4",
+                    "asset_report.json",
+                    "rights_manifest.json",
+                    "production_state.json",
+                    "pipeline_result.json",
+                )
+                if (project_dir / name).exists()
+            ]
+            enriched = run_ledger.enrich_manifest(
+                _manifest,
+                status="completed",
+                execution=run_metrics.snapshot(),
+                asset_report=asset_report,
+                stage_outputs=stage_outputs,
+            )
+            written = run_ledger.write_manifest(project_dir, enriched)
+            manifest_path = str(written) if written else None
+        run_ledger.finish_run(
+            _run_id,
+            "completed",
+            execution=run_metrics.snapshot(),
+            manifest_path=manifest_path,
+        )
+    if "_run_context_previous" in state:
+        run_context.deactivate(state.pop("_run_context_previous"))
+
     print()
     print("=" * 70)
     print("DOCUMENTARY PIPELINE COMPLETE")
@@ -957,7 +1149,7 @@ def enqueue_script_analysis(project_id: str, script: str):
 
 
 def analyze_project_script(project_id: str, script: str):
-    project_dir = Path("media") / project_id
+    project_dir = media_paths.project_dir(project_id)
     production_data = build_production_scenes(
         script, project_id=project_id, project_dir=project_dir
     )
@@ -983,7 +1175,7 @@ def enqueue_media_processing(project_id: str, scenes: list):
 
 
 def process_project_media(project_id: str, scenes: list):
-    project_dir = Path("media") / project_id
+    project_dir = media_paths.project_dir(project_id)
     project_dir.mkdir(parents=True, exist_ok=True)
     reset_registry(project_id)
     processed_scenes = []
@@ -996,7 +1188,7 @@ def process_project_media(project_id: str, scenes: list):
         result["project_id"] = project_id
         processed_scenes.append(result)
     timeline_result = build_project_timeline(
-        project_id, processed_scenes, output_dir="media"
+        project_id, processed_scenes, output_dir=str(media_paths.media_root())
     )
     return {
         "project_id": project_id,

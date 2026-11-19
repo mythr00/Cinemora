@@ -1,4 +1,5 @@
-﻿import json
+﻿import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -23,7 +24,7 @@ def _audio_duration(audio_file):
     return frames / float(rate)
 
 
-def _build_caption_segments(text, duration):
+def _split_sentences(text):
     sentences = [
         sentence.strip()
         for sentence in re.split(r"(?<=[.!?])\s+", text.strip())
@@ -32,6 +33,12 @@ def _build_caption_segments(text, duration):
 
     if not sentences:
         sentences = [text.strip()]
+
+    return sentences
+
+
+def _build_caption_segments(text, duration):
+    sentences = _split_sentences(text)
 
     weights = [
         max(1, len(re.findall(r"\S+", sentence)))
@@ -103,10 +110,148 @@ def _write_captions(text, audio_file):
     return caption_file
 
 
+def _run_piper(text, output_file, voice_id=None, speed=None):
+    """Run Piper for a single piece of text.
+
+    This is the ONLY place in this module that runs a subprocess.
+    ``voice_id`` is threaded through (and recorded by callers in the
+    parts manifest hash) but does not change the model: narration
+    always uses PIPER_MODEL. When ``speed`` is provided, Piper's
+    --length-scale is set to 1.0 / speed; the default command
+    (voice_id=None, speed=None) is identical to the historical one.
+    """
+    output_file = Path(output_file)
+
+    command = [
+        sys.executable,
+        "-m",
+        "piper",
+        "-m",
+        str(PIPER_MODEL),
+        "-c",
+        str(PIPER_CONFIG),
+        "-f",
+        str(output_file),
+    ]
+
+    if speed is not None:
+        command.extend(["--length-scale", str(1.0 / speed)])
+
+    print("Running Piper...")
+    print()
+
+    result = subprocess.run(
+        command,
+        input=text,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+    )
+
+    if result.stdout:
+        print(result.stdout)
+
+    if result.stderr:
+        print(result.stderr)
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Piper failed with exit code {result.returncode}."
+        )
+
+    if not output_file.exists():
+        raise RuntimeError(
+            "Piper finished but no audio file was created."
+        )
+
+    if output_file.stat().st_size == 0:
+        raise RuntimeError(
+            "Piper created an empty audio file."
+        )
+
+
+def _part_hash(sentence, voice_id=None, speed=None):
+    payload = "|".join(
+        [
+            sentence,
+            str(voice_id),
+            str(speed),
+            PIPER_MODEL.name,
+            PIPER_CONFIG.name,
+        ]
+    )
+
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _sentence_sha256(sentence):
+    return hashlib.sha256(sentence.encode("utf-8")).hexdigest()
+
+
+def _load_parts_manifest(manifest_file):
+    """Return {index: entry} from an existing parts manifest, or {}."""
+    try:
+        with open(manifest_file, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, ValueError):
+        return {}
+
+    entries = {}
+
+    if isinstance(data, dict):
+        for entry in data.get("parts") or []:
+            if isinstance(entry, dict) and "index" in entry:
+                entries[entry["index"]] = entry
+
+    return entries
+
+
+def _write_parts_manifest(manifest_file, parts):
+    data = {
+        "version": 1,
+        "model": PIPER_MODEL.name,
+        "parts": parts,
+    }
+
+    with open(manifest_file, "w", encoding="utf-8") as file:
+        json.dump(data, file, ensure_ascii=False, indent=2)
+
+
+def _concatenate_parts(part_files, output_file):
+    """Join WAV parts sample-exactly, in order, with no gaps."""
+    params = None
+
+    with wave.open(str(output_file), "wb") as out_wav:
+        for part_file in part_files:
+            with wave.open(str(part_file), "rb") as part_wav:
+                part_params = (
+                    part_wav.getnchannels(),
+                    part_wav.getsampwidth(),
+                    part_wav.getframerate(),
+                )
+
+                if params is None:
+                    params = part_params
+                    out_wav.setnchannels(part_params[0])
+                    out_wav.setsampwidth(part_params[1])
+                    out_wav.setframerate(part_params[2])
+                elif part_params != params:
+                    raise RuntimeError(
+                        "Narration parts have mismatched audio "
+                        f"parameters: {part_file} has {part_params}, "
+                        f"expected {params}."
+                    )
+
+                out_wav.writeframes(
+                    part_wav.readframes(part_wav.getnframes())
+                )
+
+
 def generate_narration(
     text: str,
     output_path: str,
     voice_id=None,
+    speed=None,
 ):
     if not text or not text.strip():
         raise ValueError("Narration text cannot be empty.")
@@ -137,39 +282,85 @@ def generate_narration(
     print(f"Output: {output_file}")
     print()
 
-    command = [
-        sys.executable,
-        "-m",
-        "piper",
-        "-m",
-        str(PIPER_MODEL),
-        "-c",
-        str(PIPER_CONFIG),
-        "-f",
-        str(output_file),
-    ]
+    sentences = _split_sentences(text)
 
-    print("Running Piper...")
+    parts_dir = output_file.parent / "narration_parts"
+    parts_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_file = parts_dir / "parts_manifest.json"
+    existing_entries = _load_parts_manifest(manifest_file)
+
+    print(f"Sentences: {len(sentences)}")
+    print(f"Parts: {parts_dir}")
     print()
 
-    result = subprocess.run(
-        command,
-        input=text,
-        text=True,
-        encoding="utf-8",
-        capture_output=True,
-    )
+    manifest_parts = []
+    part_files = []
 
-    if result.stdout:
-        print(result.stdout)
+    for index, sentence in enumerate(sentences):
+        part_name = f"part_{index:03d}.wav"
+        part_file = parts_dir / part_name
+        part_hash = _part_hash(sentence, voice_id=voice_id, speed=speed)
 
-    if result.stderr:
-        print(result.stderr)
+        entry = {
+            "index": index,
+            "file": part_name,
+            "hash": part_hash,
+            "sentence_sha256": _sentence_sha256(sentence),
+        }
 
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Piper failed with exit code {result.returncode}."
+        existing = existing_entries.get(index)
+        reused = (
+            part_file.exists()
+            and part_file.stat().st_size > 0
+            and existing is not None
+            and existing.get("hash") == part_hash
         )
+
+        if reused:
+            print(
+                f"Part {index + 1}/{len(sentences)}: "
+                f"reusing {part_name}"
+            )
+        else:
+            print(
+                f"Part {index + 1}/{len(sentences)}: "
+                f"synthesizing {part_name}"
+            )
+
+            last_error = None
+
+            for attempt in range(1, 4):
+                try:
+                    _run_piper(
+                        sentence,
+                        part_file,
+                        voice_id=voice_id,
+                        speed=speed,
+                    )
+                    last_error = None
+                    break
+                except Exception as error:  # noqa: BLE001 - retried below
+                    last_error = error
+                    print(
+                        f"Part {index + 1}/{len(sentences)}: "
+                        f"attempt {attempt}/3 failed: {error}"
+                    )
+
+            if last_error is not None:
+                raise last_error
+
+        manifest_parts.append(entry)
+        part_files.append(part_file)
+
+        # Persist progress after every part so a crashed run can
+        # resume from the parts already synthesized.
+        _write_parts_manifest(manifest_file, manifest_parts)
+
+    print()
+    print("Joining narration parts...")
+
+    _concatenate_parts(part_files, output_file)
 
     if not output_file.exists():
         raise RuntimeError(

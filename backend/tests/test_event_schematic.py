@@ -2,9 +2,10 @@
 
 Covers the chain the v4 E2E run exposed as untested:
 
-- the five-minute harness now builds graphics targets from the
-  Asset Manager's missing-visual records with the SAME logic as
-  jobs.run_full_pipeline (build_graphic_targets);
+- the five-minute harness runs production through the SINGLE
+  jobs.run_full_pipeline entry point with no targeting mirror of
+  its own (Stage 2F — the harness/production divergence the v4 run
+  exposed is impossible by construction);
 - a targeted sentence with no statistic, in a scene with NO
   verified visuals at all, whose own analysis record carries
   event/place labels, receives an EVENT SCHEMATIC graphic
@@ -54,42 +55,29 @@ def _load_harness():
         os.chdir(cwd_snapshot)
 
 
-def test_harness_build_graphic_targets_mirrors_production():
+def test_harness_uses_production_pipeline_without_a_targeting_mirror():
+    """Stage 2F replacement for the harness-mirror test.
+
+    The original test asserted the harness's build_graphic_targets
+    mirror matched jobs' targeting logic on a fixture (missing
+    sentence_number 2 -> one target at scene-local index 1, None/99
+    records skipped). The v4 E2E failure happened because that
+    mirror could drift. The harness now keeps NO mirror: production
+    execution is a single jobs.run_full_pipeline call, so the
+    targeting inside jobs is the only implementation and divergence
+    is impossible by construction. This test pins that structure.
+    """
     harness = _load_harness()
-    processed_scenes = [
-        {
-            "scene": {
-                "scene_number": 1,
-                "sentences": [
-                    {"sentence_number": 1, "text": "Alpha opening."},
-                    {
-                        "sentence_number": 2,
-                        "text": "Beta missing sentence.",
-                        "scenario": {"event": "Beta event"},
-                    },
-                    {"sentence_number": 3, "text": "Gamma covered."},
-                ],
-            },
-            "asset_stats": {
-                "missing_visuals": [
-                    {"sentence_number": 2},
-                    {"sentence_number": None},
-                    {"sentence_number": 99},
-                ]
-            },
-            "videos": [],
-            "images": [],
-        }
-    ]
-    targets = harness.build_graphic_targets(processed_scenes)
-    assert len(targets) == 1
-    target = targets[0]
-    assert target["scene_number"] == 1
-    # Scene-local, 0-based index of sentence_number 2.
-    assert target["sentence_index"] == 1
-    assert target["sentence_number"] == 2
-    assert target["text"] == "Beta missing sentence."
-    assert target["scenario"] == {"event": "Beta event"}
+    assert not hasattr(harness, "build_graphic_targets")
+    source = Path(harness.__file__).read_text(encoding="utf-8")
+    assert "jobs.run_full_pipeline(PROJECT_ID, SCRIPT)" in source
+    for stage_function in (
+        "process_scene_media",
+        "build_motion_graphics_assets",
+        "build_project_timeline",
+        "build_graphic_targets",
+    ):
+        assert stage_function not in source
 
 
 # ---------------------------------------------------------------------------

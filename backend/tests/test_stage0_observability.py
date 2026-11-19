@@ -251,6 +251,11 @@ def test_status_endpoint_shapes(tmp_path, monkeypatch):
 
         # With a persisted state file under media/<id>/, progress is
         # served — and it contains no run internals.
+        # Stage 2G: media paths are anchored via CINEMORA_MEDIA_ROOT
+        # (services/media_paths), no longer resolved against the CWD —
+        # point the media root at this test's tmp layout, whose
+        # media/<id> structure matches project_dir() exactly.
+        monkeypatch.setenv("CINEMORA_MEDIA_ROOT", str(tmp_path / "media"))
         monkeypatch.chdir(tmp_path)
         media_dir = tmp_path / "media" / project_id
         media_dir.mkdir(parents=True)

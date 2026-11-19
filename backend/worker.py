@@ -28,6 +28,20 @@ if __name__ == "__main__":
     print("Using Windows-compatible SimpleWorker...")
     print()
 
+    # Stage 2B (AUD-08): stale-run reconciliation. This process just
+    # started, so any production run still recorded as "running" in
+    # the ledger is an orphan of a dead worker — mark it failed /
+    # "interrupted" instead of leaving it running forever. Fail-soft:
+    # a ledger problem must never stop the worker from starting.
+    try:
+        from services import run_ledger
+
+        reconciled = run_ledger.reconcile_stale_runs()
+        if reconciled:
+            print(f"Reconciled {reconciled} interrupted run(s).")
+    except Exception as error:
+        print(f"WARNING: stale-run reconciliation skipped: {error}")
+
     worker = SimpleWorker(
         queues,
         connection=redis_conn,

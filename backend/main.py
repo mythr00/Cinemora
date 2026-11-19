@@ -17,6 +17,8 @@ from jobs import (
     enqueue_full_pipeline,
 )
 
+from services import media_paths
+
 
 app = FastAPI(
     title="Documentary Studio API",
@@ -173,7 +175,7 @@ def get_project_status(
     # progress. The state file is written atomically (MA-11) and no
     # longer contains run internals (MA-09), so it is safe to serve.
     progress = None
-    state_file = Path("media") / project_id / "production_state.json"
+    state_file = media_paths.project_dir(project_id) / "production_state.json"
     if state_file.exists():
         try:
             progress = json.loads(

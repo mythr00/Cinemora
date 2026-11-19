@@ -2,6 +2,11 @@ import json
 import re
 from pathlib import Path
 
+try:
+    from services import media_paths
+except ImportError:  # flat-layout fallback
+    import media_paths
+
 
 # ============================================================
 # CONFIGURATION
@@ -137,8 +142,10 @@ def tokenize(text):
 
 def load_caption_data(
     project_id,
-    output_dir="media",
+    output_dir=None,
 ):
+    if output_dir is None:
+        output_dir = media_paths.media_root()
     project_dir = (
         Path(output_dir)
         / str(project_id)
@@ -1643,8 +1650,11 @@ def build_scene_timeline(
 def build_project_timeline(
     project_id,
     processed_scenes,
-    output_dir="media",
+    output_dir=None,
 ):
+
+    if output_dir is None:
+        output_dir = media_paths.media_root()
 
     project_dir = (
         Path(output_dir)
