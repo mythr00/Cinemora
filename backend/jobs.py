@@ -633,6 +633,7 @@ def run_full_pipeline(project_id: str, script: str):
             processed_scenes,
             timeline_result=timeline_result,
             renderer_audit=renderer_audit,
+            analysis_mode=analysis.get("mode") if isinstance(analysis, dict) else None,
         )
         write_asset_report(project_dir, asset_report)
 

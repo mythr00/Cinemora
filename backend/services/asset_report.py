@@ -95,12 +95,17 @@ def _timeline_items(timeline_result) -> list:
     return items
 
 
-def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None) -> dict:
+def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None) -> dict:
     """Build the report from real pipeline outputs.
 
     processed_scenes: scene result dicts from the media pipeline.
     timeline_result:  the dict returned by build_project_timeline.
     renderer_audit:   parsed renderer_timing_audit.json, or None.
+    analysis_mode:    "llm" or "degraded" from the story analysis —
+                      recorded verbatim so every report states
+                      explicitly whether real LLM analysis or the
+                      heuristic degraded mode produced the scenarios
+                      the assets were selected against.
     """
     stats = Counter()
     accepted_by_path: dict[str, dict] = {}
@@ -269,6 +274,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     }
 
     return {
+        "analysis_mode": analysis_mode,
         "total_retrieved_assets": stats["candidates_considered"],
         "total_accepted_assets": len(accepted),
         "total_rejected_assets": stats["candidates_rejected"],

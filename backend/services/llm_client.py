@@ -19,6 +19,33 @@ BREWKEG_MODEL = os.getenv(
     "gpt-5-mini",
 )
 
+# Bounded per-request timeout. Legitimate planner calls complete in
+# well under a minute with thinking disabled (see _request); the old
+# timeout=None could hang a production job forever on a stuck call.
+REQUEST_TIMEOUT_SECONDS = 300
+
+
+class LLMResponseError(RuntimeError):
+    """The provider answered, but the response itself is unusable.
+
+    kind is one of:
+      "no_text"   — no text content block (e.g. a reasoning-only
+                    response that spent its budget thinking);
+      "truncated" — stop_reason reported the token cap, so any text
+                    present is incomplete;
+      "empty"     — HTTP 200 with an empty body;
+      "malformed" — the body was not JSON.
+
+    Kept distinct from transport/HTTP failures (plain RuntimeError
+    from _request) so callers and reports can tell a bad response
+    apart from a provider outage — and so an unusable response is
+    never mistaken for a successful one.
+    """
+
+    def __init__(self, kind, message):
+        super().__init__(message)
+        self.kind = kind
+
 
 if not BREWKEG_API_KEY:
     raise RuntimeError("BREWKEG_API_KEY is not configured")
@@ -43,6 +70,18 @@ def _request(
                 "content": str(user_prompt),
             }
         ],
+        # Root-cause fix (diagnosed live, 2026-11-19): the backing
+        # model is a reasoning model. Left enabled, its reasoning is
+        # returned as a "thinking" content block that consumes the
+        # output budget — responses truncate at max_tokens, sometimes
+        # before any text block exists at all. Every caller of this
+        # client wants a direct structured answer (llm_json already
+        # instructs "Do NOT return your reasoning"), so thinking is
+        # disabled at the source. Verified against the live service:
+        # with thinking disabled the same prompts return text-only
+        # responses with stop_reason=end_turn in a fraction of the
+        # time and output tokens.
+        "thinking": {"type": "disabled"},
     }
 
     import time
@@ -57,7 +96,7 @@ def _request(
                 "Content-Type": "application/json",
             },
             json=payload,
-            timeout=None,
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
 
         last_response = response
@@ -85,17 +124,19 @@ def _request(
         )
 
     if not response.text.strip():
-        raise RuntimeError(
-            "BrewKeg returned HTTP 200 but an empty response body."
+        raise LLMResponseError(
+            "empty",
+            "BrewKeg returned HTTP 200 but an empty response body.",
         )
 
     try:
         return response.json()
 
     except ValueError as exc:
-        raise RuntimeError(
+        raise LLMResponseError(
+            "malformed",
             "BrewKeg returned non-JSON response:\n"
-            + response.text[:3000]
+            + response.text[:3000],
         ) from exc
 
 
@@ -180,16 +221,16 @@ def llm_text(
     temperature=0.1,
     max_tokens=16000,
 ):
-    # The backing model is a reasoning model served through the
-    # BrewKeg proxy: it intermittently spends its entire output
-    # budget on a "thinking" content block and returns a successful
-    # response with NO text block at all (observed live: usage
-    # output_tokens == max_tokens, content = [thinking] only).
-    # That response carries no answer, but the identical call
-    # usually succeeds on a fresh attempt — so retry a bounded
-    # number of times before giving up, instead of degrading the
-    # whole analysis because one response had no text output.
-    last_data = None
+    # A response counts as successful ONLY when it carries text and
+    # was not truncated at the token cap. Reasoning-only responses
+    # (no text block) and truncated responses are classified
+    # explicitly via LLMResponseError and retried a bounded number
+    # of times with an escalating output budget — never silently
+    # treated as success. (Thinking is disabled in _request, which
+    # removes the usual cause; this loop is the safety net for the
+    # cases that remain, e.g. a genuinely long answer.)
+    budget = max_tokens
+    last_error = None
 
     for _attempt in range(3):
         data = _request(
@@ -197,21 +238,41 @@ def llm_text(
             user_prompt,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_tokens=budget,
         )
 
         text = _extract_text(data)
+        stop_reason = data.get("stop_reason")
 
-        if text:
+        if text and stop_reason != "max_tokens":
             return text
 
-        last_data = data
+        if not text:
+            blocks = [
+                item.get("type")
+                for item in data.get("content") or []
+                if isinstance(item, dict)
+            ]
+            last_error = LLMResponseError(
+                "no_text",
+                "BrewKeg returned no text output.\n"
+                f"Content blocks: {blocks}\n"
+                f"stop_reason: {stop_reason}\n"
+                f"usage: {data.get('usage')}\n"
+                f"Response: {json.dumps(data)[:3000]}",
+            )
+        else:
+            last_error = LLMResponseError(
+                "truncated",
+                "BrewKeg returned a truncated response "
+                f"(stop_reason=max_tokens at a {budget}-token budget); "
+                "the incomplete text was not treated as a successful "
+                "response.",
+            )
 
-    raise RuntimeError(
-        "BrewKeg returned no text output.\n"
-        f"Response keys: {list(last_data.keys())}\n"
-        f"Response: {json.dumps(last_data)[:3000]}"
-    )
+        budget = min(budget * 2, 64000)
+
+    raise last_error
 
 
 def llm_json(

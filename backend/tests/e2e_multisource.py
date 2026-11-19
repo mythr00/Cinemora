@@ -161,7 +161,12 @@ def main():
     audit_file = PROJECT_DIR / "renderer_timing_audit.json"
     if audit_file.exists():
         renderer_audit = json.loads(audit_file.read_text(encoding="utf-8"))
-    report = build_asset_report(processed_scenes, timeline_result, renderer_audit=renderer_audit)
+    report = build_asset_report(
+        processed_scenes,
+        timeline_result,
+        renderer_audit=renderer_audit,
+        analysis_mode=analysis.get("mode") if isinstance(analysis, dict) else None,
+    )
     write_asset_report(PROJECT_DIR, report)
     manifest = build_rights_manifest(processed_scenes)
     write_rights_manifest(PROJECT_DIR, manifest)
@@ -186,6 +191,17 @@ def main():
 
     print()
     print("E2E-MS CHECKS:")
+    expected_mode = (
+        "llm"
+        if os.environ.get("BREWKEG_API_KEY", "e2e-no-key") != "e2e-no-key"
+        else "degraded"
+    )
+    check(
+        "asset report explicitly records the analysis mode",
+        report.get("analysis_mode") == expected_mode
+        and analysis.get("mode") == expected_mode,
+        f"(report: {report.get('analysis_mode')}, analysis: {analysis.get('mode')}, expected: {expected_mode})",
+    )
     check(
         "final video is 1920x1080 with audio",
         audit["width"] == 1920 and audit["height"] == 1080 and bool(audit.get("audio_codec")),
