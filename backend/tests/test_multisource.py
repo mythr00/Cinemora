@@ -218,3 +218,47 @@ def test_provider_failure_does_not_block_other_providers(monkeypatch):
     videos, web, images = media_pipeline._uve_scenario_search(scenario, {}, "ms4-test")
     assert len(videos) == 1
     assert videos[0]["provider"] == "vimeo"
+
+
+# ---------------------------------------------------------------------------
+# MS-5: visual_selector as tie-break only — relevance always wins.
+# ---------------------------------------------------------------------------
+
+
+def _pickable(url, score, provider):
+    return {
+        "title": f"Candidate {url}",
+        "url": url,
+        "video_url": url,
+        "source": provider,
+        "provider": provider,
+        "verification": {"accepted": True, "score": score},
+        "universal_score": score,
+        "relevance_score": score,
+    }
+
+
+def test_relevance_gap_beats_domain_prestige():
+    # Mandated test 5 (converse): a clearly more relevant YouTube
+    # candidate beats a higher-prestige archive candidate.
+    registry = VisualRegistry(project_id=f"test-{uuid.uuid4()}")
+    youtube = _pickable("https://www.youtube.com/watch?v=x", 0.90, "youtube")
+    archive = _pickable("https://archive.org/details/x", 0.60, "archive.org")
+    picks = media_pipeline._uve_pick(
+        [youtube, archive], {"visual": "Berlin Wall"}, registry, set(), shot_need={}
+    )
+    assert [p["provider"] for p in picks] == ["youtube", "archive.org"]
+
+
+def test_tie_break_prefers_higher_source_quality():
+    registry = VisualRegistry(project_id=f"test-{uuid.uuid4()}")
+    youtube = _pickable("https://www.youtube.com/watch?v=x", 0.800, "youtube")
+    loc = _pickable("https://www.loc.gov/item/x", 0.795, "loc.gov")
+    picks = media_pipeline._uve_pick(
+        [youtube, loc], {"visual": "Berlin Wall"}, registry, set(), shot_need={}
+    )
+    # Within epsilon (0.005 apart): the Library of Congress's higher
+    # domain score (100 vs YouTube's 50 in visual_selector's table)
+    # wins the tie, and both picks carry the recorded quality.
+    assert picks[0]["provider"] == "loc.gov"
+    assert picks[0]["source_quality"] > picks[1]["source_quality"]

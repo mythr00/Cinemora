@@ -4322,7 +4322,58 @@ def _uve_pick(
         if len(picked) >= limit:
             break
 
-    return picked
+    return _apply_source_quality_tiebreak(picked)
+
+
+_TIEBREAK_EPSILON = 0.02
+
+
+def _apply_source_quality_tiebreak(picked):
+    """MS-5: reconnect visual_selector as a TIE-BREAK ONLY.
+
+    Picks arrive relevance-ordered. Candidates whose universal_scores
+    sit within a small epsilon (0.02) of their group's leader are
+    re-ordered by source-quality (domain) score; a relevance gap
+    larger than the epsilon can NEVER be overridden by provider
+    prestige. Every pick is stamped with source_quality for reporting.
+    """
+    if len(picked) < 2:
+        return picked
+    try:
+        from services.visual_selector import get_domain_score
+    except Exception:
+        return picked
+
+    for item in picked:
+        url = (
+            item.get("url") or item.get("video_url")
+            or item.get("image_url") or ""
+        )
+        try:
+            item["source_quality"] = get_domain_score(url)
+        except Exception:
+            item["source_quality"] = 0
+
+    ordered, group = [], []
+
+    def flush():
+        if group:
+            ordered.extend(
+                sorted(
+                    group,
+                    key=lambda i: i.get("source_quality") or 0,
+                    reverse=True,
+                )
+            )
+            group.clear()
+
+    for item in picked:
+        score = item.get("universal_score") or 0
+        if group and abs((group[0].get("universal_score") or 0) - score) > _TIEBREAK_EPSILON:
+            flush()
+        group.append(item)
+    flush()
+    return ordered
 
 
 def _uve_download_any_candidate(candidate, scene_dir, sentence_number, asset_index):
