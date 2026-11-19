@@ -1,0 +1,64 @@
+# CINEMORA backend dependencies — pinned and verified 2026-11-19
+# Verified on Python 3.12.3: clean venv install + all 36 backend modules import (dummy env).
+# System requirements (not pip): ffmpeg + ffprobe on PATH; PostgreSQL and Redis for runtime.
+# Direct deps: fastapi, uvicorn, pydantic, sqlalchemy, python-dotenv, redis, rq, requests,
+# pillow, faster-whisper, yt-dlp, piper-tts, psycopg2-binary; dev/test: pytest, alembic.
+alembic==1.20.1
+annotated-doc==0.0.7
+annotated-types==0.8.0
+anyio==4.16.0
+av==19.0.2
+certifi==2026.10.23
+charset-normalizer==3.5.2
+click==8.5.1
+croniter==7.0.0
+ctranslate2==4.9.0
+fastapi==0.165.0
+faster-whisper==1.2.1
+filelock==4.2.12
+flatbuffers==25.12.19
+fsspec==2026.9.0
+h11==0.16.0
+hf-xet==1.8.0
+httpcore2==2.16.2
+httptools==0.9.0
+httpx2==2.16.2
+huggingface_hub==2.4.0
+idna==3.20
+iniconfig==2.3.1
+Mako==1.4.3
+MarkupSafe==3.0.4
+numpy==2.5.5
+onnxruntime==1.32.0
+opentelemetry-api==1.45.2
+packaging==26.3
+pathvalidate==3.3.1
+pillow==13.0.0
+piper-tts==1.8.0
+pluggy==1.7.0
+protobuf==7.36.2
+psycopg2-binary==2.9.13
+pydantic==2.14.3
+pydantic_core==2.50.4
+Pygments==2.21.0
+pytest==9.2.0
+python-dateutil==4.0.0
+python-dotenv==1.2.4
+PyYAML==6.0.3
+redis==8.1.0
+requests==2.34.2
+rq==3.0.0
+SQLAlchemy==2.1.9
+starlette==1.10.0
+tokenizers==0.23.3
+tqdm==4.70.1
+truststore==0.10.5
+typing-inspection==0.4.5
+typing_extensions==4.16.0
+tzdata==2026.6
+urllib3==2.8.0
+uvicorn==0.54.0
+uvloop==0.23.0
+watchfiles==1.3.0
+websockets==17.4
+yt-dlp==2026.10.26
