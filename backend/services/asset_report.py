@@ -287,6 +287,22 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "unknown_licences": len(unknown_licence),
     }
 
+    # ---- segment retrieval (original vs extracted, honestly) -----------
+    segment_retrieval = [
+        {
+            "provider": _source_name(asset),
+            "url": asset.get("video_url") or asset.get("url") or "",
+            "source_duration_seconds": asset.get("source_duration_seconds"),
+            "segment_start_seconds": asset.get("clip_start"),
+            "segment_evidence": asset.get("segment_evidence"),
+            "extracted_duration_seconds": asset.get("duration_seconds"),
+            "download_method": asset.get("download_method"),
+            "partial_download": asset.get("partial_download"),
+        }
+        for asset in real_assets
+        if (asset.get("type") or asset.get("visual_type")) == "video"
+    ]
+
     return {
         "analysis_mode": analysis_mode,
         "total_retrieved_assets": stats["candidates_considered"],
@@ -300,6 +316,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "text_cards": len(cards),
         "placeholder_clips": placeholder_clips,
         "holdover_clips": holdover_clips,
+        "segment_retrieval": segment_retrieval,
         "missing_visuals": missing_visuals,
         "missing_visual_count": len(missing_visuals),
         "repeated_footage": repeated,

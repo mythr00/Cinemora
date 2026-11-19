@@ -292,6 +292,19 @@ def enrich_visual_collection_with_evidence(visuals, *, shot_type="", query="", s
 DEFAULT_IMAGE_COUNT = 3
 DEFAULT_VIDEO_COUNT = 2
 DEFAULT_CLIP_DURATION = 8
+
+# Segment-retrieval provenance (founder directive: download only the
+# segment required, and prove it). The real download functions record
+# HOW each clip was retrieved here, keyed by output path; the asset
+# builder pops the entry and stamps it onto the accepted asset.
+# Methods: "yt-dlp-download-sections" (partial), "ffmpeg-range-seek"
+# (partial), "full-download-trim" (NOT partial — reported honestly).
+DOWNLOAD_PROVENANCE: dict = {}
+
+# Source durations learned during segment-evidence checks, keyed by
+# URL, so accepted assets can report original vs extracted duration
+# without re-probing remote sources.
+_SOURCE_DURATION_CACHE: dict = {}
 MAX_CONSECUTIVE_SEARCH_FAILURES = 8
 YT_DLP_TIMEOUT = 120
 FFMPEG_TIMEOUT = 90
@@ -1609,6 +1622,36 @@ def download_valid_image(image_url, output_path):
 def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, start_time=0):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Segment-only retrieval FIRST (founder directive): ffmpeg input
+    # seeking (-ss BEFORE -i) makes the HTTP client request only the
+    # byte ranges around the evidenced segment instead of pulling the
+    # whole file. Servers that cannot serve ranges, or sources that
+    # fail this path, fall through to the full-download trim below —
+    # which is then reported honestly as NOT partial.
+    seek_command = [
+        "ffmpeg", "-y",
+        "-ss", str(max(0, int(start_time or 0))),
+        "-i", str(url),
+        "-t", str(duration),
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-an", "-movflags", "+faststart", str(output_path),
+    ]
+    seek_code, _, _seek_err = run_command_safe(
+        seek_command, FFMPEG_TIMEOUT, "FFmpeg range download"
+    )
+    if seek_code == 0 and validate_video(output_path):
+        DOWNLOAD_PROVENANCE[str(output_path)] = {
+            "method": "ffmpeg-range-seek",
+            "partial": True,
+        }
+        return True
+    try:
+        if output_path.exists():
+            output_path.unlink()
+    except OSError:
+        pass
+
     raw_path = output_path.with_name(output_path.stem + "_raw.mp4")
     try:
         response = _http().get(url, timeout=60, stream=True)
@@ -1630,6 +1673,12 @@ def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, star
         if code != 0 or not validate_video(output_path):
             print((stderr or "")[-1000:])
             return False
+        # This path downloaded the whole file before trimming — the
+        # provenance says so; it is never dressed up as partial.
+        DOWNLOAD_PROVENANCE[str(output_path)] = {
+            "method": "full-download-trim",
+            "partial": False,
+        }
         return True
     except Exception as error:
         print(f"Source video download failed: {error}")
@@ -1833,6 +1882,13 @@ def download_video_clip(
         f"VALID YOUTUBE VIDEO CLIP: "
         f"{output_path}"
     )
+
+    # The yt-dlp path retrieves only the evidenced section
+    # (--download-sections), never the whole source video.
+    DOWNLOAD_PROVENANCE[str(output_path)] = {
+        "method": "yt-dlp-download-sections",
+        "partial": True,
+    }
 
     return True
 
@@ -3351,6 +3407,8 @@ def _segment_start_detailed(url, subject="", place="", event="", era="",
 
     if is_direct_media_url(url):
         source_duration = _remote_duration_seconds(url)
+        if source_duration:
+            _SOURCE_DURATION_CACHE[url] = float(source_duration)
         if source_duration and float(source_duration) <= clip * 2:
             return 0, "whole_asset"
         return None, "none"
@@ -3364,6 +3422,8 @@ def _segment_start_detailed(url, subject="", place="", event="", era="",
             source_duration = float(slim["duration"])
         except (TypeError, ValueError):
             source_duration = None
+    if source_duration:
+        _SOURCE_DURATION_CACHE[url] = float(source_duration)
     if source_duration and source_duration <= clip * 2:
         return 0, "whole_asset"
 
@@ -3510,6 +3570,7 @@ def _uve_download_video_candidate(
 
     asset = dict(candidate)
     asset.pop("_download_error", None)
+    _download_provenance = DOWNLOAD_PROVENANCE.pop(str(output_path), {}) or {}
 
     asset.update(
         {
@@ -3525,6 +3586,13 @@ def _uve_download_video_candidate(
             # MS-3: how the start time was evidenced — whole_asset or
             # verified_segment; recorded on every accepted video.
             "segment_evidence": segment_evidence,
+            # Segment-retrieval provenance: the ORIGINAL source
+            # duration (when the evidence stage learned it), how the
+            # clip was retrieved, and whether retrieval was genuinely
+            # partial. Unknown stays None — never guessed.
+            "source_duration_seconds": _SOURCE_DURATION_CACHE.get(url),
+            "download_method": _download_provenance.get("method"),
+            "partial_download": _download_provenance.get("partial"),
             "clip_duration": probe["duration_seconds"],
             "width": probe["width"],
             "height": probe["height"],
