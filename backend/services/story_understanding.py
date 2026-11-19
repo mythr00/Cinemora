@@ -33,6 +33,65 @@ SCENARIO_KINDS = [
 ]
 SPECIFICITY = ["exact", "representative", "generic"]
 
+# F-1 (format intelligence): the visual FORMAT that would best communicate
+# a sentence. This is a ranking signal for the Asset Manager's unified
+# selection — it never mandates a format and never fabricates an asset.
+FORMAT_INTENTS = [
+    "footage", "photograph", "document", "map", "chart", "graphic", "any",
+]
+
+_CHART_RE = re.compile(
+    r"(\$\s?\d|\d[\d,.]*\s?(percent|%)|\b(million|billion|trillion)\b|"
+    r"\b(statistics|casualties|death toll|population|unemployment|inflation)\b)",
+    re.IGNORECASE,
+)
+_DOCUMENT_RE = re.compile(
+    r"\b(court|trial|verdict|sentenced|signed|treaty|decree|official record|"
+    r"document|letter (stating|saying)|report (stated|found)|law (stated|said))\b",
+    re.IGNORECASE,
+)
+_MAP_RE = re.compile(
+    r"\b(border|boundary|river|coast|island|peninsula|territory|region|"
+    r"located|north of|south of|east of|west of|map)\b",
+    re.IGNORECASE,
+)
+_GRAPHIC_RE = re.compile(
+    r"\b(how (it|the|a)|works by|process|mechanism|cycle|step by step|system)\b",
+    re.IGNORECASE,
+)
+_FOOTAGE_RE = re.compile(
+    r"\b(crowd|marched|attacked|opened|fired|celebrated|speech|ceremony|"
+    r"gathered|stormed|parade|protest|riots?|battle|explosion)\b",
+    re.IGNORECASE,
+)
+
+
+def infer_format_intent(sentence_text, scenario=None):
+    """Heuristic format intent for a sentence (degraded mode + fallback).
+
+    Returns (intent, confidence). Deliberately conservative: strong,
+    specific communicative signals (numbers -> chart, records -> document,
+    geography -> map) outrank generic ones; no signal -> ("any", 0.0),
+    which leaves selection to pure relevance.
+    """
+    scenario = scenario or {}
+    kind = str(scenario.get("kind") or "").lower()
+    text = f"{sentence_text or ''} {scenario.get('visual') or ''}"
+
+    if kind == "document" or _DOCUMENT_RE.search(text):
+        return "document", 0.85
+    if _CHART_RE.search(text):
+        return "chart", 0.9
+    if _MAP_RE.search(text):
+        return "map", 0.6
+    if _GRAPHIC_RE.search(text):
+        return "graphic", 0.4
+    if kind == "archival":
+        return "photograph", 0.5
+    if _FOOTAGE_RE.search(text):
+        return "footage", 0.6
+    return "any", 0.0
+
 # Closed grammatical class (not a vocabulary list): only used as a fallback
 # to decide that a sentence refers back to the established subject.
 PRONOUNS = {"he", "him", "his", "she", "her", "hers", "they", "them", "their", "it", "its"}
@@ -262,6 +321,7 @@ Return ONLY a JSON list, one object per sentence:
     {
       "visual": "plain description of ONE shot that would illustrate the meaning",
       "kind": one of %(kinds)s,
+      "format_intent": "footage | photograph | document | map | chart | graphic | any — the visual format that would best communicate this sentence (a guide for ranking, not a requirement)",
       "subject_id": "bible entity id or null",
       "specificity": "exact | representative | generic",
       "search_terms": ["2-6 word visual noun phrases a stock/archive search would need"],
@@ -383,7 +443,7 @@ def normalize_plan(raw, sentence, bible, carry_subject):
 
     scenarios = []
     for scenario in (raw.get("scenarios") or [])[:4]:
-        cleaned = _normalize_scenario(scenario, raw, by_id, subject_id)
+        cleaned = _normalize_scenario(scenario, raw, by_id, subject_id, sentence_text=sentence)
         if cleaned:
             scenarios.append(cleaned)
 
@@ -397,6 +457,10 @@ def normalize_plan(raw, sentence, bible, carry_subject):
             None,
         )
         subject_entity = by_id.get(subject_id)
+        _intent, _intent_conf = infer_format_intent(
+            sentence,
+            {"kind": "archival" if subject_entity else "abstract_broll", "visual": ""},
+        )
         scenarios.append({
             "visual": f"archival material about {subject_entity['canonical']}" if subject_entity else "neutral documentary b-roll",
             "kind": "archival" if subject_entity else "abstract_broll",
@@ -406,6 +470,8 @@ def normalize_plan(raw, sentence, bible, carry_subject):
             "event": None,
             "place": (place_entity["canonical"] if place_entity else raw.get("place")),
             "era": _year_or_decade(sentence) or None,
+            "format_intent": _intent,
+            "format_intent_confidence": _intent_conf,
         })
         degraded = True
 
@@ -428,7 +494,7 @@ def normalize_plan(raw, sentence, bible, carry_subject):
     return plan
 
 
-def _normalize_scenario(scenario, sentence_raw, by_id, sentence_subject):
+def _normalize_scenario(scenario, sentence_raw, by_id, sentence_subject, sentence_text=""):
     if not isinstance(scenario, dict):
         return None
     visual = str(scenario.get("visual") or "").strip()
@@ -450,6 +516,17 @@ def _normalize_scenario(scenario, sentence_raw, by_id, sentence_subject):
     if specificity == "exact" and subject_id is None:
         specificity = "representative"  # cannot demand an exact match with no subject
 
+    # F-1: format intent — an LLM-provided value is validated against the
+    # closed set; anything else falls back to the heuristic inference.
+    format_intent = str(scenario.get("format_intent") or "").lower()
+    if format_intent in FORMAT_INTENTS and format_intent != "any":
+        format_confidence = 0.8
+    else:
+        format_intent, format_confidence = infer_format_intent(
+            sentence_text or sentence_raw.get("sentence") or "",
+            {"kind": kind, "visual": visual},
+        )
+
     return {
         "visual": visual,
         "kind": kind,
@@ -459,6 +536,8 @@ def _normalize_scenario(scenario, sentence_raw, by_id, sentence_subject):
         "event": scenario.get("event") or None,
         "place": scenario.get("place") or sentence_raw.get("place") or None,
         "era": scenario.get("era") or sentence_raw.get("time") or None,
+        "format_intent": format_intent,
+        "format_intent_confidence": format_confidence,
     }
 
 
