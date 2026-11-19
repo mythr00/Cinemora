@@ -618,12 +618,27 @@ ACCEPT_THRESHOLD = {"exact": 0.55, "representative": 0.34, "generic": 0.22}
 def verify_candidate(candidate, scenario, bible):
     """
     candidate: dict with any of title, snippet, description, url, source.
-    Returns {"accepted": bool, "score": float, "reasons": [..]}
+    Returns {"accepted": bool, "score": float, "reasons": [..],
+             "contributions": {..}, "rejection_reason": str}
+
+    Scoring is deterministic and explainable:
+      subject alias hit ............ +0.45
+      topical token overlap ........ +0.45 * min(1, overlap * 1.5)
+      era year present ............. +0.10
+      names a different person ..... -0.30
+
+    VA-04: a subject match ALONE can no longer approve a candidate.
+    When the scenario defines topical terms (search_terms / visual),
+    the candidate must show SOME topical overlap with them; era or
+    subject mentions by themselves are not topical evidence. The
+    individual contributions and the final rejection reason are
+    recorded on the verdict so every decision is explainable.
     """
     text = _norm(" ".join(str(candidate.get(k) or "") for k in ("title", "snippet", "description", "url", "source")))
     by_id = bible.get("by_id", {})
     reasons = []
     score = 0.0
+    contributions = {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0}
 
     subject = by_id.get(scenario.get("subject_id"))
     subject_hit = False
@@ -636,6 +651,7 @@ def verify_candidate(candidate, scenario, bible):
         subject_hit = any(_norm(a) and _norm(a) in text for a in aliases)
         if subject_hit:
             score += 0.45
+            contributions["subject"] = 0.45
             reasons.append(f"mentions {subject['canonical']}")
         elif scenario.get("specificity") == "exact":
             reasons.append(f"missing required subject {subject['canonical']}")
@@ -644,14 +660,18 @@ def verify_candidate(candidate, scenario, bible):
     for term in scenario.get("search_terms") or []:
         wanted |= _content_tokens(term)
     wanted |= _content_tokens(scenario.get("visual"))
+    overlap = None
     if wanted:
         overlap = len(wanted & {_stem(t) for t in text.split()}) / len(wanted)
-        score += 0.45 * min(1.0, overlap * 1.5)
+        topical = 0.45 * min(1.0, overlap * 1.5)
+        score += topical
+        contributions["topical"] = round(topical, 3)
         reasons.append(f"visual overlap {overlap:.2f}")
 
     era = _year_or_decade(scenario.get("era"))
     if era and era[:4] in text:
         score += 0.10
+        contributions["era"] = 0.10
         reasons.append("era match")
 
     # A named-person shot that names a DIFFERENT bible person and not the
@@ -664,13 +684,32 @@ def verify_candidate(candidate, scenario, bible):
         ]
         if others:
             score -= 0.3
+            contributions["wrong_person"] = -0.3
             reasons.append(f"names other person {others[0]['canonical']}")
 
     specificity = scenario.get("specificity", "representative")
     accepted = score >= ACCEPT_THRESHOLD.get(specificity, 0.34)
+    rejection_reason = ""
     if specificity == "exact" and subject and not subject_hit:
         accepted = False
-    return {"accepted": accepted, "score": round(score, 3), "reasons": reasons}
+        rejection_reason = "missing_required_subject"
+    elif wanted and overlap == 0:
+        # VA-04: no topical evidence at all — a subject mention and/or
+        # an era year by themselves do not establish relevance to the
+        # visual topic the sentence actually needs.
+        accepted = False
+        rejection_reason = "no_topical_evidence"
+    elif not accepted:
+        rejection_reason = "below_threshold"
+    if accepted:
+        rejection_reason = ""
+    return {
+        "accepted": accepted,
+        "score": round(score, 3),
+        "reasons": reasons,
+        "contributions": contributions,
+        "rejection_reason": rejection_reason,
+    }
 
 
 # --------------------------------------------------------------------------

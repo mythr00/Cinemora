@@ -72,6 +72,27 @@ def finish_stage(state: dict, stage: str, project_dir: Path):
 def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
     fail_stage(state, stage, str(error))
     save_production_state(project_dir, state)
+    # VA-07: a failed run must still leave its asset report, built
+    # from whatever partial state the pipeline had accumulated, so a
+    # failure is diagnosable from the report alone. A problem writing
+    # the report never masks the original error.
+    try:
+        partial = state.get("_partial") or {}
+        partial_analysis = partial.get("analysis")
+        failure_report = build_asset_report(
+            partial.get("processed_scenes") or [],
+            timeline_result=partial.get("timeline_result"),
+            analysis_mode=(
+                partial_analysis.get("mode")
+                if isinstance(partial_analysis, dict)
+                else None
+            ),
+            run_failure={"stage": stage, "error": str(error)},
+        )
+        write_asset_report(project_dir, failure_report)
+        print("Asset report (failure): written from partial state.")
+    except Exception as report_error:
+        print(f"Asset report (failure) could not be written: {report_error}")
     print()
     print("========================================")
     print("PIPELINE FAILED")
@@ -242,6 +263,14 @@ def run_full_pipeline(project_id: str, script: str):
             project_dir=project_dir,
         )
         analysis = production_data["analysis"]
+        # VA-07: keep references to the accumulating run state so a
+        # later failure can still produce an asset report (the lists
+        # are mutated in place as the pipeline progresses).
+        state["_partial"] = {
+            "processed_scenes": processed_scenes,
+            "analysis": analysis,
+            "timeline_result": None,
+        }
         sentences = production_data["sentences"]
         scenes = production_data["scenes"]
         script_hash = production_data.get("script_hash") or script_hash
@@ -474,6 +503,8 @@ def run_full_pipeline(project_id: str, script: str):
         # sentences — never padded, stretched or placeholdered.
         # ----------------------------------------------
 
+        if isinstance(state.get("_partial"), dict):
+            state["_partial"]["timeline_result"] = timeline_result
         coverage = timeline_result.get("coverage") or {}
         if coverage and not coverage.get("complete", True):
             uncovered = coverage.get("uncovered_sentences") or []
@@ -679,7 +710,7 @@ def run_full_pipeline(project_id: str, script: str):
             f"verified_footage={asset_report['verified_moving_footage']} "
             f"verified_images={asset_report['verified_images']} "
             f"substitutions={asset_report['substitutions']} "
-            f"genuine_footage_only={asset_report['genuine_footage_only']}"
+            f"authentic={asset_report['authentic']}"
         )
 
         # ----------------------------------------------

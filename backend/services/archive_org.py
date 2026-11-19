@@ -143,6 +143,14 @@ def search_archive_videos(query: str, limit: int = 3) -> list[dict]:
         )
         label = licence_label(license_url)
 
+        # VA-03: archive.org metadata carries each file's length in
+        # seconds — legitimate provider timing metadata, used as a
+        # duration fallback when yt-dlp cannot read the item.
+        try:
+            duration_seconds = float(chosen.get("length") or 0) or None
+        except (TypeError, ValueError):
+            duration_seconds = None
+
         results.append(
             {
                 "title": str(meta.get("title") or doc.get("title") or identifier),
@@ -160,6 +168,7 @@ def search_archive_videos(query: str, limit: int = 3) -> list[dict]:
                     "recorded" if label != "unknown" else "verify_before_publish"
                 ),
                 "snippet": description[:300],
+                "duration_seconds": duration_seconds,
                 "matched_query": query,
             }
         )

@@ -22,11 +22,30 @@ from pathlib import Path
 from typing import Optional
 
 _lock = threading.RLock()
-_initialized = False
+_initialized_paths: set = set()
 
 # How long a cached "transcript unavailable" verdict is trusted before the
 # transcript is retried (AUD-19). Mirrors the rate_limited retry pattern.
 TRANSCRIPT_UNAVAILABLE_TTL_SECONDS = 24 * 3600
+
+
+def _profile_ttl_seconds() -> float:
+    """How long a successful source profile is trusted (VA-14).
+
+    Other cache horizons in this module: search results 30 days,
+    empty searches 2 days, transcript-unavailable 24h, transcript
+    rate-limit cooldown ~10 min. A successful profile was previously
+    trusted FOREVER — a video that later became private, deleted or
+    region-blocked kept being treated as available and correctly
+    analysed. Seven days bounds that staleness while keeping the
+    cache useful; overridable via CINEMORA_PROFILE_TTL_SECONDS.
+    """
+    import os
+
+    try:
+        return float(os.environ.get("CINEMORA_PROFILE_TTL_SECONDS") or 7 * 24 * 3600)
+    except (TypeError, ValueError):
+        return float(7 * 24 * 3600)
 
 _STOP = {
     "the", "a", "an", "of", "in", "on", "and", "to", "for", "with",
@@ -105,18 +124,21 @@ def _db_path() -> Path:
 
 @contextlib.contextmanager
 def _db():
-    global _initialized
+    # Schema initialization is tracked PER PATH: the database path is
+    # env-switchable, and initializing only the first path ever used
+    # left any later path without tables ("no such table" errors).
     with _lock:
-        conn = sqlite3.connect(str(_db_path()), timeout=30)
+        db_path = str(_db_path())
+        conn = sqlite3.connect(db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         try:
-            if not _initialized:
+            if db_path not in _initialized_paths:
                 try:
                     conn.execute("PRAGMA journal_mode=WAL")
                 except sqlite3.DatabaseError:
                     pass
                 conn.executescript(_SCHEMA)
-                _initialized = True
+                _initialized_paths.add(db_path)
             yield conn
             conn.commit()
         finally:
@@ -220,6 +242,16 @@ def profile_get(url: str) -> Optional[dict]:
         and (p.get("analyzed_at") or 0) < time.time() - TRANSCRIPT_UNAVAILABLE_TTL_SECONDS
     ):
         p["transcript_status"] = "unknown"
+    # VA-14: successful profiles expire too. Past the TTL the status
+    # is reported as "stale" so callers re-verify availability and
+    # metadata instead of trusting one old analysis forever (the
+    # cached facts remain available as hints, mirroring the
+    # rate-limit pattern above).
+    if (
+        p.get("status") == "ok"
+        and (p.get("analyzed_at") or 0) < time.time() - _profile_ttl_seconds()
+    ):
+        p["status"] = "stale"
     bump("profile_hit")
     return p
 

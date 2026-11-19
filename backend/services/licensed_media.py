@@ -316,9 +316,17 @@ def search_wikimedia_videos(query: str, limit: int = 5) -> list[dict]:
             download_url = str(info.get("url") or "")
         if not download_url:
             continue
+        # VA-03: Commons videoinfo carries the file's duration when
+        # the handler provides it — provider timing metadata used as
+        # a duration fallback downstream. Absent stays absent.
+        try:
+            video_duration = float(info.get("duration") or 0) or None
+        except (TypeError, ValueError):
+            video_duration = None
         out.append(
             {
                 "kind": "video",
+                "duration_seconds": video_duration,
                 "source": "wikimedia",
                 "source_url": info.get("descriptionurl"),
                 "creator": (meta.get("Artist") or {}).get("value", ""),

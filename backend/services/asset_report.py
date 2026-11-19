@@ -95,7 +95,7 @@ def _timeline_items(timeline_result) -> list:
     return items
 
 
-def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None) -> dict:
+def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None) -> dict:
     """Build the report from real pipeline outputs.
 
     processed_scenes: scene result dicts from the media pipeline.
@@ -116,6 +116,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     rejection_reasons: Counter = Counter()
     discovery_failures: list = []
     recovery_attempts: list = []
+    candidate_records: list = []
 
     for scene in processed_scenes or []:
         if not isinstance(scene, dict):
@@ -150,6 +151,11 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             if isinstance(failure, dict):
                 discovery_failures.append(
                     {"scene": scene.get("scene_number"), **failure}
+                )
+        for record in scene_stats.get("candidate_records") or []:
+            if isinstance(record, dict):
+                candidate_records.append(
+                    {"scene": scene.get("scene_number"), **record}
                 )
         for attempt in scene_stats.get("recovery_attempts") or []:
             if isinstance(attempt, dict):
@@ -313,6 +319,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             "source_duration_seconds": asset.get("source_duration_seconds"),
             "segment_start_seconds": asset.get("clip_start"),
             "segment_evidence": asset.get("segment_evidence"),
+            "segment_evidence_basis": asset.get("segment_evidence_basis"),
             "extracted_duration_seconds": asset.get("duration_seconds"),
             "download_method": asset.get("download_method"),
             "partial_download": asset.get("partial_download"),
@@ -327,6 +334,75 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
 
     return {
         "analysis_mode": analysis_mode,
+        # VA-07: a failed run still produces this report (from partial
+        # state); run_failure names the stage and error. None means
+        # the run completed.
+        "run_failure": run_failure,
+        "run_completed": run_failure is None,
+        # VA-09: the four verification dimensions, kept separate —
+        # technical validity, metadata relevance, segment evidence
+        # and rights are different judgements and are never merged
+        # into a single "verified" claim.
+        "verification_dimensions": {
+            "technical_validity": {
+                "accepted_with_technical_checks": sum(
+                    1 for a in real_assets
+                    if (a.get("technical_checks") or {}).get("passed")
+                ),
+                "accepted_total": len(real_assets),
+            },
+            "metadata_relevance": {
+                "verified_for_sentence": assignment_counts.get("sentence", 0),
+                "assigned_by_rotation": assignment_counts.get("rotation", 0),
+                "low_confidence_selections": len(low_confidence),
+            },
+            "segment_evidence": {
+                "by_class": dict(Counter(
+                    a.get("segment_evidence") or "not_applicable"
+                    for a in real_assets
+                    if (a.get("type") or a.get("visual_type")) == "video"
+                )),
+                "positional_no_contract": sum(
+                    1 for a in real_assets
+                    if a.get("segment_evidence") == "positional_no_contract"
+                ),
+            },
+            "rights": {
+                "recorded_licences": len(real_assets) - len(unknown_licence),
+                "unknown_licences": len(unknown_licence),
+            },
+        },
+        # VA-09: rights honesty. RIGHTS_POLICY=allow_all is the
+        # founder's operating policy: assets are accepted on relevance
+        # and technical validity. That is NOT legal clearance.
+        "rights_note": (
+            "RIGHTS_POLICY=allow_all: acceptance is based on relevance "
+            "and technical validity only. A recorded licence is "
+            "provider-supplied evidence; an unknown licence is NOT "
+            "cleared for publication, and technical acceptance is not "
+            "legal clearance."
+        ),
+        "provider_rights_policies": {
+            "wikimedia_stills": (
+                "Discovery pre-filters to public-domain / CC0 / CC-BY "
+                "licences; other licences never become candidates."
+            ),
+            "wikimedia_videos": (
+                "No licence pre-filter; the licence is labelled from "
+                "provider metadata, including NC/ND."
+            ),
+            "archive_org": (
+                "Licence mapped only from recognizable licence URLs; "
+                "anything unrecognized stays unknown."
+            ),
+            "all_other_providers": (
+                "Licence recorded as unknown unless the provider "
+                "supplies evidence; unknown is never treated as cleared."
+            ),
+        },
+        # VA-10: rotation assignments are counted explicitly — a
+        # rotated visual was verified for a DIFFERENT sentence.
+        "rotation_assignments": assignment_counts.get("rotation", 0),
         "total_retrieved_assets": stats["candidates_considered"],
         "total_accepted_assets": len(accepted),
         "total_rejected_assets": stats["candidates_rejected"],
@@ -339,6 +415,19 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "placeholder_clips": placeholder_clips,
         "holdover_clips": holdover_clips,
         "segment_retrieval": segment_retrieval,
+        # VA-08: per-candidate traceability. The aggregates are
+        # computed FROM these records, so totals and individual
+        # records cannot disagree.
+        "candidate_records": {
+            "total": len(candidate_records),
+            "by_outcome": dict(
+                Counter(r.get("outcome") for r in candidate_records)
+            ),
+            "by_stage": dict(
+                Counter(r.get("stage") for r in candidate_records)
+            ),
+            "records": candidate_records,
+        },
         "missing_visuals": missing_visuals,
         "missing_visual_count": len(missing_visuals),
         "repeated_footage": repeated,

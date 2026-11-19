@@ -310,6 +310,18 @@ DOWNLOAD_PROVENANCE: dict = {}
 # without re-probing remote sources.
 _SOURCE_DURATION_CACHE: dict = {}
 
+# VA-03/VA-06: per-run segment-evidence bookkeeping, keyed by URL.
+# _SEGMENT_BASIS records HOW a start time was established inside
+# _youtube_start ("chapter" | "transcript" | "description" |
+# "positional_no_contract") so a positional estimate is never
+# relabelled as verified evidence downstream. _SEGMENT_ATTEMPTS lists
+# every evidence source tried for a URL, in order, with its outcome.
+# _SEGMENT_FAILURE_CAUSE records why evidence failed, distinguishing
+# a broken information channel from genuinely absent evidence.
+_SEGMENT_BASIS: dict = {}
+_SEGMENT_ATTEMPTS: dict = {}
+_SEGMENT_FAILURE_CAUSE: dict = {}
+
 # Per-run resilience state (cleared by reset_media_caches each job):
 # URLs whose download already failed in this run are never re-requested
 # by a later beat/scene — a throttled or dead URL stays dead for the run
@@ -1630,19 +1642,77 @@ def validate_video(path):
     return probe_video(path) is not None
 
 
-def download_valid_image(image_url, output_path):
-    output_path = Path(output_path).resolve()
+def _technical_minimums():
+    """Configurable technical minimums (VA-12).
+
+    Deliberately conservative: they reject only media that cannot
+    plausibly serve a 1080p timeline — sub-second clips and
+    thumbnail-grade dimensions. There is NO frame-rate minimum
+    (archival footage legitimately runs at unusual rates) and NO
+    aspect-ratio rejection (the renderer normalizes). Every value is
+    overridable via the environment for unusual productions.
+    """
+    def _env(name, default):
+        try:
+            return float(os.environ.get(name) or default)
+        except (TypeError, ValueError):
+            return float(default)
+
+    return {
+        "min_video_width": _env("CINEMORA_MIN_VIDEO_WIDTH", 320),
+        "min_video_height": _env("CINEMORA_MIN_VIDEO_HEIGHT", 240),
+        "min_video_duration": _env("CINEMORA_MIN_VIDEO_DURATION", 1.0),
+        "min_image_width": _env("CINEMORA_MIN_IMAGE_WIDTH", 320),
+        "min_image_height": _env("CINEMORA_MIN_IMAGE_HEIGHT", 240),
+    }
+
+
+def _video_technical_failures(probe, minimums=None):
+    """Reasons a probed video is technically unsuitable (VA-12).
+
+    Returns a list of failed check names; empty means technically
+    acceptable. This is a TECHNICAL judgement only — it says nothing
+    about relevance, which the gate/verifier own.
+    """
+    minimums = minimums or _technical_minimums()
+    failures = []
+    if probe.get("duration_seconds") is not None and (
+        probe["duration_seconds"] < minimums["min_video_duration"]
+    ):
+        failures.append("duration_below_minimum")
+    width, height = probe.get("width"), probe.get("height")
+    if width is not None and width < minimums["min_video_width"]:
+        failures.append("width_below_minimum")
+    if height is not None and height < minimums["min_video_height"]:
+        failures.append("height_below_minimum")
+    return failures
+
+
+def _image_technical_failures(probe, minimums=None):
+    minimums = minimums or _technical_minimums()
+    failures = []
+    width, height = probe.get("width"), probe.get("height")
+    if width is not None and width < minimums["min_image_width"]:
+        failures.append("width_below_minimum")
+    if height is not None and height < minimums["min_image_height"]:
+        failures.append("height_below_minimum")
+    return failures
+
+
+def _download_image_detailed(image_url, output_path):
+    """Download + validate an image with an explicit reason (VA-13).
+
+    Returns (ok, reason): reason is "" on success, else one of
+    no_url / rate_limited / http_error / download_failed /
+    undersized_file / decode_failed / probe_failed.
+    """
+    output_path = Path(output_path)
+    if not image_url:
+        return False, "no_url"
     try:
         if output_path.exists():
             output_path.unlink()
         download_image(image_url, str(output_path))
-        if not validate_image(output_path):
-            try:
-                output_path.unlink()
-            except OSError:
-                pass
-            return False
-        return True
     except Exception as error:
         print(f"IMAGE DOWNLOAD FAILED: {error}")
         try:
@@ -1650,7 +1720,37 @@ def download_valid_image(image_url, output_path):
                 output_path.unlink()
         except OSError:
             pass
-        return False
+        status = getattr(getattr(error, "response", None), "status_code", None)
+        if status == 429 or "429" in str(error):
+            return False, "rate_limited"
+        if status is not None or "HTTP" in type(error).__name__:
+            return False, "http_error"
+        if re.search(r"\b[45]\d\d\b", str(error)):
+            return False, "http_error"
+        return False, "download_failed"
+    if not output_path.exists() or output_path.stat().st_size < 1000:
+        try:
+            output_path.unlink()
+        except OSError:
+            pass
+        return False, "undersized_file"
+    try:
+        with Image.open(output_path) as img:
+            img.verify()
+        with Image.open(output_path) as img:
+            img.load()
+    except Exception:
+        try:
+            output_path.unlink()
+        except OSError:
+            pass
+        return False, "decode_failed"
+    return True, ""
+
+
+def download_valid_image(image_url, output_path):
+    ok, _reason = _download_image_detailed(image_url, Path(output_path).resolve())
+    return ok
 
 
 def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, start_time=0):
@@ -2032,6 +2132,9 @@ def reset_media_caches():
     _yt_info_locks.clear()
     _FAILED_DOWNLOAD_URLS.clear()
     _DISCOVERY_FAILURES.clear()
+    _SEGMENT_BASIS.clear()
+    _SEGMENT_ATTEMPTS.clear()
+    _SEGMENT_FAILURE_CAUSE.clear()
 
 
 def _youtube_info(key):
@@ -2127,7 +2230,12 @@ def _youtube_slim(key):
     if not (isinstance(info, dict) and info.get("_full")):
         persisted = source_cache.profile_get(key)
 
-        if persisted and persisted.get("duration"):
+        # VA-14: a stale profile (past its TTL) is re-analysed rather
+        # than trusted — the video may have become unavailable since.
+        if (
+            persisted and persisted.get("duration")
+            and persisted.get("status") != "stale"
+        ):
             return {
                 "duration": persisted["duration"],
                 "chapters": persisted.get("chapters") or [],
@@ -3089,7 +3197,7 @@ def _youtube_start(
             f"score={chapter['score']} "
             f"matched={chapter['matched_terms']}"
         )
-
+        _SEGMENT_BASIS[key] = "chapter"
         return start_time
 
     # ---------------------------------------------------------
@@ -3118,7 +3226,7 @@ def _youtube_start(
             f"end={transcript_start + duration}s "
             f"source=transcript"
         )
-
+        _SEGMENT_BASIS[key] = "transcript"
         return transcript_start
 
     # ---------------------------------------------------------
@@ -3188,7 +3296,7 @@ def _youtube_start(
                 f"score={moment_score} "
                 f"matched={moment_matched}"
             )
-
+            _SEGMENT_BASIS[key] = "description"
             return moment_start
 
         most_specific = event or place or subject
@@ -3227,6 +3335,7 @@ def _youtube_start(
                     f"event='{event}'"
                 )
 
+                _SEGMENT_BASIS[key] = "positional_no_contract"
                 return candidate
 
         print(
@@ -3260,6 +3369,7 @@ def _youtube_start(
                     f"representative=True"
                 )
 
+                _SEGMENT_BASIS[key] = "positional_no_contract"
                 return candidate
 
             candidate += duration
@@ -3284,7 +3394,7 @@ def _youtube_start(
             f"chapter='{chapter['title']}' "
             f"representative=True"
         )
-
+        _SEGMENT_BASIS[key] = "chapter"
         return start_time
 
     # ---------------------------------------------------------
@@ -3421,32 +3531,108 @@ def _remote_duration_seconds(url):
         return None
 
 
+def _provider_duration_seconds(candidate):
+    """Duration claimed by the candidate's own provider metadata (VA-03).
+
+    Returns (seconds_or_None, source_label). Accepts plain seconds and
+    HH:MM:SS / MM:SS strings; anything else is ignored, never guessed.
+    This is a FALLBACK for establishing a source's duration when the
+    primary channels (remote probe / yt-dlp info) cannot — it is used
+    only for the whole-asset determination, never to invent a segment
+    inside a long video.
+    """
+    raw = candidate.get("duration_seconds")
+    if raw is None:
+        raw = candidate.get("duration")
+    value = None
+    if isinstance(raw, (int, float)) and raw > 0:
+        value = float(raw)
+    elif isinstance(raw, str) and raw.strip():
+        text = raw.strip()
+        try:
+            value = float(text)
+        except ValueError:
+            try:
+                nums = [float(part) for part in text.split(":")]
+                if len(nums) == 2:
+                    value = nums[0] * 60 + nums[1]
+                elif len(nums) == 3:
+                    value = nums[0] * 3600 + nums[1] * 60 + nums[2]
+            except ValueError:
+                value = None
+    if value and value > 0:
+        return value, str(
+            candidate.get("provider") or candidate.get("source") or "provider"
+        )
+    return None, ""
+
+
 def _segment_start_detailed(url, subject="", place="", event="", era="",
-                            duration=DEFAULT_CLIP_DURATION):
-    """Provider-neutral segment evidence (MS-3).
+                            duration=DEFAULT_CLIP_DURATION,
+                            provider_duration=None,
+                            provider_duration_source=""):
+    """Provider-neutral segment evidence (MS-3, extended VA-03/VA-06).
 
     Returns (start_seconds, evidence) or (None, "none"). Evidence
     classes:
     - "whole_asset": the source is short enough (<= 2x the clip length)
       that starting at 0 is the asset itself, not an arbitrary window
-      of a long video.
+      of a long video. The duration may come from a remote probe,
+      yt-dlp info, or — as a recorded fallback — the provider's own
+      metadata (archive.org file lengths, Wikimedia videoinfo).
     - "verified_segment": the transcript/chapter/description evidence
       machinery (_youtube_start, yt-dlp based and NOT YouTube-only)
       selected a segment matched to the visual contract.
+    - "positional_no_contract": the contract was empty and
+      _youtube_start chose an evenly spaced position. That is an
+      estimate, NOT verified evidence, and is labelled accordingly
+      (VA-06).
     - "none": no evidence — the caller must reject the segment rather
       than invent a timestamp. Timestamp zero is never assumed for a
       long source.
+
+    Every source tried is recorded in _SEGMENT_ATTEMPTS[url], and a
+    failed lookup records its cause in _SEGMENT_FAILURE_CAUSE[url]
+    ("info_unavailable" when the information channel itself failed,
+    vs "no_evidence" when the duration was known but no timed
+    evidence exists). A failed lookup NEVER becomes a segment.
     """
     if not url:
         return None, "none"
     clip = int(duration or DEFAULT_CLIP_DURATION)
+    attempts = []
+    _SEGMENT_ATTEMPTS[url] = attempts
 
     if is_direct_media_url(url):
         source_duration = _remote_duration_seconds(url)
         if source_duration:
             _SOURCE_DURATION_CACHE[url] = float(source_duration)
+            attempts.append({
+                "source": "remote_probe", "outcome": "duration_known",
+                "duration_seconds": float(source_duration),
+            })
+        else:
+            attempts.append({"source": "remote_probe", "outcome": "unavailable"})
+            if provider_duration:
+                _SOURCE_DURATION_CACHE[url] = float(provider_duration)
+                attempts.append({
+                    "source": "provider_metadata", "outcome": "duration_known",
+                    "duration_seconds": float(provider_duration),
+                    "provider": provider_duration_source,
+                })
+        source_duration = _SOURCE_DURATION_CACHE.get(url)
         if source_duration and float(source_duration) <= clip * 2:
             return 0, "whole_asset"
+        if source_duration:
+            # A long direct file has no timed-evidence channel; the
+            # honest outcome is rejection, never an invented window.
+            attempts.append({
+                "source": "timed_evidence",
+                "outcome": "no_path_for_direct_media",
+            })
+            _SEGMENT_FAILURE_CAUSE[url] = "no_evidence_path_for_long_direct_media"
+        else:
+            _SEGMENT_FAILURE_CAUSE[url] = "duration_unknown"
         return None, "none"
 
     # Page URLs on any yt-dlp-supported site: a short source qualifies
@@ -3460,14 +3646,38 @@ def _segment_start_detailed(url, subject="", place="", event="", era="",
             source_duration = None
     if source_duration:
         _SOURCE_DURATION_CACHE[url] = float(source_duration)
+        attempts.append({
+            "source": "yt_dlp_info", "outcome": "duration_known",
+            "duration_seconds": float(source_duration),
+        })
+    else:
+        attempts.append({"source": "yt_dlp_info", "outcome": "unavailable"})
+        if provider_duration:
+            source_duration = float(provider_duration)
+            _SOURCE_DURATION_CACHE[url] = source_duration
+            attempts.append({
+                "source": "provider_metadata", "outcome": "duration_known",
+                "duration_seconds": source_duration,
+                "provider": provider_duration_source,
+            })
     if source_duration and source_duration <= clip * 2:
         return 0, "whole_asset"
 
     start = _youtube_start(
         url, subject=subject, place=place, event=event, era=era
     )
+    basis = _SEGMENT_BASIS.get(str(url).split("&", 1)[0].strip())
     if start is None:
+        attempts.append({"source": "timed_evidence", "outcome": "none_found"})
+        _SEGMENT_FAILURE_CAUSE[url] = (
+            "no_evidence" if source_duration else "info_unavailable"
+        )
         return None, "none"
+    attempts.append({
+        "source": "timed_evidence", "outcome": basis or "verified_segment",
+    })
+    if basis == "positional_no_contract":
+        return int(start), "positional_no_contract"
     return int(start), "verified_segment"
 
 
@@ -3522,6 +3732,9 @@ def _uve_download_video_candidate(
     # its segment: a whole-asset case (short source) or a verified
     # timed segment. No evidence -> reject; timestamp zero is never
     # silently assumed for a long video.
+    provider_duration, provider_duration_source = (
+        _provider_duration_seconds(candidate)
+    )
     start, segment_evidence = _segment_start_detailed(
         url,
         subject=subject,
@@ -3529,6 +3742,8 @@ def _uve_download_video_candidate(
         event=event,
         era=era,
         duration=DEFAULT_CLIP_DURATION,
+        provider_duration=provider_duration,
+        provider_duration_source=provider_duration_source,
     )
 
     if start is None:
@@ -3541,6 +3756,13 @@ def _uve_download_video_candidate(
             f"url={url}"
         )
         candidate["_download_error"] = "no_segment_evidence"
+        # VA-03: preserve WHY evidence failed (broken information
+        # channel vs genuinely absent evidence) and every source tried.
+        candidate["_segment_attempts"] = list(_SEGMENT_ATTEMPTS.get(url) or [])
+        candidate["_segment_failure_cause"] = (
+            _SEGMENT_FAILURE_CAUSE.get(url) or ""
+        )
+        candidate["rejection_stage"] = "segment_evidence"
         return None
 
     safe_query = str(
@@ -3604,6 +3826,24 @@ def _uve_download_video_candidate(
 
         return None
 
+    # VA-12: defensible technical minimums, recorded distinctly from
+    # relevance rejections — the facts and the failed checks travel
+    # with the candidate into the failure records and the report.
+    technical_failures = _video_technical_failures(probe)
+    if technical_failures:
+        candidate["_download_error"] = "technical_below_minimum"
+        candidate["_technical_rejection"] = {
+            "facts": probe,
+            "failed": technical_failures,
+            "minimums": _technical_minimums(),
+        }
+        candidate["rejection_stage"] = "technical_validation"
+        try:
+            output_path.unlink()
+        except OSError:
+            pass
+        return None
+
     asset = dict(candidate)
     asset.pop("_download_error", None)
     _download_provenance = DOWNLOAD_PROVENANCE.pop(str(output_path), {}) or {}
@@ -3617,11 +3857,26 @@ def _uve_download_video_candidate(
             "type": "video",
             "visual_type": "video",
             "duration_seconds": probe["duration_seconds"],
+            "technical_checks": {
+                "passed": True,
+                "facts": {
+                    "width": probe["width"],
+                    "height": probe["height"],
+                    "fps": probe["fps"],
+                    "codec": probe["codec"],
+                    "has_audio": probe["has_audio"],
+                },
+                "minimums": _technical_minimums(),
+            },
             "sentence_number": sentence_number,
             "clip_start": start,
             # MS-3: how the start time was evidenced — whole_asset or
             # verified_segment; recorded on every accepted video.
             "segment_evidence": segment_evidence,
+            "segment_evidence_basis": (
+                _SEGMENT_BASIS.get(str(url).split("&", 1)[0].strip())
+                or segment_evidence
+            ),
             # Segment-retrieval provenance: the ORIGINAL source
             # duration (when the evidence stage learned it), how the
             # clip was retrieved, and whether retrieval was genuinely
@@ -3710,11 +3965,39 @@ def _uve_download_image_candidate(
         f"_{safe_query}{extension}"
     )
 
-    if not download_valid_image(image_url, output_path):
+    ok, reason = _download_image_detailed(image_url, output_path)
+    if not ok:
+        # VA-13: image failures carry explicit reason codes, exactly
+        # like the video path — never a silent None.
+        candidate["_download_error"] = reason
+        candidate["rejection_stage"] = (
+            "technical_validation"
+            if reason in ("undersized_file", "decode_failed", "probe_failed")
+            else "download"
+        )
         return None
 
     probe = probe_image(output_path)
     if probe is None:
+        candidate["_download_error"] = "probe_failed"
+        candidate["rejection_stage"] = "technical_validation"
+        try:
+            output_path.unlink()
+        except OSError:
+            pass
+        return None
+
+    # VA-12: image technical minimums (thumbnail-grade stills cannot
+    # serve a 1080p timeline).
+    image_failures = _image_technical_failures(probe)
+    if image_failures:
+        candidate["_download_error"] = "technical_below_minimum"
+        candidate["_technical_rejection"] = {
+            "facts": probe,
+            "failed": image_failures,
+            "minimums": _technical_minimums(),
+        }
+        candidate["rejection_stage"] = "technical_validation"
         try:
             output_path.unlink()
         except OSError:
@@ -3742,6 +4025,11 @@ def _uve_download_image_candidate(
             "height": probe["height"],
             "format": probe["format"],
             "probed": True,
+            "technical_checks": {
+                "passed": True,
+                "facts": {"width": probe["width"], "height": probe["height"]},
+                "minimums": _technical_minimums(),
+            },
             "license": candidate.get("license") or "unknown",
             "rights_status": candidate.get("rights_status")
             or "verify_before_publish",
@@ -4075,10 +4363,31 @@ def _uve_scenario_search(
 
     return videos, web_sources, images
 
+def _candidate_id_for(candidate):
+    """Stable per-run candidate identifier (VA-08).
+
+    Derived from the candidate URL, so the same candidate carries the
+    same id through verification, selection, download and reporting
+    within a run.
+    """
+    import hashlib
+
+    url = str(
+        candidate.get("url")
+        or candidate.get("video_url")
+        or candidate.get("image_url")
+        or candidate.get("download_url")
+        or candidate.get("link")
+        or ""
+    )
+    return "cand_" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+
+
 def _uve_verify_all(candidates, scenario, bible, shot_need=None):
     scored, seen = [], set()
 
     for candidate in candidates:
+        candidate["candidate_id"] = _candidate_id_for(candidate)
         key = _uve_candidate_key(candidate)
 
         if not key or key in seen:
@@ -4096,6 +4405,7 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
             item = dict(candidate)
             source_cache.bump("gate_rejects")
             item["reject_reason"] = reason
+            item["rejection_stage"] = "metadata_gate"
             item["verification"] = {
                 "accepted": False,
                 "score": 0,
@@ -4121,6 +4431,15 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
         item["verification"] = verdict
         item["universal_score"] = verdict["score"]
         item["relevance_score"] = verdict["score"]
+        if not verdict.get("accepted"):
+            # VA-04/VA-08: scoring rejections used to leave NO record —
+            # the verdict (score, contributions, reason) was computed
+            # and then dropped. Stamp the reason and stage so the
+            # review log and asset report can explain the decision.
+            item["reject_reason"] = (
+                verdict.get("rejection_reason") or "score_below_threshold"
+            )
+            item["rejection_stage"] = "scoring"
         scored.append(item)
 
     scored.sort(
@@ -4135,10 +4454,17 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
 # verifier-rejected candidates can no longer enter the accepted pool.
 
 def _title_blob(candidate):
+    """Candidate-supplied metadata ONLY (VA-05).
+
+    The matched search query used to be included here, which let the
+    query's own words satisfy the gate's subject/place checks — an
+    irrelevant candidate could pass because the QUERY mentioned the
+    subject. The query remains on the candidate for diagnostics and
+    reporting; it is no longer evidence about the candidate.
+    """
     return " ".join([
         str(candidate.get("title") or ""),
         str(candidate.get("snippet") or ""),
-        str(candidate.get("matched_query") or ""),
     ]).lower()
 
 
@@ -4306,51 +4632,16 @@ def _uve_pick(
 ):
     pool = []
 
-    need = shot_need or {}
-
-    specificity = str(
-        need.get("specificity") or ""
-    ).lower()
-
-    required_type = str(
-        need.get("required_type") or ""
-    ).lower()
-
-    required_subject = str(
-        need.get("required_subject") or ""
-    ).strip()
-
-    place = str(
-        need.get("place") or ""
-    ).strip()
-
-    strict_specific = (
-        required_type in {
-            "person",
-            "location",
-            "organization",
-            "event",
-            "object",
-        }
-        or bool(required_subject)
-        or bool(place)
-        or specificity == "exact"
-    )
-
+    # VA-11: the metadata gate runs ONCE, in _uve_verify_all, which
+    # stamps reject_reason on every candidate it rejects. This function
+    # previously re-ran gate_shot_need on every candidate — duplicating
+    # the work, double-printing every REJECT line (which inflated
+    # rejection counts in logs ~2x), and re-stamping the same reasons.
+    # The pick now trusts the recorded gate outcome: a candidate is
+    # eligible only when the verifier accepted it. (The unused
+    # strict_specific computation that also lived here was dead code
+    # and has been removed.)
     for candidate in scored:
-        ok, reason = gate_shot_need(
-            candidate,
-            shot_need,
-        )
-
-        if not ok:
-            candidate["reject_reason"] = reason
-            print(
-                f"      REJECT {reason}: "
-                f"{result_title(candidate)[:80]}"
-            )
-            continue
-
         verification = (
             candidate.get("verification")
             or {}
@@ -4388,6 +4679,7 @@ def _uve_pick(
 
         if existing_uses + batch_uses >= registry.max_source_uses:
             candidate["reject_reason"] = "source_usage_limit"
+            candidate["rejection_stage"] = "selection"
             continue
 
         key = _uve_candidate_key(candidate)
@@ -4411,6 +4703,7 @@ def _uve_pick(
             allowed, why = True, ""
 
         if not allowed:
+            candidate["rejection_stage"] = "selection"
             candidate["reject_reason"] = (
                 why or "registry_block"
             )
@@ -4541,21 +4834,36 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
             # (stashed on the candidate by the downloader) — never silent,
             # never substituted with unrelated footage.
             if failures is not None:
-                failures.append(
-                    {
-                        "provider": candidate.get("provider")
-                        or candidate.get("source")
-                        or "unknown",
-                        "url": str(
-                            candidate.get("url")
-                            or candidate.get("video_url")
-                            or candidate.get("image_url")
-                            or ""
-                        ),
-                        "reason": candidate.get("_download_error")
-                        or "download_failed",
-                    }
+                failure = {
+                    "provider": candidate.get("provider")
+                    or candidate.get("source")
+                    or "unknown",
+                    "url": str(
+                        candidate.get("url")
+                        or candidate.get("video_url")
+                        or candidate.get("image_url")
+                        or ""
+                    ),
+                    "reason": candidate.get("_download_error")
+                    or "download_failed",
+                }
+                failure["candidate_id"] = candidate.get("candidate_id")
+                failure.setdefault(
+                    "stage", candidate.get("rejection_stage") or "download"
                 )
+                if candidate.get("_technical_rejection"):
+                    failure["technical_rejection"] = (
+                        candidate["_technical_rejection"]
+                    )
+                if candidate.get("_segment_failure_cause"):
+                    failure["segment_failure_cause"] = (
+                        candidate["_segment_failure_cause"]
+                    )
+                if candidate.get("_segment_attempts"):
+                    failure["segment_attempts"] = candidate["_segment_attempts"]
+                if candidate.get("rejection_stage"):
+                    failure["stage"] = candidate["rejection_stage"]
+                failures.append(failure)
             continue
 
         key = _uve_candidate_key(asset)
@@ -4839,6 +5147,74 @@ def _uve_search_and_pick(
             print(f"      + image ({asset.get('verification_status')}, score {asset.get('universal_score')})")
     elif picks:
         scene_stats["downloads_failed"] += 1
+    # VA-08: one traceable record per candidate outcome in this pass,
+    # so the asset report's aggregates are built from the same records
+    # an operator can inspect individually.
+    _records = scene_stats.setdefault("candidate_records", [])
+    for _item in (scored_videos + scored_web_sources + scored_images):
+        _base = {
+            "candidate_id": _item.get("candidate_id"),
+            "url": (
+                _item.get("url") or _item.get("video_url")
+                or _item.get("image_url") or ""
+            ),
+            "provider": str(
+                _item.get("provider") or _item.get("source") or "unknown"
+            ),
+        }
+        if _item.get("reject_reason"):
+            _records.append({
+                **_base,
+                "outcome": "rejected",
+                "stage": _item.get("rejection_stage") or "scoring",
+                "reason": _item.get("reject_reason"),
+            })
+        elif (_item.get("verification") or {}).get("accepted"):
+            _records.append({
+                **_base, "outcome": "verified",
+                "stage": "verification", "reason": "",
+            })
+    for _item in combined_pool:
+        # Selection-stage rejections are stamped by _uve_pick on the
+        # pool copies; verification-stage ones are already recorded
+        # from the scored lists above.
+        if _item.get("rejection_stage") == "selection":
+            _records.append({
+                "candidate_id": _item.get("candidate_id"),
+                "url": (
+                    _item.get("url") or _item.get("video_url")
+                    or _item.get("image_url") or ""
+                ),
+                "provider": str(
+                    _item.get("provider") or _item.get("source") or "unknown"
+                ),
+                "outcome": "rejected",
+                "stage": "selection",
+                "reason": _item.get("reject_reason") or "",
+            })
+    for _failure in fetch_failures:
+        _records.append({
+            "candidate_id": _failure.get("candidate_id"),
+            "url": _failure.get("url", ""),
+            "provider": str(_failure.get("provider") or "unknown"),
+            "outcome": "download_failed",
+            "stage": _failure.get("stage") or "download",
+            "reason": _failure.get("reason", ""),
+        })
+    if accepted_asset is not None:
+        _records.append({
+            "candidate_id": accepted_asset.get("candidate_id"),
+            "url": (
+                accepted_asset.get("url") or accepted_asset.get("video_url")
+                or ""
+            ),
+            "provider": str(
+                accepted_asset.get("provider")
+                or accepted_asset.get("source") or "unknown"
+            ),
+            "outcome": "accepted", "stage": "accepted", "reason": "",
+        })
+
     review_records.append({
         "shot_index": scenario_index,
         "queries": list(queries or []),
@@ -4848,11 +5224,19 @@ def _uve_search_and_pick(
             str(c.get("provider") or c.get("source") or "unknown")
             for c in (raw_videos + raw_web_sources + raw_images)
         }) if shot_need else [],
+        # VA-08: the rejected list is NOT capped — diagnostics must
+        # cover every rejected candidate, each with its stable id and
+        # the stage that rejected it.
         "rejected": [
-            {"title": result_title(item), "reason": item.get("reject_reason")}
+            {
+                "candidate_id": item.get("candidate_id"),
+                "title": result_title(item),
+                "reason": item.get("reject_reason"),
+                "stage": item.get("rejection_stage") or "scoring",
+            }
             for item in (scored_videos + scored_web_sources + scored_images)
             if item.get("reject_reason")
-        ][:12],
+        ],
         "picked": [result_title(item) for item in beat_videos + beat_images][-2:],
     })
 

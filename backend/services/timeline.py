@@ -958,6 +958,16 @@ def build_scene_timeline(
             list(sentence_result.get("videos") or [])
             + list(sentence_result.get("images") or [])
         ):
+            # VA-16 (defence in depth): the pipeline never places a
+            # rejected or failed asset into a sentence result, but the
+            # timeline does not blindly trust that — an asset carrying
+            # an explicit rejection or download error is skipped here
+            # too, so no code path can put it on screen.
+            verification = candidate.get("verification") or {}
+            if verification.get("accepted") is False:
+                continue
+            if candidate.get("_download_error"):
+                continue
             if visual_exists(candidate):
                 assigned_by_position[position] = candidate
                 break
@@ -1177,6 +1187,16 @@ def build_scene_timeline(
                 # the asset report (AUD-16/AUD-23).
                 "assignment":
                     assignment,
+
+                # VA-10: what "assignment" means for THIS sentence,
+                # stated explicitly so a rotated visual is never
+                # mistaken for a sentence-verified one downstream.
+                "relevance_status":
+                    {
+                        "sentence": "verified_for_sentence",
+                        "rotation": "not_verified_for_this_sentence",
+                        "motion_graphic": "generated_graphic",
+                    }.get(assignment, "not_verified_for_this_sentence"),
 
                 "motion":
                     "auto",
