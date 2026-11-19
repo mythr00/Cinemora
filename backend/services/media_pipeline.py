@@ -23,6 +23,7 @@ def download_image(image_url, output_path):
 
 from services.visual_registry import get_registry
 from services import story_understanding as story
+from services.media_probe import probe_video
 
 
 # ==========================================================================
@@ -1325,11 +1326,11 @@ def validate_image(path):
 
 
 def validate_video(path):
-    try:
-        path = Path(path)
-        return path.exists() and path.stat().st_size >= 10_000
-    except OSError:
-        return False
+    """A video counts as valid only if ffprobe confirms a real video stream
+    with a usable duration (AUD-17). The previous check — file exists and is
+    >= 10,000 bytes — let corrupt downloads pass and become silent
+    placeholder clips at render time."""
+    return probe_video(path) is not None
 
 
 def download_valid_image(image_url, output_path):
@@ -3091,6 +3092,18 @@ def _uve_download_video_candidate(
 
         return None
 
+    # AUD-17: record the file's REAL probed facts. The asset previously
+    # claimed duration_seconds = DEFAULT_CLIP_DURATION (8s) regardless of
+    # what was actually downloaded.
+    probe = probe_video(output_path)
+    if probe is None:
+        try:
+            output_path.unlink()
+        except OSError:
+            pass
+
+        return None
+
     asset = dict(candidate)
 
     asset.update(
@@ -3101,17 +3114,23 @@ def _uve_download_video_candidate(
             "url": url,
             "type": "video",
             "visual_type": "video",
-            "duration_seconds": DEFAULT_CLIP_DURATION,
+            "duration_seconds": probe["duration_seconds"],
             "sentence_number": sentence_number,
             "clip_start": start,
-            "clip_duration": DEFAULT_CLIP_DURATION,
+            "clip_duration": probe["duration_seconds"],
+            "width": probe["width"],
+            "height": probe["height"],
+            "fps": probe["fps"],
+            "codec": probe["codec"],
+            "has_audio": probe["has_audio"],
+            "probed": True,
         }
     )
 
     print(
         f"YOUTUBE ASSET READY: "
         f"start={start}s "
-        f"duration={DEFAULT_CLIP_DURATION}s "
+        f"duration={probe['duration_seconds']}s "
         f"subject='{subject}' "
         f"place='{place}' "
         f"event='{event}' "

@@ -1,0 +1,125 @@
+"""Real media probing for the Asset Manager (AUD-17).
+
+Before this module, a downloaded "video" was considered valid if the file
+existed and was at least 10,000 bytes, and every asset was stamped with a
+fabricated ``duration_seconds = 8`` regardless of the file's real contents.
+Corrupt-but-large files passed verification and silently became placeholder
+clips at render time.
+
+This module is the single place that answers "what is actually in this
+file?" using ffprobe (video) and Pillow (images):
+
+- ``probe_video(path)`` -> dict with the REAL duration, resolution, fps,
+  codec and audio presence, or ``None`` when the file is missing, unreadable,
+  has no video stream, or reports no usable duration.
+- ``probe_image(path)`` -> dict with real dimensions/format, or ``None``.
+
+Nothing here fabricates values: unknown stays ``None`` and callers must
+treat ``None`` as "not a verified asset".
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+from PIL import Image, UnidentifiedImageError
+
+_FFPROBE_TIMEOUT_SECONDS = 30
+
+
+def _parse_fps(raw: str | None) -> float | None:
+    if not raw:
+        return None
+    try:
+        if "/" in raw:
+            num, den = raw.split("/", 1)
+            den_f = float(den)
+            if den_f == 0:
+                return None
+            return round(float(num) / den_f, 3)
+        return round(float(raw), 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def probe_video(path) -> dict | None:
+    """Return real stream facts for a video file, or None if unverifiable."""
+    path = Path(path)
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_FFPROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        return None
+
+    streams = data.get("streams") or []
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    if video is None:
+        return None
+
+    duration = None
+    fmt = data.get("format") or {}
+    for raw in (fmt.get("duration"), video.get("duration")):
+        try:
+            if raw is not None:
+                duration = float(raw)
+                break
+        except (TypeError, ValueError):
+            continue
+    if duration is None or duration <= 0:
+        return None
+
+    try:
+        width = int(video.get("width") or 0) or None
+        height = int(video.get("height") or 0) or None
+    except (TypeError, ValueError):
+        width = height = None
+
+    return {
+        "duration_seconds": round(duration, 3),
+        "width": width,
+        "height": height,
+        "fps": _parse_fps(video.get("avg_frame_rate") or video.get("r_frame_rate")),
+        "codec": video.get("codec_name"),
+        "has_audio": any(s.get("codec_type") == "audio" for s in streams),
+    }
+
+
+def probe_image(path) -> dict | None:
+    """Return real dimensions/format for an image file, or None."""
+    path = Path(path)
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        with Image.open(path) as img:
+            img.verify()
+        with Image.open(path) as img:
+            width, height = img.size
+            fmt = img.format
+    except (UnidentifiedImageError, OSError, ValueError):
+        return None
+    if not width or not height:
+        return None
+    return {"width": width, "height": height, "format": fmt}
