@@ -1055,6 +1055,17 @@ def _uve_scenarios_for(sentence):
 
             "era": era,
 
+            # F-1 threading: carry the scenario's format intent into the
+            # beat loop, where unified selection uses it as a bounded
+            # ranking signal.
+            "format_intent": str(
+                scenario.get("format_intent") or "any"
+            ).strip().lower(),
+
+            "format_intent_confidence": scenario.get(
+                "format_intent_confidence"
+            ) or 0.0,
+
             "subject": subject,
 
             "required_type": required_type,
@@ -1181,17 +1192,44 @@ def search_web_sources(query, limit=8):
         if not url:
             continue
 
+        provider, host = provider_for_url(url)
         output.append({
             "title": item.get("title", ""),
             "url": url,
             "link": url,
             "snippet": item.get("snippet", ""),
-            "source": "web",
+            "source": provider,
+            "provider": provider,
+            "source_domain": host,
+            "license": "unknown",
             "rights_status": "verify_before_publish",
             "matched_query": query,
         })
 
     return output
+
+
+def _web_source_is_video_candidate(candidate):
+    """MS-2: can this web result plausibly yield moving footage?
+
+    True for direct media files, known video hosts, and pages whose URL
+    marks them as video pages (news /video/ and /av/ paths, /watch).
+    Plain articles are NOT attempted — a failed or misleading extraction
+    must never be how footage is 'found'."""
+    url = str(
+        candidate.get("url") or candidate.get("video_url") or candidate.get("link") or ""
+    ).strip()
+    if not url:
+        return False
+    if is_direct_media_url(url):
+        return True
+    provider, _host = provider_for_url(url)
+    if provider in {"youtube", "vimeo", "dailymotion"}:
+        return True
+    from urllib.parse import urlparse
+
+    path = (urlparse(url).path or "").lower()
+    return "/video" in path or "/watch" in path or "/av/" in path
 
 
 def search_image_sources(query, limit=5):
@@ -3188,6 +3226,7 @@ def _uve_download_video_candidate(
     ).strip()
 
     if not url:
+        candidate["_download_error"] = "no_url"
         return None
 
     need = candidate.get("shot_need") or {}
@@ -3247,6 +3286,7 @@ def _uve_download_video_candidate(
                 f"era='{era}' "
                 f"url={url}"
             )
+            candidate["_download_error"] = "no_segment_evidence"
             return None
 
     safe_query = str(
@@ -3281,12 +3321,15 @@ def _uve_download_video_candidate(
             f"VIDEO DOWNLOAD FAILED: "
             f"{url} start={start}s error={exc}"
         )
+        candidate["_download_error"] = f"download_exception: {exc}"
         return None
 
     if not ok:
+        candidate["_download_error"] = "download_failed"
         return None
 
     if not validate_video(output_path):
+        candidate["_download_error"] = "invalid_media"
         try:
             output_path.unlink()
         except OSError:
@@ -3299,6 +3342,7 @@ def _uve_download_video_candidate(
     # what was actually downloaded.
     probe = probe_video(output_path)
     if probe is None:
+        candidate["_download_error"] = "probe_failed"
         try:
             output_path.unlink()
         except OSError:
@@ -3307,6 +3351,7 @@ def _uve_download_video_candidate(
         return None
 
     asset = dict(candidate)
+    asset.pop("_download_error", None)
 
     asset.update(
         {
@@ -4049,7 +4094,19 @@ def _uve_pick(
     return picked
 
 
-def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_index, registry, used_keys):
+def _uve_download_any_candidate(candidate, scene_dir, sentence_number, asset_index):
+    """F-2 dispatcher: route a unified-pool pick to its format's
+    downloader. The pool kind was stamped when the pool was built."""
+    if candidate.get("_pool_kind") == "image":
+        return _uve_download_image_candidate(
+            candidate, scene_dir, sentence_number, asset_index
+        )
+    return _uve_download_video_candidate(
+        candidate, scene_dir, sentence_number, asset_index
+    )
+
+
+def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_index, registry, used_keys, failures=None):
     for candidate in candidates:
         if not isinstance(candidate, dict):
             continue
@@ -4062,6 +4119,25 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
         )
 
         if not asset:
+            # MS-2: a failed download is recorded with its actual reason
+            # (stashed on the candidate by the downloader) — never silent,
+            # never substituted with unrelated footage.
+            if failures is not None:
+                failures.append(
+                    {
+                        "provider": candidate.get("provider")
+                        or candidate.get("source")
+                        or "unknown",
+                        "url": str(
+                            candidate.get("url")
+                            or candidate.get("video_url")
+                            or candidate.get("image_url")
+                            or ""
+                        ),
+                        "reason": candidate.get("_download_error")
+                        or "download_failed",
+                    }
+                )
             continue
 
         key = _uve_candidate_key(asset)
@@ -4293,35 +4369,84 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     if item.get("reject_reason")
                 )
 
-                got_video = False
-                if videos_left > 0:
-                    picks = _uve_pick(scored_videos, scenario, registry, used_keys, shot_need=shot_need)
-                    asset = _uve_fetch_first(
-                        picks, _uve_download_video_candidate, scene_dir,
-                        beat["sentence_numbers"][0], len(beat_videos) + 1, registry, used_keys,
-                    )
-                    if asset:
-                        beat_videos.append(_uve_annotate(asset, scenario, scenario_index, beat.get("text", "")))
-                        videos_left -= 1
-                        got_video = True
-                        print(f"      + video ({asset.get('verification_status')}, score {asset.get('universal_score')})")
-                    elif picks:
-                        scene_stats["downloads_failed"] += 1
+                # F-2: UNIFIED SELECTION. Verified video candidates,
+                # footage-capable web candidates (MS-2) and verified image
+                # candidates compete in ONE pool for this scenario. Ranking
+                # is relevance (universal_score) adjusted by format-intent
+                # fit — a bounded bonus (max 0.10) that can tip a close
+                # contest toward the format that best communicates the
+                # sentence, but can never rescue a weak candidate over a
+                # clearly more relevant one of another format, and never
+                # admits a verifier-rejected candidate (_uve_pick still
+                # enforces acceptance). No format is tried "first" any
+                # more: the old video->image cascade is gone.
+                intent = str(scenario.get("format_intent") or "any").lower()
+                intent_conf = scenario.get("format_intent_confidence") or 0.0
+                try:
+                    intent_conf = float(intent_conf)
+                except (TypeError, ValueError):
+                    intent_conf = 0.0
 
-                if not got_video:
-                    # AUD-13: a beat with no verified moving footage falls
-                    # back to a REAL verified image — downloaded and probed —
-                    # before any generated card may be considered.
-                    image_picks = _uve_pick(scored_images, scenario, registry, used_keys, shot_need=shot_need)
-                    image_asset = _uve_fetch_first(
-                        image_picks, _uve_download_image_candidate, scene_dir,
-                        beat["sentence_numbers"][0], len(beat_images) + 1, registry, used_keys,
-                    )
-                    if image_asset:
-                        beat_images.append(_uve_annotate(image_asset, scenario, scenario_index, beat.get("text", "")))
-                        print(f"      + image ({image_asset.get('verification_status')}, score {image_asset.get('universal_score')})")
-                    elif image_picks:
-                        scene_stats["downloads_failed"] += 1
+                def _intent_bonus(kind):
+                    if intent == "any" or intent_conf <= 0:
+                        return 0.0
+                    if kind == "video":
+                        return 0.10 * intent_conf if intent == "footage" else 0.0
+                    # image-side candidates serve photograph/document/
+                    # map/chart intents fully, graphic intents partially.
+                    if intent in {"photograph", "document", "map", "chart"}:
+                        return 0.10 * intent_conf
+                    if intent == "graphic":
+                        return 0.05 * intent_conf
+                    return 0.0
+
+                combined_pool = []
+                pool_keys = set()
+                for item in scored_videos:
+                    item = dict(item)
+                    item["_pool_kind"] = "video"
+                    item["_selection_score"] = (item.get("universal_score") or 0) + _intent_bonus("video")
+                    combined_pool.append(item)
+                    pool_keys.add(_uve_candidate_key(item))
+                for web_item in scored_web_sources:
+                    if not _web_source_is_video_candidate(web_item):
+                        continue
+                    web_key = _uve_candidate_key(web_item)
+                    if not web_key or web_key in pool_keys:
+                        continue
+                    pool_keys.add(web_key)
+                    web_item = dict(web_item)
+                    web_item["_pool_kind"] = "video"
+                    web_item["_selection_score"] = (web_item.get("universal_score") or 0) + _intent_bonus("video")
+                    combined_pool.append(web_item)
+                for item in scored_images:
+                    item = dict(item)
+                    item["_pool_kind"] = "image"
+                    item["_selection_score"] = (item.get("universal_score") or 0) + _intent_bonus("image")
+                    combined_pool.append(item)
+
+                combined_pool.sort(key=lambda c: c.get("_selection_score") or 0, reverse=True)
+
+                picks = _uve_pick(combined_pool, scenario, registry, used_keys, shot_need=shot_need)
+                fetch_failures = []
+                asset = _uve_fetch_first(
+                    picks, _uve_download_any_candidate, scene_dir,
+                    beat["sentence_numbers"][0], len(beat_videos) + len(beat_images) + 1,
+                    registry, used_keys, failures=fetch_failures,
+                )
+                if fetch_failures:
+                    scene_stats.setdefault("download_failures", []).extend(fetch_failures)
+                if asset:
+                    annotated = _uve_annotate(asset, scenario, scenario_index, beat.get("text", ""))
+                    if asset.get("type") == "video" or asset.get("visual_type") == "video":
+                        beat_videos.append(annotated)
+                        videos_left -= 1
+                        print(f"      + video ({asset.get('verification_status')}, score {asset.get('universal_score')})")
+                    else:
+                        beat_images.append(annotated)
+                        print(f"      + image ({asset.get('verification_status')}, score {asset.get('universal_score')})")
+                elif picks:
+                    scene_stats["downloads_failed"] += 1
                 review_records.append({
                     "shot_index": scenario_index,
                     "queries": list(queries or []),
