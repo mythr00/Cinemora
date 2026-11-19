@@ -971,6 +971,7 @@ def list_decisions(run_id, limit=100, offset=0):
                         "rights": row.rights,
                         "decision_type": row.decision_type,
                         "previous_decision_id": row.previous_decision_id,
+                        "revision_id": row.revision_id,
                         "created_at": row.created_at,
                     }
                     for row in rows
@@ -984,7 +985,8 @@ def list_decisions(run_id, limit=100, offset=0):
 
 
 def record_swap_decisions(run_id, project_id, *, scene_number,
-                          sentence_number, original, refreshed):
+                          sentence_number, original, refreshed,
+                          revision_id=None):
     """Append the swapped_out / swapped_in pair for a post-run
     review swap (Stage 4 plan decisions, on top of Stage 1's MA-33
     machinery). The swapped_out row carries ONLY the replaced
@@ -992,7 +994,12 @@ def record_swap_decisions(run_id, project_id, *, scene_number,
     decision rows — and the swapped_in row carries the replacement's
     FRESH probe / verdict / rights from the refreshed record the
     caller built via _refresh_swapped_asset. Returns the new
-    swapped_in row id, or None (fail-soft)."""
+    swapped_in row id, or None (fail-soft).
+
+    Stage 6: when the swap comes from an editor revision, both rows
+    are tagged with that revision_id (migration 0004) so the
+    per-revision certificate can select them; plan-review swaps
+    leave it NULL, exactly as before."""
     if not run_id:
         return None
     try:
@@ -1042,6 +1049,7 @@ def record_swap_decisions(run_id, project_id, *, scene_number,
                 rights=None,
                 decision_type="swapped_out",
                 previous_decision_id=None,
+                revision_id=str(revision_id) if revision_id else None,
                 created_at=_now(),
             )
             db.add(out_row)
@@ -1077,6 +1085,7 @@ def record_swap_decisions(run_id, project_id, *, scene_number,
                 rights=_asset_rights(refreshed or {}),
                 decision_type="swapped_in",
                 previous_decision_id=out_row.id,
+                revision_id=str(revision_id) if revision_id else None,
                 created_at=_now(),
             )
             db.add(in_row)
@@ -1087,6 +1096,218 @@ def record_swap_decisions(run_id, project_id, *, scene_number,
     except Exception as error:
         print(f"WARNING: swap decision recording failed: {error}")
         return None
+
+
+# ---------------------------------------------------------------------
+# Editor revision decisions + render runs (Stage 6)
+# ---------------------------------------------------------------------
+
+
+def record_editor_decision(run_id, project_id, *, revision_id,
+                           decision_type, asset=None, scene_number=None,
+                           sentence_number=None,
+                           previous_decision_id=None):
+    """Append ONE ledger row produced by an editor revision
+    (upload, add, graphic regeneration, render-time record). The
+    row is tagged with revision_id (migration 0004); the original
+    run's rows are never touched. `asset` is the editor's asset
+    record (file_path/source_url/provider/segment_evidence/
+    verification + the pipeline-shaped rights fields _asset_rights
+    consumes). Returns the new row id, or None (fail-soft)."""
+    if not run_id or not revision_id:
+        return None
+    asset = asset or {}
+    try:
+        from models import AssetDecision
+
+        hash_cache: dict = {}
+        path = str(asset.get("file_path") or asset.get("path") or "")
+        db = _session()
+        try:
+            row = AssetDecision(
+                id=_new_uuid(),
+                run_id=str(run_id),
+                project_id=str(project_id),
+                asset_key=(
+                    asset.get("candidate_id")
+                    or asset.get("decision_id")
+                    or _file_sha256(path, hash_cache)
+                    or path
+                    or None
+                ),
+                content_hash=_file_sha256(path, hash_cache),
+                source_url=(
+                    asset.get("source_url")
+                    or asset.get("video_url")
+                    or asset.get("image_url")
+                    or asset.get("url")
+                    or None
+                ),
+                provider=str(
+                    asset.get("provider") or asset.get("source") or "unknown"
+                ),
+                scene_number=scene_number,
+                sentence_number=sentence_number,
+                interval_start=asset.get("clip_start"),
+                interval_duration=asset.get("duration_seconds"),
+                evidence_class=asset.get("segment_evidence"),
+                verification=_asset_verification(asset),
+                rights=(
+                    asset["rights"]
+                    if isinstance(asset.get("rights"), dict)
+                    else (
+                        _asset_rights(asset)
+                        if any(
+                            key in asset
+                            for key in ("license", "rights_status", "creator")
+                        )
+                        else None
+                    )
+                ),
+                decision_type=str(decision_type),
+                previous_decision_id=previous_decision_id,
+                revision_id=str(revision_id),
+                created_at=_now(),
+            )
+            db.add(row)
+            db.commit()
+            return row.id
+        finally:
+            db.close()
+    except Exception as error:
+        print(f"WARNING: editor decision recording failed: {error}")
+        return None
+
+
+def list_decisions_for_revision(project_id, run_id, revision_ids):
+    """The decision trail for one revision chain: the source run's
+    ORIGINAL decisions (revision_id NULL) plus every decision the
+    chain's revisions appended (revision_id in the chain), oldest
+    first. Returns the row list in list_decisions' dict shape;
+    [] when unavailable."""
+    try:
+        from models import AssetDecision
+        from sqlalchemy import or_
+
+        chain = [str(r) for r in (revision_ids or [])]
+        db = _session()
+        try:
+            query = db.query(AssetDecision).filter(
+                AssetDecision.project_id == str(project_id),
+                or_(
+                    (AssetDecision.run_id == str(run_id))
+                    & (AssetDecision.revision_id.is_(None)),
+                    AssetDecision.revision_id.in_(chain) if chain
+                    else AssetDecision.revision_id.is_(None),
+                ),
+            )
+            rows = query.order_by(AssetDecision.created_at.asc()).all()
+            result = [
+                {
+                    "id": row.id,
+                    "run_id": row.run_id,
+                    "project_id": row.project_id,
+                    "asset_key": row.asset_key,
+                    "content_hash": row.content_hash,
+                    "source_url": row.source_url,
+                    "provider": row.provider,
+                    "scene_number": row.scene_number,
+                    "sentence_number": row.sentence_number,
+                    "interval_start": row.interval_start,
+                    "interval_duration": row.interval_duration,
+                    "evidence_class": row.evidence_class,
+                    "verification": row.verification,
+                    "rights": row.rights,
+                    "decision_type": row.decision_type,
+                    "previous_decision_id": row.previous_decision_id,
+                    "revision_id": row.revision_id,
+                    "created_at": row.created_at,
+                }
+                for row in rows
+            ]
+            return result
+        finally:
+            db.close()
+    except Exception:
+        return []
+
+
+def counts_for_decisions(rows):
+    """decision_counts over an explicit row list (same definitions:
+    rights counts cover selected / still / swapped_in rows)."""
+    by_type: dict[str, int] = {}
+    recorded = 0
+    unknown = 0
+    for row in rows or []:
+        by_type[row["decision_type"]] = by_type.get(row["decision_type"], 0) + 1
+        if row["decision_type"] in ("selected", "still", "swapped_in"):
+            licence = (row.get("rights") or {}).get("license")
+            if licence and licence != "unknown":
+                recorded += 1
+            else:
+                unknown += 1
+    return {
+        "by_type": by_type,
+        "rights_recorded": recorded,
+        "rights_unknown": unknown,
+        "total": len(rows or []),
+    }
+
+
+def submit_revision_render(project_id, script_text, revision_id,
+                           source_run_id):
+    """Queue a render run for one editor revision (Stage 6).
+
+    Deduplicated per revision: an ACTIVE render run (queued or
+    running) for the same revision is returned instead of queueing
+    a second one. The run's options carry kind="revision_render" so
+    lifecycle tooling can tell renders from productions. Returns
+    the run dict (with deduplicated flag), or None when the ledger
+    is unavailable — the caller must then refuse the render rather
+    than run it unrecorded."""
+    try:
+        from models import ProductionRun
+
+        db = _session()
+        try:
+            active = (
+                db.query(ProductionRun)
+                .filter(
+                    ProductionRun.project_id == str(project_id),
+                    ProductionRun.status.in_(ACTIVE_STATUSES),
+                )
+                .order_by(ProductionRun.created_at.asc())
+                .all()
+            )
+            for row in active:
+                options = row.options or {}
+                if (
+                    options.get("kind") == "revision_render"
+                    and str(options.get("revision_id")) == str(revision_id)
+                ):
+                    return {
+                        "run_id": row.id,
+                        "project_id": row.project_id,
+                        "status": row.status,
+                        "script_hash": row.script_hash,
+                        "deduplicated": True,
+                    }
+        finally:
+            db.close()
+    except Exception as error:
+        print(f"WARNING: revision render dedup check failed: {error}")
+        return None
+    return _insert_run(
+        project_id,
+        script_text,
+        {
+            "kind": "revision_render",
+            "revision_id": str(revision_id),
+            "source_run_id": str(source_run_id),
+            "entrypoint": "editor_render",
+        },
+        "queued",
+    )
 
 
 # ---------------------------------------------------------------------

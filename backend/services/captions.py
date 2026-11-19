@@ -263,6 +263,28 @@ def build_captions(narration_file, script_text, captions_json_path):
     return data
 
 
+def write_edited_captions(data, json_path):
+    """Write an EDITED caption document through the single writer
+    (Stage 6 editor): the same _write_captions_json + _write_sidecars
+    primitives build_captions uses, so an editor revision's
+    captions.json / .srt / .vtt are produced by exactly the code
+    path that produces the production's — never by a second writer.
+    The caller supplies the full document (segments already edited);
+    it is stamped edited=True so the artefact says a human changed
+    it. Returns the written data dict."""
+    data = dict(data or {})
+    data["edited"] = True
+    segments = [
+        segment
+        for segment in (data.get("segments") or [])
+        if isinstance(segment, dict)
+    ]
+    data["segments"] = segments
+    _write_captions_json(data, json_path)
+    _write_sidecars(segments, json_path)
+    return data
+
+
 def validate_captions(captions_path, sentences):
     """Check caption coverage against the script sentences.
 

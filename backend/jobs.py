@@ -507,6 +507,34 @@ def enqueue_analysis_phase(project_id: str, script: str, run_id: str, options=No
     return job.id
 
 
+def enqueue_revision_render(project_id: str, revision_id: str, run_id: str):
+    """Queue an editor revision render (Stage 6). The run row was
+    already submitted through run_ledger.submit_revision_render by
+    services.editor.request_render; this only enqueues the worker
+    job. The render claims the run itself, writes to
+    revision_<id>_final.mp4 and never touches the production's
+    documentary_final_output.mp4. An enqueue failure marks the run
+    failed rather than orphaning it."""
+    from services import editor
+
+    try:
+        job = video_queue.enqueue(
+            editor.run_revision_render,
+            project_id,
+            revision_id,
+            run_id,
+            at_front=True,
+        )
+    except Exception as error:
+        if run_id:
+            run_ledger.finish_run(
+                run_id, "failed", error=f"enqueue failed: {error}"
+            )
+        raise
+    print(f"Queued revision-render job: {job.id} (run {run_id})")
+    return job.id
+
+
 def run_analysis_phase(project_id: str, script: str, run_id: str = None, options=None):
     """Stage 4 plan gate, phase 1: story analysis ONLY.
 

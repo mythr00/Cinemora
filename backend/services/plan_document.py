@@ -539,6 +539,7 @@ def build_certificate(project, run, decisions, counts):
             "title": project.get("title"),
             "category": project.get("category"),
         },
+
         "run": {
             "run_id": run.get("run_id") if run else None,
             "status": run.get("status") if run else None,
@@ -550,3 +551,46 @@ def build_certificate(project, run, decisions, counts):
         "assets": rows,
         "disclaimers": CERTIFICATE_DISCLAIMERS,
     }
+
+
+# ---------------------------------------------------------------------
+# Per-revision provenance certificate (Stage 6 editor)
+# ---------------------------------------------------------------------
+
+REVISION_CERTIFICATE_DISCLAIMER = (
+    "This certificate covers an EDITED REVISION of the production. "
+    "Its decision trail is the original run's decisions plus the "
+    "decisions the revision chain appended (each tagged with its "
+    "revision id); manual edits never rewrite the original records, "
+    "and a manually replaced or uploaded asset carries only the "
+    "evidence recorded for it at edit time — editing does not make "
+    "an asset verified."
+)
+
+
+def build_revision_certificate(project, run, revision, decisions, counts,
+                               final_assets):
+    """Certificate for one editor revision, built on the run
+    certificate: the trail is the source run's original decisions
+    plus the revision chain's appended decisions (the caller
+    selects them via run_ledger.list_decisions_for_revision), and
+    `final_assets` is the revision document's own final asset set —
+    what the exported revision actually contains, with each item's
+    classification, evidence class, verification outcome and rights
+    as recorded in the document. The original run certificate is
+    unchanged by this builder."""
+    certificate = build_certificate(project, run, decisions, counts)
+    certificate["certificate_version"] = 2
+    certificate["revision"] = {
+        "revision_id": revision.get("revision_id"),
+        "revision_number": revision.get("revision_number"),
+        "parent_revision_id": revision.get("parent_revision_id"),
+        "chain_revision_ids": revision.get("chain_revision_ids") or [],
+        "status": revision.get("status"),
+        "source_run_id": run.get("run_id") if run else None,
+    }
+    certificate["final_revision_assets"] = final_assets
+    certificate["disclaimers"] = (
+        list(CERTIFICATE_DISCLAIMERS) + [REVISION_CERTIFICATE_DISCLAIMER]
+    )
+    return certificate

@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,7 +49,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import jobs
 from database import SessionLocal
 from models import Project
-from services import media_paths, plan_document, run_ledger
+from services import editor, media_paths, plan_document, run_ledger
 
 MAX_SCRIPT_CHARS = 60_000
 
@@ -1021,4 +1021,209 @@ def get_certificate(project_id: str, _=Depends(require_api_token)):
     counts = run_ledger.decision_counts(latest["run_id"])
     return plan_document.build_certificate(
         project_view, latest, decisions, counts
+    )
+
+
+# ---------------------------------------------------------------------------
+# Editor (Stage 6) — non-destructive revisions of a finished production
+# ---------------------------------------------------------------------------
+# The editor works on revision documents (services/editor.py): the
+# production's artefacts are imported read-only into revision 0 and
+# every edit batch creates the next revision node. Manual editing
+# never makes an asset verified: replacements re-earn their verdict
+# through the Stage 1 swap machinery, uploads are user_supplied with
+# unknown rights, and every asset change appends ledger rows tagged
+# with the revision id.
+
+
+def _editor_call(fn, *args, **kwargs):
+    """Run an editor service call, mapping EditorError onto the v1
+    error shape (status, code, message — details appended)."""
+    try:
+        return fn(*args, **kwargs)
+    except editor.EditorError as error:
+        message = error.message
+        if error.details:
+            message = f"{message} Details: {json.dumps(error.details)}"
+        raise ApiError(error.status_code, error.code, message) from error
+
+
+class CreateRevisionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    from_revision_id: str | None = None
+    from_run_id: str | None = None
+
+
+class OperationsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operations: list[dict] = Field(min_length=1)
+    actor: str = "operator"
+
+
+class RenderBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allow_gaps: bool = False
+
+
+@router.get("/projects/{project_id}/editor")
+def get_editor(project_id: str, _=Depends(require_api_token)):
+    db = SessionLocal()
+    try:
+        _get_project_or_404(db, project_id)
+    finally:
+        db.close()
+    view, doc = _editor_call(editor.get_editor, project_id)
+    return {**view, "document": doc}
+
+
+@router.post("/projects/{project_id}/revisions", status_code=201)
+def create_revision(
+    project_id: str,
+    body: CreateRevisionBody,
+    _=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        _get_project_or_404(db, project_id)
+    finally:
+        db.close()
+    view, _doc = _editor_call(
+        editor.create_revision,
+        project_id,
+        from_revision_id=body.from_revision_id,
+        from_run_id=body.from_run_id,
+    )
+    return view
+
+
+@router.get("/projects/{project_id}/revisions")
+def list_revisions(project_id: str, _=Depends(require_api_token)):
+    db = SessionLocal()
+    try:
+        _get_project_or_404(db, project_id)
+    finally:
+        db.close()
+    return {"revisions": _editor_call(editor.list_revisions, project_id)}
+
+
+@router.get("/projects/{project_id}/revisions/{revision_id}")
+def get_revision(project_id: str, revision_id: str, _=Depends(require_api_token)):
+    db = SessionLocal()
+    try:
+        _get_project_or_404(db, project_id)
+    finally:
+        db.close()
+    view, doc = _editor_call(editor.get_revision, project_id, revision_id)
+    return {**view, "document": doc}
+
+
+@router.post(
+    "/projects/{project_id}/revisions/{revision_id}/operations",
+    status_code=201,
+)
+def apply_operations(
+    project_id: str,
+    revision_id: str,
+    body: OperationsBody,
+    _=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        _get_project_or_404(db, project_id)
+    finally:
+        db.close()
+    view, _doc = _editor_call(
+        editor.apply_operations,
+        project_id,
+        revision_id,
+        body.operations,
+        actor=body.actor,
+    )
+    return view
+
+
+@router.post(
+    "/projects/{project_id}/revisions/{revision_id}/render",
+    status_code=202,
+)
+def render_revision(
+    project_id: str,
+    revision_id: str,
+    body: RenderBody,
+    _=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        _get_project_or_404(db, project_id)
+    finally:
+        db.close()
+    return _editor_call(
+        editor.request_render,
+        project_id,
+        revision_id,
+        allow_gaps=body.allow_gaps,
+    )
+
+
+@router.get("/projects/{project_id}/revisions/{revision_id}/exports")
+def list_exports(project_id: str, revision_id: str, _=Depends(require_api_token)):
+    db = SessionLocal()
+    try:
+        _get_project_or_404(db, project_id)
+    finally:
+        db.close()
+    _view, doc = _editor_call(editor.get_revision, project_id, revision_id)
+    return {"exports": doc.get("exports") or []}
+
+
+@router.post("/projects/{project_id}/uploads", status_code=201)
+def upload_file(
+    project_id: str,
+    file: UploadFile = File(...),
+    _=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        _get_project_or_404(db, project_id)
+    finally:
+        db.close()
+    return _editor_call(
+        editor.store_upload, project_id, file.filename, file.file
+    )
+
+
+@router.get("/projects/{project_id}/revisions/{revision_id}/certificate")
+def get_revision_certificate(
+    project_id: str, revision_id: str, _=Depends(require_api_token)
+):
+    db = SessionLocal()
+    try:
+        project = _get_project_or_404(db, project_id)
+        project_view = {
+            "id": project.id,
+            "title": project.title,
+            "category": project.category,
+        }
+    finally:
+        db.close()
+    view, doc = _editor_call(editor.get_revision, project_id, revision_id)
+    chain_ids = _editor_call(editor.revision_chain_ids, project_id, revision_id)
+    decisions = _editor_call(
+        run_ledger.list_decisions_for_revision,
+        project_id,
+        view["run_id"],
+        chain_ids,
+    )
+    counts = run_ledger.counts_for_decisions(decisions)
+    run_view = run_ledger.get_run(view["run_id"]) or {"run_id": view["run_id"]}
+    return plan_document.build_revision_certificate(
+        project_view,
+        run_view,
+        view,
+        decisions,
+        counts,
+        editor.final_assets_for_certificate(doc),
     )

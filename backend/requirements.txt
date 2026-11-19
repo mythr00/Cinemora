@@ -2,7 +2,8 @@
 # Verified on Python 3.12.3: clean venv install + all 36 backend modules import (dummy env).
 # System requirements (not pip): ffmpeg + ffprobe on PATH; PostgreSQL and Redis for runtime.
 # Direct deps: fastapi, uvicorn, pydantic, sqlalchemy, python-dotenv, redis, rq, requests,
-# pillow, faster-whisper, yt-dlp, piper-tts, psycopg2-binary; dev/test: pytest, alembic.
+# pillow, faster-whisper, yt-dlp, piper-tts, psycopg2-binary, python-multipart (Stage 6:
+# editor file uploads via FastAPI); dev/test: pytest, alembic.
 alembic==1.20.1
 annotated-doc==0.0.7
 annotated-types==0.8.0
@@ -44,6 +45,7 @@ Pygments==2.21.0
 pytest==9.2.0
 python-dateutil==4.0.0
 python-dotenv==1.2.4
+python-multipart==0.0.34
 PyYAML==6.0.3
 redis==8.1.0
 requests==2.34.2
