@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
+import { MediaThumb } from "@/components/media-thumb";
 import { ArrowLeft } from "lucide-react";
 import {
   ApiClientError,
@@ -13,14 +14,36 @@ import {
   getPlan,
   getProjectStatus,
   postPlanDecision,
+  uploadAsset,
   type PlanDocument,
   type PlanSentence,
   type ProjectStatus,
+  type UploadRecord,
 } from "@/lib/api";
 
 function coverageLabel(coverage: PlanSentence["coverage"]) {
   return coverage.replaceAll("_", " ");
 }
+
+/**
+ * Replacement state per sentence (Brief Stage 5, C-04). The old
+ * control asked the reviewer to type a file path on the server;
+ * the replacement is now an uploaded file: the Stage 6 upload
+ * endpoint probes it and stamps it user-supplied with unknown
+ * rights, and only then can it be offered to the plan-decision
+ * replace, which consumes the upload's stored path exactly as
+ * the contract specifies. Outcomes the backend records as
+ * failures (swap_failed_*, replacement_probe_failed,
+ * replacement_file_missing) are presented as NOT applied — the
+ * decision endpoint returns 201 with the outcome recorded, so
+ * the outcome string, not the HTTP status, is the truth.
+ */
+type ReplacementUpload =
+  | { status: "uploading"; fileName: string; progress: number }
+  | { status: "ready"; upload: UploadRecord }
+  | { status: "error"; fileName: string; message: string };
+
+const APPLIED_REPLACE_OUTCOMES = ["swapped", "recorded_pre_run"];
 
 export default function PlanReviewPage() {
   const params = useParams<{ id: string }>();
@@ -31,7 +54,7 @@ export default function PlanReviewPage() {
   const [acting, setActing] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [replacements, setReplacements] = useState<Record<number, string>>({});
+  const [uploads, setUploads] = useState<Record<number, ReplacementUpload>>({});
 
   const load = useCallback(async () => {
     setError("");
@@ -91,14 +114,12 @@ export default function PlanReviewPage() {
     }
   }
 
-  async function onDecision(sentence: PlanSentence, action: "approve" | "regenerate" | "replace") {
+  async function onDecision(sentence: PlanSentence, action: "approve" | "regenerate") {
     setActing(`${action}-${sentence.sentence_number}`);
     try {
-      const replacementPath = (replacements[sentence.sentence_number] || "").trim();
       const decision = await postPlanDecision(projectId, {
         sentence_number: sentence.sentence_number,
         action,
-        replacement: action === "replace" ? { file_path: replacementPath } : undefined,
       });
       setMessage(
         `Sentence ${sentence.sentence_number}: ${action} recorded (${decision.outcome || "recorded"}).${decision.outcome_note ? ` ${decision.outcome_note}` : ""}`,
@@ -106,6 +127,70 @@ export default function PlanReviewPage() {
       await load();
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : "The decision could not be recorded.");
+    } finally {
+      setActing("");
+    }
+  }
+
+  async function onUpload(sentence: PlanSentence, file: File) {
+    const sentenceNumber = sentence.sentence_number;
+    setUploads((current) => ({
+      ...current,
+      [sentenceNumber]: { status: "uploading", fileName: file.name, progress: 0 },
+    }));
+    try {
+      const upload = await uploadAsset(projectId, file, (fraction) => {
+        setUploads((current) => {
+          const existing = current[sentenceNumber];
+          if (!existing || existing.status !== "uploading") return current;
+          return { ...current, [sentenceNumber]: { ...existing, progress: fraction } };
+        });
+      });
+      setUploads((current) => ({ ...current, [sentenceNumber]: { status: "ready", upload } }));
+      setMessage(
+        `Uploaded ${upload.file_name} for sentence ${sentenceNumber}. It is recorded as user-supplied with licence unknown — review it, then apply it as the replacement.`,
+      );
+    } catch (cause) {
+      setUploads((current) => ({
+        ...current,
+        [sentenceNumber]: {
+          status: "error",
+          fileName: file.name,
+          message: cause instanceof Error ? cause.message : "The upload failed.",
+        },
+      }));
+    }
+  }
+
+  async function onReplaceWithUpload(sentence: PlanSentence) {
+    const state = uploads[sentence.sentence_number];
+    if (!state || state.status !== "ready") return;
+    setActing(`replace-${sentence.sentence_number}`);
+    try {
+      const decision = await postPlanDecision(projectId, {
+        sentence_number: sentence.sentence_number,
+        action: "replace",
+        replacement: {
+          file_path: state.upload.file_path,
+          title: state.upload.title || state.upload.file_name,
+        },
+      });
+      const outcome = decision.outcome || "recorded";
+      setMessage(
+        APPLIED_REPLACE_OUTCOMES.includes(outcome)
+          ? `Sentence ${sentence.sentence_number}: replacement applied (${outcome}). The replacement was freshly probed and its evidence re-earned; nothing was inherited from the original.${decision.outcome_note ? ` ${decision.outcome_note}` : ""}`
+          : `Sentence ${sentence.sentence_number}: replacement NOT applied (${outcome}). The current visual is unchanged.${decision.outcome_note ? ` ${decision.outcome_note}` : ""}`,
+      );
+      if (APPLIED_REPLACE_OUTCOMES.includes(outcome)) {
+        setUploads((current) => {
+          const next = { ...current };
+          delete next[sentence.sentence_number];
+          return next;
+        });
+      }
+      await load();
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : "The replacement could not be recorded.");
     } finally {
       setActing("");
     }
@@ -228,9 +313,20 @@ export default function PlanReviewPage() {
                             : "—"}
                         </td>
                         <td>
-                          {sentence.chosen_visual
-                            ? `${sentence.chosen_visual.type || "visual"} · ${sentence.chosen_visual.provider || "unknown source"}`
-                            : "—"}
+                          {sentence.chosen_visual ? (
+                            <span className="plan-chosen-visual">
+                              {sentence.chosen_visual.media_key && (
+                                <MediaThumb
+                                  projectId={projectId}
+                                  mediaKey={sentence.chosen_visual.media_key}
+                                  alt={sentence.chosen_visual.title || `Chosen visual for sentence ${sentence.sentence_number}`}
+                                />
+                              )}
+                              <span>{`${sentence.chosen_visual.type || "visual"} · ${sentence.chosen_visual.provider || "unknown source"}`}</span>
+                            </span>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                         <td>{sentence.evidence_class || "—"}</td>
                         <td>
@@ -259,26 +355,56 @@ export default function PlanReviewPage() {
                             >
                               Regenerate
                             </button>
-                            <span className="plan-replace">
-                              <input
-                                type="text"
-                                aria-label={`Replacement file path for sentence ${sentence.sentence_number}`}
-                                placeholder="Replacement file path on the server"
-                                value={replacements[sentence.sentence_number] || ""}
-                                onChange={(event) =>
-                                  setReplacements((current) => ({
-                                    ...current,
-                                    [sentence.sentence_number]: event.target.value,
-                                  }))
-                                }
-                              />
-                              <button
-                                type="button"
-                                disabled={acting !== "" || !(replacements[sentence.sentence_number] || "").trim()}
-                                onClick={() => void onDecision(sentence, "replace")}
-                              >
-                                Replace
-                              </button>
+                            <span className="plan-upload">
+                              {(() => {
+                                const uploadState = uploads[sentence.sentence_number];
+                                return (
+                                  <>
+                                    <label className="plan-upload-pick">
+                                      <input
+                                        type="file"
+                                        accept="video/*,image/*,audio/*"
+                                        aria-label={`Upload a replacement file for sentence ${sentence.sentence_number}`}
+                                        disabled={acting !== "" || uploadState?.status === "uploading"}
+                                        onChange={(event) => {
+                                          const file = event.target.files?.[0];
+                                          event.target.value = "";
+                                          if (file) void onUpload(sentence, file);
+                                        }}
+                                      />
+                                      {uploadState?.status === "ready" ? "Choose a different file" : "Upload replacement…"}
+                                    </label>
+                                    {uploadState?.status === "uploading" && (
+                                      <small className="plan-upload-note" role="status">
+                                        Uploading {uploadState.fileName} — {Math.round(uploadState.progress * 100)}%
+                                      </small>
+                                    )}
+                                    {uploadState?.status === "error" && (
+                                      <small className="plan-upload-note plan-upload-error" role="alert">
+                                        Upload of {uploadState.fileName} failed: {uploadState.message} The current visual is unchanged.
+                                      </small>
+                                    )}
+                                    {uploadState?.status === "ready" && (
+                                      <>
+                                        <small className="plan-upload-note">
+                                          {uploadState.upload.file_name} · {uploadState.upload.type}
+                                          {uploadState.upload.source_duration != null
+                                            ? ` · ${Math.round(uploadState.upload.source_duration)}s`
+                                            : ""}{" "}
+                                          · user-supplied · licence unknown — verify before publish
+                                        </small>
+                                        <button
+                                          type="button"
+                                          disabled={acting !== ""}
+                                          onClick={() => void onReplaceWithUpload(sentence)}
+                                        >
+                                          {acting === `replace-${sentence.sentence_number}` ? "Replacing…" : "Replace with this upload"}
+                                        </button>
+                                      </>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </span>
                             {lastDecision && (
                               <small className="plan-decision-note">

@@ -5,22 +5,61 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
+import { ErrorState, LoadingState } from "@/components/states";
 import { ArrowLeft } from "lucide-react";
-import { getCertificate, type Certificate } from "@/lib/api";
+import {
+  ApiClientError,
+  getCertificate,
+  getProject,
+  type Certificate,
+} from "@/lib/api";
 
+/**
+ * Brief Stage 5 (C-06): this page previously presented EVERY load
+ * failure — 401, 503, network down — under the heading "No
+ * certificate yet" (audit D-06). The states are now distinguished
+ * from the API's actual responses: the backend's certificate
+ * endpoint returns 404 with code "no_runs" only when the project
+ * exists but has no production runs, and 404 "project_not_found"
+ * for a missing project; every other failure renders as the error
+ * it is (via classifyApiError, with retry). A code-less 404 is
+ * disambiguated with a project fetch before either state is shown.
+ */
 export default function CertificatePage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const [certificate, setCertificate] = useState<Certificate | null>(null);
   const [busy, setBusy] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [noCertificate, setNoCertificate] = useState(false);
 
   const load = useCallback(async () => {
-    setError("");
+    setError(null);
+    setNoCertificate(false);
     try {
       setCertificate(await getCertificate(projectId));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The certificate could not be loaded.");
+      setCertificate(null);
+      if (cause instanceof ApiClientError && cause.status === 404) {
+        if (cause.code === "no_runs") {
+          setNoCertificate(true);
+          return;
+        }
+        if (!cause.code) {
+          // A 404 without a machine code: ask for the project
+          // itself. If the project exists, the 404 can only be
+          // the no-certificate case; if it does not, surface the
+          // original error as the not-found state it is.
+          try {
+            await getProject(projectId);
+            setNoCertificate(true);
+            return;
+          } catch {
+            // fall through to the error state
+          }
+        }
+      }
+      setError(cause);
     } finally {
       setBusy(false);
     }
@@ -44,12 +83,18 @@ export default function CertificatePage() {
           what the system recorded; it is not a licence and not a legal opinion.
         </p>
 
-        {busy && <p className="plan-message" role="status">Loading the certificate…</p>}
-        {error && (
+        {busy && <LoadingState className="plan-message" label="Loading the certificate…" />}
+        {!busy && error != null && (
+          <ErrorState error={error} onRetry={() => { setBusy(true); void load(); }} />
+        )}
+        {!busy && noCertificate && (
           <div className="plan-empty">
             <h2>No certificate yet</h2>
-            <p>{error}</p>
-            <p>A certificate exists once the project has at least one production run.</p>
+            <p>
+              This project has no production runs, so no provenance certificate exists.
+              A certificate is generated from a run&apos;s decision ledger once a
+              production has run.
+            </p>
           </div>
         )}
 

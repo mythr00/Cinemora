@@ -11,9 +11,10 @@ import { ApiClientError } from "@/lib/api";
  * its exact styling). The rule they exist to enforce: a failed
  * request is presented as an error — with its classified cause
  * and a retry — never as an empty state. (The certificate page's
- * "every error is 'No certificate yet'" presentation is the
- * remaining instance; its full correction is C-06 in Brief
- * Stage 5, which builds on `classifyApiError` below.)
+ * "every error is 'No certificate yet'" presentation was the last
+ * instance; Brief Stage 5 (C-06) corrected it on top of
+ * `classifyApiError` below, reserving the empty state for the
+ * API's genuine no_runs case.)
  */
 
 export type ApiErrorKind =

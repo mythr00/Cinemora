@@ -1412,3 +1412,52 @@ body { min-height: 100vh; margin: 0; color: var(--ink); background: var(--paper)
 .state-error-copy svg { flex: 0 0 auto; }
 .overview-status-line { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .topbar-right .connection { padding: 0; }
+
+/* ============================================================
+   Brief Stage 5 (C-06 / C-07 / C-04) — backend integration.
+   Authenticated connection badge (components/connection-status):
+   icon + text per classified state, never a bare dot claim.
+   Media thumbnails (components/media-thumb): fixed-ratio tiles;
+   the fallback is a neutral labelled tile, never a fake image.
+   Run history actions + detail grid, the asset-evidence pager,
+   the dashboard approval queue, and the plan-page upload
+   replacement controls.
+   ============================================================ */
+.connection-ok { color: var(--positive); }
+.connection-warn { color: var(--warning); }
+.connection-bad { color: var(--danger); }
+.connection-retry { padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); color: var(--ink-soft); font-size: 10px; font-weight: 600; cursor: pointer; }
+.connection-retry:disabled { opacity: .45; cursor: default; }
+.media-thumb { display: block; width: 112px; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-low); }
+span.media-thumb { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: var(--ink-muted); }
+.media-thumb small { font-size: 10px; font-weight: 600; letter-spacing: .04em; }
+.plan-chosen-visual { display: flex; flex-direction: column; gap: 6px; }
+.overview-run { margin-bottom: 6px; }
+.overview-run-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.run-action { padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); color: var(--ink-soft); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+.run-action:hover { border-color: #b6c5ff; color: var(--accent); }
+.run-action:disabled { opacity: .45; cursor: default; }
+.run-action-danger { color: var(--danger); border-color: #e6aeb5; }
+.run-action-danger:hover { color: var(--danger); border-color: var(--danger); }
+.run-cancel-confirm { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--ink-soft); }
+.run-detail { margin: 8px 0 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-low); }
+.run-detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px 18px; margin: 0; }
+.run-detail-grid dt { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
+.run-detail-grid dd { margin: 2px 0 0; font-size: 13px; color: var(--ink-soft); overflow-wrap: anywhere; }
+.asset-evidence-intro { max-width: 72ch; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
+.asset-evidence-empty { color: var(--ink-soft); font-size: 14px; }
+.asset-evidence-pager { display: flex; align-items: center; gap: 12px; color: var(--ink-soft); font-size: 13px; }
+.asset-evidence-pager button { padding: 6px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--ink-soft); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.asset-evidence-pager button:disabled { opacity: .45; cursor: default; }
+.dashboard-approvals { margin-bottom: 8px; }
+.approval-queue { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.approval-queue li { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 14px 16px; border: 1px solid var(--warning); border-radius: 10px; background: var(--paper); color: var(--ink-soft); font-size: 14px; }
+.approval-queue-title { font-weight: 700; color: var(--ink); }
+.plan-upload { display: flex; flex-direction: column; gap: 6px; min-width: 170px; }
+.plan-upload-pick { display: inline-flex; align-items: center; padding: 6px 11px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-soft); background: var(--paper); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.plan-upload-pick:hover { border-color: #b6c5ff; color: var(--accent); }
+.plan-upload-pick input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.plan-upload-note { color: var(--ink-muted); font-size: 11.5px; line-height: 1.45; }
+.plan-upload-error { color: var(--danger); }
+.plan-upload button { padding: 6px 11px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink-soft); background: var(--paper); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.plan-upload button:disabled { opacity: .45; cursor: default; }

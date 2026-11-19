@@ -36,6 +36,13 @@ export default function StudioPage() {
   const activeCount = projects.filter((project) => ["queued", "running", "pipeline_queued", "awaiting_approval"].includes(project.status)).length;
   const completeCount = projects.filter((project) => project.status === "completed").length;
   const recent = projects.slice(0, 4);
+  // Brief Stage 5 (C-07): the approval queue. A plan-gated
+  // production parks in awaiting_approval until the operator
+  // approves it — previously it was silently folded into "IN
+  // PRODUCTION" and nothing said it was waiting on the user.
+  const awaitingApproval = projects.filter(
+    (project) => project.status === "awaiting_approval" || project.latest_run?.status === "awaiting_approval",
+  );
 
   return <main className="app-page studio-dashboard">
     <AppNavigation />
@@ -51,6 +58,22 @@ export default function StudioPage() {
         <div><span>FINISHED EXPORTS</span><strong>{busy ? "—" : completeCount}</strong></div>
         <p>Counts reflect the live project list.</p>
       </section>
+
+      {!busy && !error && awaitingApproval.length > 0 && (
+        <section className="dashboard-approvals" aria-label="Awaiting your approval">
+          <div className="section-heading"><div><p className="eyebrow">NEEDS YOUR DECISION</p><h2>Awaiting your approval.</h2></div></div>
+          <ul className="approval-queue">
+            {awaitingApproval.map((project) => (
+              <li key={project.id}>
+                <StatusBadge status="awaiting_approval" />
+                <span className="approval-queue-title">{project.title || project.script_preview || "Untitled production"}</span>
+                <span>Its production plan is ready for review — production starts only when you approve it.</span>
+                <Link className="text-link" href={`/projects/${project.id}/plan`}>Review the plan <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="dashboard-projects">
         <div className="section-heading"><div><p className="eyebrow">RECENT WORK</p><h2>Back to the edit.</h2></div><Link className="text-link" href="/projects">View all projects <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>

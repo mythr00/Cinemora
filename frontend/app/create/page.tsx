@@ -6,11 +6,12 @@ import { AppNavigation } from "@/components/app-navigation";
 import {
   apiUrl,
   createProject as apiCreateProject,
-  getHealth,
   getProjectStatus,
   submitRun,
+  type ApiConnectionStatus,
   type ProjectStatus,
 } from "@/lib/api";
+import { ApiConnectionBadge } from "@/components/connection-status";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -69,7 +70,7 @@ export default function Home() {
   const [jobId, setJobId] = useState("");
   const [status, setStatus] = useState<ProjectStatus | null>(null);
   const [message, setMessage] = useState("");
-  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  const [connection, setConnection] = useState<ApiConnectionStatus | null>(null);
   const [includeCaptions, setIncludeCaptions] = useState(true);
 
   const words = useMemo(() => script.trim().split(/\s+/).filter(Boolean).length, [script]);
@@ -77,7 +78,6 @@ export default function Home() {
   const isTerminal = status?.status === "completed" || status?.status === "failed";
 
   useEffect(() => {
-    const controller = new AbortController();
     const draftTimer = setTimeout(() => {
       const channelDraft = sessionStorage.getItem("cinemora-script-draft");
       if (channelDraft) {
@@ -86,15 +86,16 @@ export default function Home() {
         setMessage("Script draft loaded. Review it before starting production.");
       }
     }, 0);
-    // Reachability only: /api/v1/health is unauthenticated by
-    // design, so this says the service answers — not that the
-    // configured token is accepted (that check is register C-06).
-    // The topbar badge is labelled accordingly ("reachable").
-    getHealth(controller.signal)
-      .then(() => setApiOnline(true))
-      .catch(() => setApiOnline(false));
-    return () => { controller.abort(); clearTimeout(draftTimer); };
+    return () => { clearTimeout(draftTimer); };
   }, []);
+
+  // Brief Stage 5 (C-06): the topbar badge is the authenticated
+  // connection check (ApiConnectionBadge performs one authenticated
+  // v1 call and classifies the outcome). Submitting is blocked
+  // whenever the classified state is not "connected" — a production
+  // cannot be created through a rejected token, an unconfigured
+  // API, or an unreachable one, and the badge says which it is.
+  const apiBlocked = connection !== null && connection.state !== "connected";
 
   useEffect(() => {
     if (!projectId || isTerminal) return;
@@ -199,9 +200,9 @@ export default function Home() {
   // studio navigation like every other studio page. Its private
   // sidebar (a third navigation system: "Create / Overview /
   // Projects" labels, a brand link to the landing page) is
-  // retired; the API reachability badge it carried moves to the
-  // topbar, unchanged — same probe, same honest label (the
-  // authenticated connection check is register C-06).
+  // retired; the connection badge it carried moves to the topbar
+  // (since Brief Stage 5 / C-06 it is the authenticated check —
+  // see ApiConnectionBadge).
   return (
     <main className="app-page create-page">
       <AppNavigation />
@@ -209,7 +210,7 @@ export default function Home() {
       <section className="workspace" id="create">
         <header className="topbar">
           <div className="breadcrumbs"><span>Cinemora</span><span className="crumb-separator">/</span><strong>New documentary</strong></div>
-          <div className="topbar-right"><span className="connection"><span className={`connection-dot ${apiOnline === false ? "offline" : ""}`} /><span>{apiOnline === null ? "Contacting the studio API" : apiOnline ? "Studio API reachable" : "Studio API unavailable"}</span></span><span className="draft-status"><span /> New project</span><span className="edition-label">STUDIO EDITION</span></div>
+          <div className="topbar-right"><ApiConnectionBadge onStatus={setConnection} /><span className="draft-status"><span /> New project</span><span className="edition-label">STUDIO EDITION</span></div>
         </header>
 
         <div className="content-wrap">
@@ -264,7 +265,7 @@ export default function Home() {
                 <div className="summary-rows"><div><span>Category</span><strong>{category}</strong></div><div><span>Narration voice</span><strong>{NARRATION_VOICE_ID} · English (US)</strong></div><div><span>Captions</span><strong>{includeCaptions ? "Burned in" : "Off"}</strong></div><div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
                 <div className="summary-footnote"><Info size={18} strokeWidth={1.7} aria-hidden /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
 
-                <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiOnline === false}>
+                <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiBlocked}>
                   {loading ? <><span className="button-spinner" /> Starting…</> : <>Create and start <ArrowRight size={18} strokeWidth={1.7} aria-hidden /></>}
                 </button>
                 <p className="button-caption">You can follow each stage as your film comes together.</p>

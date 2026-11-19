@@ -427,3 +427,234 @@ export function getCertificate(projectId: string, signal?: AbortSignal) {
 export function mediaUrl(projectId: string, mediaKey: string): string {
   return apiUrl(`/api/v1/projects/${projectId}/media/${mediaKey}`);
 }
+
+/**
+ * Fetch a recorded media file as an object URL (Brief Stage 5,
+ * C-07). The media endpoint is authenticated like every v1 route,
+ * and a bare <img src> cannot send the X-API-Key header — it would
+ * receive the 401 JSON body, not the media. Thumbnails therefore
+ * fetch through this helper (which uses mediaUrl for the address)
+ * and render the resulting blob URL. Callers own revoking the URL.
+ */
+export async function fetchMediaObjectUrl(
+  projectId: string,
+  mediaKey: string,
+  signal?: AbortSignal,
+): Promise<{ url: string; contentType: string }> {
+  const headers = new Headers();
+  if (API_TOKEN) headers.set("X-API-Key", API_TOKEN);
+  const response = await fetch(mediaUrl(projectId, mediaKey), {
+    cache: "no-store",
+    headers,
+    signal,
+  });
+  if (!response.ok) throw await parseError(response);
+  const blob = await response.blob();
+  return { url: URL.createObjectURL(blob), contentType: blob.type };
+}
+
+// ---------------------------------------------------------------------
+// Authenticated connection status (Brief Stage 5, C-06)
+// ---------------------------------------------------------------------
+
+/**
+ * The honest connection states the studio can be in. They are
+ * distinguished because each needs a different operator action:
+ * - "connected": an authenticated v1 call succeeded.
+ * - "auth": the API answered but rejected this build's token
+ *   (401) — the token in NEXT_PUBLIC_CINEMORA_API_TOKEN does not
+ *   match the server's CINEMORA_API_TOKEN.
+ * - "frontend-not-configured": this frontend build carries no
+ *   API token at all, so no authenticated call can succeed.
+ * - "backend-not-configured": the server itself has no
+ *   CINEMORA_API_TOKEN set and fails closed (503
+ *   api_not_configured).
+ * - "unavailable": the API answered with another server error.
+ * - "network": the API could not be reached at all.
+ */
+export type ApiConnectionState =
+  | "connected"
+  | "auth"
+  | "frontend-not-configured"
+  | "backend-not-configured"
+  | "unavailable"
+  | "network";
+
+export type ApiConnectionStatus = {
+  state: ApiConnectionState;
+  message: string;
+};
+
+/**
+ * Probe the connection the way the studio actually uses it: one
+ * authenticated v1 call (the project list). The unauthenticated
+ * /health route is deliberately NOT used here — it can report "ok"
+ * while every real call fails 401/503 (audit D-05). The token is
+ * only ever sent as the X-API-Key header — never in a URL, never
+ * logged.
+ */
+export async function checkApiConnection(
+  signal?: AbortSignal,
+): Promise<ApiConnectionStatus> {
+  if (!API_TOKEN) {
+    return {
+      state: "frontend-not-configured",
+      message:
+        "This frontend build has no API token configured (NEXT_PUBLIC_CINEMORA_API_TOKEN), so it cannot sign in to the studio API.",
+    };
+  }
+  try {
+    await listProjects(signal);
+    return { state: "connected", message: "Authenticated API connection confirmed." };
+  } catch (error) {
+    if (error instanceof ApiClientError) {
+      if (error.status === 401) {
+        return {
+          state: "auth",
+          message:
+            "The studio API rejected this build's token. The frontend token must match the server's CINEMORA_API_TOKEN.",
+        };
+      }
+      if (error.status === 503) {
+        return {
+          state: "backend-not-configured",
+          message:
+            "The studio API is running but not configured: CINEMORA_API_TOKEN is not set on the server, so it refuses authenticated calls.",
+        };
+      }
+      return {
+        state: "unavailable",
+        message: `The studio API answered with an error (${error.status}). ${error.message}`,
+      };
+    }
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    return {
+      state: "network",
+      message: "The studio API could not be reached. Check that it is running, then try again.",
+    };
+  }
+}
+
+// ---------------------------------------------------------------------
+// Stage 6 editor surface used by Brief Stage 5 (uploads + revision
+// certificate). The editor UI itself is C-03; these helpers are its
+// contract, typed now so C-04 and C-03 share them.
+// ---------------------------------------------------------------------
+
+export type UploadRecord = {
+  upload_id: string;
+  /** Server-side stored path. The plan-decision replace contract
+   * consumes exactly this value as replacement.file_path (see
+   * API_CONTRACT.md, C-04); it is passed through programmatically
+   * and never typed by a user. */
+  file_path: string;
+  file_name: string;
+  type: string;
+  source: string;
+  provider?: string | null;
+  source_url?: string | null;
+  title?: string | null;
+  source_duration?: number | null;
+  size_bytes?: number | null;
+  decision_id?: string | null;
+  evidence_class?: string | null;
+  verification?: Record<string, unknown> | null;
+  rights?: {
+    license: string;
+    rights_status?: string | null;
+    creator?: string | null;
+    source?: string | null;
+  } | null;
+  user_supplied?: boolean;
+  generated?: boolean;
+};
+
+/**
+ * Upload one file to a project (POST /projects/{id}/uploads,
+ * multipart). Uses XMLHttpRequest because fetch exposes no upload
+ * progress; the token travels as the X-API-Key header only.
+ * The backend probes the file: an unprobeable upload fails 422
+ * and is not stored.
+ */
+export function uploadAsset(
+  projectId: string,
+  file: File,
+  onProgress?: (fraction: number) => void,
+): Promise<UploadRecord> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", apiUrl(`/api/v1/projects/${projectId}/uploads`));
+    if (API_TOKEN) xhr.setRequestHeader("X-API-Key", API_TOKEN);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress(event.loaded / event.total);
+      }
+    };
+    xhr.onload = () => {
+      let body: unknown = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        // Non-JSON body: fall through to the status-based error.
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body as UploadRecord);
+        return;
+      }
+      const errorBody = body as {
+        error?: { code?: string; message?: string };
+        detail?: string;
+      } | null;
+      reject(
+        new ApiClientError(
+          errorBody?.error?.message ||
+            (typeof errorBody?.detail === "string" ? errorBody.detail : "") ||
+            `Upload failed (${xhr.status}).`,
+          xhr.status,
+          errorBody?.error?.code,
+        ),
+      );
+    };
+    xhr.onerror = () => reject(new TypeError("The upload could not reach the studio API."));
+    const form = new FormData();
+    form.append("file", file);
+    xhr.send(form);
+  });
+}
+
+export type RevisionCertificate = Certificate & {
+  certificate_version: 2;
+  revision: {
+    revision_id: string;
+    revision_number?: number | null;
+    parent_revision_id?: string | null;
+    chain_revision_ids: string[];
+    status?: string | null;
+    source_run_id?: string | null;
+  };
+  final_revision_assets: Array<{
+    item_id: string;
+    kind: string;
+    classification?: string | null;
+    sentence_number?: number | null;
+    scene_number?: number | null;
+    file_name?: string | null;
+    provider?: string | null;
+    source_url?: string | null;
+    evidence_class?: string | null;
+    verification?: { accepted?: boolean; reason?: string | null; transcript_check?: string | null } | null;
+    rights?: { license: string; rights_status?: string | null; creator?: string | null; source?: string | null } | null;
+    timeline: { start?: number | null; duration?: number | null };
+  }>;
+};
+
+export function getRevisionCertificate(
+  projectId: string,
+  revisionId: string,
+  signal?: AbortSignal,
+) {
+  return apiRequest<RevisionCertificate>(
+    `/api/v1/projects/${projectId}/revisions/${revisionId}/certificate`,
+    { signal },
+  );
+}
