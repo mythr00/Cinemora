@@ -4443,6 +4443,45 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     shot_need=shot_need,
                 )
                 print(f"      candidates: videos={len(scored_videos)} web={len(scored_web_sources)} images={len(scored_images)}")
+
+                # F-4/MS-6: provider + kind funnels for the asset
+                # report. Discovered = raw pool size; verified/rejected
+                # from the scored lists (the verifier's own verdicts).
+                _provider_funnel = scene_stats.setdefault("providers", {})
+                _kind_funnel = scene_stats.setdefault("kinds", {})
+
+                def _funnel_add(pool, scored, kind):
+                    kind_counts = _kind_funnel.setdefault(
+                        kind, {"discovered": 0, "verified": 0, "rejected": 0}
+                    )
+                    kind_counts["discovered"] += len(pool)
+                    for cand in pool:
+                        provider = str(
+                            cand.get("provider") or cand.get("source") or "unknown"
+                        )
+                        _provider_funnel.setdefault(
+                            provider,
+                            {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+                        )["discovered"] += 1
+                    for cand in scored:
+                        provider = str(
+                            cand.get("provider") or cand.get("source") or "unknown"
+                        )
+                        entry = _provider_funnel.setdefault(
+                            provider,
+                            {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+                        )
+                        if (cand.get("verification") or {}).get("accepted"):
+                            entry["verified"] += 1
+                            kind_counts["verified"] += 1
+                        else:
+                            entry["rejected"] += 1
+                            kind_counts["rejected"] += 1
+
+                _funnel_add(raw_videos, scored_videos, "video")
+                _funnel_add(raw_web_sources, scored_web_sources, "web")
+                _funnel_add(raw_images, scored_images, "image")
+
                 scene_stats["candidates_considered"] += len(scored_videos) + len(scored_images)
                 scene_stats["candidates_rejected"] += sum(
                     1
@@ -4517,7 +4556,18 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                 )
                 if fetch_failures:
                     scene_stats.setdefault("download_failures", []).extend(fetch_failures)
+                    for failure in fetch_failures:
+                        entry = scene_stats.setdefault("providers", {}).setdefault(
+                            str(failure.get("provider") or "unknown"),
+                            {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+                        )
+                        entry["download_failed"] += 1
                 if asset:
+                    _dl_provider = str(asset.get("provider") or asset.get("source") or "unknown")
+                    scene_stats.setdefault("providers", {}).setdefault(
+                        _dl_provider,
+                        {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+                    )["downloaded"] += 1
                     annotated = _uve_annotate(asset, scenario, scenario_index, beat.get("text", ""))
                     if asset.get("type") == "video" or asset.get("visual_type") == "video":
                         beat_videos.append(annotated)
@@ -4531,7 +4581,12 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                 review_records.append({
                     "shot_index": scenario_index,
                     "queries": list(queries or []),
-                    "providers": ["youtube", "web"] if shot_need else [],
+                    # F-4: the providers ACTUALLY present in this
+                    # scenario's pools (was hardcoded ["youtube", "web"]).
+                    "providers": sorted({
+                        str(c.get("provider") or c.get("source") or "unknown")
+                        for c in (raw_videos + raw_web_sources + raw_images)
+                    }) if shot_need else [],
                     "rejected": [
                         {"title": result_title(item), "reason": item.get("reject_reason")}
                         for item in (scored_videos + scored_web_sources + scored_images)

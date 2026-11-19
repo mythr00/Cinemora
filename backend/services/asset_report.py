@@ -2,17 +2,31 @@
 
 Every documentary produces one of these. It counts — from the actual
 pipeline outputs, never from intentions — what was retrieved, accepted,
-rejected, substituted and reused, and whether the final timeline is
-genuinely verified footage or contains fallbacks.
+rejected, substituted and reused.
+
+Reporting model (founder format correction, 2026-11-19): a documentary
+is described by the QUALITY and COMPOSITION of its visuals, never
+judged by its percentage of moving footage. Four properties are kept
+strictly separate:
+- authenticity: were accepted visuals verified genuine, or were any
+  substituted (text cards, renderer placeholders, unverified assets)?
+  Generated graphics and photographs are legitimate visuals and do NOT
+  count against authenticity — they are reported in the format mix.
+- format mix: how many accepted visuals are footage / photographs /
+  documents / maps / diagrams / graphics / cards / uncertain.
+- provenance: which providers supplied candidates and accepted assets,
+  with a warning when one provider supplies >80% of accepted footage.
+- rights: recorded licences vs honestly-unknown licensing. A genuine
+  asset with unknown licensing is authentic but NOT rights-cleared;
+  the two are never merged.
 
 Honesty rules baked in:
 - A text card is counted as a text card, never as an image.
 - A placeholder clip is counted from the renderer's own audit; if the
-  renderer audit is unavailable the count is None (unknown), NOT zero.
+  renderer audit is unavailable the count is None (unknown), NOT zero,
+  and authenticity cannot be certified while it is unknown.
 - An asset whose licence is missing or "unknown" is counted as unknown
   licensing — this module never upgrades it.
-- `genuine_footage_only` is True only when every substitution counter
-  that is known is zero AND placeholder usage is known to be zero.
 """
 
 from __future__ import annotations
@@ -90,6 +104,9 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     """
     stats = Counter()
     accepted_by_path: dict[str, dict] = {}
+    provider_funnel: dict[str, Counter] = {}
+    kind_funnel: dict[str, Counter] = {}
+    download_failures: list = []
 
     for scene in processed_scenes or []:
         if not isinstance(scene, dict):
@@ -100,6 +117,21 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 stats[key] += int(scene_stats.get(key) or 0)
             except (TypeError, ValueError):
                 pass
+        for provider, counts in (scene_stats.get("providers") or {}).items():
+            funnel = provider_funnel.setdefault(provider, Counter())
+            for stage, count in (counts or {}).items():
+                try:
+                    funnel[stage] += int(count or 0)
+                except (TypeError, ValueError):
+                    pass
+        for kind, counts in (scene_stats.get("kinds") or {}).items():
+            funnel = kind_funnel.setdefault(kind, Counter())
+            for stage, count in (counts or {}).items():
+                try:
+                    funnel[stage] += int(count or 0)
+                except (TypeError, ValueError):
+                    pass
+        download_failures.extend(scene_stats.get("download_failures") or [])
         for asset in list(scene.get("videos") or []) + list(scene.get("images") or []):
             if not isinstance(asset, dict):
                 continue
@@ -179,12 +211,62 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "unverified_assets": len(unverified),
         "generated_graphics": len(graphics),
     }
-    genuine = (
+
+    # ---- format mix (composition, reported neutrally) ------------------
+    def _format_of(asset):
+        fmt = str(asset.get("visual_format") or "").strip()
+        if fmt:
+            return fmt
+        if _is_card(asset):
+            return "text_card"
+        if _is_graphic(asset):
+            return "graphic"
+        if (asset.get("type") or asset.get("visual_type")) == "video":
+            return "footage"
+        return "uncertain"  # genuine image, kind not evidence-classified
+
+    format_mix = Counter(_format_of(a) for a in accepted)
+
+    # ---- authenticity (honesty verdict — NOT a footage percentage) -----
+    # Authentic = no placeholder clips (and the count is KNOWN), no text
+    # cards standing in for visuals, no unverified assets. Photographs,
+    # documents, maps and identified generated graphics are legitimate
+    # documentary visuals and never count against authenticity.
+    authentic = (
         placeholder_clips == 0
         and len(cards) == 0
         and len(unverified) == 0
-        and len(graphics) == 0
     )
+    authenticity = {
+        "authentic": authentic,
+        "verified_genuine_assets": len(verified_videos) + len(verified_images),
+        "generated_visuals_identified": len(graphics),
+        "substitutions": {
+            "text_cards": len(cards),
+            "placeholder_clips": placeholder_clips,
+            "unverified_assets": len(unverified),
+        },
+    }
+
+    # ---- provenance: provider funnel + single-provider reliance --------
+    accepted_footage_by_provider = Counter()
+    for asset in videos:
+        provider = str(asset.get("provider") or asset.get("source") or "unknown")
+        accepted_footage_by_provider[provider] += 1
+        funnel = provider_funnel.setdefault(provider, Counter())
+        funnel["accepted_footage"] += 1
+    total_footage = sum(accepted_footage_by_provider.values())
+    reliance_provider, reliance_share = None, 0.0
+    if total_footage:
+        reliance_provider, reliance_count = accepted_footage_by_provider.most_common(1)[0]
+        reliance_share = reliance_count / total_footage
+    reliance_warning = bool(total_footage and reliance_share > 0.8)
+
+    # ---- rights (kept separate from authenticity) ----------------------
+    rights = {
+        "recorded_licences": len(real_assets) - len(unknown_licence),
+        "unknown_licences": len(unknown_licence),
+    }
 
     return {
         "total_retrieved_assets": stats["candidates_considered"],
@@ -212,7 +294,23 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             ],
         },
         "substitutions": substitutions,
-        "genuine_footage_only": genuine,
+        "authenticity": authenticity,
+        "authentic": authentic,
+        "format_mix": {
+            "accepted": dict(format_mix),
+            "by_kind": {name: dict(counts) for name, counts in sorted(kind_funnel.items())},
+        },
+        "providers": {
+            "funnel": {name: dict(counts) for name, counts in sorted(provider_funnel.items())},
+            "accepted_footage_by_provider": dict(accepted_footage_by_provider),
+            "single_provider_reliance": {
+                "warning": reliance_warning,
+                "provider": reliance_provider if reliance_warning else None,
+                "footage_share": round(reliance_share, 4) if total_footage else None,
+            },
+        },
+        "download_failures": download_failures,
+        "rights": rights,
     }
 
 

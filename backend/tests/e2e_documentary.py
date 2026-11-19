@@ -233,11 +233,22 @@ def main():
     )
     manifest_text = (PROJECT_DIR / "rights_manifest.json").read_text(encoding="utf-8")
     check("no fabricated 'royalty-free' licence anywhere", "royalty-free" not in manifest_text)
+    _subs = report["authenticity"]["substitutions"]
     check(
-        "genuine flag consistent with substitution counts",
-        report["genuine_footage_only"]
-        == all(v == 0 for v in report["substitutions"].values()),
-        f"(substitutions={report['substitutions']})",
+        "authenticity consistent with substitution counts",
+        report["authentic"]
+        == (
+            _subs["placeholder_clips"] == 0
+            and _subs["text_cards"] == 0
+            and _subs["unverified_assets"] == 0
+        ),
+        f"(authenticity={report['authenticity']})",
+    )
+    check(
+        "report describes composition (format mix present)",
+        isinstance(report.get("format_mix", {}).get("accepted"), dict)
+        and sum(report["format_mix"]["accepted"].values()) == report["total_accepted_assets"],
+        f"(format_mix={report['format_mix']['accepted']})",
     )
     check(
         "final video is 1920x1080 with audio",
@@ -246,7 +257,7 @@ def main():
     )
     check(
         "auditor consumed the report",
-        audit.get("genuine_footage_only") == report["genuine_footage_only"],
+        audit.get("authentic") == report["authentic"],
     )
 
     print()

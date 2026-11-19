@@ -106,22 +106,29 @@ def validate_final_video(
 ):
     result = probe_final_video(video_file)
 
-    # AUD-23: the auditor consumes the Asset Manager report. A technically
-    # valid file is NOT the same as genuine documentary footage — when the
-    # report shows substitutions, the audit says so, in the result and in
-    # the log, instead of passing the video as 100% genuine.
+    # AUD-23 + founder format correction: the auditor consumes the Asset
+    # Manager report. A technically valid file is NOT the same as an
+    # authentic documentary — when the report shows substitutions (text
+    # cards, placeholders, unverified assets), the audit says so.
+    # Photographs, documents, maps and identified generated graphics are
+    # legitimate visuals: the audit reports the format mix as
+    # composition, never as a failure, and never judges the film by its
+    # percentage of moving footage.
     if asset_report is not None:
-        substitutions = asset_report.get("substitutions") or {}
+        authenticity = asset_report.get("authenticity") or {}
+        substitutions = authenticity.get("substitutions") or {}
         result["asset_report"] = {
             "total_accepted_assets": asset_report.get("total_accepted_assets"),
             "verified_moving_footage": asset_report.get("verified_moving_footage"),
             "verified_images": asset_report.get("verified_images"),
             "unknown_licensing": asset_report.get("unknown_licensing"),
-            "substitutions": substitutions,
+            "format_mix": (asset_report.get("format_mix") or {}).get("accepted"),
+            "authenticity": authenticity,
         }
-        result["genuine_footage_only"] = bool(asset_report.get("genuine_footage_only"))
-        if not result["genuine_footage_only"]:
-            result["genuineness_warnings"] = [
+        result["authentic"] = bool(authenticity.get("authentic"))
+        result["format_mix"] = (asset_report.get("format_mix") or {}).get("accepted")
+        if not result["authentic"]:
+            result["authenticity_warnings"] = [
                 f"{name}={count}"
                 for name, count in substitutions.items()
                 if count
@@ -129,8 +136,8 @@ def validate_final_video(
             print()
             print("!" * 70)
             print(
-                "ASSET GENUINENESS: NOT 100% GENUINE FOOTAGE — "
-                + ", ".join(result["genuineness_warnings"])
+                "ASSET AUTHENTICITY: NOT FULLY AUTHENTIC — substitutions present: "
+                + ", ".join(result["authenticity_warnings"])
             )
             print("!" * 70)
 

@@ -192,7 +192,8 @@ def test_asset_report_counts_substitutions_honestly():
     # item 1 loops v1 (12s window > 8s clip), item 2 reuses v1: 2 repeats
     assert report["repeated_footage"] == 2
     assert report["sentence_assignment_accuracy"] == pytest.approx(2 / 3, abs=0.01)
-    assert report["genuine_footage_only"] is False
+    assert report["authentic"] is False
+    assert report["authenticity"]["authentic"] is False
 
 
 def test_asset_report_genuine_when_no_substitutions():
@@ -215,14 +216,15 @@ def test_asset_report_genuine_when_no_substitutions():
     ]
     timeline = {"scenes": [{"items": [{"file_path": "/p/v1.mp4", "assignment": "sentence", "duration": 8}]}]}
     report = build_asset_report(scenes, timeline, renderer_audit={"placeholder_count": 0})
-    assert report["genuine_footage_only"] is True
+    assert report["authentic"] is True
+    assert report["format_mix"]["accepted"].get("footage") == 1
     assert report["unknown_licensing"] == 0
 
 
 def test_asset_report_unknown_placeholders_block_genuine_claim():
     report = build_asset_report(_scenes_fixture(), _timeline_fixture(), renderer_audit=None)
     assert report["placeholder_clips"] is None
-    assert report["genuine_footage_only"] is False
+    assert report["authentic"] is False
 
 
 @pytest.fixture(scope="module")
@@ -246,9 +248,9 @@ def test_final_auditor_reports_substitutions(tiny_video):
         _scenes_fixture(), _timeline_fixture(), renderer_audit={"placeholder_count": 2}
     )
     result = validate_final_video(str(tiny_video), asset_report=report)
-    assert result["genuine_footage_only"] is False
-    assert any("text_cards" in w for w in result["genuineness_warnings"])
-    assert any("placeholder_clips" in w for w in result["genuineness_warnings"])
+    assert result["authentic"] is False
+    assert any("text_cards" in w for w in result["authenticity_warnings"])
+    assert any("placeholder_clips" in w for w in result["authenticity_warnings"])
 
 
 def test_final_auditor_confirms_genuine(tiny_video):
@@ -267,4 +269,88 @@ def test_final_auditor_confirms_genuine(tiny_video):
     ]
     report = build_asset_report(scenes, {"scenes": [{"items": []}]}, renderer_audit={"placeholder_count": 0})
     result = validate_final_video(str(tiny_video), asset_report=report)
-    assert result["genuine_footage_only"] is True
+    assert result["authentic"] is True
+
+
+# ---------------------------------------------------------------------------
+# F-4: the format-correction reporting contract. A documentary is judged
+# by authenticity and composition — never by its footage percentage.
+# ---------------------------------------------------------------------------
+
+
+def test_photo_and_graphic_led_documentary_is_authentic():
+    """Zero moving footage, all visuals verified or identified as
+    generated: authentic, with the composition reported neutrally."""
+    scenes = [
+        {
+            "asset_stats": {"candidates_considered": 4, "candidates_rejected": 1,
+                            "downloads_failed": 0, "text_cards": 0},
+            "videos": [],
+            "images": [
+                {"file_path": "/p/map.jpg", "type": "image",
+                 "verification_status": "verified", "universal_score": 0.9,
+                 "license": "CC BY-SA 4.0", "source": "wikimedia",
+                 "visual_format": "map"},
+                {"file_path": "/p/photo.jpg", "type": "image",
+                 "verification_status": "verified", "universal_score": 0.8,
+                 "license": "unknown", "source": "news.example.org",
+                 "visual_format": "photograph"},
+                {"file_path": "/p/mg.mp4", "type": "motion_graphic",
+                 "motion_graphic": True, "source": "cinemora_motion_graphics",
+                 "generated": True, "visual_format": "graphic"},
+            ],
+            "sentences": [],
+        }
+    ]
+    report = build_asset_report(scenes, {"scenes": [{"items": []}]},
+                                renderer_audit={"placeholder_count": 0})
+    assert report["verified_moving_footage"] == 0
+    assert report["authentic"] is True
+    mix = report["format_mix"]["accepted"]
+    assert mix.get("map") == 1
+    assert mix.get("photograph") == 1
+    assert mix.get("graphic") == 1
+    # Rights stay separate from authenticity: the photograph's licence
+    # is unknown, and the report says so without tainting authenticity.
+    assert report["rights"]["unknown_licences"] == 1
+    assert report["rights"]["recorded_licences"] == 1
+
+
+def test_provider_funnel_and_reliance_warning():
+    def scene(provider, n_videos):
+        return {
+            "asset_stats": {
+                "candidates_considered": 10, "candidates_rejected": 2,
+                "downloads_failed": 1, "text_cards": 0,
+                "providers": {provider: {"discovered": 10, "verified": 8,
+                                         "rejected": 2, "downloaded": n_videos,
+                                         "download_failed": 1}},
+                "download_failures": [{"provider": provider, "url": "https://x/v", "reason": "download_failed"}],
+            },
+            "videos": [
+                {"file_path": f"/p/{provider}{i}.mp4", "type": "video",
+                 "verification_status": "verified", "universal_score": 0.9,
+                 "license": "unknown", "source": provider, "provider": provider}
+                for i in range(n_videos)
+            ],
+            "images": [],
+            "sentences": [],
+        }
+
+    report = build_asset_report([scene("youtube", 5)], {"scenes": [{"items": []}]},
+                                renderer_audit={"placeholder_count": 0})
+    funnel = report["providers"]["funnel"]["youtube"]
+    assert funnel["discovered"] == 10
+    assert funnel["verified"] == 8
+    assert funnel["download_failed"] == 1
+    assert funnel["accepted_footage"] == 5
+    reliance = report["providers"]["single_provider_reliance"]
+    assert reliance["warning"] is True
+    assert reliance["provider"] == "youtube"
+    assert report["download_failures"][0]["reason"] == "download_failed"
+
+    mixed = build_asset_report(
+        [scene("youtube", 2), scene("archive.org", 2)],
+        {"scenes": [{"items": []}]}, renderer_audit={"placeholder_count": 0},
+    )
+    assert mixed["providers"]["single_provider_reliance"]["warning"] is False
