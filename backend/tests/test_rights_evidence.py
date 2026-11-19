@@ -73,6 +73,11 @@ def test_video_asset_records_creator_and_retrieval_time(real_clip, tmp_path, mon
         return True
 
     monkeypatch.setattr(media_pipeline, "download_video_clip", fake_download)
+    # MS-3: segment evidence is a separate gate with its own tests;
+    # this test's subject is rights stamping after download.
+    monkeypatch.setattr(
+        media_pipeline, "_segment_start_detailed", lambda url, **kw: (0, "whole_asset")
+    )
     candidate = {
         "url": "https://example.com/direct.mp4",
         "title": "Archival footage",

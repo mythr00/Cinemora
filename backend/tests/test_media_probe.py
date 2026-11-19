@@ -106,6 +106,11 @@ def test_downloaded_asset_records_probed_duration(real_clip, tmp_path, monkeypat
         return True
 
     monkeypatch.setattr(media_pipeline, "download_video_clip", fake_download)
+    # MS-3: segment evidence is a separate gate with its own tests;
+    # this test's subject is post-download probe stamping.
+    monkeypatch.setattr(
+        media_pipeline, "_segment_start_detailed", lambda url, **kw: (0, "whole_asset")
+    )
     candidate = {"url": "https://example.com/direct-video.mp4", "title": "fixture"}
     asset = media_pipeline._uve_download_video_candidate(
         candidate, tmp_path, sentence_number=1, asset_index=1

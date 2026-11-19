@@ -192,6 +192,11 @@ def _run_beat(tmp_path, monkeypatch, real_clip, *, intent, intent_conf, video_sc
         lambda sc, cache, pid, shot_need=None: ([video_candidate], [], [image_candidate]),
     )
     monkeypatch.setattr(media_pipeline, "_uve_verify_all", _score_verify)
+    # MS-3 seam: segment evidence is exercised by its own tests; here
+    # the (fake) source is a short whole asset.
+    monkeypatch.setattr(
+        media_pipeline, "_segment_start_detailed", lambda url, **kw: (0, "whole_asset")
+    )
 
     def fake_clip(url, output_path, start_time=0, duration=8):
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)

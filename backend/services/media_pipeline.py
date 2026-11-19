@@ -1559,7 +1559,7 @@ def download_valid_image(image_url, output_path):
         return False
 
 
-def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION):
+def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, start_time=0):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     raw_path = output_path.with_name(output_path.stem + "_raw.mp4")
@@ -1571,7 +1571,9 @@ def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION):
                 handle.write(chunk)
         if not raw_path.exists() or raw_path.stat().st_size < 10_000:
             return False
-        command = ["ffmpeg", "-y", "-i", str(raw_path), "-t", str(duration), "-c:v", "libx264",
+        # MS-3: honour the evidence-backed start_time (was silently
+        # ignored — direct downloads always trimmed from second 0).
+        command = ["ffmpeg", "-y", "-ss", str(max(0, int(start_time or 0))), "-i", str(raw_path), "-t", str(duration), "-c:v", "libx264",
                    "-preset", "ultrafast", "-crf", "28", "-an", "-movflags", "+faststart", str(output_path)]
         code, _, stderr = run_command_safe(command, FFMPEG_TIMEOUT, "FFmpeg source")
         try:
@@ -1617,6 +1619,7 @@ def download_video_clip(
             video_url,
             output_path,
             duration,
+            start_time=start_time,
         )
 
     try:
@@ -3255,6 +3258,76 @@ def _uve_candidate_key(candidate):
     return url
 
 
+def _remote_duration_seconds(url):
+    """Duration of a remote media file via ffprobe, or None.
+
+    probe_video() is deliberately local-only (it verifies downloaded
+    files); segment evidence for a direct URL needs the SOURCE duration
+    before any download decision, so it is probed here, bounded.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-print_format", "json",
+                "-show_format", str(url),
+            ],
+            capture_output=True, text=True, timeout=25,
+        )
+        if result.returncode != 0:
+            return None
+        info = json.loads(result.stdout or "{}")
+        value = (info.get("format") or {}).get("duration")
+        return float(value) if value else None
+    except Exception:
+        return None
+
+
+def _segment_start_detailed(url, subject="", place="", event="", era="",
+                            duration=DEFAULT_CLIP_DURATION):
+    """Provider-neutral segment evidence (MS-3).
+
+    Returns (start_seconds, evidence) or (None, "none"). Evidence
+    classes:
+    - "whole_asset": the source is short enough (<= 2x the clip length)
+      that starting at 0 is the asset itself, not an arbitrary window
+      of a long video.
+    - "verified_segment": the transcript/chapter/description evidence
+      machinery (_youtube_start, yt-dlp based and NOT YouTube-only)
+      selected a segment matched to the visual contract.
+    - "none": no evidence — the caller must reject the segment rather
+      than invent a timestamp. Timestamp zero is never assumed for a
+      long source.
+    """
+    if not url:
+        return None, "none"
+    clip = int(duration or DEFAULT_CLIP_DURATION)
+
+    if is_direct_media_url(url):
+        source_duration = _remote_duration_seconds(url)
+        if source_duration and float(source_duration) <= clip * 2:
+            return 0, "whole_asset"
+        return None, "none"
+
+    # Page URLs on any yt-dlp-supported site: a short source qualifies
+    # as a whole asset; longer sources need timed evidence.
+    slim = _youtube_slim(str(url).split("&", 1)[0].strip())
+    source_duration = None
+    if slim and slim.get("duration"):
+        try:
+            source_duration = float(slim["duration"])
+        except (TypeError, ValueError):
+            source_duration = None
+    if source_duration and source_duration <= clip * 2:
+        return 0, "whole_asset"
+
+    start = _youtube_start(
+        url, subject=subject, place=place, event=event, era=era
+    )
+    if start is None:
+        return None, "none"
+    return int(start), "verified_segment"
+
+
 def _uve_download_video_candidate(
     candidate,
     scene_dir,
@@ -3301,39 +3374,31 @@ def _uve_download_video_candidate(
         or ""
     ).strip()
 
-    start = 0
+    # MS-3: segment evidence is provider-neutral. ANY source — YouTube,
+    # Vimeo, a news page, an archive file — must present evidence for
+    # its segment: a whole-asset case (short source) or a verified
+    # timed segment. No evidence -> reject; timestamp zero is never
+    # silently assumed for a long video.
+    start, segment_evidence = _segment_start_detailed(
+        url,
+        subject=subject,
+        place=place,
+        event=event,
+        era=era,
+        duration=DEFAULT_CLIP_DURATION,
+    )
 
-    if (
-        "youtube.com" in url.lower()
-        or "youtu.be" in url.lower()
-    ):
-        start = _youtube_start(
-            url,
-            subject=subject,
-            place=place,
-            event=event,
-            era=era,
+    if start is None:
+        print(
+            f"SOURCE REJECTED (no segment evidence): "
+            f"subject='{subject}' "
+            f"place='{place}' "
+            f"event='{event}' "
+            f"era='{era}' "
+            f"url={url}"
         )
-
-        # -----------------------------------------------------
-        # No suitable segment was found in this source.
-        #
-        # Reject the source cleanly so the caller can try the
-        # next YouTube candidate.
-        # -----------------------------------------------------
-
-        if start is None:
-            print(
-                f"YOUTUBE SOURCE REJECTED: "
-                f"no suitable segment "
-                f"subject='{subject}' "
-                f"place='{place}' "
-                f"event='{event}' "
-                f"era='{era}' "
-                f"url={url}"
-            )
-            candidate["_download_error"] = "no_segment_evidence"
-            return None
+        candidate["_download_error"] = "no_segment_evidence"
+        return None
 
     safe_query = str(
         candidate.get("matched_query")
@@ -3410,6 +3475,9 @@ def _uve_download_video_candidate(
             "duration_seconds": probe["duration_seconds"],
             "sentence_number": sentence_number,
             "clip_start": start,
+            # MS-3: how the start time was evidenced — whole_asset or
+            # verified_segment; recorded on every accepted video.
+            "segment_evidence": segment_evidence,
             "clip_duration": probe["duration_seconds"],
             "width": probe["width"],
             "height": probe["height"],
