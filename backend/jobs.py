@@ -17,6 +17,7 @@ from services.captions import transcribe_audio
 from services.caption_renderer import burn_captions
 from services.graphics_pipeline import build_motion_graphics_assets
 from services.final_video_auditor import validate_final_video
+from services.asset_report import build_asset_report, write_asset_report
 from services.visual_registry import reset_registry
 
 from services.production_state import (
@@ -609,6 +610,36 @@ def run_full_pipeline(project_id: str, script: str):
         )
 
         # ----------------------------------------------
+        # Asset Manager report (directive section E, AUD-23)
+        # ----------------------------------------------
+
+        renderer_audit = None
+        renderer_audit_file = project_dir / "renderer_timing_audit.json"
+        if renderer_audit_file.exists():
+            try:
+                renderer_audit = json.loads(
+                    renderer_audit_file.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                renderer_audit = None
+
+        asset_report = build_asset_report(
+            processed_scenes,
+            timeline_result=timeline_result,
+            renderer_audit=renderer_audit,
+        )
+        write_asset_report(project_dir, asset_report)
+
+        print(
+            "Asset report: "
+            f"accepted={asset_report['total_accepted_assets']} "
+            f"verified_footage={asset_report['verified_moving_footage']} "
+            f"verified_images={asset_report['verified_images']} "
+            f"substitutions={asset_report['substitutions']} "
+            f"genuine_footage_only={asset_report['genuine_footage_only']}"
+        )
+
+        # ----------------------------------------------
         # Final audit
         # ----------------------------------------------
 
@@ -619,6 +650,7 @@ def run_full_pipeline(project_id: str, script: str):
                 if expected_duration > 0
                 else None
             ),
+            asset_report=asset_report,
         )
 
         print(

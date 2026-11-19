@@ -1112,18 +1112,22 @@ def build_motion_graphics_assets(
 
     if timeline_events and mode in {"balanced", "heavy"}:
         path = output_dir / "motion_graphic_timeline_001.mp4"
-        _render_timeline_graphic(
-            path,
-            timeline_events,
-            duration=6.0,
-        )
-        register_asset(
-            path,
-            "timeline",
-            "chronology",
-            6.0,
-            "STORY TIMELINE",
-        )
+        try:
+            _render_timeline_graphic(
+                path,
+                timeline_events,
+                duration=6.0,
+            )
+            register_asset(
+                path,
+                "timeline",
+                "chronology",
+                6.0,
+                "STORY TIMELINE",
+            )
+        except Exception as error:
+            # AUD-21: one failing graphic must not kill the whole job.
+            print(f"MOTION GRAPHIC SKIPPED (timeline): {error}")
 
     # -----------------------------------------------------
     # NUMERICAL / SCALE GRAPHICS
@@ -1172,30 +1176,35 @@ def build_motion_graphics_assets(
                 / f"motion_graphic_stat_{index + 1:03d}.mp4"
             )
 
-            _render_stat_graphic(
-                path,
-                value.upper(),
-                shorten(text, 72),
-                duration=4.0,
-            )
+            try:
+                _render_stat_graphic(
+                    path,
+                    value.upper(),
+                    shorten(text, 72),
+                    duration=4.0,
+                )
 
-            register_asset(
-                path,
-                "stat",
-                "quantitative_explanation",
-                4.0,
-                value.upper(),
-                text,
-            )
+                register_asset(
+                    path,
+                    "stat",
+                    "quantitative_explanation",
+                    4.0,
+                    value.upper(),
+                    text,
+                )
 
-            assets[-1]["scene_number"] = scene_number
-            assets[-1]["sentence_index"] = sentence_index
-            assets[-1]["sentence_number"] = (
-                sentence.get("sentence_number")
-                or sentence_index + 1
-            )
+                assets[-1]["scene_number"] = scene_number
+                assets[-1]["sentence_index"] = sentence_index
+                assets[-1]["sentence_number"] = (
+                    sentence.get("sentence_number")
+                    or sentence_index + 1
+                )
 
-            stats_created += 1
+                stats_created += 1
+            except Exception as error:
+                # AUD-21: skip this graphic; never fail the whole job.
+                print(f"MOTION GRAPHIC SKIPPED (stat): {error}")
+                continue
 
             if mode == "balanced" and stats_created >= 3:
                 break
@@ -1220,19 +1229,23 @@ def build_motion_graphics_assets(
                 / "motion_graphic_process_001.mp4"
             )
 
-            _render_process_graphic(
-                path,
-                steps,
-                duration=5.0,
-            )
+            try:
+                _render_process_graphic(
+                    path,
+                    steps,
+                    duration=5.0,
+                )
 
-            register_asset(
-                path,
-                "process",
-                "process_or_transformation",
-                5.0,
-                "PROCESS",
-            )
+                register_asset(
+                    path,
+                    "process",
+                    "process_or_transformation",
+                    5.0,
+                    "PROCESS",
+                )
+            except Exception as error:
+                # AUD-21: skip this graphic; never fail the whole job.
+                print(f"MOTION GRAPHIC SKIPPED (process): {error}")
 
     manifest = output_dir / "motion_graphics.json"
 

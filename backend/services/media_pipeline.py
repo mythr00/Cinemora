@@ -2421,7 +2421,11 @@ def _youtube_transcript_segment(
 # (added by patch_youtube_fallback.py)
 # =====================================================================
 # Set False to reject sources instead of ever using a low-confidence window.
-YT_LOW_CONFIDENCE_FALLBACK = True
+# AUD-16 (founder directive 2026-11-19): set to False permanently. An
+# arbitrary 20/40/60/80% window of a video whose title merely mentions the
+# subject is NOT verified footage; sources without timestamp evidence are
+# rejected so the caller can try the next candidate.
+YT_LOW_CONFIDENCE_FALLBACK = False
 # Fractions of the video (0..1) tried, in order, for low-confidence windows.
 # The intro (first 20%) and outro (last 20%) are skipped on purpose.
 YT_LOW_CONFIDENCE_WINDOWS = (0.2, 0.4, 0.6, 0.8)
@@ -3568,7 +3572,8 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
     return scored
 
 
-RELAXED_MIN_SCORE = 0.15
+# RELAXED_MIN_SCORE was removed with the relaxed pick pool (AUD-16):
+# verifier-rejected candidates can no longer enter the accepted pool.
 
 def _title_blob(candidate):
     return " ".join([
@@ -3796,22 +3801,12 @@ def _uve_pick(
             candidate["verification_status"] = "verified"
             pool.append(candidate)
 
-    if (
-        not pool
-        and not strict_specific
-        and specificity != "exact"
-    ):
-        for candidate in scored:
-            if candidate.get("reject_reason"):
-                continue
-
-            score = float(
-                candidate.get("universal_score") or 0
-            )
-
-            if score >= RELAXED_MIN_SCORE:
-                candidate["verification_status"] = "relaxed"
-                pool.append(candidate)
+    # AUD-16 / acceptance criterion 4: there is NO relaxed pool. The old
+    # code admitted verifier-REJECTED candidates at score >= 0.15 — below
+    # the verifier's own lowest acceptance threshold — and labelled them
+    # "relaxed". Only candidates the verifier accepted may be picked; if
+    # none were accepted, the beat falls back honestly (real image, then a
+    # counted card) instead of using rejected footage.
 
     picked = []
     youtube_source_counts = {}
@@ -4041,6 +4036,15 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
     print(f"BEATS: {len(beats)}")
 
     search_cache, used_keys = {}, set()
+    # AUD-16/E: per-scene Asset Manager statistics. Every fallback and
+    # failure is counted here and surfaces in the project asset report —
+    # substitutions must never be silent.
+    scene_stats = {
+        "candidates_considered": 0,
+        "candidates_rejected": 0,
+        "downloads_failed": 0,
+        "text_cards": 0,
+    }
     all_images, all_videos, sentence_results = [], [], []
     results_by_number = {}
 
@@ -4104,6 +4108,12 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     shot_need=shot_need,
                 )
                 print(f"      candidates: videos={len(scored_videos)} web={len(scored_web_sources)} images={len(scored_images)}")
+                scene_stats["candidates_considered"] += len(scored_videos) + len(scored_images)
+                scene_stats["candidates_rejected"] += sum(
+                    1
+                    for item in (scored_videos + scored_web_sources + scored_images)
+                    if item.get("reject_reason")
+                )
 
                 got_video = False
                 if videos_left > 0:
@@ -4117,6 +4127,8 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                         videos_left -= 1
                         got_video = True
                         print(f"      + video ({asset.get('verification_status')}, score {asset.get('universal_score')})")
+                    elif picks:
+                        scene_stats["downloads_failed"] += 1
 
                 if not got_video:
                     # AUD-13: a beat with no verified moving footage falls
@@ -4130,6 +4142,8 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     if image_asset:
                         beat_images.append(_uve_annotate(image_asset, scenario, scenario_index, beat.get("text", "")))
                         print(f"      + image ({image_asset.get('verification_status')}, score {image_asset.get('universal_score')})")
+                    elif image_picks:
+                        scene_stats["downloads_failed"] += 1
                 review_records.append({
                     "shot_index": scenario_index,
                     "queries": list(queries or []),
@@ -4147,6 +4161,7 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
             if str(need.get("specificity") or "") == "exact" or not need:
                 card = _write_text_card(scene_dir, beat, need)
                 beat_images.append(card)
+                scene_stats["text_cards"] += 1
                 print(f"  FALLBACK CARD: {card['title']}")
 
         write_review_log(project_dir, scene_number, beat, review_records)
@@ -4232,6 +4247,7 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
         "sentence_count": len(sentence_results),
         "visual_engine_version": "STORY_DRIVEN_VISUAL_V2_BEATS",
         "registry_summary": registry_summary,
+        "asset_stats": scene_stats,
         "case_bible": {
             "title": bible.get("title"),
             "story_type": bible.get("story_type"),

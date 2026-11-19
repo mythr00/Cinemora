@@ -1,0 +1,223 @@
+"""Machine-readable Asset Manager report (founder directive §E, AUD-16/23).
+
+Every documentary produces one of these. It counts — from the actual
+pipeline outputs, never from intentions — what was retrieved, accepted,
+rejected, substituted and reused, and whether the final timeline is
+genuinely verified footage or contains fallbacks.
+
+Honesty rules baked in:
+- A text card is counted as a text card, never as an image.
+- A placeholder clip is counted from the renderer's own audit; if the
+  renderer audit is unavailable the count is None (unknown), NOT zero.
+- An asset whose licence is missing or "unknown" is counted as unknown
+  licensing — this module never upgrades it.
+- `genuine_footage_only` is True only when every substitution counter
+  that is known is zero AND placeholder usage is known to be zero.
+"""
+
+from __future__ import annotations
+
+import json
+from collections import Counter
+from pathlib import Path
+from urllib.parse import urlparse
+
+# The verifier's representative-specificity acceptance threshold
+# (story_understanding.verify_candidate). Accepted assets below it are
+# reported as low-confidence selections.
+LOW_CONFIDENCE_SCORE = 0.34
+
+
+def _is_card(asset: dict) -> bool:
+    return (
+        asset.get("asset_scope") == "fallback_card"
+        or asset.get("source") == "text_card"
+        or asset.get("type") == "text_card"
+    )
+
+
+def _is_graphic(asset: dict) -> bool:
+    return bool(
+        asset.get("motion_graphic")
+        or asset.get("type") == "motion_graphic"
+        or asset.get("source") == "cinemora_motion_graphics"
+    )
+
+
+def _is_verified(asset: dict) -> bool:
+    return asset.get("verification_status") == "verified"
+
+
+def _score(asset: dict):
+    for key in ("universal_score", "verification_score", "relevance_score"):
+        value = asset.get(key)
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def _source_name(asset: dict) -> str:
+    source = str(asset.get("source") or "").strip()
+    if source:
+        return source
+    url = str(asset.get("url") or asset.get("video_url") or "").strip()
+    if url:
+        return urlparse(url).netloc or url
+    return "unknown"
+
+
+def _timeline_items(timeline_result) -> list:
+    if not isinstance(timeline_result, dict):
+        return []
+    items = list(timeline_result.get("items") or [])
+    if items:
+        return items
+    for scene in timeline_result.get("scenes") or []:
+        if isinstance(scene, dict):
+            items.extend(scene.get("items") or [])
+    return items
+
+
+def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None) -> dict:
+    """Build the report from real pipeline outputs.
+
+    processed_scenes: scene result dicts from the media pipeline.
+    timeline_result:  the dict returned by build_project_timeline.
+    renderer_audit:   parsed renderer_timing_audit.json, or None.
+    """
+    stats = Counter()
+    accepted_by_path: dict[str, dict] = {}
+
+    for scene in processed_scenes or []:
+        if not isinstance(scene, dict):
+            continue
+        scene_stats = scene.get("asset_stats") or {}
+        for key in ("candidates_considered", "candidates_rejected", "downloads_failed"):
+            try:
+                stats[key] += int(scene_stats.get(key) or 0)
+            except (TypeError, ValueError):
+                pass
+        for asset in list(scene.get("videos") or []) + list(scene.get("images") or []):
+            if not isinstance(asset, dict):
+                continue
+            path = str(asset.get("file_path") or asset.get("path") or "")
+            if path and path not in accepted_by_path:
+                accepted_by_path[path] = asset
+
+    accepted = list(accepted_by_path.values())
+    cards = [a for a in accepted if _is_card(a)]
+    graphics = [a for a in accepted if _is_graphic(a) and not _is_card(a)]
+    real_assets = [a for a in accepted if not _is_card(a) and not _is_graphic(a)]
+    videos = [a for a in real_assets if (a.get("type") or a.get("visual_type")) == "video"]
+    images = [a for a in real_assets if (a.get("type") or a.get("visual_type")) == "image"]
+
+    verified_videos = [a for a in videos if _is_verified(a)]
+    verified_images = [a for a in images if _is_verified(a)]
+    unverified = [a for a in real_assets if not _is_verified(a)]
+    unknown_licence = [
+        a for a in real_assets if not a.get("license") or a.get("license") == "unknown"
+    ]
+    low_confidence = [
+        a
+        for a in real_assets
+        if not _is_verified(a) or (_score(a) is not None and _score(a) < LOW_CONFIDENCE_SCORE)
+    ]
+
+    # ---- timeline-level measures -------------------------------------
+    items = _timeline_items(timeline_result)
+    assignment_counts = Counter(
+        str(item.get("assignment") or "unmarked") for item in items if isinstance(item, dict)
+    )
+    total_items = sum(assignment_counts.values())
+    assignment_accuracy = (
+        round(assignment_counts.get("sentence", 0) / total_items, 4) if total_items else None
+    )
+
+    probed_duration = {
+        path: asset.get("duration_seconds")
+        for path, asset in accepted_by_path.items()
+        if isinstance(asset.get("duration_seconds"), (int, float))
+    }
+    seen_paths: set[str] = set()
+    repeated = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("file_path") or item.get("path") or "")
+        is_repeat = bool(path and path in seen_paths)
+        if path:
+            seen_paths.add(path)
+        loops = False
+        real_duration = probed_duration.get(path)
+        item_duration = item.get("duration")
+        if isinstance(real_duration, (int, float)) and isinstance(item_duration, (int, float)):
+            # The renderer loops a clip (-stream_loop -1) when the timeline
+            # window is longer than the clip itself.
+            loops = float(item_duration) > float(real_duration) + 0.05
+        if is_repeat or loops:
+            repeated += 1
+
+    # ---- renderer placeholders ---------------------------------------
+    if isinstance(renderer_audit, dict) and renderer_audit.get("placeholder_count") is not None:
+        placeholder_clips = int(renderer_audit.get("placeholder_count") or 0)
+    else:
+        placeholder_clips = None  # unknown — never claim zero
+
+    # ---- source reuse --------------------------------------------------
+    source_counter = Counter(_source_name(a) for a in real_assets)
+    url_counter = Counter(
+        str(a.get("video_url") or a.get("url") or "") for a in real_assets
+    )
+    url_counter.pop("", None)
+
+    substitutions = {
+        "text_cards": len(cards),
+        "placeholder_clips": placeholder_clips,
+        "unverified_assets": len(unverified),
+        "generated_graphics": len(graphics),
+    }
+    genuine = (
+        placeholder_clips == 0
+        and len(cards) == 0
+        and len(unverified) == 0
+        and len(graphics) == 0
+    )
+
+    return {
+        "total_retrieved_assets": stats["candidates_considered"],
+        "total_accepted_assets": len(accepted),
+        "total_rejected_assets": stats["candidates_rejected"],
+        "verified_moving_footage": len(verified_videos),
+        "verified_images": len(verified_images),
+        "unverified_assets": len(unverified),
+        "unknown_licensing": len(unknown_licence),
+        "generated_graphics": len(graphics),
+        "text_cards": len(cards),
+        "placeholder_clips": placeholder_clips,
+        "repeated_footage": repeated,
+        "failed_downloads": stats["downloads_failed"],
+        "low_confidence_selections": len(low_confidence),
+        "sentence_assignment_accuracy": assignment_accuracy,
+        "timeline_items": total_items,
+        "assignment_breakdown": dict(assignment_counts),
+        "source_reuse": {
+            "distinct_sources": len(source_counter),
+            "max_uses_of_single_source_url": max(url_counter.values()) if url_counter else 0,
+            "top_sources": [
+                {"source": name, "assets": count}
+                for name, count in source_counter.most_common(5)
+            ],
+        },
+        "substitutions": substitutions,
+        "genuine_footage_only": genuine,
+    }
+
+
+def write_asset_report(project_dir, report) -> Path:
+    path = Path(project_dir) / "asset_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path

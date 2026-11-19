@@ -1054,14 +1054,16 @@ def build_scene_timeline(
                 if v.get("motion_graphic")
                 and v.get("sentence_index") == sentence_index
             ]
-            if assigned_graphics:
-                visual = assigned_graphics[0]
-                assignment = "motion_graphic"
-            elif sentence_index in assigned_by_position:
-                # AUD-14: the visual the pipeline verified for THIS
-                # sentence — never a rotated substitute.
+            if sentence_index in assigned_by_position:
+                # AUD-14 + AUD-21: the visual the pipeline verified for
+                # THIS sentence always wins — including over a generated
+                # motion graphic, which previously replaced genuine
+                # footage for any sentence containing a number.
                 visual = assigned_by_position[sentence_index]
                 assignment = "sentence"
+            elif assigned_graphics:
+                visual = assigned_graphics[0]
+                assignment = "motion_graphic"
             else:
                 visual = visuals[
                     sentence_index

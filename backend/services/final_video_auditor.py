@@ -102,8 +102,37 @@ def validate_final_video(
     video_file,
     expected_duration=None,
     max_duration_delta=5.0,
+    asset_report=None,
 ):
     result = probe_final_video(video_file)
+
+    # AUD-23: the auditor consumes the Asset Manager report. A technically
+    # valid file is NOT the same as genuine documentary footage — when the
+    # report shows substitutions, the audit says so, in the result and in
+    # the log, instead of passing the video as 100% genuine.
+    if asset_report is not None:
+        substitutions = asset_report.get("substitutions") or {}
+        result["asset_report"] = {
+            "total_accepted_assets": asset_report.get("total_accepted_assets"),
+            "verified_moving_footage": asset_report.get("verified_moving_footage"),
+            "verified_images": asset_report.get("verified_images"),
+            "unknown_licensing": asset_report.get("unknown_licensing"),
+            "substitutions": substitutions,
+        }
+        result["genuine_footage_only"] = bool(asset_report.get("genuine_footage_only"))
+        if not result["genuine_footage_only"]:
+            result["genuineness_warnings"] = [
+                f"{name}={count}"
+                for name, count in substitutions.items()
+                if count
+            ]
+            print()
+            print("!" * 70)
+            print(
+                "ASSET GENUINENESS: NOT 100% GENUINE FOOTAGE — "
+                + ", ".join(result["genuineness_warnings"])
+            )
+            print("!" * 70)
 
     if expected_duration is not None:
         expected_duration = float(expected_duration)

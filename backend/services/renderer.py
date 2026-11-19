@@ -511,6 +511,8 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
             "actual_frames": 0,
             "items": [],
             "status": "empty",
+            "placeholder_count": 0,
+            "placeholder_items": [],
         }
 
     clips_dir = Path(project_dir) / "clips" / f"scene_{scene_number}"
@@ -518,6 +520,11 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
 
     rendered_clips = []
     audits = []
+    # AUD-16: placeholder clips are substitutions, not footage. Every use
+    # is recorded here and surfaced in the scene audit, the renderer timing
+    # audit and the project asset report — a placeholder must never pass
+    # silently as genuine documentary footage.
+    placeholder_items = []
     allocations, scene_end_frame = allocate_item_frames(
         items,
         starting_frame,
@@ -550,7 +557,8 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
         print(f"Source: {media_path or '(none)'}")
 
         success = False
-        if media_path and valid_media(media_path):
+        media_ok = bool(media_path and valid_media(media_path))
+        if media_ok:
             if media_type == "video":
                 success = create_video_clip(
                     media_path,
@@ -571,6 +579,7 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                 "— using exact-frame placeholder."
             )
 
+        used_placeholder = False
         if not success:
             label = item.get("sentence") or item.get("title") or f"Scene {scene_number} · {index + 1}"
             success = create_placeholder_clip(
@@ -579,6 +588,7 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                 label=str(label)[:48],
                 frame_count=frame_count,
             )
+            used_placeholder = bool(success)
 
         if not success:
             print(f"CRITICAL: visual {index + 1} failed.")
@@ -588,10 +598,25 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                 label="HOLD",
                 frame_count=frame_count,
             )
+            used_placeholder = bool(success)
 
         if not success:
             raise RuntimeError(
                 f"Unable to create timing-preserving clip scene={scene_number} item={index + 1}"
+            )
+
+        if used_placeholder:
+            placeholder_items.append(
+                {
+                    "item_index": index + 1,
+                    "sentence_index": item.get("sentence_index"),
+                    "sentence": str(item.get("sentence") or "")[:120],
+                    "reason": (
+                        "missing_or_invalid_media"
+                        if not media_ok
+                        else "clip_creation_failed"
+                    ),
+                }
             )
 
         audit = audit_clip(
@@ -640,6 +665,8 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
         "timeline_item_count": len(items),
         "status": status,
         "items": audits,
+        "placeholder_count": len(placeholder_items),
+        "placeholder_items": placeholder_items,
     }
 
     print()
@@ -834,6 +861,10 @@ def render_timeline(scenes, project_dir, expected_duration=None):
         "clip_count": len(all_clips),
         "scenes": scene_audits,
         "status": "pre_concat_pass",
+        # AUD-16: total placeholder substitutions across all scenes.
+        "placeholder_count": sum(
+            int(audit.get("placeholder_count") or 0) for audit in scene_audits
+        ),
     }
     with open(audit_file, "w", encoding="utf-8") as file:
         json.dump(audit_payload, file, indent=2)
