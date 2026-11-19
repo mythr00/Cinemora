@@ -1093,6 +1093,11 @@ def build_motion_graphics_assets(
             "type": "motion_graphic",
             "graphic_type": graphic_type,
             "graphic_style": graphic_type,
+            # Format honesty (founder correction): generated in-house —
+            # explicitly identified as generated, never as source material.
+            "generated": True,
+            "visual_format": "graphic",
+            "visual_format_evidence": "generated_in_house",
             "purpose": purpose,
             "file_path": str(path),
             "path": str(path),

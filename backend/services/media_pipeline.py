@@ -3158,6 +3158,43 @@ def _youtube_start(
     return None
 
 
+_VISUAL_FORMAT_TERMS = {
+    "map": ("map", "karte", "atlas", "cartograph"),
+    "document": (
+        "document", "manuscript", "decree", "treaty", "newspaper",
+        "front page", "court record", "proclamation",
+    ),
+    "diagram": ("diagram", "schematic", "infographic", "chart", "graph"),
+    "photograph": ("photograph", "photo of"),
+}
+
+
+def classify_visual_format(asset):
+    """Evidence-based visual-format classification (F-3).
+
+    Correction rule: an asset is NEVER classified solely from the search
+    query or the intended format. Classification uses the asset's own
+    metadata and source context (provider title/snippet terms); when no
+    evidence supports a specific kind, the format stays "uncertain" —
+    the asset can still be a genuine verified image; kind and
+    authenticity are separate properties. Returns (format, evidence).
+    """
+    asset_type = (asset.get("type") or asset.get("visual_type") or "").lower()
+    if asset_type == "video":
+        return "footage", "media_probe"
+    if asset.get("generated"):
+        return (asset.get("visual_format") or "graphic"), "generated_in_house"
+
+    text = (
+        f"{asset.get('title') or ''} {asset.get('snippet') or ''} "
+        f"{asset.get('source_url') or ''}"
+    ).lower()
+    for fmt, terms in _VISUAL_FORMAT_TERMS.items():
+        if any(term in text for term in terms):
+            return fmt, "source_context"
+    return "uncertain", "unknown"
+
+
 def _uve_annotate(asset, scenario, scenario_index, sentence_text):
     asset.update({
         "scenario_index": scenario_index,
@@ -3170,6 +3207,15 @@ def _uve_annotate(asset, scenario, scenario_index, sentence_text):
         "matched_sentence": sentence_text,
         "rights_status": asset.get("rights_status", "verify_before_publish"),
     })
+    # F-3: stamp the evidence-based visual format. The scenario's intent
+    # is recorded only as a hint when the evidence is inconclusive —
+    # intent alone never classifies an asset.
+    if not asset.get("visual_format"):
+        fmt, evidence = classify_visual_format(asset)
+        asset["visual_format"] = fmt
+        asset["visual_format_evidence"] = evidence
+        if evidence == "unknown":
+            asset["format_hint"] = scenario.get("format_intent") or "any"
     return asset
 
 def _uve_candidate_key(candidate):
@@ -3729,6 +3775,37 @@ def _uve_scenario_search(
             seen_image_urls.add(image_url)
             images.append(image)
 
+    # F-3: format-aware discovery. When the scenario's format intent is
+    # a map or a document with real confidence, run ONE additional
+    # intent-shaped image search so those formats are sought
+    # deliberately instead of found by luck. The shaped query is a
+    # discovery aid only — classification of anything it returns still
+    # requires metadata/source evidence (classify_visual_format).
+    _intent = str(scenario.get("format_intent") or "any").lower()
+    try:
+        _intent_conf = float(scenario.get("format_intent_confidence") or 0)
+    except (TypeError, ValueError):
+        _intent_conf = 0.0
+    if _intent in {"map", "document"} and _intent_conf >= 0.5 and unique_queries:
+        shaped_query = f"{unique_queries[0]} {_intent}"
+        shaped_images = []
+        try:
+            shaped_images = search_image_sources(shaped_query, limit=5)
+        except Exception as error:
+            print(f"Shaped image search failed for '{shaped_query}': {error}")
+        try:
+            shaped_images = shaped_images + search_wikimedia_images(
+                shaped_query, limit=3
+            )
+        except Exception as error:
+            print(f"Shaped Wikimedia search failed for '{shaped_query}': {error}")
+        for image in shaped_images:
+            image_url = str(image.get("image_url") or "").strip()
+            if not image_url or image_url in seen_image_urls:
+                continue
+            seen_image_urls.add(image_url)
+            images.append(image)
+
     return videos, web_sources, images
 
 def _uve_verify_all(candidates, scenario, bible, shot_need=None):
@@ -4263,6 +4340,10 @@ def _write_text_card(scene_dir, beat, shot_need=None):
         "asset_scope": "fallback_card",
         "verification_status": "graphic_fallback",
         "reject_reason": "no_verified_clip",
+        # Format honesty: a generated card — identified as generated.
+        "generated": True,
+        "visual_format": "text_card",
+        "visual_format_evidence": "generated_in_house",
     }
 
 def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):

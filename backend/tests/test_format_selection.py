@@ -247,3 +247,82 @@ def test_no_intent_means_pure_relevance(tmp_path, monkeypatch, _real_clip):
     )
     assert len(sentence.get("images") or []) == 1
     assert sentence.get("videos") in (None, [])
+
+
+# ---------------------------------------------------------------------------
+# F-3: evidence-based classification + format-aware discovery.
+# An asset is never classified from its search query or intended format:
+# metadata/source context decides, and inconclusive stays "uncertain".
+# ---------------------------------------------------------------------------
+
+
+def test_classify_video_is_footage_by_probe():
+    fmt, evidence = media_pipeline.classify_visual_format({"type": "video"})
+    assert (fmt, evidence) == ("footage", "media_probe")
+
+
+def test_classify_map_from_source_context():
+    fmt, evidence = media_pipeline.classify_visual_format(
+        {"type": "image", "title": "Map of the Berlin sector boundaries, 1961"}
+    )
+    assert (fmt, evidence) == ("map", "source_context")
+
+
+def test_classify_document_from_source_context():
+    fmt, evidence = media_pipeline.classify_visual_format(
+        {"type": "image", "title": "Treaty document signed in 1990, front page"}
+    )
+    assert fmt == "document"
+    assert evidence == "source_context"
+
+
+def test_classify_plain_image_stays_uncertain():
+    # No kind evidence in the metadata: the format must remain
+    # "uncertain" — it is still a genuine image, just unclassified.
+    fmt, evidence = media_pipeline.classify_visual_format(
+        {"type": "image", "title": "Crowds at a concrete wall"}
+    )
+    assert (fmt, evidence) == ("uncertain", "unknown")
+
+
+def test_classify_generated_graphic_is_labelled_generated():
+    fmt, evidence = media_pipeline.classify_visual_format(
+        {"type": "motion_graphic", "generated": True, "visual_format": "graphic"}
+    )
+    assert (fmt, evidence) == ("graphic", "generated_in_house")
+
+
+def test_annotate_stamps_format_and_keeps_intent_as_hint_only():
+    asset = {"type": "image", "title": "Crowds at a concrete wall"}
+    scenario = {"visual": "wall", "kind": "event", "format_intent": "map"}
+    annotated = media_pipeline._uve_annotate(asset, scenario, 0, "text")
+    # The map INTENT must not classify this image as a map.
+    assert annotated["visual_format"] == "uncertain"
+    assert annotated["format_hint"] == "map"
+
+
+def test_intent_shaped_discovery_for_map(monkeypatch):
+    queries_seen = []
+
+    def fake_images(query, limit=5):
+        queries_seen.append(query)
+        return []
+
+    monkeypatch.setattr(media_pipeline, "search_videos_multi", lambda q, limit=8: [])
+    monkeypatch.setattr(media_pipeline, "search_web_sources", lambda q, limit=5: [])
+    monkeypatch.setattr(media_pipeline, "search_image_sources", fake_images)
+    monkeypatch.setattr(media_pipeline, "search_wikimedia_images", lambda q, limit=3: [])
+
+    scenario = {
+        "queries": ["berlin wall sectors"],
+        "format_intent": "map",
+        "format_intent_confidence": 0.6,
+    }
+    media_pipeline._uve_scenario_search(scenario, {}, "f3-test")
+    assert any(q.endswith(" map") for q in queries_seen)
+
+    queries_seen.clear()
+    scenario["format_intent"] = "any"
+    scenario["format_intent_confidence"] = 0.0
+    media_pipeline._uve_scenario_search(scenario, {}, "f3-test")
+    assert not any(q.endswith(" map") for q in queries_seen)
