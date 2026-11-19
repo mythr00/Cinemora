@@ -11,7 +11,7 @@ MS-1: YouTube discovery lock-in removed.
 
 import uuid
 
-from services import media_pipeline, search_provider
+from services import archive_org, licensed_media, media_pipeline, search_provider
 from services.visual_registry import VisualRegistry
 
 
@@ -94,3 +94,127 @@ def test_non_youtube_source_reuse_is_allowed():
         [candidate], {"visual": "Berlin Wall"}, registry, {key}, shot_need={}
     )
     assert len(picked) == 1
+
+
+# ---------------------------------------------------------------------------
+# MS-4: independent providers — archive.org, Wikimedia video, and
+# failure isolation between providers.
+# ---------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+class _FakeArchiveClient:
+    headers = {}
+
+    def get(self, url, params=None, timeout=None):
+        if "advancedsearch" in url:
+            return _FakeResponse({
+                "response": {"docs": [{
+                    "identifier": "berlin-wall-1989",
+                    "title": "Berlin Wall falls",
+                    "creator": "Archive Contributor",
+                    "licenseurl": "https://creativecommons.org/licenses/by-nc-nd/3.0/",
+                    "description": "<p>Crowds at the wall</p>",
+                }]}
+            })
+        return _FakeResponse({
+            "metadata": {
+                "title": "Berlin Wall falls",
+                "creator": "Archive Contributor",
+                "licenseurl": "https://creativecommons.org/licenses/by-nc-nd/3.0/",
+                "description": "<p>Crowds at the wall</p>",
+            },
+            "files": [
+                {"name": "big.mp4", "format": "h.264", "size": 50_000_000},
+                {"name": "small.mp4", "format": "h.264", "size": 2_000_000},
+                {"name": "thumb.mp4", "format": "Thumbnail", "size": 10_000},
+            ],
+        })
+
+
+def test_archive_org_search_maps_metadata_and_licence(monkeypatch):
+    monkeypatch.setattr(archive_org, "_session", lambda: _FakeArchiveClient())
+    results = archive_org.search_archive_videos("berlin wall", limit=3)
+    assert len(results) == 1
+    item = results[0]
+    assert item["provider"] == "archive.org"
+    assert item["license"] == "CC BY-NC-ND 3.0"  # real label from licenseurl
+    assert item["license_url"].endswith("by-nc-nd/3.0/")
+    assert item["creator"] == "Archive Contributor"
+    assert item["video_url"].endswith("/small.mp4")  # smallest usable derivative
+    assert item["rights_status"] == "recorded"
+
+
+def test_archive_org_unknown_licence_stays_unknown():
+    assert archive_org.licence_label("") == "unknown"
+    assert archive_org.licence_label("https://example.org/some-licence") == "unknown"
+    assert archive_org.licence_label("https://creativecommons.org/licenses/by/4.0/") == "CC BY 4.0"
+
+
+class _FakeSession:
+    def get(self, url, params=None, timeout=None):
+        return _FakeResponse({
+            "query": {"pages": {"1": {
+                "title": "File:Berlin Wall.webm",
+                "videoinfo": [{
+                    "url": "https://upload.wikimedia.org/original.webm",
+                    "descriptionurl": "https://commons.wikimedia.org/wiki/File:Berlin_Wall.webm",
+                    "derivatives": [
+                        {"src": "https://upload.wikimedia.org/big.mp4", "type": "video/mp4", "width": 1920},
+                        {"src": "https://upload.wikimedia.org/small.mp4", "type": "video/mp4", "width": 640},
+                    ],
+                    "extmetadata": {
+                        "LicenseShortName": {"value": "CC BY-NC-ND 3.0"},
+                        "LicenseUrl": {"value": "https://creativecommons.org/licenses/by-nc-nd/3.0/"},
+                        "Artist": {"value": "Commons Filmer"},
+                        "ImageDescription": {"value": "Wall crowds"},
+                    },
+                }],
+            }}}
+        })
+
+
+def test_wikimedia_video_discovery_keeps_licence_and_picks_small_derivative(monkeypatch):
+    monkeypatch.setattr(licensed_media, "_session", lambda: _FakeSession())
+    results = licensed_media.search_wikimedia_videos("berlin wall", limit=3)
+    assert len(results) == 1
+    item = results[0]
+    # NC-ND is NOT silently filtered at discovery — it is labelled.
+    assert item["license"] == "CC BY-NC-ND 3.0"
+    assert item["download_url"].endswith("/small.mp4")
+    assert item["creator"] == "Commons Filmer"
+
+
+def test_provider_failure_does_not_block_other_providers(monkeypatch):
+    """Mandated test 8: one provider raising must not stop discovery."""
+    monkeypatch.setattr(
+        media_pipeline, "search_videos_multi",
+        lambda q, limit=8: [{
+            "title": "Vimeo hit", "video_url": "https://vimeo.com/1",
+            "url": "https://vimeo.com/1", "source": "vimeo", "provider": "vimeo",
+        }],
+    )
+    monkeypatch.setattr(media_pipeline, "search_web_sources", lambda q, limit=5: [])
+    monkeypatch.setattr(media_pipeline, "search_image_sources", lambda q, limit=5: [])
+    monkeypatch.setattr(media_pipeline, "search_wikimedia_images", lambda q, limit=3: [])
+
+    def boom(q, limit=3):
+        raise RuntimeError("archive.org unreachable")
+
+    monkeypatch.setattr(media_pipeline, "search_archive_org_videos", boom)
+    monkeypatch.setattr(media_pipeline, "search_wikimedia_videos", lambda q, limit=3: [])
+
+    scenario = {"queries": ["berlin wall 1989"]}
+    videos, web, images = media_pipeline._uve_scenario_search(scenario, {}, "ms4-test")
+    assert len(videos) == 1
+    assert videos[0]["provider"] == "vimeo"

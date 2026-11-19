@@ -1440,6 +1440,53 @@ def search_videos_multi(query, limit=5):
     return results
 
 
+def search_wikimedia_videos(query, limit=5):
+    """Wikimedia Commons VIDEO candidates (MS-4) with provider licence
+    evidence. Supplementary provider: Commons is one source among many,
+    with no priority over or under any other."""
+    from services.licensed_media import search_wikimedia_videos as _search
+
+    query = str(query or "").strip()
+    if not query:
+        return []
+
+    output = []
+    for hit in _search(query, limit=limit):
+        video_url = str(hit.get("download_url") or "").strip()
+        if not video_url:
+            continue
+        creator = re.sub("<[^>]+>", "", str(hit.get("creator") or "")).strip()
+        licence = str(hit.get("license") or "").strip()
+        output.append({
+            "title": hit.get("title", ""),
+            "video_url": video_url,
+            "url": hit.get("source_url") or video_url,
+            "source_url": hit.get("source_url") or "",
+            "source": "wikimedia",
+            "provider": "wikimedia",
+            "creator": creator,
+            "channel": creator,
+            "license": licence if licence else "unknown",
+            "license_url": hit.get("license_url") or "",
+            "rights_status": "recorded" if licence else "verify_before_publish",
+            "snippet": hit.get("alt") or "",
+            "matched_query": query,
+        })
+    return output
+
+
+def search_archive_org_videos(query, limit=3):
+    """Archive.org moving-image candidates (MS-4) — an independent
+    provider with its own search + metadata, licence evidence included
+    when the item records it."""
+    from services.archive_org import search_archive_videos
+
+    query = str(query or "").strip()
+    if not query:
+        return []
+    return search_archive_videos(query, limit=limit)
+
+
 def search_youtube_videos(query, limit=5):
     """Legacy name kept for existing callers. Since the multi-source
     correction (MS-1) this returns results from ALL video providers via
@@ -3873,6 +3920,45 @@ def _uve_scenario_search(
                 continue
             seen_image_urls.add(image_url)
             images.append(image)
+
+    # MS-4: supplementary independent providers, queried once per
+    # scenario on its primary query. Each is failure-isolated: one
+    # provider being down or empty never blocks the others, and none
+    # of them is the centre of discovery — they join the same pool.
+    if unique_queries:
+        primary_query = unique_queries[0]
+
+        def _merge_videos(found):
+            for video in found or []:
+                url = str(
+                    video.get("video_url") or video.get("url") or ""
+                ).strip()
+                if not url or url in seen_video_urls:
+                    continue
+                seen_video_urls.add(url)
+                videos.append(video)
+
+        try:
+            _merge_videos(search_archive_org_videos(primary_query, limit=3))
+        except Exception as error:
+            print(f"Archive.org search failed for '{primary_query}': {error}")
+
+        try:
+            _merge_videos(search_wikimedia_videos(primary_query, limit=3))
+        except Exception as error:
+            print(f"Wikimedia video search failed for '{primary_query}': {error}")
+
+        # Targeted institutional search: only when general discovery
+        # found no moving footage at all for this scenario.
+        if not videos:
+            try:
+                targeted_query = (
+                    f"{primary_query} site:archive.org OR site:loc.gov "
+                    f"OR site:si.edu OR site:nps.gov"
+                )
+                _merge_videos(search_videos_multi(targeted_query, limit=5))
+            except Exception as error:
+                print(f"Targeted search failed for '{primary_query}': {error}")
 
     return videos, web_sources, images
 

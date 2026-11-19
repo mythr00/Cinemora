@@ -264,3 +264,64 @@ def _wikimedia(q: str, limit: int) -> list[dict]:
             }
         )
     return out
+
+def search_wikimedia_videos(query: str, limit: int = 5) -> list[dict]:
+    """Wikimedia Commons VIDEO discovery (MS-4).
+
+    Mirrors _wikimedia's metadata handling but for moving images, and
+    WITHOUT the stills licence pre-filter: every result keeps the
+    licence exactly as Commons records it (NC/ND included, honestly
+    labelled) — reuse decisions belong to the rights report, not to
+    silent discovery filtering. Prefers the smallest MP4 derivative so
+    downloads stay practical; falls back to the original file.
+    """
+    r = _session().get(
+        "https://commons.wikimedia.org/w/api.php",
+        params={
+            "action": "query",
+            "format": "json",
+            "generator": "search",
+            "gsrsearch": f"filetype:video {query}",
+            "gsrnamespace": 6,
+            "gsrlimit": limit,
+            "prop": "videoinfo",
+            "viprop": "url|extmetadata|derivatives|size|mime",
+        },
+        timeout=30,
+    )
+    r.raise_for_status()
+    pages = ((r.json().get("query") or {}).get("pages") or {})
+    out = []
+    for page in pages.values():
+        infos = page.get("videoinfo") or []
+        if not infos:
+            continue
+        info = infos[0]
+        meta = info.get("extmetadata") or {}
+        derivatives = [
+            d for d in (info.get("derivatives") or [])
+            if str(d.get("type") or "").startswith("video/")
+            or str(d.get("src") or "").lower().endswith(".mp4")
+        ]
+        download_url = ""
+        if derivatives:
+            derivatives.sort(key=lambda d: int(d.get("width") or 10**9))
+            download_url = str(derivatives[0].get("src") or "")
+        if not download_url:
+            download_url = str(info.get("url") or "")
+        if not download_url:
+            continue
+        out.append(
+            {
+                "kind": "video",
+                "source": "wikimedia",
+                "source_url": info.get("descriptionurl"),
+                "creator": (meta.get("Artist") or {}).get("value", ""),
+                "license": (meta.get("LicenseShortName") or {}).get("value", ""),
+                "license_url": (meta.get("LicenseUrl") or {}).get("value", ""),
+                "title": page.get("title", query),
+                "alt": re.sub("<[^>]+>", "", (meta.get("ImageDescription") or {}).get("value", "")),
+                "download_url": download_url,
+            }
+        )
+    return out
