@@ -18,6 +18,39 @@ PRESET = "ultrafast"
 
 
 # =========================================================
+# SHARED GRAPHIC STYLE (Stage B: one style system for every
+# generated graphic — palette + bundled font, so output is
+# identical on any machine instead of depending on the host's
+# fontconfig default font.)
+# =========================================================
+
+GRAPHIC_BG_STAT = "0x07090d"
+GRAPHIC_BG_TIMELINE = "0x070a10"
+GRAPHIC_BG_PROCESS = "0x090c12"
+GRAPHIC_PANEL = "0x111722"
+GRAPHIC_PANEL_PROCESS = "0x151b25"
+GRAPHIC_TEXT = "white"
+GRAPHIC_SCRIM = "0x080b10"
+
+_FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+GRAPHIC_FONT_FILE = _FONT_DIR / "DejaVuSans.ttf"
+GRAPHIC_FONT_BOLD_FILE = _FONT_DIR / "DejaVuSans-Bold.ttf"
+
+
+def _fontfile(font_path):
+    """drawtext fontfile= fragment for a bundled font ('' if missing)."""
+    try:
+        if font_path and Path(font_path).exists():
+            # Escape the two characters that are special inside an
+            # ffmpeg filter option value.
+            escaped = str(font_path).replace("\\", "/").replace(":", "\\:")
+            return f"fontfile={escaped}:"
+    except Exception:
+        pass
+    return ""
+
+
+# =========================================================
 # TEXT HELPERS
 # =========================================================
 
@@ -654,10 +687,15 @@ def _ffmpeg_text_filter(
     fontsize=58,
     fontcolor="white",
     alpha=1.0,
+    bold=False,
+    enable=None,
 ):
     text = escape_drawtext(shorten(text, 64))
-    return (
-        f"drawtext=text='{text}':"
+    font = _fontfile(
+        GRAPHIC_FONT_BOLD_FILE if bold else GRAPHIC_FONT_FILE
+    )
+    result = (
+        f"drawtext={font}text='{text}':"
         f"x={x}:y={y}:"
         f"fontsize={fontsize}:"
         f"fontcolor={fontcolor}@{alpha}:"
@@ -667,6 +705,9 @@ def _ffmpeg_text_filter(
         "shadowy=3:"
         "shadowcolor=black@0.65"
     )
+    if enable:
+        result += f":enable='{enable}'"
+    return result
 
 
 def _graphic_background():
@@ -682,9 +723,121 @@ def _graphic_background():
         "y=0:"
         "w=1920:"
         "h=1080:"
-        "color=0x080b10@0.18:"
+        f"color={GRAPHIC_SCRIM}@0.18:"
         "t=fill",
     ]
+
+
+_STAT_VALUE_RE = re.compile(
+    r"^\s*(?P<prefix>\$\s?)?"
+    r"(?P<number>\d[\d,]*(?:\.\d+)?)"
+    r"(?P<suffix>\s*(?:million|billion|trillion|tons?|feet|miles?|years?|vehicles?))?"
+    r"\s*$",
+    re.I,
+)
+
+
+def _parse_stat_value(value):
+    """Split a verbatim stat headline ('$5 million', '12,000 feet')
+    into prefix / numeric value / suffix for count-up animation.
+
+    Returns None when the value does not parse cleanly — the caller
+    then renders the headline statically, exactly as before. The
+    original string is always preserved for the final frame.
+    """
+    match = _STAT_VALUE_RE.match(clean_text(value))
+    if not match:
+        return None
+    number_text = match.group("number")
+    try:
+        number = float(number_text.replace(",", ""))
+    except ValueError:
+        return None
+    decimals = len(number_text.split(".")[1]) if "." in number_text else 0
+    return {
+        "prefix": match.group("prefix") or "",
+        "number_text": number_text,
+        "number": number,
+        "decimals": decimals,
+        "grouped": "," in number_text,
+        "suffix": match.group("suffix") or "",
+        # eif can only print a plain integer; anything with grouping
+        # commas or decimals uses stepped layers instead.
+        "eif_ok": decimals == 0 and "," not in number_text,
+    }
+
+
+def _format_stat_step(parsed, fraction):
+    """Format an intermediate count-up value with the same grouping
+    and decimal places as the verbatim final value."""
+    value = parsed["number"] * fraction
+    if parsed["decimals"]:
+        body = f"{value:,.{parsed['decimals']}f}"
+    elif parsed["grouped"]:
+        body = f"{value:,.0f}"
+    else:
+        body = f"{value:.0f}"
+    return f"{parsed['prefix']}{body}{parsed['suffix']}"
+
+
+def _countup_headline_filters(headline, x, y, fontsize, duration):
+    """Drawtext filters that animate the headline value counting up
+    from a low fraction to the VERBATIM final value.
+
+    - Plain integers: one drawtext whose numeric part is an ffmpeg
+      %{eif:...} expression clamped at the final value (continuous).
+    - Grouped/decimal values: four stepped drawtext layers
+      (25/50/75/100%) with enable windows; the last layer is the
+      original string, character for character.
+    - Unparseable values: the original static headline.
+    """
+    parsed = _parse_stat_value(headline)
+    if parsed is None or parsed["number"] <= 0:
+        return [
+            _ffmpeg_text_filter(
+                headline, str(x), str(y), fontsize, GRAPHIC_TEXT, 1.0,
+                bold=True,
+            )
+        ]
+
+    ramp = max(0.8, duration * 0.8)
+
+    if parsed["eif_ok"]:
+        whole = int(parsed["number"])
+        expr = rf"%{{eif\:{whole}*min(1\,t/{ramp:.3f})\:d}}"
+        animated = f"{parsed['prefix']}{expr}{parsed['suffix']}"
+        font = _fontfile(GRAPHIC_FONT_BOLD_FILE)
+        return [
+            "drawtext="
+            f"{font}text='{escape_drawtext(animated)}':"
+            f"x={x}:y={y}:"
+            f"fontsize={fontsize}:"
+            f"fontcolor={GRAPHIC_TEXT}@1.0:"
+            "borderw=2:"
+            "bordercolor=black@0.45:"
+            "shadowx=3:"
+            "shadowy=3:"
+            "shadowcolor=black@0.65"
+        ]
+
+    filters = []
+    fractions = (0.25, 0.50, 0.75, 1.0)
+    for step, fraction in enumerate(fractions):
+        start = ramp * step / len(fractions)
+        if fraction >= 1.0:
+            text = headline  # verbatim final value
+            enable = f"gte(t,{start:.3f})"
+        else:
+            text = _format_stat_step(parsed, fraction)
+            end = ramp * (step + 1) / len(fractions)
+            enable = f"between(t,{start:.3f},{end:.3f})"
+        filters.append(
+            _ffmpeg_text_filter(
+                text, str(x), str(y), fontsize, GRAPHIC_TEXT, 1.0,
+                bold=True, enable=enable,
+            )
+        )
+    return filters
 
 
 def _render_stat_graphic(
@@ -703,7 +856,7 @@ def _render_stat_graphic(
         "y=120:"
         "w=1720:"
         "h=840:"
-        "color=0x111722@0.92:"
+        f"color={GRAPHIC_PANEL}@0.92:"
         "t=fill",
 
         "drawbox="
@@ -727,19 +880,14 @@ def _render_stat_graphic(
             "190",
             "235",
             24,
-            "white",
+            GRAPHIC_TEXT,
             0.65,
         ),
-
-        _ffmpeg_text_filter(
-            headline,
-            "190",
-            "445",
-            100,
-            "white",
-            1.0,
-        ),
     ]
+
+    # Stage B: the headline value counts up to its verbatim final
+    # value instead of sitting static from frame 0.
+    filters += _countup_headline_filters(headline, 190, 445, 100, duration)
 
     if subtext:
         filters += [
@@ -792,7 +940,7 @@ def _render_stat_graphic(
             "195",
             "805",
             21,
-            "white",
+            GRAPHIC_TEXT,
             0.45,
         ),
     ]
@@ -802,7 +950,7 @@ def _render_stat_graphic(
         "-y",
         "-f", "lavfi",
         "-i",
-        f"color=c=0x07090d:s=1920x1080:r={FPS}",
+        f"color=c={GRAPHIC_BG_STAT}:s=1920x1080:r={FPS}",
         "-t", f"{duration:.3f}",
         "-vf", ",".join(filters),
         "-an",
@@ -816,11 +964,74 @@ def _render_stat_graphic(
     run_ffmpeg(command)
 
 
+_MONTH_NUMBERS = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5,
+    "june": 6, "july": 7, "august": 8, "september": 9, "october": 10,
+    "november": 11, "december": 12,
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+    "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _parse_event_date(when):
+    """Parse a fractional year (year + month/12) from an event's
+    `when` string ('November 1989', '9 November 1989', '1989').
+    Returns None when no year can be found."""
+    text = clean_text(when).lower()
+    year_match = re.search(r"\b(1[5-9]\d{2}|20\d{2})\b", text)
+    if not year_match:
+        return None
+    value = float(year_match.group(1))
+    for name, number in _MONTH_NUMBERS.items():
+        if re.search(rf"\b{name}\b", text):
+            value += (number - 1) / 12.0
+            break
+    return value
+
+
+def _timeline_node_positions(usable, duration):
+    """Stage B: node x positions PROPORTIONAL to the events' actual
+    dates when at least two distinct dates parse; otherwise the
+    historical even spacing. Returns (positions, spacing_mode) where
+    spacing_mode is 'proportional' or 'even_fallback'. The reveal
+    time of node i is when the scan line reaches its x position."""
+    line_start = 120.0
+    line_span = 1680.0
+    dates = [_parse_event_date(event.get("when", "")) for event in usable]
+    parsed = [d for d in dates if d is not None]
+
+    if len(usable) > 1 and len(parsed) >= 2 and (max(parsed) - min(parsed)) > 0:
+        low, high = min(parsed), max(parsed)
+        positions = []
+        for index, date in enumerate(dates):
+            if date is None:
+                # Unparseable events keep their ordinal slot.
+                fraction = index / max(len(usable) - 1, 1)
+            else:
+                fraction = (date - low) / (high - low)
+            # Nodes are 70px wide starting at x; keep the fraction
+            # inside the line span with the original 70px inset.
+            positions.append(190 + fraction * 1540)
+        mode = "proportional"
+    else:
+        spacing = 1540 / max(len(usable) - 1, 1)
+        positions = [190 + index * spacing for index in range(len(usable))]
+        mode = "even_fallback"
+
+    reveals = [
+        duration * ((x - line_start) / line_span) for x in positions
+    ]
+    return positions, mode, reveals
+
+
 def _render_timeline_graphic(
     output_file,
     events,
     duration=6.0,
 ):
+    """Render the chronology graphic. Returns the spacing mode used
+    ('proportional' or 'even_fallback') so the caller can record it
+    on the asset record."""
     duration = _graphic_duration(0, duration, 4.0, 10.0)
 
     filters = _graphic_background()
@@ -831,7 +1042,7 @@ def _render_timeline_graphic(
             "120",
             "150",
             28,
-            "white",
+            GRAPHIC_TEXT,
             0.65,
         ),
         "drawbox="
@@ -853,10 +1064,12 @@ def _render_timeline_graphic(
             }
         ]
 
-    spacing = 1540 / max(len(usable) - 1, 1)
+    positions, spacing_mode, reveals = _timeline_node_positions(
+        usable, duration
+    )
 
     for index, event in enumerate(usable):
-        x = int(190 + index * spacing)
+        x = int(positions[index])
 
         when = shorten(
             event.get("when", ""),
@@ -868,6 +1081,10 @@ def _render_timeline_graphic(
             34,
         )
 
+        # Stage B: the node and its labels appear when the scan line
+        # reaches them, not all from frame 0.
+        enable = f"gte(t,{reveals[index]:.3f})"
+
         # Timeline node.
         filters += [
             f"drawbox="
@@ -876,7 +1093,8 @@ def _render_timeline_graphic(
             f"w=70:"
             f"h=70:"
             f"color=white@0.08:"
-            f"t=fill",
+            f"t=fill:"
+            f"enable='{enable}'",
 
             f"drawbox="
             f"x={x + 12}:"
@@ -884,15 +1102,17 @@ def _render_timeline_graphic(
             f"w=46:"
             f"h=46:"
             f"color=white@0.92:"
-            f"t=fill",
+            f"t=fill:"
+            f"enable='{enable}'",
 
             _ffmpeg_text_filter(
                 when,
                 str(x - 20),
                 "405",
                 27,
-                "white",
+                GRAPHIC_TEXT,
                 0.85,
+                enable=enable,
             ),
 
             _ffmpeg_text_filter(
@@ -900,15 +1120,18 @@ def _render_timeline_graphic(
                 str(max(80, x - 45)),
                 "585",
                 22,
-                "white",
+                GRAPHIC_TEXT,
                 0.68,
+                enable=enable,
             ),
         ]
 
-    # Moving scan line gives the timeline actual motion.
+    # Moving scan line gives the timeline actual motion. It sweeps
+    # the line across the graphic's own duration so node reveals
+    # stay synchronised with it.
     filters += [
         "drawbox="
-        "x='120+1680*t/6':"
+        f"x='120+1680*t/{duration:.3f}':"
         "y=495:"
         "w=8:"
         "h=14:"
@@ -921,7 +1144,7 @@ def _render_timeline_graphic(
         "-y",
         "-f", "lavfi",
         "-i",
-        f"color=c=0x070a10:s=1920x1080:r={FPS}",
+        f"color=c={GRAPHIC_BG_TIMELINE}:s=1920x1080:r={FPS}",
         "-t", f"{duration:.3f}",
         "-vf", ",".join(filters),
         "-an",
@@ -933,6 +1156,7 @@ def _render_timeline_graphic(
     ]
 
     run_ffmpeg(command)
+    return spacing_mode
 
 
 def _render_process_graphic(
@@ -950,7 +1174,7 @@ def _render_process_graphic(
             "120",
             "145",
             27,
-            "white",
+            GRAPHIC_TEXT,
             0.65,
         )
     ]
@@ -971,6 +1195,11 @@ def _render_process_graphic(
             25,
         )
 
+        # Stage B: steps reveal one at a time, in narration order,
+        # instead of all being visible from frame 0.
+        reveal = duration * 0.55 * index / max(len(usable) - 1, 1)
+        enable = f"gte(t,{reveal:.3f})"
+
         # Outer card.
         filters += [
             f"drawbox="
@@ -978,8 +1207,9 @@ def _render_process_graphic(
             f"y=405:"
             f"w=250:"
             f"h=170:"
-            f"color=0x151b25@0.94:"
-            f"t=fill",
+            f"color={GRAPHIC_PANEL_PROCESS}@0.94:"
+            f"t=fill:"
+            f"enable='{enable}'",
 
             f"drawbox="
             f"x={x}:"
@@ -987,15 +1217,17 @@ def _render_process_graphic(
             f"w=250:"
             f"h=4:"
             f"color=white@0.8:"
-            f"t=fill",
+            f"t=fill:"
+            f"enable='{enable}'",
 
             _ffmpeg_text_filter(
                 f"{index + 1:02d}",
                 str(x + 20),
                 "430",
                 23,
-                "white",
+                GRAPHIC_TEXT,
                 0.45,
+                enable=enable,
             ),
 
             _ffmpeg_text_filter(
@@ -1003,29 +1235,36 @@ def _render_process_graphic(
                 str(x + 20),
                 "490",
                 25,
-                "white",
+                GRAPHIC_TEXT,
                 0.92,
+                bold=True,
+                enable=enable,
             ),
         ]
 
         if index < len(usable) - 1:
             arrow_x = x + 265
-
+            # Stage B: the connector is a drawn chevron in the
+            # bundled font (the old code rendered a literal "?"
+            # because no arrow glyph was available). It appears
+            # together with the step it points FROM.
             filters += [
                 _ffmpeg_text_filter(
-                    "?",
+                    ">",
                     str(arrow_x),
                     "460",
                     48,
-                    "white",
+                    GRAPHIC_TEXT,
                     0.8,
+                    bold=True,
+                    enable=enable,
                 )
             ]
 
     # Animated horizontal sweep.
     filters += [
         "drawbox="
-        "x='120+1500*t/5':"
+        f"x='120+1500*t/{duration:.3f}':"
         "y=620:"
         "w=220:"
         "h=3:"
@@ -1038,7 +1277,7 @@ def _render_process_graphic(
         "-y",
         "-f", "lavfi",
         "-i",
-        f"color=c=0x090c12:s=1920x1080:r={FPS}",
+        f"color=c={GRAPHIC_BG_PROCESS}:s=1920x1080:r={FPS}",
         "-t", f"{duration:.3f}",
         "-vf", ",".join(filters),
         "-an",
@@ -1056,6 +1295,8 @@ def build_motion_graphics_assets(
     data,
     output_dir,
     mode="balanced",
+    targets=None,
+    max_stats=None,
 ):
     """
     Generate real standalone MP4 motion-graphic assets.
@@ -1063,16 +1304,35 @@ def build_motion_graphics_assets(
     These are visual assets, not post-render overlays.
     Each returned record can later be inserted into the
     documentary timeline just like normal video footage.
+
+    Stage A (targeting): `targets` is an optional list of uncovered
+    sentences — dicts with scene_number, sentence_index (scene-local,
+    0-based), sentence_number, text and optional scenario fields —
+    typically derived from the Asset Manager's missing-visual records.
+    Targeted sentences get a graphic FIRST and are never blocked by
+    the untargeted stat cap; a targeted sentence with no defensible
+    graphic content is skipped and the skip is recorded in the
+    manifest (no invented content, no text cards).
+
+    `max_stats` caps the number of UNTARGETED stat graphics
+    (None = the historical per-mode default: 3 in balanced mode,
+    uncapped in heavy mode).
     """
 
     if mode in {"off", "none", "disabled"}:
         return []
+
+    if max_stats is None:
+        # Historical defaults: balanced was capped at 3; heavy was
+        # uncapped (kept effectively uncapped here).
+        max_stats = 3 if mode == "balanced" else 1_000_000
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     case_bible = data.get("case_bible") or {}
     timeline_events = case_bible.get("timeline") or []
+    scenes = data.get("scenes") or []
 
     assets = []
     index = 0
@@ -1112,13 +1372,83 @@ def build_motion_graphics_assets(
         assets.append(record)
 
     # -----------------------------------------------------
+    # STAGE A: normalise targets and choose anchors for the
+    # timeline / process graphics. Every generated graphic must
+    # carry a scene/sentence anchor so the jobs.py attach loop
+    # can place it — unanchored graphics never reach a film.
+    # -----------------------------------------------------
+
+    target_list = []
+    seen_targets = set()
+    for target in targets or []:
+        if not isinstance(target, dict):
+            continue
+        scene_number = target.get("scene_number")
+        sentence_index = target.get("sentence_index")
+        if scene_number is None or sentence_index is None:
+            continue
+        key = (scene_number, sentence_index)
+        if key in seen_targets:
+            continue
+        seen_targets.add(key)
+        target_list.append(
+            {
+                "scene_number": scene_number,
+                "sentence_index": sentence_index,
+                "sentence_number": target.get("sentence_number"),
+                "text": clean_text(
+                    target.get("text") or target.get("sentence_text") or ""
+                ),
+                "scenario": target.get("scenario") or {},
+            }
+        )
+
+    target_skips = []
+
+    def _first_scene_anchor():
+        for scene in scenes:
+            if scene.get("scene_number") is not None and (
+                scene.get("sentences") or []
+            ):
+                return {
+                    "scene_number": scene.get("scene_number"),
+                    "sentence_index": 0,
+                    "sentence_number": (
+                        (scene.get("sentences") or [{}])[0].get(
+                            "sentence_number"
+                        )
+                        or 1
+                    ),
+                }
+        return None
+
+    if target_list:
+        timeline_anchor = target_list[0]
+        process_anchor = (
+            target_list[1] if len(target_list) > 1 else None
+        )
+    else:
+        # No uncovered sentences: anchor the chronology to the first
+        # scene's first sentence so it can still reach the film, and
+        # do not anchor the process graphic (it summarises the same
+        # events; one anchored summary graphic is enough).
+        timeline_anchor = _first_scene_anchor()
+        process_anchor = None
+
+    def _stamp_anchor(record, anchor):
+        if anchor:
+            record["scene_number"] = anchor.get("scene_number")
+            record["sentence_index"] = anchor.get("sentence_index")
+            record["sentence_number"] = anchor.get("sentence_number")
+
+    # -----------------------------------------------------
     # STORY TIMELINE
     # -----------------------------------------------------
 
     if timeline_events and mode in {"balanced", "heavy"}:
         path = output_dir / "motion_graphic_timeline_001.mp4"
         try:
-            _render_timeline_graphic(
+            spacing_mode = _render_timeline_graphic(
                 path,
                 timeline_events,
                 duration=6.0,
@@ -1130,6 +1460,10 @@ def build_motion_graphics_assets(
                 6.0,
                 "STORY TIMELINE",
             )
+            _stamp_anchor(assets[-1], timeline_anchor)
+            assets[-1]["timeline_spacing"] = (
+                spacing_mode or "even_fallback"
+            )
         except Exception as error:
             # AUD-21: one failing graphic must not kill the whole job.
             print(f"MOTION GRAPHIC SKIPPED (timeline): {error}")
@@ -1137,8 +1471,6 @@ def build_motion_graphics_assets(
     # -----------------------------------------------------
     # NUMERICAL / SCALE GRAPHICS
     # -----------------------------------------------------
-
-    scenes = data.get("scenes") or []
 
     money_re = re.compile(
         r"\$\s?\d[\d,]*(?:\.\d+)?"
@@ -1152,15 +1484,104 @@ def build_motion_graphics_assets(
         re.I,
     )
 
+    def _make_stat(scene_number, sentence_index, sentence_number,
+                   text, targeted):
+        """Render + register one stat graphic. Returns True when an
+        asset was created, False when the sentence carries no
+        defensible stat value."""
+        match = money_re.search(text) or number_re.search(text)
+        if not match:
+            return False
+
+        value = clean_text(match.group(0))
+
+        path = (
+            output_dir
+            / f"motion_graphic_stat_{index + 1:03d}.mp4"
+        )
+
+        try:
+            _render_stat_graphic(
+                path,
+                value.upper(),
+                shorten(text, 72),
+                duration=4.0,
+            )
+        except Exception as error:
+            # AUD-21: skip this graphic; never fail the whole job.
+            print(f"MOTION GRAPHIC SKIPPED (stat): {error}")
+            return False
+
+        register_asset(
+            path,
+            "stat",
+            "quantitative_explanation",
+            4.0,
+            value.upper(),
+            text,
+        )
+
+        assets[-1]["scene_number"] = scene_number
+        assets[-1]["sentence_index"] = sentence_index
+        assets[-1]["sentence_number"] = (
+            sentence_number or sentence_index + 1
+        )
+        assets[-1]["targeted"] = bool(targeted)
+        return True
+
+    covered = set()
+    targeted_generated = 0
+
+    # Targeted graphics FIRST — they answer a recorded coverage
+    # failure, so the untargeted cap must never block them.
+    for target in target_list:
+        key = (target["scene_number"], target["sentence_index"])
+        if not target["text"]:
+            target_skips.append(
+                {
+                    "scene_number": target["scene_number"],
+                    "sentence_index": target["sentence_index"],
+                    "sentence_number": target["sentence_number"],
+                    "reason": "no_sentence_text",
+                }
+            )
+            continue
+        if _make_stat(
+            target["scene_number"],
+            target["sentence_index"],
+            target["sentence_number"],
+            target["text"],
+            targeted=True,
+        ):
+            covered.add(key)
+            targeted_generated += 1
+        else:
+            target_skips.append(
+                {
+                    "scene_number": target["scene_number"],
+                    "sentence_index": target["sentence_index"],
+                    "sentence_number": target["sentence_number"],
+                    "reason": "no_stat_value",
+                }
+            )
+
+    # Untargeted stats, capped by max_stats (Stage A: parameterised;
+    # historically a hardcoded 3 in balanced mode).
     stats_created = 0
 
     for scene in scenes:
+        if stats_created >= max_stats:
+            break
         scene_number = scene.get("scene_number")
 
         for sentence_index, sentence in enumerate(
             scene.get("sentences") or []
         ):
+            if stats_created >= max_stats:
+                break
             if not isinstance(sentence, dict):
+                continue
+            if (scene_number, sentence_index) in covered:
                 continue
 
             text = clean_text(
@@ -1169,53 +1590,18 @@ def build_motion_graphics_assets(
                 or ""
             )
 
-            match = money_re.search(text) or number_re.search(text)
-
-            if not match:
+            if not text:
                 continue
 
-            value = clean_text(match.group(0))
-
-            path = (
-                output_dir
-                / f"motion_graphic_stat_{index + 1:03d}.mp4"
-            )
-
-            try:
-                _render_stat_graphic(
-                    path,
-                    value.upper(),
-                    shorten(text, 72),
-                    duration=4.0,
-                )
-
-                register_asset(
-                    path,
-                    "stat",
-                    "quantitative_explanation",
-                    4.0,
-                    value.upper(),
-                    text,
-                )
-
-                assets[-1]["scene_number"] = scene_number
-                assets[-1]["sentence_index"] = sentence_index
-                assets[-1]["sentence_number"] = (
-                    sentence.get("sentence_number")
-                    or sentence_index + 1
-                )
-
+            if _make_stat(
+                scene_number,
+                sentence_index,
+                sentence.get("sentence_number"),
+                text,
+                targeted=False,
+            ):
+                covered.add((scene_number, sentence_index))
                 stats_created += 1
-            except Exception as error:
-                # AUD-21: skip this graphic; never fail the whole job.
-                print(f"MOTION GRAPHIC SKIPPED (stat): {error}")
-                continue
-
-            if mode == "balanced" and stats_created >= 3:
-                break
-
-        if mode == "balanced" and stats_created >= 3:
-            break
     # -----------------------------------------------------
     # PROCESS / TRANSFORMATION GRAPHIC
     # -----------------------------------------------------
@@ -1248,6 +1634,7 @@ def build_motion_graphics_assets(
                     5.0,
                     "PROCESS",
                 )
+                _stamp_anchor(assets[-1], process_anchor)
             except Exception as error:
                 # AUD-21: skip this graphic; never fail the whole job.
                 print(f"MOTION GRAPHIC SKIPPED (process): {error}")
@@ -1258,8 +1645,14 @@ def build_motion_graphics_assets(
         json.dumps(
             {
                 "mode": mode,
+                "max_stats": max_stats,
                 "count": len(assets),
                 "assets": assets,
+                "targets": {
+                    "requested": len(target_list),
+                    "generated": targeted_generated,
+                    "skipped": target_skips,
+                },
             },
             indent=2,
             ensure_ascii=False,

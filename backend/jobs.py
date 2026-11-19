@@ -46,6 +46,11 @@ video_queue = Queue(
 
 SENTENCES_PER_SCENE = 40
 
+# Stage A: cap on UNTARGETED stat motion graphics per project.
+# Targeted graphics (for sentences with no verified visual) are
+# never blocked by this cap.
+MOTION_GRAPHIC_MAX_STATS = 3
+
 
 def save_production_state(project_dir: Path, state: dict):
     state_file = project_dir / "production_state.json"
@@ -366,11 +371,62 @@ def run_full_pipeline(project_id: str, script: str):
             "processed_scenes": processed_scenes,
         }
 
+        # Stage A (targeting): the Asset Manager records every
+        # sentence that finished retrieval + coverage recovery with
+        # no verified visual in each processed scene's
+        # asset_stats["missing_visuals"] (sentence_number based).
+        # Translate those records into graphics targets —
+        # scene_number + scene-local sentence_index + the sentence's
+        # own text — so the graphics stage can answer exactly the
+        # sentences that have no verified visual. Data propagation
+        # only: no retrieval or verification behaviour changes here.
+        graphic_targets = []
+        for processed_scene in processed_scenes:
+            _scene = processed_scene.get("scene") or {}
+            _scene_number = _scene.get("scene_number")
+            _sentences = _scene.get("sentences") or []
+            _missing = (
+                (processed_scene.get("asset_stats") or {})
+                .get("missing_visuals")
+                or []
+            )
+            for _record in _missing:
+                _sentence_number = _record.get("sentence_number")
+                if _sentence_number is None:
+                    continue
+                for _index, _sentence in enumerate(_sentences):
+                    if not isinstance(_sentence, dict):
+                        continue
+                    if _sentence.get("sentence_number") != _sentence_number:
+                        continue
+                    graphic_targets.append(
+                        {
+                            "scene_number": _scene_number,
+                            "sentence_index": _index,
+                            "sentence_number": _sentence_number,
+                            "text": (
+                                _sentence.get("text")
+                                or _sentence.get("sentence_text")
+                                or ""
+                            ),
+                            "scenario": _sentence.get("scenario") or {},
+                        }
+                    )
+                    break
+
+        if graphic_targets:
+            print(
+                f"Graphics targets (uncovered sentences): "
+                f"{len(graphic_targets)}"
+            )
+
         motion_graphics_dir = project_dir / "motion_graphics"
         motion_graphics = build_motion_graphics_assets(
             motion_data,
             motion_graphics_dir,
             mode="balanced",
+            targets=graphic_targets,
+            max_stats=MOTION_GRAPHIC_MAX_STATS,
         )
 
         # Attach each standalone motion graphic to its target scene/sentence
