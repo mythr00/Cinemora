@@ -997,6 +997,15 @@ def build_scene_timeline(
 
     if sentence_timings:
 
+        # Sentence timings are ABSOLUTE project times, while `duration`
+        # is this scene's LENGTH. The scene's absolute end is therefore
+        # first-timing-start + duration. The window math below previously
+        # capped visual_end at `duration` itself, which corrupted every
+        # scene after the first (items ending before they started, or
+        # collapsing to zero length) — a latent cause of timeline /
+        # narration duration mismatches in multi-scene productions.
+        timeline_end = float(sentence_timings[0]["start"]) + duration
+
         items = []
 
         for sentence_index, timing in enumerate(
@@ -1026,7 +1035,7 @@ def build_scene_timeline(
             else:
                 visual_end = max(
                     end,
-                    duration,
+                    timeline_end,
                 )
 
             # Keep visual assets sequential; narration timing remains untouched.
@@ -1045,7 +1054,7 @@ def build_scene_timeline(
             # Visuals must never flash for a fraction of a second.
             # Keep narration timing untouched; extend only the visual window.
             visual_end = min(
-                duration,
+                timeline_end,
                 visual_start + sentence_duration,
             )
             # Prefer a motion graphic explicitly assigned to this sentence.
@@ -1660,6 +1669,8 @@ def build_project_timeline(
 
     sentence_cursor = 0
 
+    scene_ranges = []
+
     for scene_media in processed_scenes:
 
         scene = scene_media.get(
@@ -1681,6 +1692,15 @@ def build_project_timeline(
         scene_count = len(
             scene_sentences
         )
+
+        scene_ranges.append((
+            scene.get(
+                "scene_number",
+                len(scene_ranges) + 1,
+            ),
+            sentence_cursor,
+            scene_count,
+        ))
 
         scene_sentence_timings = (
             sentence_timings[
@@ -1807,6 +1827,58 @@ def build_project_timeline(
         )
 
     # --------------------------------------------------------
+    # VISUAL COVERAGE VALIDATION
+    #
+    # Every narration sentence must be covered by at least one
+    # timeline item overlapping its aligned window. A scene whose
+    # media stage produced no visuals contributes NO items, so its
+    # sentences surface here by number instead of vanishing silently
+    # and detonating later as an unexplained frame mismatch in the
+    # renderer. Coverage is reported, never faked: an uncovered
+    # sentence stays uncovered in this record.
+    # --------------------------------------------------------
+
+    uncovered_sentences = []
+
+    for position, timing in enumerate(sentence_timings):
+
+        t_start = float(timing["start"])
+
+        t_end = float(timing["end"])
+
+        covered = any(
+            float(it.get("project_start", it.get("start", 0))) < t_end - 0.05
+            and float(it.get("project_end", it.get("end", 0))) > t_start + 0.05
+            for it in all_items
+        )
+
+        if not covered:
+
+            uncovered_scene = None
+
+            for s_num, s_start, s_count in scene_ranges:
+
+                if s_start <= position < s_start + s_count:
+
+                    uncovered_scene = s_num
+
+                    break
+
+            uncovered_sentences.append({
+                "sentence_number": position + 1,
+                "scene_number": uncovered_scene,
+                "start": round(t_start, 3),
+                "end": round(t_end, 3),
+            })
+
+    coverage = {
+        "total_sentences": len(sentence_timings),
+        "covered_sentences": len(sentence_timings) - len(uncovered_sentences),
+        "uncovered_sentences": uncovered_sentences,
+        "complete": not uncovered_sentences,
+    }
+
+    # --------------------------------------------------------
     # FINAL DURATION MUST EQUAL NARRATION
     # --------------------------------------------------------
 
@@ -1828,6 +1900,9 @@ def build_project_timeline(
 
         "visual_count":
             total_visuals,
+
+        "coverage":
+            coverage,
 
         "sentence_count":
             len(sentence_timings),

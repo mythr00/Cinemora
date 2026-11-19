@@ -9,6 +9,7 @@ from urllib.parse import quote_plus
 import requests
 
 from .visual_policy import VisualRequest, reject_candidate
+from .http_retry import request_with_retry
 
 UA = "DocumentaryStudio/0.3 (local research tool)"
 
@@ -51,7 +52,7 @@ def download_asset(hit: dict, dest_dir: Path) -> Path:
     path = dest_dir / name
     if path.exists() and path.stat().st_size > 1024:
         return path
-    r = _session().get(url, timeout=60, stream=True)
+    r = request_with_retry("GET", url, session=_session(), timeout=60, stream=True)
     r.raise_for_status()
     tmp = path.with_suffix(path.suffix + ".part")
     with open(tmp, "wb") as f:
@@ -214,8 +215,10 @@ def search_wikimedia(query: str, limit: int = 6) -> list[dict]:
 
 def _wikimedia(q: str, limit: int) -> list[dict]:
     """PD / CC stills only. Useful later for verified archival images."""
-    r = _session().get(
+    r = request_with_retry(
+        "GET",
         "https://commons.wikimedia.org/w/api.php",
+        session=_session(),
         params={
             "action": "query",
             "format": "json",
@@ -275,8 +278,10 @@ def search_wikimedia_videos(query: str, limit: int = 5) -> list[dict]:
     silent discovery filtering. Prefers the smallest MP4 derivative so
     downloads stay practical; falls back to the original file.
     """
-    r = _session().get(
+    r = request_with_retry(
+        "GET",
         "https://commons.wikimedia.org/w/api.php",
+        session=_session(),
         params={
             "action": "query",
             "format": "json",

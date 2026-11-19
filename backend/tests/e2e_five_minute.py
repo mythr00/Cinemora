@@ -183,9 +183,18 @@ def main():
     timeline_data = json.loads(Path(timeline_result["timeline_file"]).read_text(encoding="utf-8"))
     render_scenes = timeline_data.get("scenes", [])
 
-    raw_video = render_timeline(render_scenes, str(PROJECT_DIR), expected_duration=duration)
+    coverage = timeline_result.get("coverage") or {}
     final_video = PROJECT_DIR / "documentary_final_output.mp4"
-    add_narration(str(raw_video), str(narration_file), str(final_video))
+    render_error = None
+    try:
+        raw_video = render_timeline(render_scenes, str(PROJECT_DIR), expected_duration=duration)
+        add_narration(str(raw_video), str(narration_file), str(final_video))
+    except Exception as error:
+        # The renderer refusing (coverage / frame mismatch) is a
+        # legitimate outcome to REPORT, not a harness crash: the asset
+        # report and coverage checks below carry the full diagnostic.
+        render_error = error
+        print(f"E2E-5M RENDER REFUSED: {type(error).__name__}: {error}")
 
     renderer_audit = None
     audit_file = PROJECT_DIR / "renderer_timing_audit.json"
@@ -201,7 +210,16 @@ def main():
     manifest = build_rights_manifest(processed_scenes)
     write_rights_manifest(PROJECT_DIR, manifest)
 
-    audit = validate_final_video(str(final_video), asset_report=report)
+    if final_video.exists():
+        audit = validate_final_video(str(final_video), asset_report=report)
+    else:
+        audit = {
+            "width": 0,
+            "height": 0,
+            "audio_codec": None,
+            "duration_seconds": 0,
+            "authentic": report["authentic"],
+        }
 
     accepted = []
     for scene in processed_scenes:
@@ -231,6 +249,22 @@ def main():
         report.get("analysis_mode") == expected_mode
         and analysis.get("mode") == expected_mode,
         f"(report: {report.get('analysis_mode')}, analysis: {analysis.get('mode')}, expected: {expected_mode})",
+    )
+    check(
+        "timeline coverage complete \u2014 every narration sentence has a visual",
+        bool(coverage.get("complete")),
+        f"(covered {coverage.get('covered_sentences')}/{coverage.get('total_sentences')}, uncovered: {coverage.get('uncovered_sentences')})",
+    )
+    _last_scene = max((s.get("scene_number") or 0) for s in processed_scenes) if processed_scenes else 0
+    check(
+        "final scene fully covered",
+        not [u for u in (coverage.get("uncovered_sentences") or []) if u.get("scene_number") == _last_scene],
+        f"(last scene: {_last_scene})",
+    )
+    check(
+        "renderer produced the final video",
+        render_error is None and final_video.exists(),
+        f"(render error: {render_error})" if render_error else "",
     )
     check(
         "final video is 1920x1080 with audio",

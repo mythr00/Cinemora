@@ -468,6 +468,29 @@ def run_full_pipeline(project_id: str, script: str):
         )
 
         # ----------------------------------------------
+        # Coverage gate: every narration sentence must have
+        # visual coverage BEFORE rendering starts. An incomplete
+        # timeline is rejected here with the exact uncovered
+        # sentences — never padded, stretched or placeholdered.
+        # ----------------------------------------------
+
+        coverage = timeline_result.get("coverage") or {}
+        if coverage and not coverage.get("complete", True):
+            uncovered = coverage.get("uncovered_sentences") or []
+            detail = ", ".join(
+                f"sentence {u.get('sentence_number')} "
+                f"(scene {u.get('scene_number')}, "
+                f"{u.get('start')}s-{u.get('end')}s)"
+                for u in uncovered
+            )
+            raise RuntimeError(
+                "TIMELINE COVERAGE INCOMPLETE: "
+                f"{len(uncovered)} of {coverage.get('total_sentences')} "
+                f"narration sentences have no visual coverage: {detail}. "
+                "Refusing to render an incomplete documentary."
+            )
+
+        # ----------------------------------------------
         # Render visual edit
         # ----------------------------------------------
 

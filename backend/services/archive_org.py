@@ -22,6 +22,8 @@ import re
 
 import requests
 
+from .http_retry import request_with_retry
+
 _SEARCH_URL = "https://archive.org/advancedsearch.php"
 _METADATA_URL = "https://archive.org/metadata/{identifier}"
 _DETAILS_URL = "https://archive.org/details/{identifier}"
@@ -91,8 +93,10 @@ def search_archive_videos(query: str, limit: int = 3) -> list[dict]:
         return []
 
     session = _session()
-    response = session.get(
+    response = request_with_retry(
+        "GET",
         _SEARCH_URL,
+        session=session,
         params={
             "q": f"{query} AND mediatype:movies",
             "fl[]": ["identifier", "title", "creator", "licenseurl", "description"],
@@ -112,8 +116,11 @@ def search_archive_videos(query: str, limit: int = 3) -> list[dict]:
         if not identifier:
             continue
         try:
-            meta_response = session.get(
-                _METADATA_URL.format(identifier=identifier), timeout=_TIMEOUT
+            meta_response = request_with_retry(
+                "GET",
+                _METADATA_URL.format(identifier=identifier),
+                session=session,
+                timeout=_TIMEOUT,
             )
             meta_response.raise_for_status()
             metadata = meta_response.json()

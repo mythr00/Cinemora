@@ -13,7 +13,10 @@ from PIL import Image, UnidentifiedImageError
 
 
 def download_image(image_url, output_path):
-    response = requests.get(
+    # Bounded retry with backoff + Retry-After: a single Wikimedia 429
+    # must not kill an otherwise verified image download outright.
+    response = request_with_retry(
+        "GET",
         image_url,
         timeout=30,
         headers={"User-Agent": "Mozilla/5.0"},
@@ -26,6 +29,7 @@ from datetime import datetime, timezone
 from services.visual_registry import get_registry
 from services import story_understanding as story
 from services.media_probe import probe_image, probe_video
+from services.http_retry import request_with_retry
 
 
 # ==========================================================================
@@ -305,6 +309,36 @@ DOWNLOAD_PROVENANCE: dict = {}
 # URL, so accepted assets can report original vs extracted duration
 # without re-probing remote sources.
 _SOURCE_DURATION_CACHE: dict = {}
+
+# Per-run resilience state (cleared by reset_media_caches each job):
+# URLs whose download already failed in this run are never re-requested
+# by a later beat/scene — a throttled or dead URL stays dead for the run
+# instead of burning discovery budget again and again.
+_FAILED_DOWNLOAD_URLS: set = set()
+
+# Discovery failures recorded by _uve_scenario_search (provider, query,
+# error) so the asset report can distinguish DISCOVERY failures from
+# download and verification failures instead of losing them in prints.
+_DISCOVERY_FAILURES: list = []
+
+
+def _record_discovery_failure(provider, query, error):
+    _DISCOVERY_FAILURES.append(
+        {
+            "provider": str(provider),
+            "query": str(query)[:160],
+            "error": f"{type(error).__name__}: {error}"[:200],
+        }
+    )
+
+
+def drain_discovery_failures():
+    """Return and clear the discovery failures recorded since last drain."""
+    failures = list(_DISCOVERY_FAILURES)
+    _DISCOVERY_FAILURES.clear()
+    return failures
+
+
 MAX_CONSECUTIVE_SEARCH_FAILURES = 8
 YT_DLP_TIMEOUT = 120
 FFMPEG_TIMEOUT = 90
@@ -1996,6 +2030,8 @@ def reset_media_caches():
     _yt_info_failed.clear()
     _yt_transcript_failed.clear()
     _yt_info_locks.clear()
+    _FAILED_DOWNLOAD_URLS.clear()
+    _DISCOVERY_FAILURES.clear()
 
 
 def _youtube_info(key):
@@ -3861,6 +3897,7 @@ def _uve_scenario_search(
                 limit=8,
             )
         except Exception as error:
+            _record_discovery_failure("serper-videos", query, error)
             print(
                 f"Video search failed "
                 f"for '{query}': {error}"
@@ -3873,6 +3910,7 @@ def _uve_scenario_search(
                 limit=5,
             )
         except Exception as error:
+            _record_discovery_failure("serper-web", query, error)
             print(
                 f"Web search failed "
                 f"for '{query}': {error}"
@@ -3885,6 +3923,7 @@ def _uve_scenario_search(
                 limit=5,
             )
         except Exception as error:
+            _record_discovery_failure("serper-images", query, error)
             print(
                 f"Image search failed "
                 f"for '{query}': {error}"
@@ -3899,6 +3938,7 @@ def _uve_scenario_search(
                 limit=3,
             )
         except Exception as error:
+            _record_discovery_failure("wikimedia", query, error)
             print(
                 f"Wikimedia search failed "
                 f"for '{query}': {error}"
@@ -3975,12 +4015,14 @@ def _uve_scenario_search(
         try:
             shaped_images = search_image_sources(shaped_query, limit=5)
         except Exception as error:
+            _record_discovery_failure("serper-images", shaped_query, error)
             print(f"Shaped image search failed for '{shaped_query}': {error}")
         try:
             shaped_images = shaped_images + search_wikimedia_images(
                 shaped_query, limit=3
             )
         except Exception as error:
+            _record_discovery_failure("wikimedia", shaped_query, error)
             print(f"Shaped Wikimedia search failed for '{shaped_query}': {error}")
         for image in shaped_images:
             image_url = str(image.get("image_url") or "").strip()
@@ -4009,11 +4051,13 @@ def _uve_scenario_search(
         try:
             _merge_videos(search_archive_org_videos(primary_query, limit=3))
         except Exception as error:
+            _record_discovery_failure("archive.org", primary_query, error)
             print(f"Archive.org search failed for '{primary_query}': {error}")
 
         try:
             _merge_videos(search_wikimedia_videos(primary_query, limit=5))
         except Exception as error:
+            _record_discovery_failure("wikimedia", primary_query, error)
             print(f"Wikimedia video search failed for '{primary_query}': {error}")
 
         # Targeted institutional search: only when general discovery
@@ -4026,6 +4070,7 @@ def _uve_scenario_search(
                 )
                 _merge_videos(search_videos_multi(targeted_query, limit=5))
             except Exception as error:
+                _record_discovery_failure("serper-videos-targeted", primary_query, error)
                 print(f"Targeted search failed for '{primary_query}': {error}")
 
     return videos, web_sources, images
@@ -4461,6 +4506,27 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
         if not isinstance(candidate, dict):
             continue
 
+        candidate_url = str(
+            candidate.get("url")
+            or candidate.get("video_url")
+            or candidate.get("image_url")
+            or ""
+        )
+        if candidate_url and candidate_url in _FAILED_DOWNLOAD_URLS:
+            # Already failed once this run (throttled, dead, invalid):
+            # never re-request it; record the skip as a failure too.
+            if failures is not None:
+                failures.append(
+                    {
+                        "provider": candidate.get("provider")
+                        or candidate.get("source")
+                        or "unknown",
+                        "url": candidate_url,
+                        "reason": "previously_failed_this_run",
+                    }
+                )
+            continue
+
         asset = downloader(
             candidate,
             scene_dir,
@@ -4469,6 +4535,8 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
         )
 
         if not asset:
+            if candidate_url:
+                _FAILED_DOWNLOAD_URLS.add(candidate_url)
             # MS-2: a failed download is recorded with its actual reason
             # (stashed on the candidate by the downloader) — never silent,
             # never substituted with unrelated footage.
@@ -4586,6 +4654,296 @@ def _uve_prepare_sentence_result(sentence, sentence_number, images, videos, stor
         },
     }
 
+def _uve_search_and_pick(
+    scenario, shot_need, *,
+    search_cache, project_id, bible, registry, used_keys,
+    scene_dir, scene_stats, beat, beat_videos, beat_images,
+    scenario_index, queries, review_records,
+):
+    """One full discovery pass for a scenario.
+
+    Search every enabled provider, verify every candidate, rank the
+    survivors in the unified format-aware pool, pick under the
+    verifier's acceptance rules and download the winner. All accounting
+    (provider funnel, candidate totals, rejection reasons, download
+    failures, discovery failures, review record) is recorded on
+    scene_stats / review_records. An accepted asset is appended to
+    beat_videos / beat_images and returned; otherwise None is returned
+    and the caller decides about coverage recovery. Nothing here ever
+    fabricates or substitutes an asset.
+    """
+    raw_videos, raw_web_sources, raw_images = _uve_scenario_search(scenario, search_cache, project_id, shot_need)
+    scored_videos = _uve_verify_all(
+        raw_videos,
+        scenario,
+        bible,
+        shot_need=shot_need,
+    )
+    scored_web_sources = _uve_verify_all(
+        raw_web_sources,
+        scenario,
+        bible,
+        shot_need=shot_need,
+    )
+    scored_images = _uve_verify_all(
+        raw_images,
+        scenario,
+        bible,
+        shot_need=shot_need,
+    )
+    print(f"      candidates: videos={len(scored_videos)} web={len(scored_web_sources)} images={len(scored_images)}")
+
+    # F-4/MS-6: provider + kind funnels for the asset
+    # report. Discovered = raw pool size; verified/rejected
+    # from the scored lists (the verifier's own verdicts).
+    _provider_funnel = scene_stats.setdefault("providers", {})
+    _kind_funnel = scene_stats.setdefault("kinds", {})
+
+    def _funnel_add(pool, scored, kind):
+        kind_counts = _kind_funnel.setdefault(
+            kind, {"discovered": 0, "verified": 0, "rejected": 0}
+        )
+        kind_counts["discovered"] += len(pool)
+        for cand in pool:
+            provider = str(
+                cand.get("provider") or cand.get("source") or "unknown"
+            )
+            _provider_funnel.setdefault(
+                provider,
+                {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+            )["discovered"] += 1
+        for cand in scored:
+            provider = str(
+                cand.get("provider") or cand.get("source") or "unknown"
+            )
+            entry = _provider_funnel.setdefault(
+                provider,
+                {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+            )
+            if (cand.get("verification") or {}).get("accepted"):
+                entry["verified"] += 1
+                kind_counts["verified"] += 1
+            else:
+                entry["rejected"] += 1
+                kind_counts["rejected"] += 1
+
+    _funnel_add(raw_videos, scored_videos, "video")
+    _funnel_add(raw_web_sources, scored_web_sources, "web")
+    _funnel_add(raw_images, scored_images, "image")
+
+    scene_stats["candidates_considered"] += len(scored_videos) + len(scored_images)
+    scene_stats["candidates_rejected"] += sum(
+        1
+        for item in (scored_videos + scored_web_sources + scored_images)
+        if item.get("reject_reason")
+    )
+
+    # Failure classification: every rejected candidate contributes its
+    # reason (gate reason, or score_below_threshold when the verifier
+    # scored it under the acceptance bar) to the scene's totals, which
+    # the asset report aggregates. Nothing is rejected silently.
+    _reasons = scene_stats.setdefault("rejection_reasons", {})
+    for _item in (scored_videos + scored_web_sources + scored_images):
+        if (_item.get("verification") or {}).get("accepted"):
+            continue
+        _reason = _item.get("reject_reason") or "score_below_threshold"
+        _reasons[_reason] = _reasons.get(_reason, 0) + 1
+
+    # F-2: UNIFIED SELECTION. Verified video candidates,
+    # footage-capable web candidates (MS-2) and verified image
+    # candidates compete in ONE pool for this scenario. Ranking
+    # is relevance (universal_score) adjusted by format-intent
+    # fit — a bounded bonus (max 0.10) that can tip a close
+    # contest toward the format that best communicates the
+    # sentence, but can never rescue a weak candidate over a
+    # clearly more relevant one of another format, and never
+    # admits a verifier-rejected candidate (_uve_pick still
+    # enforces acceptance). No format is tried "first" any
+    # more: the old video->image cascade is gone.
+    intent = str(scenario.get("format_intent") or "any").lower()
+    intent_conf = scenario.get("format_intent_confidence") or 0.0
+    try:
+        intent_conf = float(intent_conf)
+    except (TypeError, ValueError):
+        intent_conf = 0.0
+
+    def _intent_bonus(kind):
+        if intent == "any" or intent_conf <= 0:
+            return 0.0
+        if kind == "video":
+            return 0.10 * intent_conf if intent == "footage" else 0.0
+        # image-side candidates serve photograph/document/
+        # map/chart intents fully, graphic intents partially.
+        if intent in {"photograph", "document", "map", "chart"}:
+            return 0.10 * intent_conf
+        if intent == "graphic":
+            return 0.05 * intent_conf
+        return 0.0
+
+    combined_pool = []
+    pool_keys = set()
+    for item in scored_videos:
+        item = dict(item)
+        item["_pool_kind"] = "video"
+        item["_selection_score"] = (item.get("universal_score") or 0) + _intent_bonus("video")
+        combined_pool.append(item)
+        pool_keys.add(_uve_candidate_key(item))
+    for web_item in scored_web_sources:
+        if not _web_source_is_video_candidate(web_item):
+            continue
+        web_key = _uve_candidate_key(web_item)
+        if not web_key or web_key in pool_keys:
+            continue
+        pool_keys.add(web_key)
+        web_item = dict(web_item)
+        web_item["_pool_kind"] = "video"
+        web_item["_selection_score"] = (web_item.get("universal_score") or 0) + _intent_bonus("video")
+        combined_pool.append(web_item)
+    for item in scored_images:
+        item = dict(item)
+        item["_pool_kind"] = "image"
+        item["_selection_score"] = (item.get("universal_score") or 0) + _intent_bonus("image")
+        combined_pool.append(item)
+
+    combined_pool.sort(key=lambda c: c.get("_selection_score") or 0, reverse=True)
+
+    picks = _uve_pick(combined_pool, scenario, registry, used_keys, shot_need=shot_need)
+    fetch_failures = []
+    asset = _uve_fetch_first(
+        picks, _uve_download_any_candidate, scene_dir,
+        beat["sentence_numbers"][0], len(beat_videos) + len(beat_images) + 1,
+        registry, used_keys, failures=fetch_failures,
+    )
+    if fetch_failures:
+        scene_stats.setdefault("download_failures", []).extend(fetch_failures)
+        for failure in fetch_failures:
+            entry = scene_stats.setdefault("providers", {}).setdefault(
+                str(failure.get("provider") or "unknown"),
+                {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+            )
+            entry["download_failed"] += 1
+    accepted_asset = None
+    if asset:
+        _dl_provider = str(asset.get("provider") or asset.get("source") or "unknown")
+        scene_stats.setdefault("providers", {}).setdefault(
+            _dl_provider,
+            {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+        )["downloaded"] += 1
+        annotated = _uve_annotate(asset, scenario, scenario_index, beat.get("text", ""))
+        accepted_asset = annotated
+        if asset.get("type") == "video" or asset.get("visual_type") == "video":
+            beat_videos.append(annotated)
+            print(f"      + video ({asset.get('verification_status')}, score {asset.get('universal_score')})")
+        else:
+            beat_images.append(annotated)
+            print(f"      + image ({asset.get('verification_status')}, score {asset.get('universal_score')})")
+    elif picks:
+        scene_stats["downloads_failed"] += 1
+    review_records.append({
+        "shot_index": scenario_index,
+        "queries": list(queries or []),
+        # F-4: the providers ACTUALLY present in this
+        # scenario's pools (was hardcoded ["youtube", "web"]).
+        "providers": sorted({
+            str(c.get("provider") or c.get("source") or "unknown")
+            for c in (raw_videos + raw_web_sources + raw_images)
+        }) if shot_need else [],
+        "rejected": [
+            {"title": result_title(item), "reason": item.get("reject_reason")}
+            for item in (scored_videos + scored_web_sources + scored_images)
+            if item.get("reject_reason")
+        ][:12],
+        "picked": [result_title(item) for item in beat_videos + beat_images][-2:],
+    })
+
+    _discovery_failures = drain_discovery_failures()
+    if _discovery_failures:
+        scene_stats.setdefault("discovery_failures", []).extend(_discovery_failures)
+    return accepted_asset
+
+
+
+MAX_COVERAGE_RECOVERY_ROUNDS = 2
+
+_RECOVERY_STOPWORDS = {
+    "about", "after", "before", "their", "there", "these", "those",
+    "under", "until", "where", "which", "while", "would", "could",
+    "should", "began", "every", "first", "other", "being", "between",
+}
+
+
+def _query_signature(query):
+    """Word-set signature used to recognise already-tried queries."""
+    return " ".join(
+        sorted({w.lower() for w in str(query or "").split() if len(w) >= 3})
+    )
+
+
+def _recovery_queries(beat, tried_queries, broad=False, limit=4):
+    """Alternative targeted queries for a beat that found no asset.
+
+    Built deterministically from the beat's own shot contracts — the
+    required subject anchored with place / era / event — never from
+    generic filler. Round 1 keeps the era anchor; the broader round 2
+    drops it and tries archive/photograph phrasings. Queries whose
+    word-set signature was already tried are excluded, so recovery can
+    never silently repeat the exact search that just failed.
+    """
+    needs = beat.get("shot_needs") or []
+    beat_subject = str(beat.get("subject_id") or "").replace("_", " ").strip()
+    beat_place = str(beat.get("place") or "").strip()
+    candidates = []
+    for need in needs:
+        subject = str(need.get("required_subject") or "").strip()
+        place = str(need.get("place") or beat_place).strip()
+        era = str(need.get("era") or "").strip()
+        event = str(need.get("event") or "").strip()
+        if broad:
+            templates = [
+                (subject, place),
+                (subject, "photograph"),
+                (subject, place, "archive"),
+            ]
+        else:
+            templates = [
+                (subject, place, era),
+                (subject, event),
+                (subject, place),
+                (subject, era, "documentary"),
+            ]
+        for parts in templates:
+            query = " ".join(p for p in parts if p).strip()
+            if query:
+                candidates.append(query)
+    if beat_subject:
+        if broad:
+            candidates.append(f"{beat_subject} {beat_place} archive".strip())
+        else:
+            candidates.append(f"{beat_subject} {beat_place}".strip())
+            candidates.append(f"{beat_subject} archive footage")
+    if broad:
+        text = str(beat.get("text") or "")
+        words = [w.strip(".,;:!?\"'()") for w in text.split()]
+        keywords = [
+            w for w in words
+            if len(w) >= 5 and w.lower() not in _RECOVERY_STOPWORDS
+        ][:6]
+        if keywords:
+            candidates.append(" ".join(keywords))
+
+    tried_signatures = {_query_signature(q) for q in tried_queries}
+    out = []
+    for query in candidates:
+        signature = _query_signature(query)
+        if not signature or signature in tried_signatures:
+            continue
+        tried_signatures.add(signature)
+        out.append(query)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
     if not isinstance(scene, dict):
         scene = {}
@@ -4638,7 +4996,6 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
         print("*" * 78)
 
         scenarios = _beat_scenarios(beat)
-        videos_left = len(scenarios)
         beat_videos, beat_images = [], []
         review_records = []
 
@@ -4663,177 +5020,70 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     scenario = dict(scenario)
                     scenario["queries"] = shot_need["queries"]
                 print("      routed=youtube,web,images")
-                raw_videos, raw_web_sources, raw_images = _uve_scenario_search(scenario, search_cache, project_id, shot_need)
-                scored_videos = _uve_verify_all(
-                    raw_videos,
-                    scenario,
-                    bible,
-                    shot_need=shot_need,
+                _uve_search_and_pick(
+                    scenario, shot_need,
+                    search_cache=search_cache, project_id=project_id,
+                    bible=bible, registry=registry, used_keys=used_keys,
+                    scene_dir=scene_dir, scene_stats=scene_stats, beat=beat,
+                    beat_videos=beat_videos, beat_images=beat_images,
+                    scenario_index=scenario_index, queries=queries,
+                    review_records=review_records,
                 )
-                scored_web_sources = _uve_verify_all(
-                    raw_web_sources,
-                    scenario,
-                    bible,
-                    shot_need=shot_need,
-                )
-                scored_images = _uve_verify_all(
-                    raw_images,
-                    scenario,
-                    bible,
-                    shot_need=shot_need,
-                )
-                print(f"      candidates: videos={len(scored_videos)} web={len(scored_web_sources)} images={len(scored_images)}")
 
-                # F-4/MS-6: provider + kind funnels for the asset
-                # report. Discovered = raw pool size; verified/rejected
-                # from the scored lists (the verifier's own verdicts).
-                _provider_funnel = scene_stats.setdefault("providers", {})
-                _kind_funnel = scene_stats.setdefault("kinds", {})
-
-                def _funnel_add(pool, scored, kind):
-                    kind_counts = _kind_funnel.setdefault(
-                        kind, {"discovered": 0, "verified": 0, "rejected": 0}
+        recovery_rounds_done = 0
+        if beat.get("searchable", True) and not beat_videos and not beat_images and scenarios:
+            # COVERAGE RECOVERY (founder directive): before a beat may
+            # be declared uncovered, re-search it with alternative
+            # targeted queries built from its own shot contracts.
+            # Bounded rounds, never the same query twice, verification
+            # and acceptance rules unchanged — recovery improves
+            # DISCOVERY only. A beat is recorded missing only after
+            # recovery is exhausted, and the attempts are reported.
+            tried_queries = []
+            for _sc in scenarios:
+                tried_queries.extend(_sc.get("queries") or [])
+            for _need in beat.get("shot_needs") or []:
+                tried_queries.extend(_need.get("queries") or [])
+            base_scenario = dict(scenarios[0])
+            base_need = (beat.get("shot_needs") or [{}])[0]
+            for round_no in range(1, MAX_COVERAGE_RECOVERY_ROUNDS + 1):
+                recovery_queries = _recovery_queries(
+                    beat, tried_queries, broad=(round_no > 1),
+                )
+                if not recovery_queries:
+                    break
+                recovery_rounds_done = round_no
+                tried_queries.extend(recovery_queries)
+                print(
+                    f"  COVERAGE RECOVERY round {round_no} for "
+                    f"{beat['beat_id']}: {recovery_queries}"
+                )
+                recovery_scenario = dict(base_scenario)
+                recovery_scenario["queries"] = recovery_queries
+                recovered_asset = _uve_search_and_pick(
+                    recovery_scenario, base_need,
+                    search_cache=search_cache, project_id=project_id,
+                    bible=bible, registry=registry, used_keys=used_keys,
+                    scene_dir=scene_dir, scene_stats=scene_stats, beat=beat,
+                    beat_videos=beat_videos, beat_images=beat_images,
+                    scenario_index=int(base_need.get("shot_index") or 1),
+                    queries=recovery_queries,
+                    review_records=review_records,
+                )
+                scene_stats.setdefault("recovery_attempts", []).append(
+                    {
+                        "beat_id": beat.get("beat_id"),
+                        "round": round_no,
+                        "queries": recovery_queries,
+                        "outcome": "covered" if recovered_asset else "no_asset",
+                    }
+                )
+                if recovered_asset:
+                    print(
+                        f"  COVERAGE RECOVERED for {beat['beat_id']} "
+                        f"in round {round_no}"
                     )
-                    kind_counts["discovered"] += len(pool)
-                    for cand in pool:
-                        provider = str(
-                            cand.get("provider") or cand.get("source") or "unknown"
-                        )
-                        _provider_funnel.setdefault(
-                            provider,
-                            {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
-                        )["discovered"] += 1
-                    for cand in scored:
-                        provider = str(
-                            cand.get("provider") or cand.get("source") or "unknown"
-                        )
-                        entry = _provider_funnel.setdefault(
-                            provider,
-                            {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
-                        )
-                        if (cand.get("verification") or {}).get("accepted"):
-                            entry["verified"] += 1
-                            kind_counts["verified"] += 1
-                        else:
-                            entry["rejected"] += 1
-                            kind_counts["rejected"] += 1
-
-                _funnel_add(raw_videos, scored_videos, "video")
-                _funnel_add(raw_web_sources, scored_web_sources, "web")
-                _funnel_add(raw_images, scored_images, "image")
-
-                scene_stats["candidates_considered"] += len(scored_videos) + len(scored_images)
-                scene_stats["candidates_rejected"] += sum(
-                    1
-                    for item in (scored_videos + scored_web_sources + scored_images)
-                    if item.get("reject_reason")
-                )
-
-                # F-2: UNIFIED SELECTION. Verified video candidates,
-                # footage-capable web candidates (MS-2) and verified image
-                # candidates compete in ONE pool for this scenario. Ranking
-                # is relevance (universal_score) adjusted by format-intent
-                # fit — a bounded bonus (max 0.10) that can tip a close
-                # contest toward the format that best communicates the
-                # sentence, but can never rescue a weak candidate over a
-                # clearly more relevant one of another format, and never
-                # admits a verifier-rejected candidate (_uve_pick still
-                # enforces acceptance). No format is tried "first" any
-                # more: the old video->image cascade is gone.
-                intent = str(scenario.get("format_intent") or "any").lower()
-                intent_conf = scenario.get("format_intent_confidence") or 0.0
-                try:
-                    intent_conf = float(intent_conf)
-                except (TypeError, ValueError):
-                    intent_conf = 0.0
-
-                def _intent_bonus(kind):
-                    if intent == "any" or intent_conf <= 0:
-                        return 0.0
-                    if kind == "video":
-                        return 0.10 * intent_conf if intent == "footage" else 0.0
-                    # image-side candidates serve photograph/document/
-                    # map/chart intents fully, graphic intents partially.
-                    if intent in {"photograph", "document", "map", "chart"}:
-                        return 0.10 * intent_conf
-                    if intent == "graphic":
-                        return 0.05 * intent_conf
-                    return 0.0
-
-                combined_pool = []
-                pool_keys = set()
-                for item in scored_videos:
-                    item = dict(item)
-                    item["_pool_kind"] = "video"
-                    item["_selection_score"] = (item.get("universal_score") or 0) + _intent_bonus("video")
-                    combined_pool.append(item)
-                    pool_keys.add(_uve_candidate_key(item))
-                for web_item in scored_web_sources:
-                    if not _web_source_is_video_candidate(web_item):
-                        continue
-                    web_key = _uve_candidate_key(web_item)
-                    if not web_key or web_key in pool_keys:
-                        continue
-                    pool_keys.add(web_key)
-                    web_item = dict(web_item)
-                    web_item["_pool_kind"] = "video"
-                    web_item["_selection_score"] = (web_item.get("universal_score") or 0) + _intent_bonus("video")
-                    combined_pool.append(web_item)
-                for item in scored_images:
-                    item = dict(item)
-                    item["_pool_kind"] = "image"
-                    item["_selection_score"] = (item.get("universal_score") or 0) + _intent_bonus("image")
-                    combined_pool.append(item)
-
-                combined_pool.sort(key=lambda c: c.get("_selection_score") or 0, reverse=True)
-
-                picks = _uve_pick(combined_pool, scenario, registry, used_keys, shot_need=shot_need)
-                fetch_failures = []
-                asset = _uve_fetch_first(
-                    picks, _uve_download_any_candidate, scene_dir,
-                    beat["sentence_numbers"][0], len(beat_videos) + len(beat_images) + 1,
-                    registry, used_keys, failures=fetch_failures,
-                )
-                if fetch_failures:
-                    scene_stats.setdefault("download_failures", []).extend(fetch_failures)
-                    for failure in fetch_failures:
-                        entry = scene_stats.setdefault("providers", {}).setdefault(
-                            str(failure.get("provider") or "unknown"),
-                            {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
-                        )
-                        entry["download_failed"] += 1
-                if asset:
-                    _dl_provider = str(asset.get("provider") or asset.get("source") or "unknown")
-                    scene_stats.setdefault("providers", {}).setdefault(
-                        _dl_provider,
-                        {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
-                    )["downloaded"] += 1
-                    annotated = _uve_annotate(asset, scenario, scenario_index, beat.get("text", ""))
-                    if asset.get("type") == "video" or asset.get("visual_type") == "video":
-                        beat_videos.append(annotated)
-                        videos_left -= 1
-                        print(f"      + video ({asset.get('verification_status')}, score {asset.get('universal_score')})")
-                    else:
-                        beat_images.append(annotated)
-                        print(f"      + image ({asset.get('verification_status')}, score {asset.get('universal_score')})")
-                elif picks:
-                    scene_stats["downloads_failed"] += 1
-                review_records.append({
-                    "shot_index": scenario_index,
-                    "queries": list(queries or []),
-                    # F-4: the providers ACTUALLY present in this
-                    # scenario's pools (was hardcoded ["youtube", "web"]).
-                    "providers": sorted({
-                        str(c.get("provider") or c.get("source") or "unknown")
-                        for c in (raw_videos + raw_web_sources + raw_images)
-                    }) if shot_need else [],
-                    "rejected": [
-                        {"title": result_title(item), "reason": item.get("reject_reason")}
-                        for item in (scored_videos + scored_web_sources + scored_images)
-                        if item.get("reject_reason")
-                    ][:12],
-                    "picked": [result_title(item) for item in beat_videos + beat_images][-2:],
-                })
+                    break
 
         if beat.get("searchable", True) and not beat_videos and not beat_images:
             # NO placeholder is created here. The generated text-card
@@ -4853,6 +5103,7 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                         ),
                         "reason": "no_verified_asset",
                         "specificity": str(need.get("specificity") or ""),
+                        "recovery_rounds": recovery_rounds_done,
                     }
                 )
             print(

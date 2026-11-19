@@ -113,6 +113,9 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     kind_funnel: dict[str, Counter] = {}
     download_failures: list = []
     missing_visuals: list = []
+    rejection_reasons: Counter = Counter()
+    discovery_failures: list = []
+    recovery_attempts: list = []
 
     for scene in processed_scenes or []:
         if not isinstance(scene, dict):
@@ -138,6 +141,21 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 except (TypeError, ValueError):
                     pass
         download_failures.extend(scene_stats.get("download_failures") or [])
+        for reason, count in (scene_stats.get("rejection_reasons") or {}).items():
+            try:
+                rejection_reasons[str(reason)] += int(count or 0)
+            except (TypeError, ValueError):
+                pass
+        for failure in scene_stats.get("discovery_failures") or []:
+            if isinstance(failure, dict):
+                discovery_failures.append(
+                    {"scene": scene.get("scene_number"), **failure}
+                )
+        for attempt in scene_stats.get("recovery_attempts") or []:
+            if isinstance(attempt, dict):
+                recovery_attempts.append(
+                    {"scene": scene.get("scene_number"), **attempt}
+                )
         # Sentences for which retrieval produced no verified visual.
         # Since the text-card fallback was removed, these are reported
         # explicitly here instead of being silently substituted.
@@ -303,6 +321,10 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         if (asset.get("type") or asset.get("visual_type")) == "video"
     ]
 
+    coverage = None
+    if isinstance(timeline_result, dict):
+        coverage = timeline_result.get("coverage")
+
     return {
         "analysis_mode": analysis_mode,
         "total_retrieved_assets": stats["candidates_considered"],
@@ -350,6 +372,10 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             },
         },
         "download_failures": download_failures,
+        "rejection_reasons": dict(rejection_reasons),
+        "discovery_failures": discovery_failures,
+        "recovery_attempts": recovery_attempts,
+        "coverage": coverage,
         "rights": rights,
     }
 
