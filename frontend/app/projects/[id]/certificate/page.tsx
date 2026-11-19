@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { StatusBadge } from "@/components/status-badge";
 import { ArrowLeft } from "lucide-react";
 import { getCertificate, type Certificate } from "@/lib/api";
 
@@ -32,7 +33,7 @@ export default function CertificatePage() {
 
   return (
     <main className="app-page certificate-page">
-      <AppNavigation active="/projects" />
+      <AppNavigation />
       <section className="plan-content">
         <Link href={`/projects/${projectId}`} className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Project</Link>
         <p className="eyebrow">PROVENANCE CERTIFICATE</p>
@@ -63,7 +64,8 @@ export default function CertificatePage() {
               ))}
             </div>
             <p className="plan-meta">
-              Run {certificate.run.run_id || "—"} · status {certificate.run.status || "—"}
+              Run {certificate.run.run_id || "—"} · status{" "}
+              {certificate.run.status ? <StatusBadge status={certificate.run.status} /> : "—"}
               {certificate.run.created_at ? ` · started ${new Date(certificate.run.created_at).toLocaleString()}` : ""}
               {certificate.run.finished_at ? ` · finished ${new Date(certificate.run.finished_at).toLocaleString()}` : ""}
               {certificate.run.script_hash ? ` · script ${certificate.run.script_hash.slice(0, 12)}…` : ""}

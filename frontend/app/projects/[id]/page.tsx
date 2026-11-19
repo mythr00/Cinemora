@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { StatusBadge } from "@/components/status-badge";
+import { ErrorState, LoadingState } from "@/components/states";
 import { ArrowLeft } from "lucide-react";
 import {
   apiUrl,
@@ -39,7 +41,7 @@ export default function ProjectPage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [loadError, setLoadError] = useState("");
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   const loadOverview = useCallback(async () => {
     const [statusResult, outputsResult, runsResult] = await Promise.all([
@@ -48,12 +50,12 @@ export default function ProjectPage() {
       listRuns(projectId).catch(() => ({ runs: [] as RunSummary[] })),
     ]);
     setOverview({ status: statusResult, outputs: outputsResult, runs: runsResult.runs || [] });
-    setLoadError("");
+    setLoadError(null);
   }, [projectId]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void loadOverview().catch((error) => setLoadError(error instanceof Error ? error.message : "Could not load project."));
+      void loadOverview().catch((error) => setLoadError(error));
     }, 0);
     return () => clearTimeout(timer);
   }, [loadOverview]);
@@ -67,15 +69,15 @@ export default function ProjectPage() {
     return () => clearInterval(timer);
   }, [statusName, loadOverview]);
 
-  return <main className="project-editor-page"><AppNavigation active="/projects" /><section className="projects-content"><Link href="/projects" className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Projects</Link>
+  return <main className="project-editor-page"><AppNavigation /><section className="projects-content"><Link href="/projects" className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Projects</Link>
     {!overview && loadError ? <>
       <p className="eyebrow">PROJECT OVERVIEW</p>
       <h1>Project unavailable</h1>
-      <p className="projects-error">{loadError}</p>
-    </> : !overview ? <p className="projects-state">Loading project…</p> : <>
+      <ErrorState error={loadError} onRetry={() => { void loadOverview().catch((error) => setLoadError(error)); }} />
+    </> : !overview ? <LoadingState className="projects-state" label="Loading project…" /> : <>
       <p className="eyebrow">PROJECT OVERVIEW</p>
       <h1>{overview.status.title || `${overview.status.category} production`}</h1>
-      <p>Status: <strong>{overview.status.status.replaceAll("_", " ")}</strong>{overview.status.current_stage ? ` · Stage: ${overview.status.current_stage.replaceAll("_", " ")}` : ""}</p>
+      <p className="overview-status-line">Status: <StatusBadge status={overview.status.status} />{overview.status.current_stage ? ` · Stage: ${overview.status.current_stage.replaceAll("_", " ")}` : ""}</p>
       {overview.status.error && <p className="projects-error">{overview.status.error}</p>}
       <p><Link className="button button-primary" href={`/projects/${projectId}/plan`}>Production plan</Link>{" "}<Link className="button button-secondary" href={`/projects/${projectId}/certificate`}>Provenance certificate</Link></p>
       {overview.outputs && <section aria-label="Outputs"><h2>Outputs</h2><ul className="overview-outputs">
@@ -87,7 +89,7 @@ export default function ProjectPage() {
         {overview.outputs.run_manifest.exists && <li>Run manifest — <a href={apiUrl(overview.outputs.run_manifest.media_url || "")}>download JSON</a></li>}
         {!overview.outputs.film.exists && !overview.outputs.asset_report.exists && <li>No outputs recorded yet.</li>}
       </ul></section>}
-      {overview.runs.length > 0 && <section aria-label="Production history"><h2>Production history</h2><ul className="overview-runs">{overview.runs.map((run) => <li key={run.run_id}><strong>{run.status.replaceAll("_", " ")}</strong> · started {run.created_at ? new Date(run.created_at).toLocaleString() : "—"}{run.finished_at ? ` · finished ${new Date(run.finished_at).toLocaleString()}` : ""}{run.error ? ` · ${run.error}` : ""}</li>)}</ul></section>}
+      {overview.runs.length > 0 && <section aria-label="Production history"><h2>Production history</h2><ul className="overview-runs">{overview.runs.map((run) => <li key={run.run_id}><StatusBadge status={run.status} /> · started {run.created_at ? new Date(run.created_at).toLocaleString() : "—"}{run.finished_at ? ` · finished ${new Date(run.finished_at).toLocaleString()}` : ""}{run.error ? ` · ${run.error}` : ""}</li>)}</ul></section>}
     </>}
   </section></main>;
 }

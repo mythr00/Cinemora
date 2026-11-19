@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { StatusBadge } from "@/components/status-badge";
+import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { apiUrl, listProjects, type ProjectSummary } from "@/lib/api";
 import { ArrowUpRight } from "lucide-react";
 
@@ -13,15 +15,15 @@ function label(value: string) { return value.replaceAll("_", " "); }
 export default function StudioPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [busy, setBusy] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<unknown>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
-    setError("");
+    setError(null);
     try {
       const data = await listProjects(signal);
       setProjects(data.projects || []);
     } catch (cause) {
-      if (!signal?.aborted) setError(cause instanceof Error ? cause.message : "Your projects could not be loaded.");
+      if (!signal?.aborted) setError(cause);
     } finally { if (!signal?.aborted) setBusy(false); }
   }, []);
 
@@ -36,7 +38,7 @@ export default function StudioPage() {
   const recent = projects.slice(0, 4);
 
   return <main className="app-page studio-dashboard">
-    <AppNavigation active="/studio" />
+    <AppNavigation />
     <div className="dashboard-content">
       <section className="dashboard-welcome">
         <div><p className="eyebrow">YOUR PRODUCTION DESK</p><h1>Good stories deserve<br /><em>a considered cut.</em></h1><p>Start with a script, follow each production as it moves, and return to the work whenever you’re ready.</p></div>
@@ -52,13 +54,13 @@ export default function StudioPage() {
 
       <section className="dashboard-projects">
         <div className="section-heading"><div><p className="eyebrow">RECENT WORK</p><h2>Back to the edit.</h2></div><Link className="text-link" href="/projects">View all projects <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>
-        {busy && <div className="dashboard-loading" role="status">Loading your project library…</div>}
-        {error && <div className="dashboard-error" role="alert"><span>{error}</span><button type="button" onClick={() => { setBusy(true); void load(); }}>Try again</button></div>}
-        {!busy && !error && recent.length === 0 && <div className="dashboard-empty"><div className="empty-reel" aria-hidden="true"><span /><span /><span /></div><p className="eyebrow">A CLEAR FIRST FRAME</p><h3>Your next film starts here.</h3><p>Create a project from a script. Its real production state and export will appear in this space.</p><Link className="button button-primary" href="/create">Create your first film <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>}
+        {busy && <LoadingState className="dashboard-loading" label="Loading your project library…" />}
+        {!!error && <ErrorState className="dashboard-error" error={error} onRetry={() => { setBusy(true); void load(); }} />}
+        {!busy && !error && recent.length === 0 && <EmptyState className="dashboard-empty" eyebrow="A CLEAR FIRST FRAME" title="Your next film starts here." description="Create a project from a script. Its real production state and export will appear in this space." action={<Link className="button button-primary" href="/create">Create your first film <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link>} />}
         {!busy && !error && recent.length > 0 && <div className="dashboard-project-grid">{recent.map((project) => <article className="dashboard-project-card" key={project.id}>
           <Link className={`project-art ${project.video_url ? "has-video" : ""}`} href={`/projects/${project.id}`} aria-label={`Open ${project.category} project`}>
             {project.video_url ? <video src={apiUrl(project.video_url)} preload="metadata" muted playsInline /> : <span className="project-art-mark"><span className="reel-glyph" /></span>}
-            <span className={`project-state project-state-${project.status}`}>{label(project.status)}</span>
+            <StatusBadge status={project.status} overlay />
           </Link>
           <div className="dashboard-project-info"><div><p>{project.category}</p><time dateTime={project.created_at}>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(project.created_at))}</time></div><h3>{project.title || project.script_preview || "Untitled production"}</h3><p className="project-stage">{project.current_stage ? `Stage · ${label(project.current_stage)}` : project.video_url ? "Export available" : "Production status available"}</p><Link href={`/projects/${project.id}`}>Open project <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>
         </article>)}</div>}

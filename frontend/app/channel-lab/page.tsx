@@ -13,7 +13,7 @@ import { ArrowUpRight } from "lucide-react";
  */
 export default function ChannelLabUnavailable() {
   return <main className="app-page">
-    <AppNavigation active="" />
+    <AppNavigation />
     <div className="tool-page-content">
       <section className="tool-page-heading">
         <p className="eyebrow">SCRIPT STUDIO</p>

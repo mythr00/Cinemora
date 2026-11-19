@@ -1,9 +1,8 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { BrandLockup } from "@/components/brand-lockup";
+import { AppNavigation } from "@/components/app-navigation";
 import {
   apiUrl,
   createProject as apiCreateProject,
@@ -19,13 +18,9 @@ import {
   ChevronDown,
   AlertCircle,
   Film,
-  FolderKanban,
   Info,
-  LayoutGrid,
   Mic,
   Search,
-  Sparkles,
-  WandSparkles,
 } from "lucide-react";
 
 const categories = [
@@ -94,7 +89,7 @@ export default function Home() {
     // Reachability only: /api/v1/health is unauthenticated by
     // design, so this says the service answers — not that the
     // configured token is accepted (that check is register C-06).
-    // The sidebar badge is labelled accordingly ("reachable").
+    // The topbar badge is labelled accordingly ("reachable").
     getHealth(controller.signal)
       .then(() => setApiOnline(true))
       .catch(() => setApiOnline(false));
@@ -200,33 +195,21 @@ export default function Home() {
 
   const videoUrl = status?.video_url ? apiUrl(status.video_url) : "";
 
+  // Brief Stage 4 (C-11): the page renders inside the shared
+  // studio navigation like every other studio page. Its private
+  // sidebar (a third navigation system: "Create / Overview /
+  // Projects" labels, a brand link to the landing page) is
+  // retired; the API reachability badge it carried moves to the
+  // topbar, unchanged — same probe, same honest label (the
+  // authenticated connection check is register C-06).
   return (
-    <main className="studio-shell">
-      <aside className="sidebar">
-        <Link className="brand" href="/" aria-label="Cinemora home">
-          <BrandLockup priority />
-        </Link>
-
-        <div className="side-label">WORKSPACE</div>
-        <nav className="side-nav" aria-label="Main navigation">
-          <Link className="nav-item active" href="/create"><Sparkles size={18} strokeWidth={1.7} aria-hidden /><span>Create</span><span className="nav-active-dot" /></Link>
-          <Link className="nav-item" href="/studio"><LayoutGrid size={18} strokeWidth={1.7} aria-hidden /><span>Overview</span></Link>
-          <Link className="nav-item" href="/projects"><FolderKanban size={18} strokeWidth={1.7} aria-hidden /><span>Projects</span></Link>
-        </nav>
-
-        <div className="sidebar-spacer" />
-        <div className="sidebar-note">
-          <span className="note-icon"><WandSparkles size={18} strokeWidth={1.7} aria-hidden /></span>
-          <div><strong>Production tools</strong><p>Plan, narration, visuals, and rendering.</p></div>
-        </div>
-        <div className="connection"><span className={`connection-dot ${apiOnline === false ? "offline" : ""}`} /><span>{apiOnline === null ? "Contacting the studio API" : apiOnline ? "Studio API reachable" : "Studio API unavailable"}</span></div>
-        <div className="sidebar-footer"><span className="avatar"><Image src="/cinemora-mark.svg" alt="" width={25} height={25} /></span><span><strong>Cinemora</strong><small>Production workspace</small></span></div>
-      </aside>
+    <main className="app-page create-page">
+      <AppNavigation />
 
       <section className="workspace" id="create">
         <header className="topbar">
           <div className="breadcrumbs"><span>Cinemora</span><span className="crumb-separator">/</span><strong>New documentary</strong></div>
-          <div className="topbar-right"><span className="draft-status"><span /> New project</span><span className="edition-label">STUDIO EDITION</span></div>
+          <div className="topbar-right"><span className="connection"><span className={`connection-dot ${apiOnline === false ? "offline" : ""}`} /><span>{apiOnline === null ? "Contacting the studio API" : apiOnline ? "Studio API reachable" : "Studio API unavailable"}</span></span><span className="draft-status"><span /> New project</span><span className="edition-label">STUDIO EDITION</span></div>
         </header>
 
         <div className="content-wrap">

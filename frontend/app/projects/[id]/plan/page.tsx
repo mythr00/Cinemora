@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { StatusBadge } from "@/components/status-badge";
 import { ArrowLeft } from "lucide-react";
 import {
   ApiClientError,
@@ -114,7 +115,7 @@ export default function PlanReviewPage() {
 
   return (
     <main className="app-page plan-page">
-      <AppNavigation active="/projects" />
+      <AppNavigation />
       <section className="plan-content">
         <Link href={`/projects/${projectId}`} className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Project</Link>
         <p className="eyebrow">PRODUCTION PLAN</p>
@@ -128,9 +129,15 @@ export default function PlanReviewPage() {
 
         {status && (
           <p className="plan-status-line">
-            Project status: <strong>{status.status.replaceAll("_", " ")}</strong>
+            Project status: <StatusBadge status={status.status} />
             {status.current_stage ? ` · Stage: ${status.current_stage.replaceAll("_", " ")}` : ""}
-            {status.latest_run ? ` · Latest run: ${status.latest_run.status.replaceAll("_", " ")}` : ""}
+            {status.latest_run ? (
+              <>
+                {" "}· Latest run: <StatusBadge status={status.latest_run.status} />
+              </>
+            ) : (
+              ""
+            )}
           </p>
         )}
 
@@ -255,6 +262,7 @@ export default function PlanReviewPage() {
                             <span className="plan-replace">
                               <input
                                 type="text"
+                                aria-label={`Replacement file path for sentence ${sentence.sentence_number}`}
                                 placeholder="Replacement file path on the server"
                                 value={replacements[sentence.sentence_number] || ""}
                                 onChange={(event) =>
