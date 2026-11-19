@@ -94,6 +94,52 @@ SCRIPT = (
 )
 
 
+def build_graphic_targets(processed_scenes):
+    """Mirror of the production targeting in jobs.run_full_pipeline.
+
+    Translate each processed scene's asset_stats["missing_visuals"]
+    records — the sentences that finished retrieval + coverage
+    recovery with no verified visual — into graphics targets:
+    scene_number + scene-local sentence_index + the sentence's
+    verbatim text + its scenario. Records whose sentence_number is
+    missing, or that match no sentence in the scene, cannot be
+    anchored honestly and are skipped.
+    """
+    graphic_targets = []
+    for processed_scene in processed_scenes:
+        scene = processed_scene.get("scene") or {}
+        scene_number = scene.get("scene_number")
+        sentences = scene.get("sentences") or []
+        missing = (
+            (processed_scene.get("asset_stats") or {}).get("missing_visuals")
+            or []
+        )
+        for record in missing:
+            sentence_number = record.get("sentence_number")
+            if sentence_number is None:
+                continue
+            for index, sentence in enumerate(sentences):
+                if not isinstance(sentence, dict):
+                    continue
+                if sentence.get("sentence_number") != sentence_number:
+                    continue
+                graphic_targets.append(
+                    {
+                        "scene_number": scene_number,
+                        "sentence_index": index,
+                        "sentence_number": sentence_number,
+                        "text": (
+                            sentence.get("text")
+                            or sentence.get("sentence_text")
+                            or ""
+                        ),
+                        "scenario": sentence.get("scenario") or {},
+                    }
+                )
+                break
+    return graphic_targets
+
+
 def main():
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -161,23 +207,55 @@ def main():
         "scenes": scenes,
         "processed_scenes": processed_scenes,
     }
+    # Motion graphics stage — a faithful mirror of production
+    # (jobs.run_full_pipeline): missing-visual records become
+    # targets, and the graphics stage receives them together with
+    # the production stat cap. (The previous inline copy passed
+    # neither, so targeted generation never ran in this harness.)
+    graphic_targets = build_graphic_targets(processed_scenes)
+    missing_records = sum(
+        len((ps.get("asset_stats") or {}).get("missing_visuals") or [])
+        for ps in processed_scenes
+    )
+    print(
+        f"E2E-5M missing-visual records: {missing_records}; "
+        f"graphics targets built: {len(graphic_targets)}"
+    )
     motion_graphics = build_motion_graphics_assets(
-        motion_data, PROJECT_DIR / "motion_graphics", mode="balanced"
+        motion_data, PROJECT_DIR / "motion_graphics", mode="balanced",
+        targets=graphic_targets, max_stats=jobs.MOTION_GRAPHIC_MAX_STATS,
     )
     for graphic in motion_graphics:
+        scene_number = graphic.get("scene_number")
+        sentence_index = graphic.get("sentence_index")
+        if scene_number is None:
+            continue
         for processed_scene in processed_scenes:
             scene = processed_scene.get("scene") or {}
-            if scene.get("scene_number") != graphic.get("scene_number"):
+            if scene.get("scene_number") != scene_number:
                 continue
             visual = dict(graphic)
             visual["type"] = "video"
             visual["source"] = "cinemora_motion_graphics"
             visual["motion_graphic"] = True
+            visual["sentence_index"] = sentence_index
             visual["file_path"] = graphic.get("file_path") or graphic.get("path")
             visual["path"] = visual["file_path"]
             processed_scene.setdefault("videos", []).append(visual)
             break
     print(f"E2E-5M motion graphics: {len(motion_graphics)}")
+    _mg_manifest = json.loads(
+        (PROJECT_DIR / "motion_graphics" / "motion_graphics.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    _targets_summary = _mg_manifest.get("targets") or {}
+    print(
+        "E2E-5M graphics targets summary: "
+        f"requested={_targets_summary.get('requested')}, "
+        f"generated={_targets_summary.get('generated')}, "
+        f"skipped={_targets_summary.get('skipped')}"
+    )
 
     timeline_result = build_project_timeline(PROJECT_ID, processed_scenes, output_dir=str(MEDIA_ROOT))
     timeline_data = json.loads(Path(timeline_result["timeline_file"]).read_text(encoding="utf-8"))
@@ -260,6 +338,26 @@ def main():
         "final scene fully covered",
         not [u for u in (coverage.get("uncovered_sentences") or []) if u.get("scene_number") == _last_scene],
         f"(last scene: {_last_scene})",
+    )
+    _mg_items = [
+        item
+        for scene in render_scenes
+        for item in scene.get("items", [])
+        if item.get("assignment") == "motion_graphic"
+    ]
+    _generated_files = {
+        g.get("file_path") or g.get("path") for g in motion_graphics
+    }
+    _mg_used = [
+        item
+        for item in _mg_items
+        if (item.get("file_path") or item.get("path")) in _generated_files
+    ]
+    check(
+        "targeted graphics reached the timeline as motion_graphic assignments",
+        len(_mg_used) >= 1 if graphic_targets else True,
+        f"(targets: {len(graphic_targets)}, motion_graphic items: "
+        f"{len(_mg_items)}, referencing generated files: {len(_mg_used)})",
     )
     check(
         "renderer produced the final video",

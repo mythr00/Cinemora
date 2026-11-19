@@ -1529,6 +1529,143 @@ def build_motion_graphics_assets(
         assets[-1]["targeted"] = bool(targeted)
         return True
 
+    # -----------------------------------------------------
+    # EVENT SCHEMATIC support: the fallback for a targeted
+    # sentence that carries no statistic. Conservative trigger —
+    # ALL of: the sentence is a target (above); it has no stat
+    # value (decided in the loop below); its scene is KNOWN from
+    # the processed scenes the caller already supplies (jobs.py
+    # and the E2E harness both pass processed_scenes in `data`)
+    # to hold NO genuine verified visual at all; and the
+    # sentence's own analysis record provides event + place
+    # labels. At most one schematic per scene. Generated graphics
+    # themselves never make a scene count as covered here.
+    # -----------------------------------------------------
+
+    _verified_by_scene = {}
+    for _ps in data.get("processed_scenes") or []:
+        if not isinstance(_ps, dict):
+            continue
+        _sn = (_ps.get("scene") or {}).get("scene_number")
+        if _sn is None or _sn in _verified_by_scene:
+            continue
+        _genuine = 0
+        for _v in list(_ps.get("videos") or []) + list(
+            _ps.get("images") or []
+        ):
+            if not isinstance(_v, dict):
+                continue
+            if _v.get("motion_graphic") or _v.get("_download_error"):
+                continue
+            if (_v.get("verification") or {}).get("accepted") is False:
+                continue
+            _genuine += 1
+        _verified_by_scene[_sn] = _genuine
+
+    _sentences_by_key = {}
+    for _scene in scenes:
+        for _idx, _sentence in enumerate(_scene.get("sentences") or []):
+            if isinstance(_sentence, dict):
+                _sentences_by_key[
+                    (_scene.get("scene_number"), _idx)
+                ] = _sentence
+
+    def _schematic_labels(target):
+        """Resolve (event, place, era) for a schematic ONLY from
+        the target sentence's own analysis record: the target's
+        scenario, else the sentence record's first scenario /
+        event / locations / dates. Returns None when event or
+        place is absent — labels are never invented."""
+        scenario = target.get("scenario") or {}
+        sentence = _sentences_by_key.get(
+            (target["scene_number"], target["sentence_index"]), {}
+        )
+        _scenarios = sentence.get("scenarios") or []
+        first = (
+            _scenarios[0]
+            if _scenarios and isinstance(_scenarios[0], dict)
+            else {}
+        )
+        event = clean_text(
+            scenario.get("event")
+            or first.get("event")
+            or sentence.get("event")
+            or ""
+        )
+        _locations = sentence.get("locations") or []
+        place = clean_text(
+            (_locations[0] if _locations else "")
+            or scenario.get("place")
+            or first.get("place")
+            or ""
+        )
+        _dates = sentence.get("dates") or []
+        era = clean_text(
+            scenario.get("era")
+            or first.get("era")
+            or (_dates[0] if _dates else "")
+            or ""
+        )
+        if not event or not place:
+            return None
+        return event, place, era
+
+    _schematic_scenes = set()
+
+    def _make_schematic(target):
+        """Render + register one event schematic for a target.
+        Returns None on success, otherwise the skip reason. When
+        the scene is not known to be visually empty the historical
+        "no_stat_value" reason is preserved unchanged."""
+        scene_number = target["scene_number"]
+        if (
+            scene_number not in _verified_by_scene
+            or _verified_by_scene[scene_number] > 0
+        ):
+            return "no_stat_value"
+        if scene_number in _schematic_scenes:
+            return "schematic_cap_reached"
+        labels = _schematic_labels(target)
+        if labels is None:
+            return "no_schematic_labels"
+        event, place, era = labels
+
+        path = (
+            output_dir
+            / f"motion_graphic_schematic_{index + 1:03d}.mp4"
+        )
+        try:
+            from services.vector_graphics import render_event_schematic
+
+            render_event_schematic(
+                path,
+                event_label=event,
+                place_label=place,
+                era_label=era,
+                duration=6.0,
+            )
+        except Exception as error:
+            # AUD-21: skip this graphic; never fail the whole job.
+            print(f"MOTION GRAPHIC SKIPPED (event_schematic): {error}")
+            return "schematic_render_failed"
+
+        register_asset(
+            path,
+            "event_schematic",
+            "event_schematic",
+            6.0,
+            event,
+            target["text"],
+        )
+        assets[-1]["scene_number"] = scene_number
+        assets[-1]["sentence_index"] = target["sentence_index"]
+        assets[-1]["sentence_number"] = (
+            target["sentence_number"] or target["sentence_index"] + 1
+        )
+        assets[-1]["targeted"] = True
+        _schematic_scenes.add(scene_number)
+        return None
+
     covered = set()
     targeted_generated = 0
 
@@ -1556,14 +1693,24 @@ def build_motion_graphics_assets(
             covered.add(key)
             targeted_generated += 1
         else:
-            target_skips.append(
-                {
-                    "scene_number": target["scene_number"],
-                    "sentence_index": target["sentence_index"],
-                    "sentence_number": target["sentence_number"],
-                    "reason": "no_stat_value",
-                }
-            )
+            # No statistic in this sentence: the event schematic
+            # is the only other targeted answer, and only under
+            # its conservative trigger (visually empty scene +
+            # traceable event/place labels). Otherwise the skip
+            # is recorded with its reason — nothing is invented.
+            _schematic_reason = _make_schematic(target)
+            if _schematic_reason is None:
+                covered.add(key)
+                targeted_generated += 1
+            else:
+                target_skips.append(
+                    {
+                        "scene_number": target["scene_number"],
+                        "sentence_index": target["sentence_index"],
+                        "sentence_number": target["sentence_number"],
+                        "reason": _schematic_reason,
+                    }
+                )
 
     # Untargeted stats, capped by max_stats (Stage A: parameterised;
     # historically a hardcoded 3 in balanced mode).
