@@ -86,10 +86,10 @@ def infer_format_intent(sentence_text, scenario=None):
         return "map", 0.6
     if _GRAPHIC_RE.search(text):
         return "graphic", 0.4
-    if kind == "archival":
-        return "photograph", 0.5
     if _FOOTAGE_RE.search(text):
         return "footage", 0.6
+    if kind == "archival":
+        return "photograph", 0.5
     return "any", 0.0
 
 # Closed grammatical class (not a vocabulary list): only used as a fallback

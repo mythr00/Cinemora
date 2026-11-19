@@ -3944,7 +3944,7 @@ def _uve_scenario_search(
             print(f"Archive.org search failed for '{primary_query}': {error}")
 
         try:
-            _merge_videos(search_wikimedia_videos(primary_query, limit=3))
+            _merge_videos(search_wikimedia_videos(primary_query, limit=5))
         except Exception as error:
             print(f"Wikimedia video search failed for '{primary_query}': {error}")
 
