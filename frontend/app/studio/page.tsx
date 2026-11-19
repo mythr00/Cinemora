@@ -64,7 +64,6 @@ export default function StudioPage() {
         </article>)}</div>}
       </section>
 
-      <section className="dashboard-tools"><div><p className="eyebrow">AT YOUR DISPOSAL</p><h2>Small tools for<br />the larger story.</h2></div><div className="tool-links"><Link href="/channel-lab"><span className="tool-index">01</span><span><strong>Script</strong><small>Research a fresh topic and develop an original script.</small></span><ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link><Link href="/thumbnail"><span className="tool-index">02</span><span><strong>Thumbnail</strong><small>Generate a standalone documentary cover image.</small></span><ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link><Link href="/viral-clips"><span className="tool-index">03</span><span><strong>Short-clip extraction</strong><small>Work from an accessible YouTube link or your own video file.</small></span><ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div></section>
       <footer className="app-footer"><span>CINEMORA / STUDIO</span><span>Project information is loaded from your Cinemora API.</span></footer>
     </div>
   </main>;

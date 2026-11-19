@@ -5,13 +5,13 @@ import { useState } from "react";
 import { BrandLockup } from "@/components/brand-lockup";
 import { ArrowUpRight } from "lucide-react";
 
+// Brief Stage 3 (C-02): /channel-lab, /thumbnail and /viral-clips
+// were removed — their backends do not exist in this build and the
+// routes now serve honest unavailable states (see register C-02).
 const links = [
   ["/studio", "Dashboard"],
   ["/projects", "Projects"],
   ["/create", "New production"],
-  ["/channel-lab", "Script"],
-  ["/thumbnail", "Thumbnail"],
-  ["/viral-clips", "Short clips"],
 ] as const;
 
 export function AppNavigation({ active }: { active: string }) {

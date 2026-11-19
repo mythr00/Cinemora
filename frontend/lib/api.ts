@@ -10,11 +10,17 @@
  * - The /api/v1 contract (apiRequest + the typed helpers below):
  *   single-operator token auth via the X-API-Key header, consistent
  *   {error: {code, message}} failures surfaced as ApiClientError.
- * - Legacy endpoints that predate v1 (legacyRequest): the editor,
- *   render-options, voices, backgrounds, music, thumbnails,
- *   channel research and viral clips still live outside /api/v1;
- *   they are reached through this client too, so the base URL and
- *   error handling stay in one place.
+ * - Legacy endpoints that predate v1 (legacyRequest): NO active
+ *   page calls these any more. The legacy surfaces (scene editor,
+ *   render-options, voice/music/background catalogues, thumbnails,
+ *   channel research, viral clips, transcription, voiceover) were
+ *   quarantined in Brief Stage 3 (C-02) — every endpoint they used
+ *   is absent from the committed backend (all 23 re-verified 404
+ *   under TestClient). Their original implementations are preserved
+ *   under frontend/preserved/ and are the only remaining
+ *   legacyRequest callers; the helper stays so that preserved code
+ *   keeps compiling, and so the base URL stays in one place if a
+ *   legacy surface is ever restored with a real backend.
  *
  * Configuration (build-time, NEXT_PUBLIC_*):
  * - NEXT_PUBLIC_API_BASE_URL: backend origin (default

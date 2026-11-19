@@ -9,7 +9,6 @@ import {
   createProject as apiCreateProject,
   getHealth,
   getProjectStatus,
-  legacyRequest,
   submitRun,
   type ProjectStatus,
 } from "@/lib/api";
@@ -21,8 +20,6 @@ import {
   AlertCircle,
   Film,
   FolderKanban,
-  Image as ImageIcon,
-  ImagePlus,
   Info,
   LayoutGrid,
   Mic,
@@ -55,23 +52,17 @@ const stageOrder = [
   ["video_editor", "Final edit"],
 ] as const;
 
-type MusicTrack = {
-  id: string;
-  title: string;
-  mood: string;
-  preview_url: string;
-};
+// The one narration voice actually installed in the backend
+// (Stage 3J catalogue): a built-in Piper voice. Brief Stage 3
+// (C-05) removed the catalogue browser that pretended otherwise —
+// /voices does not exist in the committed backend, and any other
+// voice id would silently fall back to this one at production time.
+const NARRATION_VOICE_ID = "en_US-lessac-medium";
 
-type BackgroundLook = {
-  id: string;
-  title: string;
-  description: string;
-  swatch: string;
-  preview: string;
-};
-
-type NarrationVoice = { id: string; name: string; installed: boolean; locale?: string; quality?: string; license_url?: string; voice_type?: string; provider?: string };
-type NarrationLanguage = { code: string; name: string };
+// The backend's real script cap (api_v1 MAX_SCRIPT_CHARS). The form
+// previously enforced a lower, wrong limit and labelled a character
+// counter as "words" (audit D-14).
+const MAX_SCRIPT_CHARS = 60000;
 
 export default function Home() {
   const [script, setScript] = useState("");
@@ -84,31 +75,7 @@ export default function Home() {
   const [status, setStatus] = useState<ProjectStatus | null>(null);
   const [message, setMessage] = useState("");
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
-  const [musicTracks, setMusicTracks] = useState<MusicTrack[]>([]);
-  const [selectedMusic, setSelectedMusic] = useState("auto");
-  const [includeMusic, setIncludeMusic] = useState(true);
-  const [includeMotion, setIncludeMotion] = useState(false);
-  const [musicPercent, setMusicPercent] = useState(3);
   const [includeCaptions, setIncludeCaptions] = useState(true);
-  const [includeSfx, setIncludeSfx] = useState(true);
-  const [voiceFile, setVoiceFile] = useState<File | null>(null);
-  const [voiceTranscribed, setVoiceTranscribed] = useState(false);
-  const [useUploadedVoice, setUseUploadedVoice] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const [musicLoadError, setMusicLoadError] = useState("");
-  const [backgrounds, setBackgrounds] = useState<BackgroundLook[]>([]);
-  const [backgroundId, setBackgroundId] = useState("midnight");
-  const [voiceCatalog, setVoiceCatalog] = useState<NarrationVoice[]>([]);
-  const [narrationLanguages, setNarrationLanguages] = useState<NarrationLanguage[]>([]);
-  const [voiceId, setVoiceId] = useState("en_US-lessac-medium");
-  const [selectedLanguage, setSelectedLanguage] = useState("auto");
-  const [useCustomLanguage, setUseCustomLanguage] = useState(false);
-  const [customLanguage, setCustomLanguage] = useState("");
-  const [voiceSearch, setVoiceSearch] = useState("");
-  const [voicePreviewUrl, setVoicePreviewUrl] = useState("");
-  const [thumbnailTitle, setThumbnailTitle] = useState("");
-  const [thumbnailUrl, setThumbnailUrl] = useState("");
-  const [thumbnailBusy, setThumbnailBusy] = useState(false);
 
   const words = useMemo(() => script.trim().split(/\s+/).filter(Boolean).length, [script]);
   const duration = words ? Math.max(1, Math.round(words / 145)) : 0;
@@ -116,73 +83,23 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    legacyRequest<{ graphics?: boolean; music?: boolean; music_percent?: number; captions?: boolean; sfx?: boolean }>("/render-options/defaults", { signal: controller.signal })
-      .then((defaults) => {
-        setIncludeMotion(defaults.graphics ?? false);
-        setIncludeMusic(defaults.music ?? true);
-        setMusicPercent(Math.min(100, Math.max(0, defaults.music_percent ?? 3)));
-        setIncludeCaptions(defaults.captions ?? true);
-        setIncludeSfx(defaults.sfx ?? true);
-      })
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
     const draftTimer = setTimeout(() => {
       const channelDraft = sessionStorage.getItem("cinemora-script-draft");
       if (channelDraft) {
-        setScript(channelDraft.slice(0, 50000));
+        setScript(channelDraft.slice(0, MAX_SCRIPT_CHARS));
         sessionStorage.removeItem("cinemora-script-draft");
         setMessage("Script draft loaded. Review it before starting production.");
       }
     }, 0);
+    // Reachability only: /api/v1/health is unauthenticated by
+    // design, so this says the service answers — not that the
+    // configured token is accepted (that check is register C-06).
+    // The sidebar badge is labelled accordingly ("reachable").
     getHealth(controller.signal)
       .then(() => setApiOnline(true))
       .catch(() => setApiOnline(false));
     return () => { controller.abort(); clearTimeout(draftTimer); };
   }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    legacyRequest<{ voices?: NarrationVoice[]; catalog?: NarrationVoice[]; languages?: NarrationLanguage[] }>("/voices", { signal: controller.signal })
-      .then((data) => {
-        setVoiceCatalog(data.catalog || []);
-        setNarrationLanguages(data.languages || []);
-        if (data.voices?.length) setVoiceId((current) => data.voices!.some((voice) => voice.id === current) ? current : data.voices![0].id);
-      })
-      .catch(() => { if (!controller.signal.aborted) setMessage("Installed narration voices could not be loaded."); });
-    return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    legacyRequest<{ backgrounds?: BackgroundLook[] }>("/backgrounds", { signal: controller.signal })
-      .then((data) => {
-        setBackgrounds(data.backgrounds || []);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setMessage("Background looks could not be loaded.");
-      });
-    return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    legacyRequest<{ tracks?: MusicTrack[] }>("/music", { signal: controller.signal })
-      .then((data) => {
-        setMusicTracks(data.tracks || []);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setMusicLoadError("Music previews are unavailable. Generation can continue with narration only unless you select an available track.");
-      });
-    return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
-    document.querySelectorAll<HTMLAudioElement>(".music-card audio").forEach((audio) => { audio.volume = musicPercent / 100; });
-  }, [musicPercent, musicTracks]);
 
   useEffect(() => {
     if (!projectId || isTerminal) return;
@@ -223,9 +140,8 @@ export default function Home() {
       return;
     }
 
-    const outputLanguage = useCustomLanguage ? customLanguage.trim() : selectedLanguage;
-    if (useCustomLanguage && !/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(outputLanguage)) {
-      setMessage("Enter a valid BCP-47 language code, such as sw, am, or zh-Hant.");
+    if (script.length > MAX_SCRIPT_CHARS) {
+      setMessage(`Scripts are limited to ${MAX_SCRIPT_CHARS.toLocaleString()} characters. Shorten the script and try again.`);
       return;
     }
 
@@ -241,37 +157,31 @@ export default function Home() {
       // the old flow posted a render_options body to endpoints that
       // silently discarded it, plus query parameters the analyze
       // handler never read.
+      // Brief Stage 3 (C-05): the submitted options are now EXACTLY
+      // the consumed keys of ProjectOptionsIn — genre (genre-pack
+      // resolution), voice_id (narration), captions (burn/off) and
+      // require_plan_approval (the plan gate). The music, sfx,
+      // graphics, language and background keys the form used to add
+      // were recorded in the snapshot but consumed by nothing
+      // (verified against jobs.py: recognised keys are music_file,
+      // voice_id, captions), so their controls are gone. Music
+      // reaches a production only via the operator-level music_file
+      // option, which has no control on this form.
       const created = await apiCreateProject({
         title: title.trim() || undefined,
         script: script.trim(),
         category,
         options: {
           genre: category,
-          voice_id: voiceId,
+          voice_id: NARRATION_VOICE_ID,
           captions: includeCaptions ? "burn" : "off",
           require_plan_approval: requirePlanApproval,
-          // Recorded production preferences (kept in the run's
-          // options snapshot; the pipeline consumes voice_id /
-          // captions / music_file directly).
-          music: includeMusic,
-          music_track_id: selectedMusic,
-          graphics: includeMotion,
-          sfx: includeSfx,
-          language: outputLanguage,
-          background_id: backgroundId,
         },
       });
 
       setProjectId(created.id);
       setMessage("Project created. Adding it to the production queue…");
-      if (useUploadedVoice && voiceFile && voiceTranscribed) {
-        const voiceBody = new FormData();
-        voiceBody.append("file", voiceFile);
-        await legacyRequest(`/projects/${created.id}/voiceover`, { method: "POST", body: voiceBody });
-      }
-      const started = await submitRun(created.id, {
-        use_uploaded_voice: Boolean(useUploadedVoice && voiceTranscribed),
-      });
+      const started = await submitRun(created.id);
 
       setJobId(started.job_id || started.run?.run_id || "");
       setMessage(
@@ -288,55 +198,6 @@ export default function Home() {
     }
   }
 
-  async function transcribeVoiceFile() {
-    if (!voiceFile) return;
-    setTranscribing(true);
-    setMessage("Transcribing your voice recording…");
-    try {
-      const body = new FormData();
-      body.append("file", voiceFile);
-      const data = await legacyRequest<{ transcript?: string; language?: string }>("/transcribe-upload", { method: "POST", body });
-      setScript(data.transcript || "");
-      setVoiceTranscribed(true);
-      setUseUploadedVoice(true);
-      setMessage(`Transcript ready${data.language ? ` (${data.language})` : ""}. Review it, then create your documentary.`);
-      document.getElementById("documentary-script")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Transcription failed.");
-    } finally {
-      setTranscribing(false);
-    }
-  }
-
-  async function createThumbnail() {
-    if (!projectId || !thumbnailTitle.trim()) return;
-    setThumbnailBusy(true);
-    setMessage("Creating a thumbnail from a frame in your finished video…");
-    try {
-      const data = await legacyRequest<{ thumbnail_url?: string }>(`/projects/${projectId}/thumbnail`, {
-        method: "POST",
-        body: JSON.stringify({ title: thumbnailTitle.trim(), background_id: backgroundId }),
-      });
-      setThumbnailUrl(`${apiUrl(data.thumbnail_url || "")}?v=${Date.now()}`);
-      setMessage("Thumbnail created from your selected video frame.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not create thumbnail.");
-    } finally {
-      setThumbnailBusy(false);
-    }
-  }
-
-  function previewVoice(id: string) {
-    setVoiceId(id);
-    setVoicePreviewUrl(apiUrl(`/voices/preview?voice_id=${encodeURIComponent(id)}`));
-  }
-
-  const effectiveLanguage = useCustomLanguage ? (customLanguage.trim().split(/[-_]/, 1)[0].toLowerCase() || "auto") : selectedLanguage;
-  const filteredVoices = voiceCatalog.filter((voice) =>
-    (effectiveLanguage === "auto" || voice.locale === effectiveLanguage || voice.locale?.split("_", 1)[0] === effectiveLanguage || voice.locale === "multilingual")
-    && `${voice.name} ${voice.id}`.toLowerCase().includes(voiceSearch.toLowerCase())
-  ).slice(0, 12);
-
   const videoUrl = status?.video_url ? apiUrl(status.video_url) : "";
 
   return (
@@ -351,18 +212,14 @@ export default function Home() {
           <Link className="nav-item active" href="/create"><Sparkles size={18} strokeWidth={1.7} aria-hidden /><span>Create</span><span className="nav-active-dot" /></Link>
           <Link className="nav-item" href="/studio"><LayoutGrid size={18} strokeWidth={1.7} aria-hidden /><span>Overview</span></Link>
           <Link className="nav-item" href="/projects"><FolderKanban size={18} strokeWidth={1.7} aria-hidden /><span>Projects</span></Link>
-          <a className="nav-item" href="#thumbnail-generator"><ImagePlus size={18} strokeWidth={1.7} aria-hidden /><span>Thumbnail generator</span></a>
-          <a className="nav-item" href="/channel-lab"><WandSparkles size={18} strokeWidth={1.7} aria-hidden /><span>Script</span></a>
-          <a className="nav-item" href="/thumbnail"><ImageIcon size={18} strokeWidth={1.7} aria-hidden /><span>Thumbnail</span></a>
-          <Link className="nav-item" href="/viral-clips"><Film size={18} strokeWidth={1.7} aria-hidden /><span>Short clips</span></Link>
         </nav>
 
         <div className="sidebar-spacer" />
         <div className="sidebar-note">
           <span className="note-icon"><WandSparkles size={18} strokeWidth={1.7} aria-hidden /></span>
-          <div><strong>Production tools</strong><p>Script, research, narration, and edit.</p></div>
+          <div><strong>Production tools</strong><p>Plan, narration, visuals, and rendering.</p></div>
         </div>
-        <div className="connection"><span className={`connection-dot ${apiOnline === false ? "offline" : ""}`} /><span>{apiOnline === null ? "Connecting to studio" : apiOnline ? "Studio API connected" : "Studio API unavailable"}</span></div>
+        <div className="connection"><span className={`connection-dot ${apiOnline === false ? "offline" : ""}`} /><span>{apiOnline === null ? "Contacting the studio API" : apiOnline ? "Studio API reachable" : "Studio API unavailable"}</span></div>
         <div className="sidebar-footer"><span className="avatar"><Image src="/cinemora-mark.svg" alt="" width={25} height={25} /></span><span><strong>Cinemora</strong><small>Production workspace</small></span></div>
       </aside>
 
@@ -383,12 +240,12 @@ export default function Home() {
                 <div className="panel-heading">
                   <div className="step-marker">01</div>
                   <div className="panel-title"><h2 id="script-title">Script</h2><p>Paste the narration you want produced.</p></div>
-                  <span className="required-tag">{words.toLocaleString()} / 50,000</span>
+                  <span className="required-tag">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span>
                 </div>
                 <label className="sr-only" htmlFor="documentary-script">Documentary script</label>
-                <textarea id="documentary-script" value={script} onChange={(event) => setScript(event.target.value)} maxLength={50000} placeholder="Paste script…" />
-                <div className="editor-footer"><span className="editor-hint">{words.toLocaleString()} words</span><span className="count">{script.length.toLocaleString()} / 50,000 characters</span></div>
-                <div className="voice-upload-row"><label className="field-label" htmlFor="voice-upload">OR UPLOAD YOUR NARRATION<input id="voice-upload" type="file" accept="audio/*,video/mp4,video/quicktime,video/webm,video/x-matroska" onChange={(event) => { setVoiceFile(event.target.files?.[0] || null); setVoiceTranscribed(false); setUseUploadedVoice(false); }} /></label><button type="button" className="thumbnail-button" disabled={!voiceFile || transcribing} onClick={() => void transcribeVoiceFile()}>{transcribing ? "Transcribing…" : voiceTranscribed ? "Transcribe again" : "Transcribe into script"}</button><small>Transcribe, then choose whether the final video uses this original recording or generated narration.</small>{voiceTranscribed && <label className="motion-toggle"><input type="checkbox" checked={useUploadedVoice} onChange={(event) => setUseUploadedVoice(event.target.checked)} /><span><strong>Use my original voice recording</strong><small>Use your uploaded audio as the narration track.</small></span></label>}</div>
+                <textarea id="documentary-script" value={script} onChange={(event) => setScript(event.target.value)} maxLength={MAX_SCRIPT_CHARS} placeholder="Paste script…" />
+                <div className="editor-footer"><span className="editor-hint">{words.toLocaleString()} words</span><span className="count">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span></div>
+                {script.length >= MAX_SCRIPT_CHARS && <p className="voice-note" role="status">Your script is at the {MAX_SCRIPT_CHARS.toLocaleString()}-character limit — the production API accepts at most {MAX_SCRIPT_CHARS.toLocaleString()} characters, and nothing beyond the limit is kept.</p>}
               </section>
 
               <section className="panel details-panel">
@@ -409,81 +266,19 @@ export default function Home() {
               </section>
 
               <section className="panel voice-panel" aria-labelledby="voice-title">
-                <div className="panel-heading compact-heading"><div className="step-marker">03</div><div className="panel-title"><h2 id="voice-title">Narration voice</h2><p>Choose a voice now; if its model is not present yet, the worker fetches it automatically when production starts.</p></div></div>
-                <label className="field-label" htmlFor="narration-voice">SELECTED VOICE
-                  <span className="select-wrap"><select id="narration-voice" value={voiceId} onChange={(event) => { const voice = voiceCatalog.find((item) => item.id === event.target.value); setVoiceId(event.target.value); if (voice?.locale && voice.locale !== "multilingual") setSelectedLanguage(voice.locale.split("_", 1)[0]); }} disabled={!voiceCatalog.length}>{filteredVoices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}{voice.voice_type === "masculine" ? " · masculine" : ""}</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
-                </label>
-                <label className="field-label" htmlFor="narration-language">DOCUMENTARY LANGUAGE
-                  <span className="select-wrap"><select id="narration-language" value={useCustomLanguage ? "__custom__" : selectedLanguage} onChange={(event) => { const nextLanguage = event.target.value; if (nextLanguage === "__custom__") { setUseCustomLanguage(true); return; } setUseCustomLanguage(false); setSelectedLanguage(nextLanguage); if (nextLanguage !== "auto") { const nextVoice = voiceCatalog.find((voice) => voice.locale?.split("_", 1)[0] === nextLanguage) || voiceCatalog.find((voice) => voice.locale === "multilingual"); if (nextVoice) setVoiceId(nextVoice.id); } }}>{[<option key="auto" value="auto">Automatic from script</option>, ...narrationLanguages.map((language) => <option key={language.code} value={language.code}>{language.name}</option>), <option key="custom" value="__custom__">Other language · enter BCP-47</option>]}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
-                </label>
-                {useCustomLanguage && <label className="field-label" htmlFor="custom-language-code">LANGUAGE CODE
-                  <input id="custom-language-code" className="thumbnail-input" value={customLanguage} onChange={(event) => setCustomLanguage(event.target.value)} placeholder="e.g. sw, am, zh-Hant" maxLength={16} />
-                  <small>Uses a matching installed Piper voice or the configured multilingual speech provider. If neither supports this language, production reports the limitation instead of speaking in another language.</small>
-                </label>}
-                <div className="voice-browser">
-                  <label className="field-label" htmlFor="voice-search">BROWSE MULTILINGUAL PIPER VOICES<input id="voice-search" className="thumbnail-input" value={voiceSearch} onChange={(event) => setVoiceSearch(event.target.value)} placeholder="Search accent or voice name" /></label>
-                  <div className="voice-catalog-list">{filteredVoices.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.name}{voice.voice_type === "masculine" ? " · masculine" : ""}</strong><small>{voice.provider === "openai" ? "Multilingual cloud voice" : voice.installed ? "Model ready" : "Worker downloads on first use"} · {voice.license_url ? <a href={voice.license_url} target="_blank" rel="noreferrer">view voice license</a> : "voice license varies"}</small></div><button type="button" onClick={() => { setVoiceId(voice.id); if (voice.locale && voice.locale !== "multilingual") setSelectedLanguage(voice.locale.split("_", 1)[0]); setMessage(`${voice.name} selected. First-use download happens in the worker if needed.`); }}>{voiceId === voice.id ? "Selected" : "Select"}</button>{voice.installed && <button type="button" onClick={() => previewVoice(voice.id)}>Preview</button>}</div>)}</div>
-                  {voiceCatalog.length > 12 && <p className="voice-note">Showing 12 matches. Search to narrow the catalog. Review each model card before commercial use.</p>}
-                  {voicePreviewUrl && <audio className="voice-preview-audio" controls preload="none" src={voicePreviewUrl}>Audio preview unavailable in this browser.</audio>}
-                </div>
-                <p className="voice-note">Automatic language selection detects the script and chooses a matching voice when one is available. If the selected language has no voice model, production reports the limitation instead of speaking in English.</p><p className="voice-note">Language support is based on the configured narration provider. Where available, a matching local Piper voice is used; other languages use the configured multilingual speech provider. Audio from that provider is AI-generated.</p>
+                <div className="panel-heading compact-heading"><div className="step-marker">03</div><div className="panel-title"><h2 id="voice-title">Narration voice</h2><p>Every production in this build is narrated with the studio's one installed voice.</p></div></div>
+                <div className="voice-catalog-list"><div className="voice-catalog-row"><div><strong>{NARRATION_VOICE_ID}</strong><small>English (US) · Built-in Piper voice · Model installed</small></div><span>In use</span></div></div>
+                <p className="voice-note">Narration language is English (US) — the language of the installed voice. There is no voice or language picker because there is nothing else installed to pick: the form sends exactly this voice, so the voice named here is the voice your film will use.</p>
               </section>
 
-              <section className="panel background-panel" aria-labelledby="background-title">
-                <div className="panel-heading compact-heading">
-                  <div className="step-marker">04</div>
-                  <div className="panel-title"><h2 id="background-title">Background</h2><p>Choose a visual treatment for motion graphics and your thumbnail.</p></div>
-                </div>
-                <div className="background-grid">
-                  {backgrounds.map((look) => (
-                    <label className={`background-option ${backgroundId === look.id ? "selected" : ""}`} key={look.id}>
-                      <input type="radio" name="background-look" value={look.id} checked={backgroundId === look.id} onChange={() => setBackgroundId(look.id)} />
-                      <span className={`background-preview bg-preview-${look.preview}`} aria-hidden="true"><span>CINEMORA</span></span>
-                      <span className="background-card-copy"><strong>{look.title}</strong><small>{look.description}</small></span>
-                    </label>
-                  ))}
-                </div>
-              </section>
-
-              <section className="panel music-panel" aria-labelledby="music-title">
-                <div className="panel-heading compact-heading">
-                  <div className="step-marker">05</div>
-                  <div className="panel-title"><h2 id="music-title">Background music</h2><p>Choose whether to include a music bed; narration stays in front.</p></div>
-                </div>
-                <label className="motion-toggle"><input type="checkbox" checked={includeMusic} onChange={(event) => setIncludeMusic(event.target.checked)} /><span><strong>Include background music</strong><small>Turn off for narration-only audio.</small></span></label>
-                {includeMusic && <div className="music-grid">
-                  <div className={`music-card ${selectedMusic === "auto" ? "selected" : ""}`}>
-                    <label className="music-card-choice">
-                      <input type="radio" name="music-track" value="auto" checked={selectedMusic === "auto"} onChange={() => setSelectedMusic("auto")} />
-                      <span><strong>Automatic selection</strong><small>Use a configured project track when available.</small></span>
-                    </label>
-                    <div className="music-auto-note">If no safe music source is configured, production continues with narration only.</div>
-                  </div>
-                  {musicTracks.map((track) => (
-                    <div className={`music-card ${selectedMusic === track.id ? "selected" : ""}`} key={track.id}>
-                      <label className="music-card-choice">
-                        <input type="radio" name="music-track" value={track.id} checked={selectedMusic === track.id} onChange={() => setSelectedMusic(track.id)} />
-                        <span><strong>{track.title}</strong><small>{track.mood}</small></span>
-                      </label>
-                      <audio controls preload="none" src={apiUrl(track.preview_url)} aria-label={`Preview ${track.title}`} />
-                    </div>
-                  ))}
-                </div>}
-                {includeMusic && <>
-                  <label className="music-volume-control">Music volume <strong>{musicPercent}% · {musicPercent === 0 ? "muted" : `${(20 * Math.log10(musicPercent / 100)).toFixed(1)} dB`}</strong><input type="range" min={0} max={100} value={musicPercent} onChange={(event) => setMusicPercent(Math.max(0, Math.min(100, Number(event.target.value))))} /><small>Linear gain after track loudness normalization and before voice ducking. Low values are very quiet. A mixed preview is available after narration is created.</small></label>
-                  <p className="music-license-note">Use tracks only when your download license permits your intended video use. Keep the original license or receipt.</p>
-                </>}
-                {includeMusic && musicLoadError && <p className="music-error" role="status">{musicLoadError}</p>}
-              </section>
-
-              <section className="panel motion-option-panel"><div className="panel-heading compact-heading"><div className="step-marker">06</div><div className="panel-title"><h2>Generation options</h2><p>Captions are independent of template-based motion graphics.</p></div></div><label className="motion-toggle"><input type="checkbox" checked={includeMotion} onChange={(event) => setIncludeMotion(event.target.checked)} /><span><strong>Motion graphics</strong><small>Off by default. Planned template graphics only; never used to cover an unresolved passage.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={includeCaptions} onChange={(event) => setIncludeCaptions(event.target.checked)} /><span><strong>Word-synced captions</strong><small>Captions remain available when graphics are off.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={includeSfx} onChange={(event) => setIncludeSfx(event.target.checked)} /><span><strong>Sound effects</strong><small>Separate from the background music option.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis. You review the per-sentence plan — proposed visuals, evidence and rights — and approve it before any footage is retrieved or rendered.</small></span></label><div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy. A downloaded asset is not automatically cleared for publication; review its source and license before publishing.</p></div></section>
+              <section className="panel motion-option-panel"><div className="panel-heading compact-heading"><div className="step-marker">04</div><div className="panel-title"><h2>Generation options</h2><p>Only options the production pipeline actually applies — nothing here is decorative.</p></div></div><label className="motion-toggle"><input type="checkbox" checked={includeCaptions} onChange={(event) => setIncludeCaptions(event.target.checked)} /><span><strong>Captions</strong><small>Burn timed captions into the finished video. Turn off to render without burned-in captions.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis. You review the per-sentence plan — proposed visuals, evidence and rights — and approve it before any footage is retrieved or rendered.</small></span></label><p className="music-license-note"><strong>Background music</strong> is not part of productions in this build: there is no music picker because the pipeline applies music only from an operator-supplied file, which this form does not collect. Films render with narration and captions only.</p><div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy. A downloaded asset is not automatically cleared for publication; review its source and license before publishing.</p></div></section>
 
             </div>
 
             <aside className="right-column">
               <section className="summary-card">
                 <div className="summary-top"><div><span className="eyebrow">PROJECT</span><h2>Summary</h2></div></div>
-                <div className="summary-rows"><div><span>Category</span><strong>{category}</strong></div><div><span>Background</span><strong>{backgrounds.find((look) => look.id === backgroundId)?.title || "Blue"}</strong></div><div><span>Music</span><strong>{includeMusic ? selectedMusic === "auto" ? "Automatic selection" : musicTracks.find((track) => track.id === selectedMusic)?.title || "Loading track" : "Off"}</strong></div><div><span>Music level</span><strong>{includeMusic ? `${musicPercent}%` : "—"}</strong></div><div><span>Captions</span><strong>{includeCaptions ? "On" : "Off"}</strong></div><div><span>Motion graphics</span><strong>{includeMotion ? "On" : "Off"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
+                <div className="summary-rows"><div><span>Category</span><strong>{category}</strong></div><div><span>Narration voice</span><strong>{NARRATION_VOICE_ID} · English (US)</strong></div><div><span>Captions</span><strong>{includeCaptions ? "Burned in" : "Off"}</strong></div><div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
                 <div className="summary-footnote"><Info size={18} strokeWidth={1.7} aria-hidden /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
 
                 <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiOnline === false}>
@@ -503,15 +298,6 @@ export default function Home() {
                   })}</div>
                   <div className="project-reference"><span>PROJECT</span><code>{projectId.slice(0, 8)}…</code>{jobId && <><i /><span>JOB</span><code>{jobId.slice(0, 8)}…</code></>}</div>
                 </> : <div className="empty-status"><div className="status-skeleton"><span /><span /><span /></div><p>Your production stages will appear here after you start.</p></div>}
-              </section>
-
-              <section className="panel thumbnail-panel" id="thumbnail-generator" aria-labelledby="thumbnail-title">
-                <div className="panel-heading compact-heading"><div className="step-marker">07</div><div className="panel-title"><h2 id="thumbnail-title">Thumbnail generator</h2><p>{videoUrl ? "Creates a 1280 × 720 cover from a real footage frame in your video." : "Available after your video is finished. Your generated thumbnails will appear here."}</p></div></div>
-                <label className="field-label" htmlFor="thumbnail-copy">THUMBNAIL TITLE
-                  <input id="thumbnail-copy" className="thumbnail-input" value={thumbnailTitle} onChange={(event) => setThumbnailTitle(event.target.value)} maxLength={100} placeholder="Add a short, clear headline" disabled={!videoUrl} />
-                </label>
-                <button className="thumbnail-button" type="button" disabled={!videoUrl || thumbnailBusy || !thumbnailTitle.trim()} onClick={() => void createThumbnail()}>{thumbnailBusy ? "Creating…" : thumbnailUrl ? "Regenerate thumbnail" : "Generate thumbnail"}</button>
-                {thumbnailUrl && <Image className="thumbnail-preview" src={thumbnailUrl} alt="Generated video thumbnail preview" width={640} height={360} unoptimized />}
               </section>
 
               {videoUrl && <section className="video-card"><div className="video-heading"><span className="eyebrow">FINAL CUT</span><span className="ready-pill">READY</span></div><video controls preload="metadata" src={videoUrl} /><a href={videoUrl} target="_blank" rel="noreferrer">Open or download MP4 <ArrowUpRight size={18} strokeWidth={1.7} aria-hidden /></a></section>}
