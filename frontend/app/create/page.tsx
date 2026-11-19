@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { BrandLockup } from "@/components/brand-lockup";
 import {
   apiUrl,
@@ -13,6 +13,23 @@ import {
   submitRun,
   type ProjectStatus,
 } from "@/lib/api";
+import {
+  ArrowRight,
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  AlertCircle,
+  Film,
+  FolderKanban,
+  Image as ImageIcon,
+  ImagePlus,
+  Info,
+  LayoutGrid,
+  Mic,
+  Search,
+  Sparkles,
+  WandSparkles,
+} from "lucide-react";
 
 const categories = [
   "Documentary",
@@ -331,18 +348,18 @@ export default function Home() {
 
         <div className="side-label">WORKSPACE</div>
         <nav className="side-nav" aria-label="Main navigation">
-          <Link className="nav-item active" href="/create"><Icon name="spark" /><span>Create</span><span className="nav-active-dot" /></Link>
-          <Link className="nav-item" href="/studio"><Icon name="grid" /><span>Overview</span></Link>
-          <Link className="nav-item" href="/projects"><Icon name="grid" /><span>Projects</span></Link>
-          <a className="nav-item" href="#thumbnail-generator"><Icon name="image" /><span>Thumbnail generator</span></a>
-          <a className="nav-item" href="/channel-lab"><Icon name="wand" /><span>Script</span></a>
-          <a className="nav-item" href="/thumbnail"><Icon name="image" /><span>Thumbnail</span></a>
-          <Link className="nav-item" href="/viral-clips"><Icon name="film" /><span>Short clips</span></Link>
+          <Link className="nav-item active" href="/create"><Sparkles size={18} strokeWidth={1.7} aria-hidden /><span>Create</span><span className="nav-active-dot" /></Link>
+          <Link className="nav-item" href="/studio"><LayoutGrid size={18} strokeWidth={1.7} aria-hidden /><span>Overview</span></Link>
+          <Link className="nav-item" href="/projects"><FolderKanban size={18} strokeWidth={1.7} aria-hidden /><span>Projects</span></Link>
+          <a className="nav-item" href="#thumbnail-generator"><ImagePlus size={18} strokeWidth={1.7} aria-hidden /><span>Thumbnail generator</span></a>
+          <a className="nav-item" href="/channel-lab"><WandSparkles size={18} strokeWidth={1.7} aria-hidden /><span>Script</span></a>
+          <a className="nav-item" href="/thumbnail"><ImageIcon size={18} strokeWidth={1.7} aria-hidden /><span>Thumbnail</span></a>
+          <Link className="nav-item" href="/viral-clips"><Film size={18} strokeWidth={1.7} aria-hidden /><span>Short clips</span></Link>
         </nav>
 
         <div className="sidebar-spacer" />
         <div className="sidebar-note">
-          <span className="note-icon"><Icon name="wand" /></span>
+          <span className="note-icon"><WandSparkles size={18} strokeWidth={1.7} aria-hidden /></span>
           <div><strong>Production tools</strong><p>Script, research, narration, and edit.</p></div>
         </div>
         <div className="connection"><span className={`connection-dot ${apiOnline === false ? "offline" : ""}`} /><span>{apiOnline === null ? "Connecting to studio" : apiOnline ? "Studio API connected" : "Studio API unavailable"}</span></div>
@@ -384,20 +401,20 @@ export default function Home() {
                     <input id="project-title" className="thumbnail-input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} placeholder="e.g. The Yangtze Incident" />
                   </label>
                   <label className="field-label" htmlFor="category">STORY CATEGORY
-                    <span className="select-wrap"><select id="category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select><Icon name="chevron" /></span>
+                    <span className="select-wrap"><select id="category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
                   </label>
                   <div className="field-label length-field"><span>ESTIMATED RUNTIME</span><div className="runtime-value">{duration ? `~${duration} min` : "Add a script"}</div><small>Based on about 145 spoken words per minute.</small></div>
                 </div>
-                <div className="workflow-includes"><span className="include-label">INCLUDED IN YOUR WORKFLOW</span><div className="include-chips"><span><Icon name="search" /> Story research</span><span><Icon name="film" /> Matched visuals</span><span><Icon name="mic" /> Narration + captions</span></div></div>
+                <div className="workflow-includes"><span className="include-label">INCLUDED IN YOUR WORKFLOW</span><div className="include-chips"><span><Search size={18} strokeWidth={1.7} aria-hidden /> Story research</span><span><Film size={18} strokeWidth={1.7} aria-hidden /> Matched visuals</span><span><Mic size={18} strokeWidth={1.7} aria-hidden /> Narration + captions</span></div></div>
               </section>
 
               <section className="panel voice-panel" aria-labelledby="voice-title">
                 <div className="panel-heading compact-heading"><div className="step-marker">03</div><div className="panel-title"><h2 id="voice-title">Narration voice</h2><p>Choose a voice now; if its model is not present yet, the worker fetches it automatically when production starts.</p></div></div>
                 <label className="field-label" htmlFor="narration-voice">SELECTED VOICE
-                  <span className="select-wrap"><select id="narration-voice" value={voiceId} onChange={(event) => { const voice = voiceCatalog.find((item) => item.id === event.target.value); setVoiceId(event.target.value); if (voice?.locale && voice.locale !== "multilingual") setSelectedLanguage(voice.locale.split("_", 1)[0]); }} disabled={!voiceCatalog.length}>{filteredVoices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}{voice.voice_type === "masculine" ? " · masculine" : ""}</option>)}</select><Icon name="chevron" /></span>
+                  <span className="select-wrap"><select id="narration-voice" value={voiceId} onChange={(event) => { const voice = voiceCatalog.find((item) => item.id === event.target.value); setVoiceId(event.target.value); if (voice?.locale && voice.locale !== "multilingual") setSelectedLanguage(voice.locale.split("_", 1)[0]); }} disabled={!voiceCatalog.length}>{filteredVoices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}{voice.voice_type === "masculine" ? " · masculine" : ""}</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
                 </label>
                 <label className="field-label" htmlFor="narration-language">DOCUMENTARY LANGUAGE
-                  <span className="select-wrap"><select id="narration-language" value={useCustomLanguage ? "__custom__" : selectedLanguage} onChange={(event) => { const nextLanguage = event.target.value; if (nextLanguage === "__custom__") { setUseCustomLanguage(true); return; } setUseCustomLanguage(false); setSelectedLanguage(nextLanguage); if (nextLanguage !== "auto") { const nextVoice = voiceCatalog.find((voice) => voice.locale?.split("_", 1)[0] === nextLanguage) || voiceCatalog.find((voice) => voice.locale === "multilingual"); if (nextVoice) setVoiceId(nextVoice.id); } }}>{[<option key="auto" value="auto">Automatic from script</option>, ...narrationLanguages.map((language) => <option key={language.code} value={language.code}>{language.name}</option>), <option key="custom" value="__custom__">Other language · enter BCP-47</option>]}</select><Icon name="chevron" /></span>
+                  <span className="select-wrap"><select id="narration-language" value={useCustomLanguage ? "__custom__" : selectedLanguage} onChange={(event) => { const nextLanguage = event.target.value; if (nextLanguage === "__custom__") { setUseCustomLanguage(true); return; } setUseCustomLanguage(false); setSelectedLanguage(nextLanguage); if (nextLanguage !== "auto") { const nextVoice = voiceCatalog.find((voice) => voice.locale?.split("_", 1)[0] === nextLanguage) || voiceCatalog.find((voice) => voice.locale === "multilingual"); if (nextVoice) setVoiceId(nextVoice.id); } }}>{[<option key="auto" value="auto">Automatic from script</option>, ...narrationLanguages.map((language) => <option key={language.code} value={language.code}>{language.name}</option>), <option key="custom" value="__custom__">Other language · enter BCP-47</option>]}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
                 </label>
                 {useCustomLanguage && <label className="field-label" htmlFor="custom-language-code">LANGUAGE CODE
                   <input id="custom-language-code" className="thumbnail-input" value={customLanguage} onChange={(event) => setCustomLanguage(event.target.value)} placeholder="e.g. sw, am, zh-Hant" maxLength={16} />
@@ -467,10 +484,10 @@ export default function Home() {
               <section className="summary-card">
                 <div className="summary-top"><div><span className="eyebrow">PROJECT</span><h2>Summary</h2></div></div>
                 <div className="summary-rows"><div><span>Category</span><strong>{category}</strong></div><div><span>Background</span><strong>{backgrounds.find((look) => look.id === backgroundId)?.title || "Blue"}</strong></div><div><span>Music</span><strong>{includeMusic ? selectedMusic === "auto" ? "Automatic selection" : musicTracks.find((track) => track.id === selectedMusic)?.title || "Loading track" : "Off"}</strong></div><div><span>Music level</span><strong>{includeMusic ? `${musicPercent}%` : "—"}</strong></div><div><span>Captions</span><strong>{includeCaptions ? "On" : "Off"}</strong></div><div><span>Motion graphics</span><strong>{includeMotion ? "On" : "Off"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
-                <div className="summary-footnote"><Icon name="info" /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
+                <div className="summary-footnote"><Info size={18} strokeWidth={1.7} aria-hidden /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
 
                 <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiOnline === false}>
-                  {loading ? <><span className="button-spinner" /> Starting…</> : <>Create and start <Icon name="arrow" /></>}
+                  {loading ? <><span className="button-spinner" /> Starting…</> : <>Create and start <ArrowRight size={18} strokeWidth={1.7} aria-hidden /></>}
                 </button>
                 <p className="button-caption">You can follow each stage as your film comes together.</p>
               </section>
@@ -482,7 +499,7 @@ export default function Home() {
                   {status?.status === "awaiting_approval" && <p className="status-message"><Link className="text-link" href={`/projects/${projectId}/plan`}>Review the production plan</Link></p>}
                   <div className="stage-list">{stageOrder.map(([key, label]) => {
                     const stageStatus = status?.stages?.[key]?.status || (status?.current_stage === key ? "running" : "pending");
-                    return <div className={`stage-row ${stageStatus}`} key={key}><span className="stage-check">{stageStatus === "completed" ? "✓" : stageStatus === "running" ? <span /> : stageStatus === "failed" ? "!" : ""}</span><span>{label}</span>{stageStatus === "running" && <small>NOW</small>}{stageStatus === "skipped" && <small>SKIPPED</small>}{stageStatus === "failed" && <small>FAILED</small>}</div>;
+                    return <div className={`stage-row ${stageStatus}`} key={key}><span className="stage-check">{stageStatus === "completed" ? <Check size={9} strokeWidth={3} aria-hidden /> : stageStatus === "running" ? <span /> : stageStatus === "failed" ? <AlertCircle size={9} strokeWidth={2.5} aria-hidden /> : ""}</span><span>{label}</span>{stageStatus === "running" && <small>NOW</small>}{stageStatus === "skipped" && <small>SKIPPED</small>}{stageStatus === "failed" && <small>FAILED</small>}</div>;
                   })}</div>
                   <div className="project-reference"><span>PROJECT</span><code>{projectId.slice(0, 8)}…</code>{jobId && <><i /><span>JOB</span><code>{jobId.slice(0, 8)}…</code></>}</div>
                 </> : <div className="empty-status"><div className="status-skeleton"><span /><span /><span /></div><p>Your production stages will appear here after you start.</p></div>}
@@ -497,7 +514,7 @@ export default function Home() {
                 {thumbnailUrl && <Image className="thumbnail-preview" src={thumbnailUrl} alt="Generated video thumbnail preview" width={640} height={360} unoptimized />}
               </section>
 
-              {videoUrl && <section className="video-card"><div className="video-heading"><span className="eyebrow">FINAL CUT</span><span className="ready-pill">READY</span></div><video controls preload="metadata" src={videoUrl} /><a href={videoUrl} target="_blank" rel="noreferrer">Open or download MP4 <Icon name="arrow-up-right" /></a></section>}
+              {videoUrl && <section className="video-card"><div className="video-heading"><span className="eyebrow">FINAL CUT</span><span className="ready-pill">READY</span></div><video controls preload="metadata" src={videoUrl} /><a href={videoUrl} target="_blank" rel="noreferrer">Open or download MP4 <ArrowUpRight size={18} strokeWidth={1.7} aria-hidden /></a></section>}
             </aside>
           </form>
           <footer className="page-footer"><span>CINEMORA</span><span>Production workspace</span></footer>
@@ -519,24 +536,4 @@ function statusTitle(status: string | undefined, hasProject: boolean, loading: b
   if (status === "running") return "Your film is in production";
   if (status === "queued" || status === "created" || status === "pipeline_queued") return "Waiting in the queue";
   return hasProject ? "Checking production…" : "Ready when you are";
-}
-
-function Icon({ name }: { name: string }) {
-  const common = { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true as const };
-  const paths: Record<string, ReactNode> = {
-    spark: <><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" /><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z" /></>,
-    grid: <><rect x="3.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="3.5" width="7" height="7" rx="1.5" /><rect x="3.5" y="13.5" width="7" height="7" rx="1.5" /><rect x="13.5" y="13.5" width="7" height="7" rx="1.5" /></>,
-    image: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="8.5" cy="9" r="1.5" /><path d="m21 15-5-5L5 20" /></>,
-    layers: <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5M3 16l9 5 9-5" /></>,
-    wand: <><path d="m15 4 5 5M4 20l12.5-12.5M7 4v4M5 6h4M18 14v4M16 16h4" /><path d="m13 6 5 5" /></>,
-    more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
-    chevron: <path d="m7 10 5 5 5-5" />,
-    search: <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 4.5 4.5" /></>,
-    film: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4" /></>,
-    mic: <><rect x="9" y="3" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" /></>,
-    info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>,
-    arrow: <><path d="M5 12h14M13 6l6 6-6 6" /></>,
-    "arrow-up-right": <><path d="M7 17 17 7M8 7h9v9" /></>,
-  };
-  return <svg {...common}>{paths[name] || paths.spark}</svg>;
 }

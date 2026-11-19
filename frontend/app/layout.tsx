@@ -1,6 +1,16 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
-import "./cinemora-design.css";
+
+/* C-09: Inter is the single typeface for body and headings, loaded via
+   next/font (self-hosted at build time, no external request at runtime)
+   and exposed as --font-inter; the design tokens in globals.css build
+   --font-sans on it. */
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: {
@@ -21,7 +31,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className={`h-full antialiased ${inter.variable}`}>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

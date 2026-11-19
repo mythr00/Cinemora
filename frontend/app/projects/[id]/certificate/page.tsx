@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { ArrowLeft } from "lucide-react";
 import { getCertificate, type Certificate } from "@/lib/api";
 
 export default function CertificatePage() {
@@ -33,7 +34,7 @@ export default function CertificatePage() {
     <main className="app-page certificate-page">
       <AppNavigation active="/projects" />
       <section className="plan-content">
-        <Link href={`/projects/${projectId}`} className="editor-back">← Project</Link>
+        <Link href={`/projects/${projectId}`} className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Project</Link>
         <p className="eyebrow">PROVENANCE CERTIFICATE</p>
         <h1>{certificate?.project.title || "Provenance certificate"}</h1>
         <p className="plan-intro">

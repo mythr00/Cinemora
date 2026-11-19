@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiUrl, listProjects, type ProjectSummary } from "@/lib/api";
+import { ArrowUpRight } from "lucide-react";
 
 type Project = ProjectSummary;
 const team = ["Voice actor", "Script analysis", "Asset manager", "Motion designer", "Sound designer", "Video editor"];
@@ -27,7 +28,7 @@ export function ProductionTeamShowcase() {
     <div className="team-stage">
       {team.map((role, index) => <div className={`team-role team-role-${index + 1}`} key={role}><span className="team-role-index">0{index + 1}</span><span>{role}</span></div>)}
       <div className="team-preview">
-        {project?.video_url ? <><video src={apiUrl(project.video_url)} controls playsInline preload="metadata" aria-label={`Completed film preview: ${project.title || project.script_preview || project.category}`} /><div className="team-preview-caption"><span>COMPLETED PROJECT</span><strong>{project.script_preview || project.category}</strong></div></> : <div className="team-preview-empty"><span className="preview-symbol" aria-hidden="true"><i /></span><strong>Your film preview appears here</strong><p>Once a project is completed, you can play it from your library.</p><Link href="/projects">View projects <span aria-hidden="true">↗</span></Link></div>}
+        {project?.video_url ? <><video src={apiUrl(project.video_url)} controls playsInline preload="metadata" aria-label={`Completed film preview: ${project.title || project.script_preview || project.category}`} /><div className="team-preview-caption"><span>COMPLETED PROJECT</span><strong>{project.script_preview || project.category}</strong></div></> : <div className="team-preview-empty"><span className="preview-symbol" aria-hidden="true"><i /></span><strong>Your film preview appears here</strong><p>Once a project is completed, you can play it from your library.</p><Link href="/projects">View projects <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>}
       </div>
       <div className="team-stage-note"><span className="team-stage-line" /><span>STORY → RESEARCH → PRODUCTION → REVIEW</span></div>
     </div>

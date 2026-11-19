@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { BrandLockup } from "@/components/brand-lockup";
+import { ArrowUpRight } from "lucide-react";
 
 const links = [
   ["/studio", "Dashboard"],
@@ -28,7 +29,7 @@ export function AppNavigation({ active }: { active: string }) {
           </Link>
         ))}
       </nav>
-      <Link className="app-nav-cta" href="/create">Create a film <span aria-hidden="true">↗</span></Link>
+      <Link className="app-nav-cta" href="/create">Create a film <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link>
       <button className="app-menu-toggle" type="button" aria-expanded={open} aria-controls="studio-menu" aria-label={open ? "Close studio navigation" : "Open studio navigation"} onClick={() => setOpen((current) => !current)}>
         <span /><span />
       </button>

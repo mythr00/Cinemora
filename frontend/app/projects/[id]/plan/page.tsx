@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { ArrowLeft } from "lucide-react";
 import {
   ApiClientError,
   approvePlan,
@@ -115,7 +116,7 @@ export default function PlanReviewPage() {
     <main className="app-page plan-page">
       <AppNavigation active="/projects" />
       <section className="plan-content">
-        <Link href={`/projects/${projectId}`} className="editor-back">← Project</Link>
+        <Link href={`/projects/${projectId}`} className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Project</Link>
         <p className="eyebrow">PRODUCTION PLAN</p>
         <h1>{plan?.title || plan?.bible.title || "Production plan"}</h1>
         <p className="plan-intro">

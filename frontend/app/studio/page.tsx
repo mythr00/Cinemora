@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { apiUrl, listProjects, type ProjectSummary } from "@/lib/api";
+import { ArrowUpRight } from "lucide-react";
 
 type Project = ProjectSummary;
 
@@ -39,7 +40,7 @@ export default function StudioPage() {
     <div className="dashboard-content">
       <section className="dashboard-welcome">
         <div><p className="eyebrow">YOUR PRODUCTION DESK</p><h1>Good stories deserve<br /><em>a considered cut.</em></h1><p>Start with a script, follow each production as it moves, and return to the work whenever you’re ready.</p></div>
-        <Link className="button button-primary" href="/create">Start a production <span aria-hidden="true">↗</span></Link>
+        <Link className="button button-primary" href="/create">Start a production <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link>
       </section>
 
       <section className="dashboard-metrics" aria-label="Project overview">
@@ -50,20 +51,20 @@ export default function StudioPage() {
       </section>
 
       <section className="dashboard-projects">
-        <div className="section-heading"><div><p className="eyebrow">RECENT WORK</p><h2>Back to the edit.</h2></div><Link className="text-link" href="/projects">View all projects <span aria-hidden="true">↗</span></Link></div>
+        <div className="section-heading"><div><p className="eyebrow">RECENT WORK</p><h2>Back to the edit.</h2></div><Link className="text-link" href="/projects">View all projects <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>
         {busy && <div className="dashboard-loading" role="status">Loading your project library…</div>}
         {error && <div className="dashboard-error" role="alert"><span>{error}</span><button type="button" onClick={() => { setBusy(true); void load(); }}>Try again</button></div>}
-        {!busy && !error && recent.length === 0 && <div className="dashboard-empty"><div className="empty-reel" aria-hidden="true"><span /><span /><span /></div><p className="eyebrow">A CLEAR FIRST FRAME</p><h3>Your next film starts here.</h3><p>Create a project from a script. Its real production state and export will appear in this space.</p><Link className="button button-primary" href="/create">Create your first film <span aria-hidden="true">↗</span></Link></div>}
+        {!busy && !error && recent.length === 0 && <div className="dashboard-empty"><div className="empty-reel" aria-hidden="true"><span /><span /><span /></div><p className="eyebrow">A CLEAR FIRST FRAME</p><h3>Your next film starts here.</h3><p>Create a project from a script. Its real production state and export will appear in this space.</p><Link className="button button-primary" href="/create">Create your first film <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>}
         {!busy && !error && recent.length > 0 && <div className="dashboard-project-grid">{recent.map((project) => <article className="dashboard-project-card" key={project.id}>
           <Link className={`project-art ${project.video_url ? "has-video" : ""}`} href={`/projects/${project.id}`} aria-label={`Open ${project.category} project`}>
             {project.video_url ? <video src={apiUrl(project.video_url)} preload="metadata" muted playsInline /> : <span className="project-art-mark"><span className="reel-glyph" /></span>}
             <span className={`project-state project-state-${project.status}`}>{label(project.status)}</span>
           </Link>
-          <div className="dashboard-project-info"><div><p>{project.category}</p><time dateTime={project.created_at}>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(project.created_at))}</time></div><h3>{project.title || project.script_preview || "Untitled production"}</h3><p className="project-stage">{project.current_stage ? `Stage · ${label(project.current_stage)}` : project.video_url ? "Export available" : "Production status available"}</p><Link href={`/projects/${project.id}`}>Open project <span aria-hidden="true">↗</span></Link></div>
+          <div className="dashboard-project-info"><div><p>{project.category}</p><time dateTime={project.created_at}>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(project.created_at))}</time></div><h3>{project.title || project.script_preview || "Untitled production"}</h3><p className="project-stage">{project.current_stage ? `Stage · ${label(project.current_stage)}` : project.video_url ? "Export available" : "Production status available"}</p><Link href={`/projects/${project.id}`}>Open project <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>
         </article>)}</div>}
       </section>
 
-      <section className="dashboard-tools"><div><p className="eyebrow">AT YOUR DISPOSAL</p><h2>Small tools for<br />the larger story.</h2></div><div className="tool-links"><Link href="/channel-lab"><span className="tool-index">01</span><span><strong>Script</strong><small>Research a fresh topic and develop an original script.</small></span><span aria-hidden="true">↗</span></Link><Link href="/thumbnail"><span className="tool-index">02</span><span><strong>Thumbnail</strong><small>Generate a standalone documentary cover image.</small></span><span aria-hidden="true">↗</span></Link><Link href="/viral-clips"><span className="tool-index">03</span><span><strong>Short-clip extraction</strong><small>Work from an accessible YouTube link or your own video file.</small></span><span aria-hidden="true">↗</span></Link></div></section>
+      <section className="dashboard-tools"><div><p className="eyebrow">AT YOUR DISPOSAL</p><h2>Small tools for<br />the larger story.</h2></div><div className="tool-links"><Link href="/channel-lab"><span className="tool-index">01</span><span><strong>Script</strong><small>Research a fresh topic and develop an original script.</small></span><ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link><Link href="/thumbnail"><span className="tool-index">02</span><span><strong>Thumbnail</strong><small>Generate a standalone documentary cover image.</small></span><ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link><Link href="/viral-clips"><span className="tool-index">03</span><span><strong>Short-clip extraction</strong><small>Work from an accessible YouTube link or your own video file.</small></span><ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div></section>
       <footer className="app-footer"><span>CINEMORA / STUDIO</span><span>Project information is loaded from your Cinemora API.</span></footer>
     </div>
   </main>;
