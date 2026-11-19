@@ -322,6 +322,24 @@ _SEGMENT_BASIS: dict = {}
 _SEGMENT_ATTEMPTS: dict = {}
 _SEGMENT_FAILURE_CAUSE: dict = {}
 
+# yt-dlp TLS trust (founder investigation, 2026-11-19): yt-dlp verifies
+# TLS against certifi's bundled Mozilla roots by default and ignores
+# both the system trust store and SSL_CERT_FILE. Behind a TLS-
+# intercepting egress proxy whose CA is installed in the system store
+# (and named by SSL_CERT_FILE / REQUESTS_CA_BUNDLE), every extraction
+# therefore fails with CERTIFICATE_VERIFY_FAILED even though curl,
+# git and requests — which honour the environment bundle — work.
+# When the environment configures a CA bundle, pass yt-dlp's own
+# supported --compat-options no-certifi so it verifies against the
+# system / environment trust chain instead. Verification stays ON;
+# --no-check-certificate is never used anywhere in this pipeline.
+def _yt_dlp_base_command() -> list:
+    command = [sys.executable, "-m", "yt_dlp"]
+    if os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE"):
+        command += ["--compat-options", "no-certifi"]
+    return command
+
+
 # Per-run resilience state (cleared by reset_media_caches each job):
 # URLs whose download already failed in this run are never re-requested
 # by a later beat/scene — a throttled or dead URL stays dead for the run
@@ -1869,9 +1887,7 @@ def download_video_clip(
     ).replace("\\", "/")
 
     command = [
-        sys.executable,
-        "-m",
-        "yt_dlp",
+        *_yt_dlp_base_command(),
 
         "--no-playlist",
         "--no-warnings",
@@ -2171,9 +2187,7 @@ def _youtube_info(key):
         try:
             code, stdout, stderr = run_command_safe(
                 [
-                    sys.executable,
-                    "-m",
-                    "yt_dlp",
+                    *_yt_dlp_base_command(),
                     "--no-warnings",
                     "--dump-single-json",
                     "--skip-download",
