@@ -1135,13 +1135,16 @@ def dry_run_beats(script, project_dir, project_id="beats_dry_run", llm="auto"):
 # ==========================================================================
 
 def _web_image_hit(url, title, source):
+    # AUD-15: the licence of an arbitrary web image is UNKNOWN. This helper
+    # previously stamped "royalty-free" on any URL — a false rights claim.
     return {"image_url": url, "url": url, "link": url, "title": title,
-            "source": source, "license": "royalty-free", "snippet": title}
+            "source": source, "license": "unknown", "snippet": title}
 
 
 def _youtube_video_hit(url, title, source):
+    # AUD-15: see _web_image_hit — never fabricate a licence.
     return {"video_url": url, "url": url, "link": url, "title": title,
-            "source": source, "license": "royalty-free", "snippet": title}
+            "source": source, "license": "unknown", "snippet": title}
 
 
 def _rank_hits(query, hits, limit, allow_people=False):
@@ -1237,6 +1240,54 @@ def search_image_sources(query, limit=5):
     return output
 
 
+def search_wikimedia_images(query, limit=5):
+    """Wikimedia Commons candidates with REAL licence evidence (AUD-15).
+
+    Commons is the fallback image source whose licence name, licence URL
+    and creator come from the provider's own metadata — the only image
+    source in the pipeline that can honestly record a licence. Everything
+    else stays "unknown". No API key required; no Pexels/Pixabay.
+    """
+    from services.licensed_media import search_wikimedia
+
+    query = str(query or "").strip()
+    if not query:
+        return []
+
+    try:
+        hits = search_wikimedia(query, limit=limit)
+    except Exception as error:
+        print(f"Wikimedia search failed: {error}")
+        return []
+
+    output = []
+    for hit in hits:
+        image_url = str(hit.get("download_url") or "").strip()
+        if not image_url:
+            continue
+
+        creator = re.sub("<[^>]+>", "", str(hit.get("creator") or "")).strip()
+        licence = str(hit.get("license") or "").strip()
+
+        output.append({
+            "title": hit.get("title", ""),
+            "image_url": image_url,
+            "url": image_url,
+            "link": hit.get("source_url", ""),
+            "source_url": hit.get("source_url", ""),
+            "snippet": hit.get("alt", "") or hit.get("title", ""),
+            "source": "wikimedia",
+            "type": "image",
+            "creator": creator,
+            "license": licence or "unknown",
+            "license_url": hit.get("license_url", ""),
+            "rights_status": "license_recorded" if licence else "verify_before_publish",
+            "matched_query": query,
+        })
+
+    return output
+
+
 def search_youtube_videos(query, limit=5):
     query = str(query or "").strip()
     if not query:
@@ -1278,6 +1329,10 @@ def search_youtube_videos(query, limit=5):
             "link": url,
             "title": hit.get("title", ""),
             "source": "youtube",
+            # Serper's per-result "source" is the channel name for YouTube
+            # results — keep it as creator evidence (AUD-15).
+            "channel": hit.get("source", ""),
+            "creator": hit.get("source", ""),
             "license": "unknown",
             "rights_status": "verify_before_publish",
             "snippet": hit.get("snippet", ""),
@@ -3176,6 +3231,13 @@ def _uve_download_video_candidate(
             "codec": probe["codec"],
             "has_audio": probe["has_audio"],
             "probed": True,
+            # AUD-15 rights evidence: who made it (when the provider says),
+            # and when WE retrieved it. Licence stays whatever the
+            # candidate honestly carried — "unknown" for YouTube.
+            "creator": candidate.get("creator")
+            or candidate.get("channel")
+            or "",
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
         }
     )
 
@@ -3459,6 +3521,19 @@ def _uve_scenario_search(
                 f"for '{query}': {error}"
             )
             found_images = []
+
+        # Wikimedia Commons fallback (AUD-15): appended after Serper
+        # results; carries genuine licence evidence when available.
+        try:
+            found_images = found_images + search_wikimedia_images(
+                query,
+                limit=3,
+            )
+        except Exception as error:
+            print(
+                f"Wikimedia search failed "
+                f"for '{query}': {error}"
+            )
 
         search_cache[cache_key] = {
             "videos": found_videos,

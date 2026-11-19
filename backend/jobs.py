@@ -17,7 +17,12 @@ from services.captions import transcribe_audio
 from services.caption_renderer import burn_captions
 from services.graphics_pipeline import build_motion_graphics_assets
 from services.final_video_auditor import validate_final_video
-from services.asset_report import build_asset_report, write_asset_report
+from services.asset_report import (
+    build_asset_report,
+    build_rights_manifest,
+    write_asset_report,
+    write_rights_manifest,
+)
 from services.visual_registry import reset_registry
 
 from services.production_state import (
@@ -629,6 +634,19 @@ def run_full_pipeline(project_id: str, script: str):
             renderer_audit=renderer_audit,
         )
         write_asset_report(project_dir, asset_report)
+
+        rights_manifest = build_rights_manifest(processed_scenes)
+        write_rights_manifest(project_dir, rights_manifest)
+        licensed_count = sum(
+            1
+            for entry in rights_manifest
+            if entry["license"] and entry["license"] != "unknown"
+        )
+        print(
+            f"Rights manifest: {len(rights_manifest)} assets, "
+            f"{licensed_count} with a recorded licence, "
+            f"{len(rights_manifest) - licensed_count} unknown."
+        )
 
         print(
             "Asset report: "

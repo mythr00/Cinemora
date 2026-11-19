@@ -221,3 +221,67 @@ def write_asset_report(project_dir, report) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+def build_rights_manifest(processed_scenes) -> list:
+    """Per-asset rights evidence for a project (AUD-15).
+
+    One entry per accepted asset: where it came from, who created it (when
+    the provider reports it), its licence exactly as recorded — "unknown"
+    stays "unknown" — and when it was retrieved. This manifest is the
+    project's reuse evidence; nothing in it is inferred or upgraded.
+    """
+    entries: dict[str, dict] = {}
+    sentences_by_path: dict[str, list] = {}
+
+    for scene in processed_scenes or []:
+        if not isinstance(scene, dict):
+            continue
+        for asset in list(scene.get("videos") or []) + list(scene.get("images") or []):
+            if not isinstance(asset, dict):
+                continue
+            path = str(asset.get("file_path") or asset.get("path") or "")
+            if path and path not in entries:
+                entries[path] = asset
+        for sentence in scene.get("sentences") or []:
+            if not isinstance(sentence, dict):
+                continue
+            number = sentence.get("sentence_number")
+            for asset in list(sentence.get("videos") or []) + list(sentence.get("images") or []):
+                if not isinstance(asset, dict):
+                    continue
+                path = str(asset.get("file_path") or asset.get("path") or "")
+                if path and number is not None:
+                    sentences_by_path.setdefault(path, [])
+                    if number not in sentences_by_path[path]:
+                        sentences_by_path[path].append(number)
+
+    manifest = []
+    for path, asset in entries.items():
+        manifest.append(
+            {
+                "file_path": path,
+                "type": asset.get("type") or asset.get("visual_type") or "",
+                "title": asset.get("title") or "",
+                "source": asset.get("source") or "",
+                "source_url": asset.get("source_url") or asset.get("link") or "",
+                "content_url": asset.get("video_url")
+                or asset.get("image_url")
+                or asset.get("url")
+                or "",
+                "creator": asset.get("creator") or asset.get("channel") or "",
+                "license": asset.get("license") or "unknown",
+                "license_url": asset.get("license_url") or "",
+                "rights_status": asset.get("rights_status") or "verify_before_publish",
+                "retrieved_at": asset.get("retrieved_at") or "",
+                "sentence_numbers": sentences_by_path.get(path, []),
+            }
+        )
+    return manifest
+
+
+def write_rights_manifest(project_dir, manifest) -> Path:
+    path = Path(project_dir) / "rights_manifest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path

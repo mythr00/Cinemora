@@ -203,6 +203,15 @@ def _pixabay_videos(q: str, limit: int) -> list[dict]:
     return out
 
 
+def search_wikimedia(query: str, limit: int = 6) -> list[dict]:
+    """Public Wikimedia Commons search (PD / CC stills with full licence
+    evidence). Added for the corrected Asset Manager (AUD-15): Wikimedia is
+    the one retrieval source whose licence, licence URL and creator are
+    captured from the provider itself. Pexels/Pixabay stay unwired per the
+    founder's permanent restriction (2026-11-19)."""
+    return _wikimedia(query, limit)
+
+
 def _wikimedia(q: str, limit: int) -> list[dict]:
     """PD / CC stills only. Useful later for verified archival images."""
     r = _session().get(
