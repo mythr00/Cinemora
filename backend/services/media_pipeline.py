@@ -1288,20 +1288,68 @@ def search_wikimedia_images(query, limit=5):
     return output
 
 
-def search_youtube_videos(query, limit=5):
+_KNOWN_VIDEO_PROVIDERS = {
+    "youtube.com": "youtube",
+    "youtu.be": "youtube",
+    "vimeo.com": "vimeo",
+    "dailymotion.com": "dailymotion",
+    "archive.org": "archive.org",
+    "commons.wikimedia.org": "wikimedia",
+    "upload.wikimedia.org": "wikimedia",
+    "wikimedia.org": "wikimedia",
+}
+
+
+def provider_for_url(url):
+    """(provider, host) for a URL. Known video hosts get canonical
+    provider names; anything else is identified by its domain, so a news
+    site is reported as itself (e.g. "bbc.com"), never as another
+    provider. Multi-source correction MS-1."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(str(url or "")).netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    for suffix, name in _KNOWN_VIDEO_PROVIDERS.items():
+        if host == suffix or host.endswith("." + suffix):
+            return name, host
+    return (host or "web"), host
+
+
+def _disabled_providers():
+    """Providers disabled via CINEMORA_DISABLED_PROVIDERS (comma list).
+    Provider toggles are part of the modular retrieval design: any
+    provider — including YouTube — can be switched off without touching
+    the others."""
+    raw = os.getenv("CINEMORA_DISABLED_PROVIDERS", "")
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}
+
+
+def search_videos_multi(query, limit=5):
+    """Multi-source video discovery (MS-1).
+
+    Serper's video index covers many hosts — YouTube, Vimeo, news sites,
+    archives and more. The previous implementation DISCARDED every result
+    that was not a YouTube watch URL and stamped the survivors
+    source="youtube". This function preserves every result, tags it with
+    its real provider/domain, and lets the shared gate/verifier/pick
+    machinery judge all of them by relevance alone. YouTube has no
+    special status here.
+    """
     query = str(query or "").strip()
     if not query:
         return []
 
     from services.search_provider import search_videos
 
+    disabled = _disabled_providers()
     results = []
     seen = set()
 
     try:
-        hits = search_videos(query, limit=max(limit * 2, 10))
+        hits = search_videos(query, limit=max(limit * 3, 15))
     except Exception as error:
-        print(f"YouTube video search failed: {error}")
+        print(f"Video search failed: {error}")
         return []
 
     for hit in hits:
@@ -1312,25 +1360,32 @@ def search_youtube_videos(query, limit=5):
             or ""
         ).strip()
 
-        if "youtube.com/watch" not in url and "youtu.be/" not in url:
+        if not url:
             continue
 
-        if "&" in url:
+        provider, host = provider_for_url(url)
+        if provider in disabled:
+            continue
+
+        if provider == "youtube" and "&" in url:
             url = url.split("&", 1)[0]
 
-        if url in seen:
+        dedupe_key = url.split("#", 1)[0]
+        if dedupe_key in seen:
             continue
 
-        seen.add(url)
+        seen.add(dedupe_key)
 
         results.append({
             "video_url": url,
             "url": url,
             "link": url,
             "title": hit.get("title", ""),
-            "source": "youtube",
-            # Serper's per-result "source" is the channel name for YouTube
-            # results — keep it as creator evidence (AUD-15).
+            "source": provider,
+            "provider": provider,
+            "source_domain": host,
+            # Serper's per-result "source" is the channel/site name —
+            # keep it as creator evidence (AUD-15).
             "channel": hit.get("source", ""),
             "creator": hit.get("source", ""),
             "license": "unknown",
@@ -1345,6 +1400,13 @@ def search_youtube_videos(query, limit=5):
             break
 
     return results
+
+
+def search_youtube_videos(query, limit=5):
+    """Legacy name kept for existing callers. Since the multi-source
+    correction (MS-1) this returns results from ALL video providers via
+    search_videos_multi — it is no longer YouTube-only despite the name."""
+    return search_videos_multi(query, limit=limit)
 
 
 def search_source_videos(query, limit=5):
@@ -3520,13 +3582,13 @@ def _uve_scenario_search(
             continue
 
         try:
-            found_videos = search_youtube_videos(
+            found_videos = search_videos_multi(
                 query,
-                limit=5,
+                limit=8,
             )
         except Exception as error:
             print(
-                f"YouTube search failed "
+                f"Video search failed "
                 f"for '{query}': {error}"
             )
             found_videos = []
@@ -3917,11 +3979,11 @@ def _uve_pick(
     # counted card) instead of using rejected footage.
 
     picked = []
-    youtube_source_counts = {}
-
+    source_counts = {}
 
     for candidate in pool:
-        # Enforce a maximum of 3 clips from the same YouTube source.
+        # MS-1: the per-source usage cap applies to EVERY provider
+        # equally. Previously it applied only to YouTube URLs.
         candidate_url = str(
             candidate.get("url")
             or candidate.get("video_url")
@@ -3929,43 +3991,32 @@ def _uve_pick(
             or ""
         ).strip().split("&", 1)[0]
 
-        is_youtube_candidate = (
-            "youtube.com" in candidate_url.lower()
-            or "youtu.be" in candidate_url.lower()
-        )
+        batch_uses = source_counts.get(candidate_url.lower(), 0)
+        try:
+            existing_uses = registry.source_usage_count(candidate_url)
+        except Exception:
+            existing_uses = 0
 
-        if is_youtube_candidate:
-            batch_uses = youtube_source_counts.get(candidate_url.lower(), 0)
-            try:
-                existing_uses = registry.source_usage_count(candidate_url)
-            except Exception:
-                existing_uses = 0
-
-            if existing_uses + batch_uses >= registry.max_source_uses:
-                candidate["reject_reason"] = "source_usage_limit"
-                continue
+        if existing_uses + batch_uses >= registry.max_source_uses:
+            candidate["reject_reason"] = "source_usage_limit"
+            continue
 
         key = _uve_candidate_key(candidate)
 
         if not key:
             continue
 
-        is_youtube = (
-            "youtube.com" in key
-            or "youtu.be" in key
-        )
-
-        # Search candidates do not have clip_start yet.
-        # For YouTube, allow the source to be selected again.
-        # _youtube_start() will choose a new timestamp later.
-        if key in used_keys and not is_youtube:
-            continue
-
+        # MS-1: source reuse is provider-neutral. Previously only YouTube
+        # sources could be re-picked (the segment machinery would choose
+        # a different timestamp); other providers were silently skipped
+        # once used. Segment differentiation now exists for every
+        # provider (MS-3 evidence + registry segment ranges), so the
+        # carve-out is removed.
         try:
             allowed, why = registry.can_use(
                 url=key,
                 title=result_title(candidate),
-                allow_source_reuse=is_youtube,
+                allow_source_reuse=True,
             )
         except Exception:
             allowed, why = True, ""
@@ -3989,9 +4040,8 @@ def _uve_pick(
 
         picked.append(item)
 
-        if is_youtube_candidate:
-            source_key = candidate_url.lower()
-            youtube_source_counts[source_key] = youtube_source_counts.get(source_key, 0) + 1
+        source_key = candidate_url.lower()
+        source_counts[source_key] = source_counts.get(source_key, 0) + 1
 
         if len(picked) >= limit:
             break
