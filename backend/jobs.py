@@ -14,7 +14,7 @@ from services.renderer import render_timeline
 from services.narration import generate_narration
 from services.audio_mixer import add_narration
 from services.music import prepare_soundtrack
-from services.captions import transcribe_audio
+from services.captions import build_captions, validate_captions
 from services.caption_renderer import burn_captions
 from services.graphics_pipeline import build_motion_graphics_assets
 from services.final_video_auditor import validate_final_video
@@ -264,6 +264,55 @@ def _script_sentence_count(script: str):
         return None
 
 
+def _planned_scenes_if_sane(planned, sentences, project_id, script_hash, bible, bible_path):
+    """Return production scenes built from analyzer-planned scenes,
+    or None when the plan is missing/insane (caller falls back to
+    flat chunking). Sanity = the planned scenes' sentence lists,
+    concatenated, are exactly ``sentences`` (same objects, same
+    order, each exactly once) and no scene is empty."""
+    if not isinstance(planned, list) or not planned:
+        return None
+    flat = []
+    for scene in planned:
+        if not isinstance(scene, dict):
+            return None
+        scene_sentences = scene.get("sentences")
+        if not isinstance(scene_sentences, list) or not scene_sentences:
+            return None
+        flat.extend(scene_sentences)
+    if len(flat) != len(sentences) or any(
+        a is not b for a, b in zip(flat, sentences)
+    ):
+        return None
+
+    # Normalise into fresh scene dicts in the production shape.
+    groups = [list(scene["sentences"]) for scene in planned]
+    # Merge guard: a trailing scene of <2 sentences joins the
+    # previous scene (unless it is the only scene).
+    if len(groups) > 1 and len(groups[-1]) < 2:
+        groups[-2].extend(groups.pop())
+
+    scenes = []
+    for group in groups:
+        scenes.append(
+            {
+                "scene_number": len(scenes) + 1,
+                "sentences": group,
+                "text": " ".join(
+                    str(s.get("text") or "")
+                    for s in group
+                    if isinstance(s, dict) and s.get("text")
+                ),
+                "sentence_count": len(group),
+                "project_id": project_id,
+                "script_hash": script_hash,
+                "bible": bible,
+                "case_bible_path": str(bible_path) if bible_path else "",
+            }
+        )
+    return scenes
+
+
 def build_production_scenes(script: str, project_id: str = "", project_dir=None):
     project_dir = Path(project_dir) if project_dir else (
         media_paths.project_dir(project_id) if project_id else None
@@ -297,6 +346,32 @@ def build_production_scenes(script: str, project_id: str = "", project_dir=None)
         print(f"Case Bible saved: {bible_path}")
 
     script_hash = script_hash_for(script)
+
+    # Stage 3C: prefer the story-structured scenes the analyzer
+    # derived (analysis["scenes"]) when they are sane — they cover
+    # every sentence exactly once, in order, with no empty scene.
+    # A trailing scene of <2 sentences merges into the previous one
+    # (unless it is the only scene). Anything else falls back to the
+    # historical flat SENTENCES_PER_SCENE chunking, unchanged.
+    planned_scenes = analysis.get("scenes")
+    scenes = _planned_scenes_if_sane(
+        planned_scenes, sentences, project_id, script_hash, bible, bible_path
+    )
+    if scenes is not None:
+        print(
+            f"Production scenes: using {len(scenes)} story-structured "
+            "scene(s) from script analysis."
+        )
+        return {
+            "analysis": analysis,
+            "sentences": sentences,
+            "scenes": scenes,
+            "script_hash": script_hash,
+            "project_id": project_id,
+            "bible": bible,
+            "case_bible_path": str(bible_path) if bible_path else "",
+        }
+
     scenes = []
     for start_index in range(0, len(sentences), SENTENCES_PER_SCENE):
         scene_sentences = sentences[start_index:start_index + SENTENCES_PER_SCENE]
@@ -351,7 +426,14 @@ def test_job(project_id: str):
     return {"project_id": project_id, "status": "completed"}
 
 
-def enqueue_full_pipeline(project_id: str, script: str):
+def enqueue_full_pipeline(project_id: str, script: str, options=None):
+    # Stage 3 options plumbing: caller options (recognised keys:
+    # "music_file", "voice_id", "captions") are merged into the
+    # ledger/manifest options snapshot next to the entrypoint.
+    # Unknown keys pass through harmlessly.
+    run_options = {"entrypoint": "enqueue_full_pipeline"}
+    if isinstance(options, dict):
+        run_options.update(options)
     # Stage 2B (AUD-07/10): the submission is recorded in the run
     # ledger FIRST and deduplicated — a second submission of the same
     # script for the same project while a run is active returns that
@@ -362,7 +444,7 @@ def enqueue_full_pipeline(project_id: str, script: str):
     submission = run_ledger.submit_production(
         project_id,
         script,
-        options={"entrypoint": "enqueue_full_pipeline"},
+        options=run_options,
     )
     if submission and submission.get("deduplicated"):
         print(
@@ -378,6 +460,7 @@ def enqueue_full_pipeline(project_id: str, script: str):
             project_id,
             script,
             run_id=run_id,
+            options=run_options,
             at_front=True,
         )
     except Exception as error:
@@ -390,7 +473,7 @@ def enqueue_full_pipeline(project_id: str, script: str):
     return job.id
 
 
-def run_full_pipeline(project_id: str, script: str, run_id: str = None):
+def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=None):
     print()
     print("=" * 70)
     print("DOCUMENTARY STUDIO")
@@ -404,6 +487,18 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None):
     project_dir.mkdir(parents=True, exist_ok=True)
 
     run_metrics.begin_run()
+
+    # Stage 3 options plumbing: recognised keys "music_file" (path),
+    # "voice_id" (str), "captions" ("burn"|"sidecar"|"off", default
+    # "burn"). Unknown keys pass through harmlessly into the
+    # ledger/manifest options snapshot.
+    _merged_options = {"entrypoint": "run_full_pipeline"}
+    if isinstance(options, dict):
+        _merged_options.update(options)
+    options = _merged_options
+    captions_mode = str(options.get("captions") or "burn").lower()
+    if captions_mode not in ("burn", "sidecar", "off"):
+        captions_mode = "burn"
 
     # Stage 2: claim or begin the ledger run. All fail-soft — the
     # ledger records the run; it never gates it. When the caller
@@ -434,7 +529,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None):
         _run_id = run_ledger.begin_run(
             project_id,
             script,
-            options={"entrypoint": "run_full_pipeline"},
+            options=_merged_options,
         )
 
     state = create_production_state()
@@ -451,7 +546,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None):
         _run_id,
         project_id,
         script,
-        options={"entrypoint": "run_full_pipeline"},
+        options=_merged_options,
         sentence_count=_script_sentence_count(script),
     )
     state["_manifest"] = _manifest
@@ -475,18 +570,43 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None):
 
     timeline_file = None
     expected_duration = None
+    soundtrack_record = None
 
     try:
         run_stage(state, "voice_actor", project_dir)
         print("Voice Actor")
-        generate_narration(text=script, output_path=str(narration_file))
+        voice_meta = generate_narration(
+            text=script,
+            output_path=str(narration_file),
+            voice_id=options.get("voice_id"),
+        )
+        if isinstance(voice_meta, dict):
+            state["voice"] = voice_meta
+            print(f"Voice: {voice_meta}")
         if not narration_file.exists():
             raise RuntimeError("narration.wav was not created.")
         print(f"Voiceover created: {narration_file}")
-        transcribe_audio(str(narration_file), str(captions_json))
+        # Stage 3I: captions.py is the single caption writer —
+        # Whisper word timings when usable, proportional segments
+        # (stamped provisional) otherwise; SRT/VTT sidecars always.
+        build_captions(str(narration_file), script, str(captions_json))
         if not captions_json.exists():
             raise RuntimeError("Caption transcription failed.")
         print(f"Captions generated: {captions_json}")
+        try:
+            from services.narration import _split_sentences as _split_for_validation
+
+            caption_validation = validate_captions(
+                str(captions_json), _split_for_validation(script)
+            )
+        except Exception as validation_error:
+            caption_validation = {"ok": False, "error": str(validation_error)}
+        state["captions_validation"] = caption_validation
+        if not caption_validation.get("ok"):
+            print(
+                "WARNING: caption validation found uncovered segments: "
+                f"{caption_validation}"
+            )
         finish_stage(state, "voice_actor", project_dir)
     except Exception as error:
         fail_pipeline(state, "voice_actor", error, project_dir)
@@ -703,22 +823,36 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None):
         run_stage(state, "sound_designer", project_dir)
         print("Sound Designer")
 
-        music_file = project_dir / "background.mp3"
+        # Stage 3H: an explicitly supplied music file (options)
+        # wins; otherwise the legacy project background.mp3 if it
+        # exists. No downloads, no library — user-supplied only.
+        music_option = options.get("music_file")
+        if music_option:
+            soundtrack_music = str(music_option)
+        else:
+            legacy_music = project_dir / "background.mp3"
+            soundtrack_music = (
+                str(legacy_music) if legacy_music.exists() else None
+            )
 
-        prepare_soundtrack(
+        soundtrack_record = prepare_soundtrack(
             narration_file=str(narration_file),
             output_file=str(soundtrack_file),
-            music_file=(
-                str(music_file)
-                if music_file.exists()
-                else None
-            ),
+            music_file=soundtrack_music,
         )
 
         if not soundtrack_file.exists():
             raise RuntimeError(
                 "Sound Designer did not create soundtrack."
             )
+
+        if isinstance(soundtrack_record, dict):
+            state["soundtrack"] = soundtrack_record
+            (project_dir / "soundtrack.json").write_text(
+                json.dumps(soundtrack_record, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            print(f"Soundtrack record: {soundtrack_record}")
 
         print(f"Soundtrack created: {soundtrack_file}")
 
@@ -895,44 +1029,58 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None):
         )
 
         # ----------------------------------------------
-        # Captions
+        # Captions (Stage 3I: captions option — "burn" is the
+        # historical behaviour; "sidecar" keeps captions.json/.srt/
+        # .vtt alongside an unburned video; "off" skips burning and
+        # records the mode in state)
         # ----------------------------------------------
 
-        from services.caption_renderer import create_ass_file
+        state["captions_mode"] = captions_mode
+        save_production_state(project_dir, state)
 
-        create_ass_file(
-            str(captions_json),
-            str(captions_ass),
-        )
+        if captions_mode == "burn":
+            from services.caption_renderer import create_ass_file
 
-        if not captions_ass.exists():
-            raise RuntimeError(
-                "ASS caption file was not created."
+            create_ass_file(
+                str(captions_json),
+                str(captions_ass),
             )
 
-        if captioned_video.exists():
-            try:
-                captioned_video.unlink()
-            except OSError as error:
-                print(
-                    "WARNING: could not remove old "
-                    f"captioned video: {error}"
+            if not captions_ass.exists():
+                raise RuntimeError(
+                    "ASS caption file was not created."
                 )
 
-        burn_captions(
-            str(narrated_video),
-            str(captions_ass),
-            str(captioned_video),
-        )
+            if captioned_video.exists():
+                try:
+                    captioned_video.unlink()
+                except OSError as error:
+                    print(
+                        "WARNING: could not remove old "
+                        f"captioned video: {error}"
+                    )
 
-        if not captioned_video.exists():
-            raise RuntimeError(
-                "Caption rendering failed."
+            burn_captions(
+                str(narrated_video),
+                str(captions_ass),
+                str(captioned_video),
             )
 
-        print(
-            f"Captions burned: {captioned_video}"
-        )
+            if not captioned_video.exists():
+                raise RuntimeError(
+                    "Caption rendering failed."
+                )
+
+            print(
+                f"Captions burned: {captioned_video}"
+            )
+            pre_final_video = captioned_video
+        else:
+            print(
+                f"Captions mode '{captions_mode}': skipping ASS/burn; "
+                "sidecar captions (json/srt/vtt) are kept."
+            )
+            pre_final_video = narrated_video
 
         # ----------------------------------------------
         # Final Output
@@ -948,7 +1096,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None):
                 )
 
         os.replace(
-            str(captioned_video),
+            str(pre_final_video),
             str(final_video),
         )
 
@@ -981,6 +1129,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None):
             renderer_audit=renderer_audit,
             analysis_mode=analysis.get("mode") if isinstance(analysis, dict) else None,
             execution=run_metrics.snapshot(),
+            soundtrack=(
+                soundtrack_record
+                if isinstance(soundtrack_record, dict)
+                else None
+            ),
         )
         write_asset_report(project_dir, asset_report)
 

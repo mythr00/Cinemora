@@ -13,6 +13,7 @@ from pathlib import Path
 
 from services.llm_client import get_llm
 from services import story_understanding as story
+from services.scene_structure import derive_scenes
 
 
 def clean_text(value):
@@ -419,6 +420,13 @@ def analyze_script(script, project_id="", cache_path=None, llm="auto"):
     degraded_count = sum(1 for item in analyzed if item["degraded"])
     print(f"Sentences: {len(analyzed)}  (degraded: {degraded_count})")
 
+    serialized_bible = story.serialize_bible(bible)
+    # Stage 3C: story-structured scenes derived from the sentence
+    # records' subject / scenario place / era fields. jobs decides
+    # whether to use them (with a coverage sanity check) or fall back
+    # to flat chunking.
+    scenes = derive_scenes(analyzed, serialized_bible)
+
     return {
         "text": clean_text(script),
         "entities": all_entities,
@@ -426,7 +434,8 @@ def analyze_script(script, project_id="", cache_path=None, llm="auto"):
         "dates": all_dates,
         "sentences": analyzed,
         "sentence_count": len(analyzed),
-        "bible": story.serialize_bible(bible),
+        "scenes": scenes,
+        "bible": serialized_bible,
         "mode": mode,
         "project_id": project_id,
     }

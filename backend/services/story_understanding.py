@@ -21,7 +21,14 @@ import hashlib
 import json
 import re
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
+
+# Stage 3A: the research pass resolves services.search_provider's
+# search_web LAZILY at call time (see _resolve_search_web), so this
+# module never imports the provider at module load and tests can patch
+# either services.search_provider.search_web or this attribute.
+search_web = None
 
 SENTENCE_ROLES = [
     "hook", "setup", "background", "action", "event", "evidence",
@@ -298,6 +305,315 @@ def find_mentions(text, alias_index):
         if eid not in ordered:
             ordered.append(eid)
     return ordered
+
+
+# --------------------------------------------------------------------------
+# 1b. RESEARCH-GROUNDED BIBLE (Stage 3A — audit MA-32, review §2.11)
+# --------------------------------------------------------------------------
+# After the bible is built, a bounded web-research pass grounds it:
+# the most-mentioned subjects are searched (via
+# services.search_provider.search_web ONLY — never Serper directly),
+# the retrieved sources are attached to their bible entities, bible
+# facts are labelled "externally_supported" / "script_asserted", and
+# disagreements between sources are recorded as conflicts — never
+# resolved silently. The whole pass is FAIL-SOFT: a missing provider,
+# a raising search, or any unexpected error leaves the bible usable
+# with every fact "script_asserted".
+
+_RESEARCH_MAX_SUBJECTS = 12
+_RESEARCH_MAX_SOURCES_PER_SUBJECT = 10
+_RESEARCH_FAILURE_LIMIT = 3  # total failed queries before giving up
+
+_NUMBER_RE = re.compile(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b|\b\d+(?:\.\d+)?\b")
+_YEAR_RE = re.compile(r"\b(?:1[5-9]\d\d|20\d\d)\b")
+
+
+def _resolve_search_web():
+    """The research search function, resolved at call time.
+
+    A callable patched onto this module's ``search_web`` attribute
+    wins; otherwise services.search_provider.search_web is imported
+    lazily. Returns None when no provider is importable.
+    """
+    fn = globals().get("search_web")
+    if callable(fn):
+        return fn
+    try:
+        from services.search_provider import search_web as resolved
+        return resolved
+    except Exception:
+        pass
+    try:
+        import search_provider
+
+        return getattr(search_provider, "search_web", None)
+    except Exception:
+        return None
+
+
+def _number_tokens(text):
+    """All number tokens in text, comma-normalized ("1,000" -> "1000")."""
+    return {raw.replace(",", "") for raw in _NUMBER_RE.findall(str(text or ""))}
+
+
+def _year_tokens(text):
+    return set(_YEAR_RE.findall(str(text or "")))
+
+
+def _research_queries_for(bible, entity):
+    """1–2 queries for a subject: its canonical name, plus the name
+    with a distinguishing term from the bible (era first, then a
+    place from the bible, then the entity's role)."""
+    canonical = str(entity.get("canonical") or "").strip()
+    if not canonical:
+        return []
+    queries = [canonical]
+    term = _year_or_decade(bible.get("time_period")) or _year_or_decade(
+        entity.get("description")
+    )
+    if not term:
+        for other in bible.get("entities") or []:
+            if other.get("type") == "place" and other.get("id") != entity.get("id"):
+                term = str(other.get("canonical") or "").strip()
+                break
+    if not term:
+        term = str(entity.get("role") or "").strip()
+    if term and term.lower() not in canonical.lower():
+        queries.append(f"{canonical} {term}")
+    return queries
+
+
+def _fact_supported(fact_text, sources):
+    """A fact is externally supported when at least one retrieved
+    snippet for its subject contains the fact's year/number (when the
+    fact has one) or a strict majority of its key content tokens."""
+    numbers = _number_tokens(fact_text)
+    key_tokens = _content_tokens(fact_text)
+    for source in sources:
+        snippet = str(source.get("snippet") or "")
+        if not snippet:
+            continue
+        if numbers and numbers & _number_tokens(snippet):
+            return True
+        if key_tokens:
+            overlap = len(key_tokens & _content_tokens(snippet))
+            if overlap * 2 > len(key_tokens):
+                return True
+    return False
+
+
+def _fact_conflict(fact_text, subject, sources):
+    """One conflict record when two DIFFERENT sources for the subject
+    disagree on the fact's years (or headline numbers) in snippets
+    that share the fact's key tokens. Both values are recorded; the
+    conflict is never resolved. Returns None when sources agree (or
+    there is nothing comparable)."""
+    years = _year_tokens(fact_text)
+    if not years and not _number_tokens(fact_text):
+        return None
+    key_tokens = _content_tokens(fact_text)
+    # The snippet must share the fact's DISTINCTIVE tokens — the ones
+    # beyond the subject's own name. Every snippet about the subject
+    # shares the name; requiring more keeps a snippet about a
+    # different event in the subject's life from "disagreeing" with
+    # this fact just because it mentions another year.
+    subject_tokens = _content_tokens(subject.get("canonical"))
+    for alias in subject.get("aliases") or []:
+        subject_tokens |= _content_tokens(alias)
+    share_tokens = (key_tokens - subject_tokens) or key_tokens
+    per_source = []
+    for source in sources:
+        snippet = str(source.get("snippet") or "")
+        if not snippet:
+            continue
+        if share_tokens and not (share_tokens & _content_tokens(snippet)):
+            continue
+        values = _year_tokens(snippet) if years else _number_tokens(snippet)
+        if values:
+            per_source.append((str(source.get("url") or ""), values))
+    if len(per_source) < 2:
+        return None
+    all_values = set().union(*(values for _, values in per_source))
+    if len(all_values) < 2:
+        return None
+    if all(values == per_source[0][1] for _, values in per_source):
+        return None
+    recorded = []
+    for value in sorted(all_values):
+        url = next(u for u, values in per_source if value in values)
+        recorded.append({"value": value, "source_url": url})
+    return {
+        "subject": subject.get("id"),
+        "subject_name": subject.get("canonical"),
+        "fact_hint": fact_text[:120],
+        "values": recorded,
+    }
+
+
+def _label_bible_facts(bible, by_id):
+    """Label every bible fact and collect source conflicts.
+
+    Facts are the bible's timeline entries (when/what) and each
+    entity's description claim. The label is stored ON the fact
+    entry: timeline entries and entity dicts each gain "support".
+    A fact whose related subject was not researched (or has no
+    sources) stays "script_asserted". Returns the conflicts list.
+    """
+    alias_index = bible.get("alias_index") or build_alias_index(
+        bible.get("entities") or []
+    )
+    facts = []
+    for entry in bible.get("timeline") or []:
+        if not isinstance(entry, dict):
+            continue
+        text = f"{entry.get('when') or ''} {entry.get('what') or ''}".strip()
+        mentions = find_mentions(text, alias_index)
+        subject_id = mentions[0] if mentions else bible.get("primary_subject_id")
+        facts.append((entry, subject_id, text))
+    for entity in bible.get("entities") or []:
+        description = str(entity.get("description") or "").strip()
+        if description:
+            facts.append((entity, entity.get("id"), description))
+
+    conflicts = []
+    for entry, subject_id, text in facts:
+        subject = by_id.get(subject_id) if subject_id else None
+        sources = (subject or {}).get("sources") or []
+        entry["support"] = "script_asserted"
+        if not sources or subject is None:
+            continue
+        if _fact_supported(text, sources):
+            entry["support"] = "externally_supported"
+        conflict = _fact_conflict(text, subject, sources)
+        if conflict:
+            conflicts.append(conflict)
+    return conflicts
+
+
+def enrich_bible_with_research(bible, script_text, sentences=None):
+    """Stage 3A research pass over a built bible (mutates and returns it).
+
+    Subjects are identified across the WHOLE script (alias index +
+    find_mentions over the full text and every sentence), ranked by
+    mention count, and at most the top 12 are researched with 1–2
+    search_web queries each. Retrieved sources are attached to the
+    matching entity as entity["sources"] = [{url, title, snippet,
+    retrieved_at}]; the bible gains "conflicts" and "research_meta".
+    Fail-soft: any failure leaves a valid bible whose facts are all
+    "script_asserted".
+    """
+    if not isinstance(bible, dict):
+        return bible
+    researched_at = datetime.now(timezone.utc).isoformat()
+    entities = bible.get("entities") or []
+    by_id = bible.get("by_id") or {e["id"]: e for e in entities}
+    for entity in entities:
+        if isinstance(entity, dict):
+            entity.setdefault("sources", [])
+    bible["conflicts"] = []
+    bible["research_meta"] = {
+        "researched_at": researched_at,
+        "subjects_researched": 0,
+        "sources_attached": 0,
+        "conflicts_found": 0,
+    }
+    try:
+        alias_index = build_alias_index(entities)
+        counts = Counter()
+        for eid in find_mentions(script_text, alias_index):
+            counts[eid] += 1
+        for text in sentences or []:
+            for eid in find_mentions(text, alias_index):
+                counts[eid] += 1
+        order = {entity.get("id"): i for i, entity in enumerate(entities)}
+        ranked = sorted(
+            entities,
+            key=lambda e: (-counts.get(e.get("id"), 0), order.get(e.get("id"), 0)),
+        )
+        subjects = ranked[:_RESEARCH_MAX_SUBJECTS]
+
+        search_fn = _resolve_search_web()
+        subjects_researched = 0
+        sources_attached = 0
+        failures = 0
+        if search_fn is not None:
+            for entity in subjects:
+                if failures >= _RESEARCH_FAILURE_LIMIT:
+                    break
+                subjects_researched += 1
+                seen_urls = {
+                    s.get("url") for s in entity.get("sources") or []
+                }
+                for query in _research_queries_for(bible, entity):
+                    if failures >= _RESEARCH_FAILURE_LIMIT:
+                        break
+                    try:
+                        results = search_fn(query) or []
+                    except Exception as error:
+                        failures += 1
+                        print(f"STORY RESEARCH: search failed for {query!r}: {error}")
+                        continue
+                    for result in results:
+                        if not isinstance(result, dict):
+                            continue
+                        url = str(result.get("url") or result.get("link") or "").strip()
+                        if not url or url in seen_urls:
+                            continue
+                        seen_urls.add(url)
+                        entity["sources"].append({
+                            "url": url,
+                            "title": str(result.get("title") or ""),
+                            "snippet": str(result.get("snippet") or ""),
+                            "retrieved_at": researched_at,
+                        })
+                        sources_attached += 1
+                        if len(entity["sources"]) >= _RESEARCH_MAX_SOURCES_PER_SUBJECT:
+                            break
+
+        conflicts = _label_bible_facts(bible, by_id)
+        bible["conflicts"] = conflicts
+        bible["research_meta"] = {
+            "researched_at": researched_at,
+            "subjects_researched": subjects_researched,
+            "sources_attached": sources_attached,
+            "conflicts_found": len(conflicts),
+        }
+    except Exception as error:  # research must never crash a production
+        print(f"STORY RESEARCH: pass failed ({error}) — facts stay script_asserted.")
+        try:
+            for entry in bible.get("timeline") or []:
+                if isinstance(entry, dict):
+                    entry.setdefault("support", "script_asserted")
+            for entity in entities:
+                if isinstance(entity, dict) and str(entity.get("description") or "").strip():
+                    entity.setdefault("support", "script_asserted")
+        except Exception:
+            pass
+    return bible
+
+
+def _attach_research_refs(plans, bible):
+    """Stage 3A sentence coverage: every plan gains "research_ref" —
+    the id of the subject the plan is about when that subject has at
+    least one attached research source, else "no_external_source"."""
+    by_id = (bible or {}).get("by_id") or {}
+    for plan in plans or []:
+        if not isinstance(plan, dict):
+            continue
+        ref = "no_external_source"
+        candidates = []
+        if plan.get("subject_id"):
+            candidates.append(plan["subject_id"])
+        for eid in plan.get("entity_ids") or []:
+            if eid not in candidates:
+                candidates.append(eid)
+        for eid in candidates:
+            entity = by_id.get(eid) or {}
+            if entity.get("sources"):
+                ref = eid
+                break
+        plan["research_ref"] = ref
+    return plans
 
 
 # --------------------------------------------------------------------------
@@ -860,12 +1176,24 @@ def plan_script(script_text, sentences, llm, cache_path=None):
             cached = json.loads(Path(cache_path).read_text(encoding="utf-8"))
             if cached.get("key") == key and cached.get("mode") == "llm":
                 print("STORY PLAN: loaded from cache.")
-                return hydrate_bible(cached["bible"]), cached["plans"], "llm"
+                cached_bible = hydrate_bible(cached["bible"])
+                cached_plans = cached["plans"]
+                # Stage 3A: cached plans were stored with their
+                # research_refs; re-derive them anyway so a cache
+                # written before Stage 3A still yields full coverage.
+                _attach_research_refs(cached_plans, cached_bible)
+                return cached_bible, cached_plans, "llm"
         except Exception:
             pass
 
     bible = build_case_bible(script_text, llm, sentences=sentences)
     plans = analyze_sentences(sentences, bible, llm)
+    # Stage 3A: research-ground the bible (both the LLM and the
+    # heuristic bible paths land here) and stamp every plan with its
+    # research_ref. Runs after sentence analysis so source snippets
+    # never leak into the LLM's sentence prompts. Fail-soft by design.
+    enrich_bible_with_research(bible, script_text, sentences=sentences)
+    _attach_research_refs(plans, bible)
     mode = _analysis_mode(bible, plans)
     if llm is None:
         print("STORY: no LLM configured -> DEGRADED MODE (set LLM_API_KEY for full understanding).")

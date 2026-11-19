@@ -95,7 +95,7 @@ def _timeline_items(timeline_result) -> list:
     return items
 
 
-def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None) -> dict:
+def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None) -> dict:
     """Build the report from real pipeline outputs.
 
     processed_scenes: scene result dicts from the media pipeline.
@@ -113,6 +113,12 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                       monetary_cost_usd is None unless a price table
                       is configured — unknown cost is never reported
                       as zero. None when the caller has no metrics.
+    soundtrack:       the Sound Designer stage's record (Stage 3H):
+                      {"music": "mixed"|"absent", "source": basename
+                      or None, "loudness_lufs": float|None}. Emitted
+                      verbatim as the top-level "soundtrack" key;
+                      None keeps the pre-3H behaviour for other
+                      callers.
     """
     stats = Counter()
     accepted_by_path: dict[str, dict] = {}
@@ -364,6 +370,8 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         # services/run_metrics). Present on success AND failure
         # reports; None only when the caller collected no metrics.
         "execution": execution,
+        # Stage 3H: soundtrack honesty record (see docstring).
+        "soundtrack": soundtrack,
         # VA-09: the four verification dimensions, kept separate —
         # technical validity, metadata relevance, segment evidence
         # and rights are different judgements and are never merged

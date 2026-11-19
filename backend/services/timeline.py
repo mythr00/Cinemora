@@ -74,6 +74,18 @@ def timeline_eligible(visual):
     return verification.get("accepted") is True
 
 
+def get_clip_start(visual):
+    """Stage 3F (MA-15): the asset's segment offset (seconds into
+    the source clip) as a float, defaulting to 0.0. Carried onto
+    VIDEO timeline items so the renderer can input-seek to the
+    verified segment instead of always starting at t=0."""
+    try:
+        value = float(visual.get("clip_start") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return value if value > 0 else 0.0
+
+
 def get_visual_type(visual):
     visual_type = (
         visual.get("type")
@@ -1272,6 +1284,11 @@ def build_scene_timeline(
                     "",
                 )
 
+                # Stage 3F: segment offset of the visual actually
+                # chosen (sentence / rotation / motion-graphic paths
+                # all arrive here with `visual` already resolved).
+                item["clip_start"] = get_clip_start(visual)
+
             else:
 
                 item["image_url"] = visual.get(
@@ -1474,6 +1491,8 @@ def build_scene_timeline(
             "segment_evidence": video.get(
                 "segment_evidence"
             ),
+            # Stage 3F: segment offset for the renderer (MA-15).
+            "clip_start": get_clip_start(video),
         })
 
         current_time += item_duration

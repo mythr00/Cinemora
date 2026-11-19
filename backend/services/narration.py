@@ -12,6 +12,36 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 PIPER_MODEL = BASE_DIR / "en_US-lessac-medium.onnx"
 PIPER_CONFIG = BASE_DIR / "en_US-lessac-medium.onnx.json"
 
+# Stage 3J (AUD-29): the voice catalogue. HONEST CONTENTS: exactly
+# ONE real Piper voice model is installed in backend/
+# (en_US-lessac-medium.onnx + its .json config). The piper package
+# ships other .onnx files, but they are Hebrew diacritics models,
+# not voices, and are NOT catalogued. Both ids below therefore map
+# to the same installed model; any other requested id falls back to
+# it and the fallback is reported, never hidden.
+VOICE_CATALOGUE = {
+    "en_US-lessac-medium": (PIPER_MODEL, PIPER_CONFIG),
+    "default": (PIPER_MODEL, PIPER_CONFIG),
+}
+
+DEFAULT_VOICE_ID = "default"
+
+
+def resolve_voice(voice_id):
+    """Resolve a requested voice id to (model_path, config_path,
+    resolved_id, fell_back). Unknown/empty ids fall back to the
+    default voice with fell_back=True (empty/None request counts as
+    the default itself, not a fallback)."""
+    if voice_id is None or str(voice_id).strip() == "":
+        model, config = VOICE_CATALOGUE[DEFAULT_VOICE_ID]
+        return model, config, DEFAULT_VOICE_ID, False
+    requested = str(voice_id).strip()
+    if requested in VOICE_CATALOGUE:
+        model, config = VOICE_CATALOGUE[requested]
+        return model, config, requested, False
+    model, config = VOICE_CATALOGUE[DEFAULT_VOICE_ID]
+    return model, config, DEFAULT_VOICE_ID, True
+
 
 def _audio_duration(audio_file):
     with wave.open(str(audio_file), "rb") as wav:
@@ -114,22 +144,23 @@ def _run_piper(text, output_file, voice_id=None, speed=None):
     """Run Piper for a single piece of text.
 
     This is the ONLY place in this module that runs a subprocess.
-    ``voice_id`` is threaded through (and recorded by callers in the
-    parts manifest hash) but does not change the model: narration
-    always uses PIPER_MODEL. When ``speed`` is provided, Piper's
-    --length-scale is set to 1.0 / speed; the default command
-    (voice_id=None, speed=None) is identical to the historical one.
+    ``voice_id`` is resolved through the voice catalogue (Stage 3J):
+    the resolved model's path is what reaches the Piper command.
+    When ``speed`` is provided, Piper's --length-scale is set to
+    1.0 / speed; with the default voice the command is identical to
+    the historical one.
     """
     output_file = Path(output_file)
+    model, config, _resolved_id, _fell_back = resolve_voice(voice_id)
 
     command = [
         sys.executable,
         "-m",
         "piper",
         "-m",
-        str(PIPER_MODEL),
+        str(model),
         "-c",
-        str(PIPER_CONFIG),
+        str(config),
         "-f",
         str(output_file),
     ]
@@ -171,13 +202,18 @@ def _run_piper(text, output_file, voice_id=None, speed=None):
 
 
 def _part_hash(sentence, voice_id=None, speed=None):
+    # Stage 3J: the hash keys on the RESOLVED voice (id + its model
+    # files), so a request that falls back to the default voice and
+    # a direct default request share the same parts — and a genuine
+    # voice change still re-synthesizes.
+    model, config, resolved_id, _fell_back = resolve_voice(voice_id)
     payload = "|".join(
         [
             sentence,
-            str(voice_id),
+            str(resolved_id),
             str(speed),
-            PIPER_MODEL.name,
-            PIPER_CONFIG.name,
+            model.name,
+            config.name,
         ]
     )
 
@@ -206,10 +242,10 @@ def _load_parts_manifest(manifest_file):
     return entries
 
 
-def _write_parts_manifest(manifest_file, parts):
+def _write_parts_manifest(manifest_file, parts, model_name=None):
     data = {
         "version": 1,
-        "model": PIPER_MODEL.name,
+        "model": model_name or PIPER_MODEL.name,
         "parts": parts,
     }
 
@@ -256,14 +292,17 @@ def generate_narration(
     if not text or not text.strip():
         raise ValueError("Narration text cannot be empty.")
 
-    if not PIPER_MODEL.exists():
+    # Stage 3J: resolve the requested voice through the catalogue.
+    model, config, resolved_voice_id, voice_fell_back = resolve_voice(voice_id)
+
+    if not model.exists():
         raise FileNotFoundError(
-            f"Piper model not found: {PIPER_MODEL}"
+            f"Piper model not found: {model}"
         )
 
-    if not PIPER_CONFIG.exists():
+    if not config.exists():
         raise FileNotFoundError(
-            f"Piper config not found: {PIPER_CONFIG}"
+            f"Piper config not found: {config}"
         )
 
     output_file = Path(output_path)
@@ -278,7 +317,8 @@ def generate_narration(
     print("GENERATING NARRATION")
     print("========================================")
     print(f"Python: {sys.executable}")
-    print(f"Model: {PIPER_MODEL}")
+    print(f"Model: {model}")
+    print(f"Voice requested: {voice_id} -> used: {resolved_voice_id} (fallback: {voice_fell_back})")
     print(f"Output: {output_file}")
     print()
 
@@ -355,7 +395,7 @@ def generate_narration(
 
         # Persist progress after every part so a crashed run can
         # resume from the parts already synthesized.
-        _write_parts_manifest(manifest_file, manifest_parts)
+        _write_parts_manifest(manifest_file, manifest_parts, model_name=model.name)
 
     print()
     print("Joining narration parts...")
@@ -381,14 +421,24 @@ def generate_narration(
     print(f"Audio: {output_file}")
     print(f"Size: {file_size:,} bytes")
 
-    _write_captions(
-        text,
-        output_file,
-    )
+    # Stage 3I: narration produces AUDIO ONLY. Captions are written
+    # solely by services.captions.build_captions (the single caption
+    # writer); the proportional _write_captions call that used to
+    # run here — and silently overwrite/conflict with Whisper
+    # captions depending on call order — is removed.
 
     print()
 
-    return str(output_file)
+    # Stage 3J: voice metadata. Historically this returned
+    # str(output_file); callers that need the path can use
+    # output_path — jobs records this dict in state["voice"].
+    return {
+        "voice_id_requested": voice_id,
+        "voice_id_used": resolved_voice_id,
+        "voice_fallback": voice_fell_back,
+        "model": model.name,
+        "output_file": str(output_file),
+    }
 
 
 if __name__ == "__main__":

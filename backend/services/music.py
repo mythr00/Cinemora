@@ -290,6 +290,56 @@ def add_background_music(
 
 
 # ==================================================
+# LOUDNESS MEASUREMENT (Stage 3H)
+# ==================================================
+
+def measure_loudness_lufs(audio_file):
+    """Integrated loudness of an audio file in LUFS, measured with
+    ffmpeg's ebur128 filter (parsed from its stderr summary).
+    Returns a float, or None when measurement fails for any reason
+    — an unmeasured loudness is reported as unknown, never faked."""
+    import re
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-i", str(audio_file),
+                "-af", "ebur128",
+                "-f", "null", "-",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=300,
+        )
+    except Exception as error:
+        print(f"Loudness measurement failed: {error}")
+        return None
+
+    match = None
+    for match in re.finditer(
+        r"Integrated loudness:\s*\n?\s*I:\s*(-?[\d.]+)\s*LUFS",
+        result.stderr or "",
+    ):
+        pass  # keep the LAST (summary) match
+    if match is None:
+        simple = re.findall(
+            r"I:\s*(-?[\d.]+)\s*LUFS", result.stderr or ""
+        )
+        if not simple:
+            return None
+        try:
+            return float(simple[-1])
+        except ValueError:
+            return None
+    try:
+        return float(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+# ==================================================
 # PREPARE STANDALONE SOUNDTRACK
 # ==================================================
 
@@ -426,10 +476,30 @@ def prepare_soundtrack(
     print("========================================")
     print(f"Output: {output_file}")
 
-    return {
-        "status": "soundtrack_created",
-        "output_file": str(output_file),
-    }
+    # Stage 3H (AUD-28/MA-17): the stage RETURNS an honest record of
+    # what the soundtrack actually is — music mixed (via the
+    # sidechain-ducking mix above, the same machinery as
+    # add_background_music: looped music, volume, ducking under
+    # narration) or absent — plus the FINAL soundtrack's measured
+    # integrated loudness. The legacy status/output_file keys are
+    # kept for existing consumers.
+    loudness = measure_loudness_lufs(output_file)
+    if music_file:
+        record = {
+            "music": "mixed",
+            "source": Path(music_file).name,
+            "loudness_lufs": loudness,
+        }
+    else:
+        record = {
+            "music": "absent",
+            "source": None,
+            "loudness_lufs": loudness,
+        }
+    record["status"] = "soundtrack_created"
+    record["output_file"] = str(output_file)
+    print(f"Soundtrack record: {record}")
+    return record
 
 
 # ==================================================

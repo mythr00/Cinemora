@@ -201,6 +201,104 @@ def _frame(t, duration, fonts, event_label, place_label, era_label):
     return img
 
 
+_MOTIF_KEYWORDS = (
+    ("barrier", ("barrier", "crossing", "checkpoint", "border", "wall", "gate")),
+    ("journey", ("journey", "escape", "travel", "route", "voyage", "march", "flight")),
+    ("marker", ("signing", "founding", "discovery", "meeting", "arrival")),
+)
+
+
+def select_schematic_motif(event_label="", place_label="", era_label=""):
+    """MA-04: choose a motif from the event label text.
+
+    Returns "barrier" | "journey" | "marker" | None. No keyword
+    match -> None (no graphic): a wrong-motif illustration is a
+    wrong visual claim, so the caller records the skip instead.
+    """
+    text = f"{event_label} {place_label}".lower()
+    for motif, keywords in _MOTIF_KEYWORDS:
+        if any(keyword in text for keyword in keywords):
+            return motif
+    return None
+
+
+def _draw_header_footer(draw, fonts, event_label, place_label, era_label, t, duration):
+    for gx in range(0, WIDTH, 120):
+        draw.line([gx, 0, gx, HEIGHT], fill=_GRID, width=1)
+    for gy in range(0, HEIGHT, 120):
+        draw.line([0, gy, WIDTH, gy], fill=_GRID, width=1)
+    if event_label:
+        draw.text((120, 78), event_label.upper(), font=fonts["event"], fill=_TEXT)
+    sub = " · ".join(p for p in (place_label, era_label) if p)
+    if sub:
+        draw.text((120, 154), sub, font=fonts["sub"], fill=_MUTED)
+    draw.rectangle([120, 984, 1800, 987], fill=(52, 62, 76))
+    draw.rectangle([120, 984, 120 + 1680 * _clamp01(t / duration), 987], fill=(235, 238, 242))
+    draw.text((120, 1014), "CINEMORA / GENERATED SCHEMATIC", font=fonts["footer"], fill=_MUTED)
+
+
+def _frame_journey(t, duration, fonts, event_label, place_label, era_label):
+    import math
+
+    img = Image.new("RGB", (WIDTH, HEIGHT), _BG)
+    draw = ImageDraw.Draw(img)
+    _draw_header_footer(draw, fonts, event_label, place_label, era_label, t, duration)
+    # A route path across the frame, revealed progressively, with a
+    # marker travelling along it. Start/end labels are the caller's.
+    points = []
+    for i in range(101):
+        x = 160 + 1600 * i / 100
+        y = 640 + math.sin(i / 100 * math.pi * 1.6) * 130 - i * 0.9
+        points.append((x, y))
+    p = _smooth(t / max(duration * 0.85, 0.01))
+    revealed = points[: max(2, int(len(points) * p))]
+    if len(revealed) >= 2:
+        draw.line(revealed, fill=(120, 170, 235), width=10)
+        draw.line(revealed, fill=(235, 240, 250), width=3)
+    # Ground line.
+    draw.line([120, _GROUND, 1800, _GROUND], fill=(90, 102, 120), width=3)
+    # Start / end markers.
+    for (x, y), label in ((points[0], place_label), (points[-1], era_label or "DESTINATION")):
+        draw.ellipse([x - 14, y - 14, x + 14, y + 14], outline=(235, 238, 242), width=4)
+        if label:
+            draw.text((x - 10, y + 28), str(label).upper()[:28], font=fonts["sub"], fill=_MUTED)
+    if revealed:
+        mx, my = revealed[-1]
+        draw.ellipse([mx - 20, my - 20, mx + 20, my + 20], fill=(250, 196, 64))
+        draw.ellipse([mx - 8, my - 8, mx + 8, my + 8], fill=(24, 28, 36))
+    return img
+
+
+def _frame_marker(t, duration, fonts, event_label, place_label, era_label):
+    img = Image.new("RGB", (WIDTH, HEIGHT), _BG)
+    draw = ImageDraw.Draw(img)
+    _draw_header_footer(draw, fonts, event_label, place_label, era_label, t, duration)
+    # A location pin planted at a point on a ground line; the pin
+    # drops in and a ring expands from its base.
+    cx = WIDTH // 2
+    drop = _smooth((t - 0.4) / 1.4)
+    pin_y = int(430 + (618 - 430) * drop)
+    draw.line([240, _GROUND, 1680, _GROUND], fill=(90, 102, 120), width=3)
+    draw.line([240, _GROUND - 90, 1680, _GROUND - 90], fill=_GRID, width=2)
+    if drop >= 1.0:
+        ring = _clamp01((t - 1.8) / 2.4)
+        r = int(40 + ring * 260)
+        draw.ellipse([cx - r, _GROUND - 26, cx + r, _GROUND + 26], outline=(140, 160, 190), width=3)
+    # Pin: circle head + triangular point, plus a small flag.
+    draw.polygon([(cx - 34, pin_y + 56), (cx + 34, pin_y + 56), (cx, pin_y + 168)], fill=(198, 64, 52))
+    draw.ellipse([cx - 62, pin_y - 62, cx + 62, pin_y + 62], fill=(198, 64, 52))
+    draw.ellipse([cx - 26, pin_y - 26, cx + 26, pin_y + 26], fill=(246, 242, 232))
+    draw.line([cx + 62, pin_y - 40, cx + 62, pin_y - 128], fill=_COPING, width=5)
+    draw.polygon([(cx + 62, pin_y - 128), (cx + 140, pin_y - 106), (cx + 62, pin_y - 84)], fill=(250, 196, 64))
+    if place_label:
+        tw = draw.textlength(place_label.upper(), font=fonts["event"])
+        draw.text((cx - tw / 2, _GROUND + 36), place_label.upper(), font=fonts["event"], fill=_TEXT)
+    return img
+
+
+_FRAME_BY_MOTIF = {"journey": _frame_journey, "marker": _frame_marker}
+
+
 def render_event_schematic(
     output_file,
     event_label="",
@@ -211,8 +309,11 @@ def render_event_schematic(
 ):
     """Render the event schematic to an MP4 at output_file.
 
-    Raises on failure (callers treat one failing graphic as
-    skippable, per AUD-21). Returns the output path as a string.
+    MA-04: the motif is selected from the event label text. When
+    no motif matches, returns None and creates NO file — the
+    caller records the skip. Raises on render failure (callers
+    treat one failing graphic as skippable, per AUD-21). Returns
+    the output path as a string on success.
     """
     output_file = Path(output_file)
     output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -225,6 +326,11 @@ def render_event_schematic(
     event_label = clean_text(event_label)
     place_label = clean_text(place_label)
     era_label = clean_text(era_label)
+
+    motif = select_schematic_motif(event_label, place_label, era_label)
+    if motif is None:
+        return None
+    frame_fn = _frame if motif == "barrier" else _FRAME_BY_MOTIF[motif]
 
     total_frames = max(1, int(duration * fps))
     command = [
@@ -246,8 +352,8 @@ def render_event_schematic(
     try:
         for i in range(total_frames):
             t = i / fps
-            frame = _frame(t, duration, fonts, event_label, place_label,
-                           era_label)
+            frame = frame_fn(t, duration, fonts, event_label, place_label,
+                             era_label)
             proc.stdin.write(frame.tobytes())
         proc.stdin.close()
     except BrokenPipeError:

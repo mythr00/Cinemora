@@ -349,7 +349,51 @@ def build_video_filter():
     )
 
 
-def create_image_clip(image_path, duration, output_path, frame_count=None):
+def build_image_motion_filter(frame_count, motion=None):
+    """Stage 3F (MA-16): real motion for stills via zoompan.
+
+    The still is scaled/cropped to a 2x intermediate (3840x2160) so
+    zoompan works on a large raster (avoiding its notorious jitter),
+    then zoompan emits EXACTLY ``frame_count`` frames at the project
+    fps, downscaled to 1920x1080. Motions: "zoom_in" (default slow
+    push-in), "zoom_out", "pan_right", "pan_left". Unknown values
+    fall back to "zoom_in". The frame count is locked by zoompan's
+    d= parameter plus the caller's -frames:v, so the renderer's
+    frame-lock audits are unaffected.
+    """
+    frames = max(int(frame_count), 1)
+    motion = str(motion or "zoom_in").lower()
+    # Slow zoom: reach ~1.10x over the whole clip.
+    inc = 0.10 / frames
+    if motion == "zoom_out":
+        z = f"if(eq(on,0),1.10,max(zoom-{inc:.6f},1.0))"
+        x = "iw/2-(iw/zoom/2)"
+        y = "ih/2-(ih/zoom/2)"
+    elif motion == "pan_right":
+        z = "1.15"
+        x = f"(iw-iw/zoom)*on/{max(frames - 1, 1)}"
+        y = "ih/2-(ih/zoom/2)"
+    elif motion == "pan_left":
+        z = "1.15"
+        x = f"(iw-iw/zoom)*(1-on/{max(frames - 1, 1)})"
+        y = "ih/2-(ih/zoom/2)"
+    else:  # zoom_in
+        motion = "zoom_in"
+        z = f"min(zoom+{inc:.6f},1.10)"
+        x = "iw/2-(iw/zoom/2)"
+        y = "ih/2-(ih/zoom/2)"
+    return (
+        f"scale={WIDTH * 2}:{HEIGHT * 2}:"
+        "force_original_aspect_ratio=increase,"
+        f"crop={WIDTH * 2}:{HEIGHT * 2},"
+        "setsar=1,"
+        f"zoompan=z='{z}':x='{x}':y='{y}'"
+        f":d={frames}:s={WIDTH}x{HEIGHT}:fps={FPS},"
+        "format=yuv420p"
+    )
+
+
+def create_image_clip(image_path, duration, output_path, frame_count=None, motion=None):
     if not valid_media(image_path):
         print(f"Skipping invalid image: {image_path}")
         return False
@@ -365,7 +409,7 @@ def create_image_clip(image_path, duration, output_path, frame_count=None):
         "ffmpeg", "-y",
         "-loop", "1",
         "-i", str(image_path),
-        "-vf", build_video_filter(),
+        "-vf", build_image_motion_filter(frame_count, motion=motion),
         "-frames:v", str(frame_count),
         "-fps_mode", "cfr",
         "-c:v", VIDEO_CODEC,
@@ -390,7 +434,7 @@ def create_image_clip(image_path, duration, output_path, frame_count=None):
     return True
 
 
-def create_video_clip(video_path, duration, output_path, frame_count=None):
+def create_video_clip(video_path, duration, output_path, frame_count=None, start_offset=0.0):
     if not valid_media(video_path):
         print(f"Skipping invalid video: {video_path}")
         return False
@@ -399,12 +443,27 @@ def create_video_clip(video_path, duration, output_path, frame_count=None):
         frame_count = duration_to_frames(duration)
     frame_count = max(int(frame_count), 1)
 
+    try:
+        start_offset = float(start_offset or 0.0)
+    except (TypeError, ValueError):
+        start_offset = 0.0
+    if start_offset < 0:
+        start_offset = 0.0
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     command = [
         "ffmpeg", "-y",
         "-stream_loop", "-1",
+    ]
+    # Stage 3F (MA-15): input seeking — "-ss" BEFORE "-i" starts the
+    # (looped) source at the asset's verified segment offset instead
+    # of always at t=0. With start_offset=0 the command is identical
+    # to the historical one.
+    if start_offset > 0:
+        command.extend(["-ss", str(start_offset)])
+    command.extend([
         "-i", str(video_path),
         "-vf", build_video_filter(),
         "-frames:v", str(frame_count),
@@ -416,7 +475,7 @@ def create_video_clip(video_path, duration, output_path, frame_count=None):
         "-an",
         "-movflags", "+faststart",
         str(output_path),
-    ]
+    ])
 
     success = run_ffmpeg(command)
     if not success or not valid_media(output_path):
@@ -576,6 +635,14 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
 
         success = False
         media_ok = bool(media_path and valid_media(media_path))
+        # Stage 3F: deterministic still motion chosen from the item
+        # index (even = zoom-in, odd = pan-right); video items seek
+        # to their timeline clip_start.
+        item_motion = "zoom_in" if index % 2 == 0 else "pan_right"
+        try:
+            item_clip_start = float(item.get("clip_start") or 0.0)
+        except (TypeError, ValueError):
+            item_clip_start = 0.0
         if media_ok:
             if media_type == "video":
                 success = create_video_clip(
@@ -583,6 +650,7 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                     duration,
                     output_path,
                     frame_count=frame_count,
+                    start_offset=item_clip_start,
                 )
             else:
                 success = create_image_clip(
@@ -590,6 +658,7 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                     duration,
                     output_path,
                     frame_count=frame_count,
+                    motion=item_motion,
                 )
         else:
             print(
@@ -615,6 +684,7 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                     duration,
                     output_path,
                     frame_count=frame_count,
+                    start_offset=item_clip_start,
                 )
             else:
                 success = create_image_clip(
@@ -622,6 +692,7 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                     duration,
                     output_path,
                     frame_count=frame_count,
+                    motion=item_motion,
                 )
             used_holdover = bool(success)
 

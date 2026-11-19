@@ -110,15 +110,21 @@ def test_crash_resume_only_synthesizes_missing_parts(tmp_path, install_fake):
 
     result = generate_narration(text=TEXT, output_path=str(output))
 
-    assert result == str(output)
+    # Stage 3J: generate_narration returns voice metadata (was the
+    # output path string).
+    assert isinstance(result, dict)
+    assert result["output_file"] == str(output)
     assert fake.called_indices() == [2, 3]
 
     assert output.exists()
     expected_frames = sum(_frames_for(i) for i in range(4))
     assert _wav_frames(output) == expected_frames
 
-    captions = json.loads((tmp_path / "captions.json").read_text())
-    assert len(captions["segments"]) == 4
+    # Stage 3I: narration produces audio ONLY — captions.json is
+    # written solely by services.captions.build_captions, so it must
+    # NOT appear here (previously this asserted the proportional
+    # captions narration used to write itself).
+    assert not (tmp_path / "captions.json").exists()
 
 
 def test_hash_stability_and_selective_invalidation(tmp_path, install_fake):
@@ -164,7 +170,9 @@ def test_retry_succeeds_within_three_attempts(tmp_path, install_fake):
 
     result = generate_narration(text=TEXT, output_path=str(output))
 
-    assert result == str(output)
+    # Stage 3J: returns voice metadata dict (was the path string).
+    assert isinstance(result, dict)
+    assert result["output_file"] == str(output)
     assert output.exists()
     sentence_zero_calls = [
         call for call in fake.calls if call["index"] == 0
@@ -196,6 +204,8 @@ def test_backward_compatible_signature_and_keyword_call(
         output_path=str(output),
     )
 
-    assert result == str(output)
+    # Stage 3J: returns voice metadata dict (was the path string).
+    assert isinstance(result, dict)
+    assert result["output_file"] == str(output)
     assert output.exists()
     assert _wav_frames(output) == _frames_for(0)

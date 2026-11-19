@@ -73,9 +73,35 @@ def create_ass_file(
         "MarginL, MarginR, MarginV, Effect, Text"
     )
 
-    for segment in data["segments"]:
+    dialogue_count = 0
 
-        words = segment["words"]
+    for segment in data.get("segments") or []:
+
+        words = segment.get("words") or []
+
+        if not words:
+            # Stage 3I (MA-19): word-less (proportional/provisional)
+            # segments still produce dialogue — one event per
+            # segment from its own start/end/text. Previously this
+            # loop read segment["words"] unconditionally into
+            # per-word events only, so word-less captions yielded a
+            # header-only ASS that "succeeded" and burned ZERO
+            # captions while every stage passed.
+            text = str(segment.get("text") or "").strip()
+            if not text:
+                continue
+            start_time = format_ass_time(float(segment.get("start", 0)))
+            end_time = format_ass_time(float(segment.get("end", 0)))
+            lines.append(
+                f"Dialogue: 0,"
+                f"{start_time},"
+                f"{end_time},"
+                f"Default,,"
+                f"0,0,0,0,"
+                f"{text}"
+            )
+            dialogue_count += 1
+            continue
 
         for index, word in enumerate(words):
 
@@ -122,6 +148,17 @@ def create_ass_file(
                 f"0,0,0,0,"
                 f"{text}"
             )
+            dialogue_count += 1
+
+    # Stage 3I: a header-only ASS is a FAILURE, not a success. Raise
+    # before writing anything so no empty ASS file is left behind
+    # for the caller's exists() check to mistake for success.
+    if dialogue_count == 0:
+        raise ValueError(
+            "Captions contain no dialogue events: every segment was "
+            "empty or missing text/words. Refusing to write a "
+            "header-only ASS file."
+        )
 
     output_file.parent.mkdir(
         parents=True,
@@ -139,6 +176,7 @@ def create_ass_file(
 
     print()
     print("ASS CAPTIONS CREATED")
+    print(f"Dialogue events: {dialogue_count}")
     print(f"Output: {output_file}")
 
 

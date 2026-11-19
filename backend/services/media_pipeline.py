@@ -2333,67 +2333,22 @@ def _youtube_slim(key):
     }
 
 
-def _youtube_transcript_segment(
-    url,
-    subject="",
-    place="",
-    event="",
-    era="",
-):
+def _get_youtube_transcript(url):
     """
-    Find a relevant timestamp inside a YouTube automatic transcript.
+    Load the raw yt-dlp json3 transcript for a source URL, or None.
 
-    Evidence is evaluated across a short transcript window rather
-    than one caption line. This is important because documentary
-    narration often introduces the subject, location, and event
-    across several consecutive sentences.
-
-    This function is intentionally niche-agnostic.
+    This is the SINGLE transcript loading path: memory cache ->
+    persistent source profile -> one caption download (failures are
+    cached in _yt_transcript_failed and never retried per shot).
+    _youtube_transcript_segment uses it to find segments, and the
+    Stage 3B transcript-interval verification uses it to read the
+    text of an already-chosen segment. Fail-soft: any failure
+    returns None.
     """
-
     key = str(url or "").split("&", 1)[0].strip()
 
     if not key:
         return None
-
-    def normalize(value):
-        value = " ".join(
-            str(value or "").split()
-        ).strip().lower()
-
-        value = re.sub(
-            r"^(the|a|an)\s+",
-            "",
-            value,
-            flags=re.IGNORECASE,
-        )
-
-        return value
-
-    subject = normalize(subject)
-    place = normalize(place)
-    event = normalize(event)
-    era = normalize(era)
-
-    terms = [
-        value
-        for value in (
-            subject,
-            place,
-            event,
-            era,
-        )
-        if value
-    ]
-
-    if not terms:
-        return None
-
-    # ---------------------------------------------------------
-    # Transcript: memory cache -> persistent cache -> one download.
-    # Failures (no captions, HTTP 429) are cached, never retried
-    # per shot.
-    # ---------------------------------------------------------
 
     transcript = _youtube_transcript_cache.get(key)
 
@@ -2514,6 +2469,76 @@ def _youtube_transcript_segment(
             )
             _yt_transcript_failed.add(key)
             return None
+
+    return transcript
+
+
+def _youtube_transcript_segment(
+    url,
+    subject="",
+    place="",
+    event="",
+    era="",
+):
+    """
+    Find a relevant timestamp inside a YouTube automatic transcript.
+
+    Evidence is evaluated across a short transcript window rather
+    than one caption line. This is important because documentary
+    narration often introduces the subject, location, and event
+    across several consecutive sentences.
+
+    This function is intentionally niche-agnostic.
+    """
+
+    key = str(url or "").split("&", 1)[0].strip()
+
+    if not key:
+        return None
+
+    def normalize(value):
+        value = " ".join(
+            str(value or "").split()
+        ).strip().lower()
+
+        value = re.sub(
+            r"^(the|a|an)\s+",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+
+        return value
+
+    subject = normalize(subject)
+    place = normalize(place)
+    event = normalize(event)
+    era = normalize(era)
+
+    terms = [
+        value
+        for value in (
+            subject,
+            place,
+            event,
+            era,
+        )
+        if value
+    ]
+
+    if not terms:
+        return None
+
+    # ---------------------------------------------------------
+    # Transcript: memory cache -> persistent cache -> one download.
+    # Failures (no captions, HTTP 429) are cached, never retried
+    # per shot.
+    # ---------------------------------------------------------
+
+    transcript = _get_youtube_transcript(key)
+
+    if transcript is None:
+        return None
 
     info = _youtube_metadata_cache.get(key) or {}
 
@@ -2929,6 +2954,179 @@ def _youtube_transcript_segment(
     )
 
     return None
+
+
+# =====================================================================
+# Stage 3B — transcript-interval verification (review §2.4)
+#
+# verify_candidate judges a candidate by its METADATA (title /
+# snippet / description). This layer judges the actual spoken words
+# inside the segment that was chosen: the transcript text overlapping
+# [clip_start, clip_start + duration] must contain at least one of
+# the scenario's subject/topical tokens. It can ONLY demote — a
+# mismatch rejects an otherwise-accepted candidate; a match or an
+# unavailable transcript never changes a verdict, and a candidate the
+# verifier already rejected is never upgraded.
+# =====================================================================
+
+TRANSCRIPT_MIN_WINDOW_TOKENS = 5
+
+
+def _transcript_window_text(url, start, duration=DEFAULT_CLIP_DURATION):
+    """Transcript text overlapping [start, start+duration] for a
+    source video, or None when no transcript is available.
+
+    Reuses the single transcript loading path
+    (_get_youtube_transcript: memory cache -> persistent profile ->
+    one download) — no second fetcher. Transcript entries are the
+    json3 events the loader returns; an entry overlaps the window
+    when its [tStartMs, tStartMs + dDurationMs] interval intersects
+    it (an entry with no duration counts when its start falls inside
+    the window). Returns "" when a transcript exists but no entry
+    overlaps the window.
+    """
+    try:
+        start = float(start)
+    except (TypeError, ValueError):
+        return None
+    try:
+        duration = float(duration or DEFAULT_CLIP_DURATION)
+    except (TypeError, ValueError):
+        duration = float(DEFAULT_CLIP_DURATION)
+    if duration <= 0:
+        duration = float(DEFAULT_CLIP_DURATION)
+
+    transcript = _get_youtube_transcript(url)
+    if not isinstance(transcript, dict):
+        return None
+
+    window_end = start + duration
+    parts = []
+    for event_item in transcript.get("events") or []:
+        segs = event_item.get("segs") or []
+        if not segs:
+            continue
+        text = " ".join(
+            part.strip()
+            for part in (str(seg.get("utf8") or "") for seg in segs)
+            if part.strip()
+        ).strip()
+        if not text:
+            continue
+        try:
+            ev_start = float(event_item.get("tStartMs") or 0) / 1000.0
+        except (TypeError, ValueError):
+            continue
+        raw_duration = event_item.get("dDurationMs")
+        try:
+            ev_end = ev_start + float(raw_duration) / 1000.0 if raw_duration else ev_start
+        except (TypeError, ValueError):
+            ev_end = ev_start
+        if ev_end > ev_start:
+            overlaps = ev_start < window_end and ev_end > start
+        else:
+            overlaps = start <= ev_start < window_end
+        if overlaps:
+            parts.append(text)
+    return " ".join(parts)
+
+
+def _transcript_check_terms(scenario, bible):
+    """Subject/topical content tokens for the interval check.
+
+    Mirrors verify_candidate's term extraction in
+    story_understanding: the scenario subject's canonical name and
+    aliases, the scenario's subject label, its search_terms and its
+    visual description — all through the same _content_tokens
+    machinery, so the interval check and the verifier speak the
+    same token language.
+    """
+    scenario = scenario or {}
+    terms = set()
+    by_id = (bible or {}).get("by_id") or {}
+    subject = by_id.get(scenario.get("subject_id"))
+    if subject:
+        terms |= story._content_tokens(subject.get("canonical"))
+        for alias in subject.get("aliases") or []:
+            terms |= story._content_tokens(alias)
+    if scenario.get("subject"):
+        terms |= story._content_tokens(scenario.get("subject"))
+    for term in scenario.get("search_terms") or []:
+        terms |= story._content_tokens(term)
+    terms |= story._content_tokens(scenario.get("visual"))
+    return terms
+
+
+def check_transcript_interval(window_text, scenario, bible=None):
+    """Judge one transcript window against a scenario.
+
+    - "no_transcript" (NEUTRAL): no window text, or the window
+      yields fewer than TRANSCRIPT_MIN_WINDOW_TOKENS content tokens,
+      or the scenario defines no subject/topical terms to check.
+    - "interval_transcript_match": the window has enough tokens and
+      at least one subject/topical token appears in it.
+    - "transcript_mismatch": the window has enough tokens and ZERO
+      subject/topical tokens appear — the segment is about something
+      else, whatever its metadata claimed.
+    """
+    if window_text is None:
+        return "no_transcript"
+    window_tokens = story._content_tokens(window_text)
+    if len(window_tokens) < TRANSCRIPT_MIN_WINDOW_TOKENS:
+        return "no_transcript"
+    terms = _transcript_check_terms(scenario, bible)
+    if not terms:
+        return "no_transcript"
+    if terms & window_tokens:
+        return "interval_transcript_match"
+    return "transcript_mismatch"
+
+
+def _apply_transcript_check(asset, scenario, bible):
+    """Run the Stage 3B check on one downloaded asset.
+
+    Applies only to candidates that (a) passed verify_candidate,
+    (b) carry real segment evidence (segment_evidence is not
+    "none"/empty) and (c) have a source-video transcript. Stamps
+    asset["verification"]["transcript_check"] whenever the check
+    runs. On "transcript_mismatch" the verdict is demoted in place
+    (accepted=False, rejection_reason="transcript_mismatch") and the
+    label is returned; every other outcome leaves the verdict
+    untouched. Returns None when the check does not apply or cannot
+    run (fail-soft). This layer ONLY ever demotes.
+    """
+    if not isinstance(asset, dict):
+        return None
+    verification = asset.get("verification") or {}
+    if not verification.get("accepted"):
+        return None
+    segment_evidence = str(asset.get("segment_evidence") or "").strip()
+    if not segment_evidence or segment_evidence == "none":
+        return None
+    url = str(asset.get("video_url") or asset.get("url") or "").strip()
+    start = asset.get("clip_start")
+    if not url or start is None:
+        return None
+    duration = (
+        asset.get("clip_duration")
+        or asset.get("duration_seconds")
+        or DEFAULT_CLIP_DURATION
+    )
+    try:
+        window_text = _transcript_window_text(url, start, duration)
+        result = check_transcript_interval(window_text, scenario, bible)
+    except Exception as error:  # a transcript failure never crashes a pick
+        print(f"TRANSCRIPT CHECK SKIPPED (error): {url}: {error}")
+        return None
+    stamped = dict(verification)
+    stamped["transcript_check"] = result
+    if result == "transcript_mismatch":
+        stamped["accepted"] = False
+        stamped["rejection_reason"] = "transcript_mismatch"
+        asset["reject_reason"] = "transcript_mismatch"
+        asset["rejection_stage"] = "transcript_verification"
+    asset["verification"] = stamped
+    return result
 
 
 # =====================================================================
@@ -4871,7 +5069,7 @@ def _uve_download_any_candidate(candidate, scene_dir, sentence_number, asset_ind
     )
 
 
-def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_index, registry, used_keys, failures=None):
+def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_index, registry, used_keys, failures=None, transcript_scenario=None, transcript_bible=None):
     for candidate in candidates:
         if not isinstance(candidate, dict):
             continue
@@ -4969,6 +5167,40 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
             except OSError:
                 pass
             continue
+
+        # Stage 3B: transcript-interval verification. The asset was
+        # accepted by verify_candidate and carries real segment
+        # evidence; if the spoken words inside the chosen interval
+        # contain none of the scenario's subject/topical tokens, the
+        # candidate is DEMOTED (never upgraded) before it is
+        # registered or returned: the downloaded file is removed, the
+        # rejection is recorded, and the loop moves to the next pick.
+        if transcript_scenario is not None:
+            check = _apply_transcript_check(
+                asset, transcript_scenario, transcript_bible
+            )
+            if check == "transcript_mismatch":
+                print(
+                    f"      TRANSCRIPT MISMATCH (demoted): "
+                    f"{candidate_url} start={asset.get('clip_start')}"
+                )
+                if failures is not None:
+                    failures.append({
+                        "provider": candidate.get("provider")
+                        or candidate.get("source")
+                        or "unknown",
+                        "url": candidate_url,
+                        "reason": "transcript_mismatch",
+                        "candidate_id": candidate.get("candidate_id"),
+                        "stage": "transcript_verification",
+                    })
+                try:
+                    path = asset.get("file_path")
+                    if path and os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
+                continue
 
         if key:
             used_keys.add(key)
@@ -5220,6 +5452,7 @@ def _uve_search_and_pick(
         picks, _uve_download_any_candidate, scene_dir,
         beat["sentence_numbers"][0], len(beat_videos) + len(beat_images) + 1,
         registry, used_keys, failures=fetch_failures,
+        transcript_scenario=scenario, transcript_bible=bible,
     )
     if fetch_failures:
         scene_stats.setdefault("download_failures", []).extend(fetch_failures)
