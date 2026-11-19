@@ -12,6 +12,11 @@ try:
 except ImportError:  # pragma: no cover - flat-layout fallback
     import source_cache
 
+try:
+    from services import run_metrics
+except ImportError:  # pragma: no cover - flat-layout fallback
+    import run_metrics
+
 load_dotenv()
 
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
@@ -45,6 +50,10 @@ def _post_with_retry(path: str, query: str) -> dict:
     for attempt in range(SERPER_MAX_ATTEMPTS):
         with _serper_sem:
             source_cache.bump("serper_calls")
+            # Stage 0 metrics: this function is the single choke
+            # point every real Serper request passes through (cache
+            # hits never reach it), split by endpoint = search type.
+            run_metrics.serper_call(path)
             try:
                 response = requests.post(
                     f"{SERPER_BASE}/{path}",

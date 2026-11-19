@@ -1,6 +1,7 @@
 ﻿import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 
 from redis import Redis
@@ -25,11 +26,13 @@ from services.asset_report import (
 )
 from services.visual_registry import reset_registry
 
+from services import run_metrics
 from services.production_state import (
     create_production_state,
     start_stage,
     complete_stage,
     fail_stage,
+    utc_now,
 )
 
 
@@ -52,15 +55,88 @@ SENTENCES_PER_SCENE = 40
 MOTION_GRAPHIC_MAX_STATS = 3
 
 
+def _persistable_state(state: dict) -> dict:
+    """The subset of the run state that may be written to disk.
+
+    MA-09: keys starting with "_" are in-memory run internals — above
+    all "_partial" (VA-07's failure-report references: live scene
+    lists, the analysis dict, the timeline result). They stay on the
+    in-memory dict for fail_pipeline, but must never be serialised
+    into production_state.json, where they bloat the file and leak
+    pipeline internals to any future /status consumer.
+    """
+    return {
+        key: value
+        for key, value in state.items()
+        if not str(key).startswith("_")
+    }
+
+
 def save_production_state(project_dir: Path, state: dict):
+    """Persist the production state atomically (MA-11).
+
+    The JSON is written to a temp file in the SAME directory, flushed
+    and fsynced, then os.replace()d over production_state.json — so a
+    reader (or a crash mid-write) can never observe a half-written
+    state file: the file on disk is always either the previous
+    complete state or the new complete state.
+    """
+    project_dir = Path(project_dir)
     state_file = project_dir / "production_state.json"
-    with open(state_file, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    payload = json.dumps(
+        _persistable_state(state), indent=2, ensure_ascii=False
+    )
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(project_dir),
+        prefix=".production_state.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, state_file)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
     return state_file
+
+
+def _set_project_status(project_id, status: str):
+    """AUD-03: write the run's status back to the Project row.
+
+    Best-effort by design: the database is the observability surface
+    for the run, never a pipeline dependency — any failure (DB down,
+    unknown project, bad config) is logged and swallowed so it can
+    never fail a production. The import is lazy for the same reason.
+    """
+    try:
+        from database import SessionLocal
+        from models import Project
+
+        db = SessionLocal()
+        try:
+            project = db.get(Project, str(project_id))
+            if project is None:
+                return
+            project.status = status
+            db.commit()
+        finally:
+            db.close()
+    except Exception as error:
+        print(
+            f"WARNING: could not write project status "
+            f"'{status}' for {project_id}: {error}"
+        )
 
 
 def run_stage(state: dict, stage: str, project_dir: Path):
     start_stage(state, stage)
+    run_metrics.stage_started(stage)
     save_production_state(project_dir, state)
     print()
     print("========================================")
@@ -71,12 +147,20 @@ def run_stage(state: dict, stage: str, project_dir: Path):
 
 def finish_stage(state: dict, stage: str, project_dir: Path):
     complete_stage(state, stage)
+    run_metrics.stage_finished(stage)
     save_production_state(project_dir, state)
 
 
 def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
     fail_stage(state, stage, str(error))
+    # AUD-30: a failed run is still a finished run — stamp the
+    # completion time the state machine previously never set.
+    state["completed_at"] = utc_now()
+    run_metrics.stage_failed(stage)
     save_production_state(project_dir, state)
+    # AUD-03: the failure is a status transition like any other.
+    # project_dir is media/<project_id>, so its name is the id.
+    _set_project_status(Path(project_dir).name, "failed")
     # VA-07: a failed run must still leave its asset report, built
     # from whatever partial state the pipeline had accumulated, so a
     # failure is diagnosable from the report alone. A problem writing
@@ -93,6 +177,7 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
                 else None
             ),
             run_failure={"stage": stage, "error": str(error)},
+            execution=run_metrics.snapshot(),
         )
         write_asset_report(project_dir, failure_report)
         print("Asset report (failure): written from partial state.")
@@ -223,8 +308,10 @@ def run_full_pipeline(project_id: str, script: str):
     project_dir = Path("media") / project_id
     project_dir.mkdir(parents=True, exist_ok=True)
 
+    run_metrics.begin_run()
     state = create_production_state()
     save_production_state(project_dir, state)
+    _set_project_status(project_id, "running")
 
     processed_scenes = []
     scenes = []
@@ -364,6 +451,10 @@ def run_full_pipeline(project_id: str, script: str):
     try:
         # Motion Designer temporarily disabled
         print("Motion Designer")
+        # AUD-30: this stage previously only ever called
+        # finish_stage — it never recorded a start. Run it through
+        # the same stage lifecycle as every other stage.
+        run_stage(state, "motion_designer", project_dir)
 
         motion_data = {
             "case_bible": analysis.get("bible") or {},
@@ -744,6 +835,7 @@ def run_full_pipeline(project_id: str, script: str):
             timeline_result=timeline_result,
             renderer_audit=renderer_audit,
             analysis_mode=analysis.get("mode") if isinstance(analysis, dict) else None,
+            execution=run_metrics.snapshot(),
         )
         write_asset_report(project_dir, asset_report)
 
@@ -805,7 +897,11 @@ def run_full_pipeline(project_id: str, script: str):
 
     state["status"] = "completed"
     state["current_stage"] = None
+    # AUD-30: completed_at was declared in the state schema but never
+    # set; a finished run now carries its finish time.
+    state["completed_at"] = utc_now()
     save_production_state(project_dir, state)
+    _set_project_status(project_id, "completed")
 
     visual_count = sum(
         len(s.get("images", [])) + len(s.get("videos", []))

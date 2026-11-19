@@ -27,6 +27,7 @@ def download_image(image_url, output_path):
 from datetime import datetime, timezone
 
 from services.visual_registry import get_registry
+from services import run_metrics
 from services import story_understanding as story
 from services.media_probe import probe_image, probe_video
 from services.http_retry import request_with_retry
@@ -4834,6 +4835,10 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                 )
             continue
 
+        # Stage 0 metrics: every real download attempt passes
+        # through this loop (previously-failed URLs skipped above are
+        # not attempts — nothing is requested for them).
+        run_metrics.download_attempted()
         asset = downloader(
             candidate,
             scene_dir,
@@ -4879,6 +4884,18 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                     failure["stage"] = candidate["rejection_stage"]
                 failures.append(failure)
             continue
+
+        # Stage 0 metrics: the download produced a file — count it
+        # and its size as downloaded bytes (measured now, while the
+        # file the downloader wrote is on disk).
+        _dl_path = asset.get("file_path") or asset.get("path")
+        _dl_bytes = 0
+        try:
+            if _dl_path and os.path.exists(_dl_path):
+                _dl_bytes = os.path.getsize(_dl_path)
+        except OSError:
+            _dl_bytes = 0
+        run_metrics.download_succeeded(_dl_bytes)
 
         key = _uve_candidate_key(asset)
 
@@ -5052,6 +5069,12 @@ def _uve_search_and_pick(
     _funnel_add(raw_videos, scored_videos, "video")
     _funnel_add(raw_web_sources, scored_web_sources, "web")
     _funnel_add(raw_images, scored_images, "image")
+
+    # Stage 0 metrics: candidates discovered in this pass — the same
+    # raw pools the funnels above are built from.
+    run_metrics.candidates_discovered(
+        len(raw_videos) + len(raw_web_sources) + len(raw_images)
+    )
 
     scene_stats["candidates_considered"] += len(scored_videos) + len(scored_images)
     scene_stats["candidates_rejected"] += sum(
@@ -5451,6 +5474,9 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                 if not recovery_queries:
                     break
                 recovery_rounds_done = round_no
+                # Stage 0 metrics: a recovery round is actually
+                # being executed for this beat.
+                run_metrics.coverage_recovery_round()
                 tried_queries.extend(recovery_queries)
                 print(
                     f"  COVERAGE RECOVERY round {round_no} for "

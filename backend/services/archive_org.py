@@ -24,6 +24,11 @@ import requests
 
 from .http_retry import request_with_retry
 
+try:
+    from . import run_metrics
+except ImportError:  # pragma: no cover - flat-layout fallback
+    import run_metrics
+
 _SEARCH_URL = "https://archive.org/advancedsearch.php"
 _METADATA_URL = "https://archive.org/metadata/{identifier}"
 _DETAILS_URL = "https://archive.org/details/{identifier}"
@@ -91,6 +96,9 @@ def search_archive_videos(query: str, limit: int = 3) -> list[dict]:
     query = str(query or "").strip()
     if not query:
         return []
+
+    # Stage 0 metrics: one advancedsearch invocation per call.
+    run_metrics.archive_org_search()
 
     session = _session()
     response = request_with_retry(

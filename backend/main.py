@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -141,6 +143,51 @@ def get_project(
         "category": project.category,
         "status": project.status,
         "created_at": project.created_at,
+    }
+
+
+# =========================================================
+# GET PROJECT STATUS (AUD-03: status write-back + progress)
+# =========================================================
+
+@app.get("/projects/{project_id}/status")
+def get_project_status(
+    project_id: str,
+    db: Session = Depends(get_db),
+):
+    statement = select(Project).where(
+        Project.id == project_id
+    )
+
+    project = db.execute(statement).scalar_one_or_none()
+
+    if project is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Project not found",
+        )
+
+    # The DB row carries the run's headline status (written back by
+    # jobs as the pipeline transitions); the persisted production
+    # state — when a run has written one — carries the per-stage
+    # progress. The state file is written atomically (MA-11) and no
+    # longer contains run internals (MA-09), so it is safe to serve.
+    progress = None
+    state_file = Path("media") / project_id / "production_state.json"
+    if state_file.exists():
+        try:
+            progress = json.loads(
+                state_file.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            progress = None
+
+    return {
+        "id": project.id,
+        "status": project.status,
+        "category": project.category,
+        "created_at": project.created_at,
+        "progress": progress,
     }
 
 

@@ -1,15 +1,18 @@
 from datetime import datetime, timezone
 
 
+# AUD-30: this list must name exactly the stages jobs.run_full_pipeline
+# runs, in run order. Timeline building and rendering happen INSIDE the
+# video_editor stage — they were previously declared here as separate
+# stages that never ran, so every persisted state carried two forever-
+# "pending" stages that did not exist.
 PRODUCTION_STAGES = [
     "voice_actor",
     "script_analysis",
     "asset_manager",
-    "timeline_builder",
-    "renderer",
+    "motion_designer",
     "sound_designer",
     "video_editor",
-    "motion_designer",
 ]
 
 

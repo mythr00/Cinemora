@@ -11,6 +11,11 @@ import requests
 from .visual_policy import VisualRequest, reject_candidate
 from .http_retry import request_with_retry
 
+try:
+    from . import run_metrics
+except ImportError:  # pragma: no cover - flat-layout fallback
+    import run_metrics
+
 UA = "DocumentaryStudio/0.3 (local research tool)"
 
 
@@ -210,6 +215,8 @@ def search_wikimedia(query: str, limit: int = 6) -> list[dict]:
     the one retrieval source whose licence, licence URL and creator are
     captured from the provider itself. Pexels/Pixabay stay unwired per the
     founder's permanent restriction (2026-11-19)."""
+    # Stage 0 metrics: one Commons search invocation.
+    run_metrics.wikimedia_search()
     return _wikimedia(query, limit)
 
 
@@ -278,6 +285,8 @@ def search_wikimedia_videos(query: str, limit: int = 5) -> list[dict]:
     silent discovery filtering. Prefers the smallest MP4 derivative so
     downloads stay practical; falls back to the original file.
     """
+    # Stage 0 metrics: one Commons search invocation.
+    run_metrics.wikimedia_search()
     r = request_with_retry(
         "GET",
         "https://commons.wikimedia.org/w/api.php",

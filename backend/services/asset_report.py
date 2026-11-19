@@ -95,7 +95,7 @@ def _timeline_items(timeline_result) -> list:
     return items
 
 
-def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None) -> dict:
+def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None) -> dict:
     """Build the report from real pipeline outputs.
 
     processed_scenes: scene result dicts from the media pipeline.
@@ -106,6 +106,12 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                       explicitly whether real LLM analysis or the
                       heuristic degraded mode produced the scenarios
                       the assets were selected against.
+    execution:        the run_metrics snapshot for this run (Stage 0
+                      observability): provider call counts, download
+                      totals, stage durations, wall time. Its
+                      monetary_cost_usd is None unless a price table
+                      is configured — unknown cost is never reported
+                      as zero. None when the caller has no metrics.
     """
     stats = Counter()
     accepted_by_path: dict[str, dict] = {}
@@ -339,6 +345,11 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         # the run completed.
         "run_failure": run_failure,
         "run_completed": run_failure is None,
+        # Stage 0 observability: what the run actually did — provider
+        # calls, downloads, stage durations, wall time (see
+        # services/run_metrics). Present on success AND failure
+        # reports; None only when the caller collected no metrics.
+        "execution": execution,
         # VA-09: the four verification dimensions, kept separate —
         # technical validity, metadata relevance, segment evidence
         # and rights are different judgements and are never merged
