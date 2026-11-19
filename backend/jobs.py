@@ -7,7 +7,7 @@ from redis import Redis
 from rq import Queue
 
 from services.script_analyzer import analyze_script, write_case_bible
-from services.media_pipeline import process_scene_media
+from services.media_pipeline import process_scene_media, reset_media_caches
 from services.timeline import build_project_timeline
 from services.renderer import render_timeline
 from services.narration import generate_narration
@@ -272,6 +272,7 @@ def run_full_pipeline(project_id: str, script: str):
         _am_scenes = []
         _am_prev = _source_cache.stats_summary()
         reset_registry(project_id)
+        reset_media_caches()
         print(f"Visual uniqueness registry reset for project {project_id}.")
         print()
 

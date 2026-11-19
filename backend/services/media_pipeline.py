@@ -1759,6 +1759,25 @@ _yt_info_locks = {}
 _yt_info_guard = _threading.Lock()
 
 
+def reset_media_caches():
+    """Clear every process-global YouTube cache (AUD-18).
+
+    These caches are keyed by raw URL and were NEVER reset: in the
+    long-lived worker, project B inherited project A's used segments and
+    permanent failure blacklists, so identical URLs were spuriously
+    rejected in unrelated later projects. jobs.run_full_pipeline calls
+    this at the start of every production run, alongside the registry
+    reset. The persistent source_cache (SQLite) is intentionally NOT
+    cleared — it is the cross-project memory; these are per-job only.
+    """
+    _yt_segment_uses.clear()
+    _youtube_metadata_cache.clear()
+    _youtube_transcript_cache.clear()
+    _yt_info_failed.clear()
+    _yt_transcript_failed.clear()
+    _yt_info_locks.clear()
+
+
 def _youtube_info(key):
     """
     Full yt-dlp info for a URL. One subprocess per URL per process, and
@@ -4015,11 +4034,31 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
             else:
                 clip_key = key
 
+            # AUD-20: pass the segment range so the registry's overlap
+            # protection actually engages — register() supported start/end
+            # all along, but this call never supplied them, leaving
+            # used_segments permanently empty.
+            segment_start = None
+            segment_end = None
+            if isinstance(clip_start, (int, float)):
+                segment_start = float(clip_start)
+                raw_duration = (
+                    asset.get("duration_seconds")
+                    or asset.get("clip_duration")
+                    or DEFAULT_CLIP_DURATION
+                )
+                try:
+                    segment_end = segment_start + float(raw_duration)
+                except (TypeError, ValueError):
+                    segment_end = None
+
             registry.register(
                 path=asset.get("file_path"),
                 url=registry_url,
                 title=asset.get("title", ""),
                 clip_key=clip_key,
+                start=segment_start,
+                end=segment_end,
             )
         except Exception:
             pass

@@ -24,6 +24,10 @@ from typing import Optional
 _lock = threading.RLock()
 _initialized = False
 
+# How long a cached "transcript unavailable" verdict is trusted before the
+# transcript is retried (AUD-19). Mirrors the rate_limited retry pattern.
+TRANSCRIPT_UNAVAILABLE_TTL_SECONDS = 24 * 3600
+
 _STOP = {
     "the", "a", "an", "of", "in", "on", "and", "to", "for", "with",
     "footage", "video",
@@ -205,6 +209,16 @@ def profile_get(url: str) -> Optional[dict]:
     p["chapters"] = json.loads(p.pop("chapters_json") or "[]")
     p["transcript"] = json.loads(p.pop("transcript_json") or "[]")
     if p["transcript_status"] == "rate_limited" and (p["retry_after"] or 0) < time.time():
+        p["transcript_status"] = "unknown"
+    # AUD-19: an "unavailable" transcript verdict used to be PERMANENT —
+    # one transient caption failure disabled transcript-based segment
+    # selection for that video in every future project. Give it the same
+    # retry horizon pattern as rate limiting: after the TTL, report the
+    # status as "unknown" so the caller retries the fetch.
+    if (
+        p["transcript_status"] == "unavailable"
+        and (p.get("analyzed_at") or 0) < time.time() - TRANSCRIPT_UNAVAILABLE_TTL_SECONDS
+    ):
         p["transcript_status"] = "unknown"
     bump("profile_hit")
     return p
