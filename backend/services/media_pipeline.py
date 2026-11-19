@@ -1691,16 +1691,30 @@ def download_video_with_ytdlp(video_url, output_path, start_time=0, duration=DEF
 
 
 def process_sentence_videos(sentence, sentence_dir, video_count=DEFAULT_VIDEO_COUNT):
-    return []
+    # AUD-24: this was a stub that silently returned []. A legacy test
+    # script exercised it and "passed" while testing nothing. Fail loudly.
+    raise NotImplementedError(
+        "process_sentence_videos is a retired stub. Use process_scene_media "
+        "(story-driven visual engine) — it assigns verified visuals per sentence."
+    )
 
 
 def process_sentence_images(sentence, sentence_dir, image_count=DEFAULT_IMAGE_COUNT):
-    return []
+    # AUD-24: see process_sentence_videos.
+    raise NotImplementedError(
+        "process_sentence_images is a retired stub. Use process_scene_media "
+        "(story-driven visual engine) — it assigns verified visuals per sentence."
+    )
 
 
 def process_sentence_media(sentence, project_dir, scene_number, image_count=DEFAULT_IMAGE_COUNT, video_count=DEFAULT_VIDEO_COUNT):
-    return {"sentence_number": get_sentence_number(sentence, 1), "sentence_text": get_sentence_text(sentence),
-            "images": [], "videos": [], "visuals": [], "sentence": sentence}
+    # AUD-24: see process_sentence_videos. This stub returned a plausible-
+    # looking but empty result dict, which silently produced visual-less
+    # sentences wherever it was called.
+    raise NotImplementedError(
+        "process_sentence_media is a retired stub. Use process_scene_media "
+        "(story-driven visual engine) — it assigns verified visuals per sentence."
+    )
 
 
 # ==========================================================================
@@ -4416,6 +4430,13 @@ def apply_review_decisions(result, project_dir):
         sentence["rejected_by_review"] = True
     return result
 def process_scene_media(scene, project_dir, image_count=3, video_count=3):
+    """Canonical scene entry point (story-driven visual engine).
+
+    Note (AUD-24): image_count/video_count are legacy parameters kept for
+    call-site compatibility. They do NOT cap retrieval — the number of
+    visuals is driven by the scene's story scenarios. They are documented
+    here so nobody mistakes them for working controls.
+    """
     return _uve_process_scene_media(scene, project_dir, image_count=image_count, video_count=video_count)
 
 

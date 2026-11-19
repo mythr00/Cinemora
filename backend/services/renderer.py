@@ -95,6 +95,7 @@ def probe_media(path):
                     pass
 
         frame_count = None
+        frame_count_estimated = False
         value = stream.get("nb_frames")
         if value not in (None, "N/A"):
             try:
@@ -103,7 +104,11 @@ def probe_media(path):
                 frame_count = None
 
         if frame_count is None and duration:
+            # AUD-22: this is an ESTIMATE (duration x nominal FPS), not a
+            # measurement. It is flagged as such so audit_clip can recount
+            # exactly instead of aborting a render over an estimate.
             frame_count = int(round(duration * FPS))
+            frame_count_estimated = True
 
         def parse_rate(value):
             if not value or value == "N/A":
@@ -122,6 +127,7 @@ def probe_media(path):
         return {
             "duration": duration,
             "frame_count": frame_count,
+            "frame_count_estimated": frame_count_estimated,
             "avg_fps": parse_rate(stream.get("avg_frame_rate")),
             "r_fps": parse_rate(stream.get("r_frame_rate")),
             "width": stream.get("width"),
@@ -131,6 +137,41 @@ def probe_media(path):
 
     except Exception:
         return None
+
+def count_frames_exact(path):
+    """Count a video's frames by decoding the headers (ffprobe
+    -count_frames). Used by audit_clip when the container does not declare
+    nb_frames, so an estimate never decides a frame-lock verdict (AUD-22).
+    Returns an int, or None when counting fails."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-count_frames",
+                "-show_entries", "stream=nb_read_frames",
+                "-of", "json",
+                str(path),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            return None
+        data = json.loads(result.stdout)
+        streams = data.get("streams", [])
+        if not streams:
+            return None
+        value = streams[0].get("nb_read_frames")
+        if value in (None, "N/A"):
+            return None
+        return int(value)
+    except Exception:
+        return None
+
 
 def probe_duration(path):
     info = probe_media(path)
@@ -465,6 +506,20 @@ def audit_clip(clip_path, expected_frames, expected_duration, scene_number, item
     if info:
         actual_frames = info.get("frame_count")
         actual_duration = info.get("duration")
+
+        # AUD-22: if the frame count was only an estimate and it disagrees
+        # with the expectation, count the frames exactly before declaring
+        # a mismatch — an estimate must never abort a whole render.
+        if (
+            info.get("frame_count_estimated")
+            and actual_frames is not None
+            and int(actual_frames) != int(expected_frames)
+        ):
+            exact = count_frames_exact(clip_path)
+            if exact is not None:
+                actual_frames = exact
+                result["frame_count_source"] = "counted_exact"
+
         result["actual_frames"] = actual_frames
         result["actual_duration"] = actual_duration
         result["fps"] = info.get("avg_fps")
