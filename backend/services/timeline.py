@@ -936,6 +936,42 @@ def build_scene_timeline(
     for image in images:
         visuals.append(image)
 
+    # --------------------------------------------------------
+    # PER-SENTENCE VERIFIED ASSIGNMENTS (AUD-14)
+    # --------------------------------------------------------
+    # The media pipeline records, for every sentence, the exact visual it
+    # retrieved and verified for THAT sentence (scene_media["sentences"],
+    # in scene order — the same order build_project_timeline slices the
+    # sentence timings by). Those assignments are authoritative. The
+    # previous implementation ignored them and paired the scene's visuals
+    # to sentences round-robin, so a clip verified for sentence A could
+    # silently illustrate sentence B.
+    assigned_by_position = {}
+
+    for position, sentence_result in enumerate(
+        scene_media.get("sentences", []) or []
+    ):
+        if not isinstance(sentence_result, dict):
+            continue
+
+        for candidate in (
+            list(sentence_result.get("videos") or [])
+            + list(sentence_result.get("images") or [])
+        ):
+            if visual_exists(candidate):
+                assigned_by_position[position] = candidate
+                break
+
+    # If the scene-level aggregates are empty but per-sentence assignments
+    # exist, the assignments themselves are the scene's visuals.
+    if not visuals and assigned_by_position:
+        seen_paths = set()
+        for candidate in assigned_by_position.values():
+            path = get_visual_path(candidate)
+            if path not in seen_paths:
+                seen_paths.add(path)
+                visuals.append(candidate)
+
     if not visuals:
 
         return {
@@ -1020,11 +1056,18 @@ def build_scene_timeline(
             ]
             if assigned_graphics:
                 visual = assigned_graphics[0]
+                assignment = "motion_graphic"
+            elif sentence_index in assigned_by_position:
+                # AUD-14: the visual the pipeline verified for THIS
+                # sentence — never a rotated substitute.
+                visual = assigned_by_position[sentence_index]
+                assignment = "sentence"
             else:
                 visual = visuals[
                     sentence_index
                     % len(visuals)
                 ]
+                assignment = "rotation"
 
             visual_type = get_visual_type(
                 visual
@@ -1116,6 +1159,13 @@ def build_scene_timeline(
 
                 "visual_relation":
                     "sentence_window",
+
+                # How this visual came to illustrate this sentence:
+                # "sentence" (pipeline-verified assignment), "rotation"
+                # (scene-level fallback) or "motion_graphic". Consumed by
+                # the asset report (AUD-16/AUD-23).
+                "assignment":
+                    assignment,
 
                 "motion":
                     "auto",
