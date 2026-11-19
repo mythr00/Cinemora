@@ -1017,8 +1017,17 @@ def get_certificate(project_id: str, _=Depends(require_api_token)):
             "This project has no production runs, so no provenance "
             "certificate exists.",
         )
-    decisions, _total = run_ledger.list_decisions(latest["run_id"], 100_000, 0)
-    counts = run_ledger.decision_counts(latest["run_id"])
+    # The run certificate describes the ORIGINAL production only:
+    # editor-appended decisions (revision_id-tagged, migration 0004)
+    # are excluded, so editing a revision can never change this
+    # certificate (Stage 6 adversarial defect D3). Per-revision
+    # certificates live on the editor endpoints below.
+    decisions, _total = run_ledger.list_decisions(
+        latest["run_id"], 100_000, 0, include_revision_decisions=False
+    )
+    counts = run_ledger.decision_counts(
+        latest["run_id"], include_revision_decisions=False
+    )
     return plan_document.build_certificate(
         project_view, latest, decisions, counts
     )

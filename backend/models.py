@@ -8,6 +8,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -244,7 +245,14 @@ class ProjectRevision(Base):
     (revision_<id>.json) — the established pattern: DB = truth for
     records, files for documents/media. The original production's
     artefacts are never modified by the editor.
-    Schema authority: migrations/versions/0004_editor_revisions.py.
+    Schema authority: migrations/versions/0004_editor_revisions.py
+    (the table); the single-root partial unique index below is
+    migrations/versions/0005_revision_root_uniqueness.py — exactly
+    ONE revision-0 root (parent_revision_id IS NULL) may exist per
+    project, enforced by the database on SQLite and PostgreSQL
+    alike, so concurrent revision-0 creation cannot fork the chain
+    (Stage 6 adversarial defect D1). Branching below the root
+    (several children of one parent) is unaffected and intended.
     """
 
     __tablename__ = "project_revisions"
@@ -309,4 +317,14 @@ class ProjectRevision(Base):
     __table_args__ = (
         Index("ix_project_revisions_project", "project_id"),
         Index("ix_project_revisions_run", "run_id"),
+        # Exactly one revision-0 root per project (D1): a partial
+        # unique index over the root rows only — children keep
+        # parent_revision_id set, so branching is unconstrained.
+        Index(
+            "uq_project_revisions_single_root",
+            "project_id",
+            unique=True,
+            sqlite_where=text("parent_revision_id IS NULL"),
+            postgresql_where=text("parent_revision_id IS NULL"),
+        ),
     )

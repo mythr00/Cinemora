@@ -61,6 +61,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy.exc import IntegrityError
+
 from models import Project, ProjectRevision
 from services import media_paths, media_probe, plan_document, run_ledger
 
@@ -656,9 +658,37 @@ def import_production(project_id, run) -> dict:
     return doc
 
 
+def _existing_root_revision(project_id):
+    """(view, doc) of the project's revision-0 root — the row with
+    parent_revision_id NULL — or None when the project has none."""
+    db = _session()
+    try:
+        row = (
+            db.query(ProjectRevision)
+            .filter(
+                ProjectRevision.project_id == str(project_id),
+                ProjectRevision.parent_revision_id.is_(None),
+            )
+            .order_by(ProjectRevision.created_at.asc())
+            .first()
+        )
+        root_id = row.id if row is not None else None
+    finally:
+        db.close()
+    if root_id is None:
+        return None
+    return get_revision(project_id, root_id)
+
+
 def create_revision_zero(project_id, run_id=None) -> tuple[dict, dict]:
     """Create revision 0 from a completed run (the given one, else
-    the latest completed run of the project)."""
+    the latest completed run of the project).
+
+    Race-safe (Stage 6 adversarial defect D1): the single-root
+    partial unique index (migration 0005) lets exactly one creator
+    insert the root; a concurrent creator's insert fails with an
+    integrity error and the winner's root — which imports the same
+    run identically — is returned instead of an error."""
     run = None
     if run_id:
         run = run_ledger.get_run(run_id)
@@ -680,7 +710,19 @@ def create_revision_zero(project_id, run_id=None) -> tuple[dict, dict]:
             "This project has no completed production run to edit.",
         )
     doc = import_production(project_id, run)
-    view = _persist_new_revision(project_id, run["run_id"], None, doc)
+    try:
+        view = _persist_new_revision(project_id, run["run_id"], None, doc)
+    except IntegrityError:
+        # D1 race loser: another creator inserted this project's
+        # root first (the single-root index rejected ours, and
+        # _persist_new_revision already removed our document file).
+        # The existing root is the answer the caller wanted; only
+        # when NO root exists was the integrity error about
+        # something else — that failure propagates unchanged.
+        existing = _existing_root_revision(project_id)
+        if existing is None:
+            raise
+        return existing
     return view, doc
 
 
@@ -705,6 +747,11 @@ def create_revision(project_id, *, from_revision_id=None, from_run_id=None,
         doc["created_from"] = "revision_branch"
         doc["render_state"] = None
         doc["last_render_error"] = None
+        # A branch has never rendered: it must not inherit the
+        # parent's export records (they name the PARENT's output
+        # file) — the same reset apply_operations performs
+        # (Stage 6 adversarial defect D2).
+        doc["exports"] = []
         doc["op_log"] = list(parent_doc.get("op_log") or []) + [
             {
                 "op_id": _new_id(),

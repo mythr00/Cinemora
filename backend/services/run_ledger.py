@@ -889,13 +889,21 @@ def record_decisions(run_id, project_id, asset_report, timeline,
         return None
 
 
-def decision_counts(run_id):
+def decision_counts(run_id, include_revision_decisions=True):
     """Ledger-derived decision counts for a run (parity checks):
     {"by_type": {...}, "rights_recorded": n, "rights_unknown": n}
     where the rights counts cover the accepted real-asset rows
     (selected / still / swapped_in) — the same population
     build_asset_report counts for rights (generated graphics are
-    excluded there). None when unavailable."""
+    excluded there). None when unavailable.
+
+    Population: by default EVERY decision recorded against the run,
+    including editor-appended rows tagged with a revision_id
+    (migration 0004). include_revision_decisions=False restricts to
+    the run's OWN production decisions (revision_id IS NULL) — the
+    population the Stage 4 run certificate must describe, so editor
+    activity can never change the original production's certificate
+    (Stage 6 adversarial defect D3)."""
     if not run_id:
         return None
     try:
@@ -903,11 +911,12 @@ def decision_counts(run_id):
 
         db = _session()
         try:
-            rows = (
-                db.query(AssetDecision)
-                .filter(AssetDecision.run_id == str(run_id))
-                .all()
+            query = db.query(AssetDecision).filter(
+                AssetDecision.run_id == str(run_id)
             )
+            if not include_revision_decisions:
+                query = query.filter(AssetDecision.revision_id.is_(None))
+            rows = query.all()
         finally:
             db.close()
         by_type: dict[str, int] = {}
@@ -931,10 +940,19 @@ def decision_counts(run_id):
         return None
 
 
-def list_decisions(run_id, limit=100, offset=0):
+def list_decisions(run_id, limit=100, offset=0,
+                   include_revision_decisions=True):
     """One page of a run's asset decisions, oldest first (the order
     they were recorded). Returns (rows, total) with rows as plain
-    dicts; ([], 0) when the ledger is unavailable."""
+    dicts; ([], 0) when the ledger is unavailable.
+
+    Population: by default EVERY decision recorded against the run,
+    including editor-appended rows tagged with a revision_id
+    (migration 0004). include_revision_decisions=False restricts to
+    the run's OWN production decisions (revision_id IS NULL) — the
+    population the Stage 4 run certificate must describe, so editor
+    activity can never change the original production's certificate
+    (Stage 6 adversarial defect D3)."""
     if not run_id:
         return [], 0
     try:
@@ -945,6 +963,8 @@ def list_decisions(run_id, limit=100, offset=0):
             query = db.query(AssetDecision).filter(
                 AssetDecision.run_id == str(run_id)
             )
+            if not include_revision_decisions:
+                query = query.filter(AssetDecision.revision_id.is_(None))
             total = query.count()
             rows = (
                 query.order_by(AssetDecision.created_at.asc())
