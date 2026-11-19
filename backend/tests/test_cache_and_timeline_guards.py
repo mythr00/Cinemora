@@ -70,7 +70,13 @@ def test_slim_uses_fresh_profile_without_reanalysis(monkeypatch):
 def _visual(tmp_path, name):
     path = tmp_path / name
     path.write_bytes(b"\x00" * 4096)
-    return {"file_path": str(path), "path": str(path), "type": "video", "title": name}
+    # MA-37: the "good" asset models a pipeline-accepted asset and
+    # carries its acceptance record; the rejected/failed fixtures in
+    # the test below override/extend this base.
+    return {
+        "file_path": str(path), "path": str(path), "type": "video",
+        "title": name, "verification": {"accepted": True},
+    }
 
 
 def test_timeline_skips_rejected_assets(tmp_path):

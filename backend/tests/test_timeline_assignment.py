@@ -14,7 +14,13 @@ from services.timeline import build_scene_timeline
 def _visual(tmp_path, name):
     path = tmp_path / name
     path.write_bytes(b"\x00" * 2048)
-    return {"file_path": str(path), "path": str(path), "type": "video", "title": name}
+    # MA-37: fixtures model pipeline-accepted assets, so they carry
+    # the verification record the pipeline stamps; a missing verdict
+    # now means unverified and is never timeline-eligible.
+    return {
+        "file_path": str(path), "path": str(path), "type": "video",
+        "title": name, "verification": {"accepted": True},
+    }
 
 
 def _timings(n):

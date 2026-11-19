@@ -235,7 +235,12 @@ def build_case_bible(script_text, llm, sentences=None, max_chars=24000):
 
     data["by_id"] = {e["id"]: e for e in cleaned}
     data["alias_index"] = build_alias_index(cleaned)
-    data["mode"] = "llm" if used_llm else "heuristic"
+    # MA-27: one vocabulary end-to-end — the bible is either
+    # LLM-produced ("llm") or it fell back ("degraded"). The run-level
+    # mode derived in plan_script adds "partial_llm" between them;
+    # the old "heuristic" string disagreed with the asset report's
+    # "degraded" and is gone.
+    data["mode"] = "llm" if used_llm else "degraded"
     return data
 
 
@@ -397,6 +402,51 @@ def analyze_sentences(sentences, bible, llm, batch_size=10, context_size=4):
     return plans
 
 
+# MA-29: the downstream shot-need contract (media_pipeline
+# build_shot_needs / gate_shot_need) branches on a required_type in
+# the GATE's vocabulary — "person" triggers the missing-person
+# branch, {"location", "organization", "event", "object"} the
+# missing-subject branch. Scenarios used to carry only subject_id,
+# so consumers derived required_type from the scenario kind and the
+# person/location branches were unreachable with production-shaped
+# scenarios. The producer now resolves both fields: the subject's
+# canonical label and a required_type translated from the bible
+# entity type (preferred) or the scenario kind.
+_ENTITY_REQUIRED_TYPE = {
+    "person": "person",
+    "place": "location",
+    "organization": "organization",
+    "event": "event",
+    "object": "object",
+}
+_KIND_REQUIRED_TYPE = {
+    "person_activity": "person",
+    "place": "location",
+    "event": "event",
+    "object": "object",
+    "document": "object",
+}
+
+
+def _required_type_for(scenario, subject_entity, kind):
+    """Resolve a scenario's required_type in the gate's vocabulary.
+
+    The resolved subject entity's bible type wins; a type supplied
+    on the scenario itself is next; the scenario kind is the last
+    resort. Returns None when nothing implies a type requirement
+    (archival / abstract b-roll scenarios)."""
+    if subject_entity:
+        mapped = _ENTITY_REQUIRED_TYPE.get(
+            str(subject_entity.get("type") or "").lower()
+        )
+        if mapped:
+            return mapped
+    supplied = str((scenario or {}).get("required_type") or "").strip().lower()
+    if supplied:
+        return supplied
+    return _KIND_REQUIRED_TYPE.get(kind)
+
+
 def _pick_subject(mentions, by_id, sentence, carry):
     """No-LLM subject choice: named person > pronoun refers to carried subject > first mention."""
     people = [m for m in mentions if by_id[m]["type"] == "person"]
@@ -465,6 +515,11 @@ def normalize_plan(raw, sentence, bible, carry_subject):
             "visual": f"archival material about {subject_entity['canonical']}" if subject_entity else "neutral documentary b-roll",
             "kind": "archival" if subject_entity else "abstract_broll",
             "subject_id": subject_id,
+            # MA-29: same producer contract as _normalize_scenario.
+            "subject": (subject_entity["canonical"] if subject_entity else None),
+            "required_type": _required_type_for(
+                {}, subject_entity, "archival" if subject_entity else "abstract_broll"
+            ),
             "specificity": "exact" if subject_entity else "generic",
             "search_terms": [],
             "event": None,
@@ -527,10 +582,24 @@ def _normalize_scenario(scenario, sentence_raw, by_id, sentence_subject, sentenc
             {"kind": kind, "visual": visual},
         )
 
+    # MA-29: emit the resolved subject label and the gate-vocabulary
+    # required_type the downstream contract expects. The subject is
+    # the bible record this scenario already resolved — never a
+    # string re-derived from the sentence.
+    subject_entity = by_id.get(subject_id) if subject_id else None
+    subject_label = (
+        str(subject_entity.get("canonical") or "").strip()
+        if subject_entity
+        else ""
+    ) or str(scenario.get("subject") or "").strip()
+    required_type = _required_type_for(scenario, subject_entity, kind)
+
     return {
         "visual": visual,
         "kind": kind,
         "subject_id": subject_id,
+        "subject": subject_label or None,
+        "required_type": required_type,
         "specificity": specificity,
         "search_terms": terms[:4],
         "event": scenario.get("event") or None,
@@ -633,6 +702,14 @@ def verify_candidate(candidate, scenario, bible):
     subject mentions by themselves are not topical evidence. The
     individual contributions and the final rejection reason are
     recorded on the verdict so every decision is explainable.
+
+    MA-30: the same guarantee holds when the scenario defines NO
+    topical terms at all. An empty topical set used to disable the
+    VA-04 test entirely (there was no overlap to measure), letting a
+    subject-only match (0.45, plus 0.10 for an era year) clear the
+    representative/generic thresholds. A subject mention with zero
+    topical evidence behind it is rejected as "no_topical_evidence"
+    regardless of why the topical set is empty.
     """
     text = _norm(" ".join(str(candidate.get(k) or "") for k in ("title", "snippet", "description", "url", "source")))
     by_id = bible.get("by_id", {})
@@ -699,6 +776,16 @@ def verify_candidate(candidate, scenario, bible):
         # visual topic the sentence actually needs.
         accepted = False
         rejection_reason = "no_topical_evidence"
+    elif not wanted and subject_hit:
+        # MA-30: the scenario yielded no topical terms, so the VA-04
+        # overlap test above had nothing to measure and silently
+        # lapsed. The only positive evidence here is the subject
+        # mention itself (plus at most an era year) — exactly the
+        # subject-only approval VA-04 forbids. Reject on the same
+        # reason so the guarantee does not depend on the scenario
+        # happening to carry topical terms.
+        accepted = False
+        rejection_reason = "no_topical_evidence"
     elif not accepted:
         rejection_reason = "below_threshold"
     if accepted:
@@ -731,9 +818,38 @@ def hydrate_bible(bible):
     return bible
 
 
+def _analysis_mode(bible, plans):
+    """MA-27: the run's analysis mode, derived from what ACTUALLY
+    happened — never from the Case Bible alone.
+
+    "llm"         — the bible AND every sentence plan were
+                    LLM-produced (no plan carries the degraded flag).
+    "partial_llm" — some of the work was LLM-produced and some fell
+                    back: an LLM bible with degraded sentence plans,
+                    or a degraded bible whose plans still came from
+                    the LLM.
+    "degraded"    — everything fell back to deterministic heuristics.
+
+    The previous logic copied the bible's mode onto the whole run,
+    so a film whose sentence plans were ALL heuristic fallbacks could
+    be reported as analysis_mode="llm" whenever the bible call alone
+    had succeeded.
+    """
+    bible_llm = (bible or {}).get("mode") == "llm"
+    plans = plans or []
+    llm_plans = sum(1 for plan in plans if not (plan or {}).get("degraded"))
+    if bible_llm and llm_plans == len(plans):
+        return "llm"
+    if not bible_llm and llm_plans == 0:
+        return "degraded"
+    return "partial_llm"
+
+
 def plan_script(script_text, sentences, llm, cache_path=None):
     """
-    Returns (bible, plans, mode). mode is "llm" or "heuristic".
+    Returns (bible, plans, mode). mode is "llm", "partial_llm" or
+    "degraded" (MA-27: derived from the bible AND the sentence plans
+    via _analysis_mode — see its docstring).
     Only real LLM results are cached, so a later run with a working LLM is
     never poisoned by an earlier degraded run.
     """
@@ -750,7 +866,7 @@ def plan_script(script_text, sentences, llm, cache_path=None):
 
     bible = build_case_bible(script_text, llm, sentences=sentences)
     plans = analyze_sentences(sentences, bible, llm)
-    mode = bible.get("mode", "heuristic") if llm is not None else "heuristic"
+    mode = _analysis_mode(bible, plans)
     if llm is None:
         print("STORY: no LLM configured -> DEGRADED MODE (set LLM_API_KEY for full understanding).")
 

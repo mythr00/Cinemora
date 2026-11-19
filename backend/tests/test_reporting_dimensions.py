@@ -82,7 +82,12 @@ def test_fail_pipeline_writes_failure_report(tmp_path):
 def _visual(tmp_path, name):
     path = tmp_path / name
     path.write_bytes(b"\x00" * 4096)
-    return {"file_path": str(path), "path": str(path), "type": "video", "title": name}
+    # MA-37: fixtures model pipeline-accepted assets and carry the
+    # acceptance record; a missing verdict now means unverified.
+    return {
+        "file_path": str(path), "path": str(path), "type": "video",
+        "title": name, "verification": {"accepted": True},
+    }
 
 
 def test_timeline_items_carry_relevance_status(tmp_path):

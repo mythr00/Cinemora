@@ -102,6 +102,8 @@ def test_verified_visual_beats_motion_graphic(tmp_path):
 
     verified_asset = {
         "file_path": str(verified), "path": str(verified), "type": "video",
+        # MA-37: a verified asset carries its acceptance record.
+        "verification": {"accepted": True},
     }
     graphic_asset = {
         "file_path": str(graphic), "path": str(graphic), "type": "video",

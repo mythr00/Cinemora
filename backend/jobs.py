@@ -875,6 +875,18 @@ def run_full_pipeline(project_id: str, script: str):
             asset_report=asset_report,
         )
 
+        # MA-14: honour the auditor's verdict. A failed verdict
+        # fails the production through the normal fail path — the
+        # rendered file may exist, but the recorded outcome (project
+        # status + failure asset report) is a failure carrying the
+        # auditor's reasons. Warnings alone never fail a run.
+        _verdict = final_audit.get("verdict") or {}
+        if _verdict.get("evaluated") and not _verdict.get("passed", True):
+            raise RuntimeError(
+                "Final video audit FAILED: "
+                + "; ".join(_verdict.get("failures") or ["unspecified"])
+            )
+
         print(
             "Final video audit complete: "
             f"{final_audit['duration_seconds']:.3f}s"

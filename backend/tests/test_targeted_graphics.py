@@ -288,6 +288,8 @@ def test_verified_visual_beats_targeted_graphic(tmp_path, monkeypatch):
     verified.write_bytes(b"\x00" * 2048)
     verified_asset = {
         "file_path": str(verified), "path": str(verified), "type": "video",
+        # MA-37: a verified asset carries its acceptance record.
+        "verification": {"accepted": True},
     }
     scene_media = _scene2_media(
         _attach(assets) + [verified_asset],

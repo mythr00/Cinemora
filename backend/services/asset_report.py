@@ -101,11 +101,12 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     processed_scenes: scene result dicts from the media pipeline.
     timeline_result:  the dict returned by build_project_timeline.
     renderer_audit:   parsed renderer_timing_audit.json, or None.
-    analysis_mode:    "llm" or "degraded" from the story analysis —
-                      recorded verbatim so every report states
-                      explicitly whether real LLM analysis or the
-                      heuristic degraded mode produced the scenarios
-                      the assets were selected against.
+    analysis_mode:    "llm", "partial_llm" or "degraded" from the
+                      story analysis (MA-27) — recorded verbatim so
+                      every report states explicitly whether real
+                      LLM analysis, a partial LLM/degraded mix, or
+                      the heuristic degraded mode produced the
+                      scenarios the assets were selected against.
     execution:        the run_metrics snapshot for this run (Stage 0
                       observability): provider call counts, download
                       totals, stage durations, wall time. Its
@@ -235,6 +236,19 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             loops = float(item_duration) > float(real_duration) + 0.05
         if is_repeat or loops:
             repeated += 1
+
+    # MA-35: positional (evidence-free) segment ASSIGNMENTS, counted
+    # from the timeline items' own segment_evidence stamps — the
+    # share of the finished film whose windows rest on an evenly
+    # spaced guess rather than segment evidence. Kept distinct from
+    # the per-asset class counts in verification_dimensions below:
+    # one positional asset can serve several assignments.
+    positional_assignments = sum(
+        1
+        for item in items
+        if isinstance(item, dict)
+        and item.get("segment_evidence") == "positional_no_contract"
+    )
 
     # ---- renderer placeholders / holdovers ---------------------------
     if isinstance(renderer_audit, dict) and renderer_audit.get("placeholder_count") is not None:
@@ -376,6 +390,14 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 "positional_no_contract": sum(
                     1 for a in real_assets
                     if a.get("segment_evidence") == "positional_no_contract"
+                ),
+                # MA-35: assignment-level positional exposure (the
+                # auditor's share limit applies to this, not to the
+                # per-asset count above).
+                "positional_assignments": positional_assignments,
+                "positional_assignment_share": (
+                    round(positional_assignments / total_items, 4)
+                    if total_items else 0.0
                 ),
             },
             "rights": {

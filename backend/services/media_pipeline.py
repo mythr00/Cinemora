@@ -5627,24 +5627,140 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
             "entity_ids": [e.get("id") for e in (bible.get("entities") or [])],
         },
     }
-    return apply_review_decisions(result, project_dir)
+    return apply_review_decisions(result, project_dir, bible=bible)
 def write_decision_template(project_dir, scene_number, beats):
     path = Path(project_dir) / f"scene_{scene_number}_decisions.json"
     if path.exists():
         return path
     rows = []
     for beat in beats or []:
-        rows.append({
-            "beat_id": beat.get("beat_id"),
-            "approve": True,
-            "swap_path": "",
-        })
+        # MA-34: one row per SENTENCE — decisions are applied at
+        # sentence granularity, so the template must let a reviewer
+        # target one sentence without touching its beat siblings. A
+        # beat with no sentence list keeps its single beat-level row.
+        sentence_numbers = beat.get("sentence_numbers") or []
+        if sentence_numbers:
+            for number in sentence_numbers:
+                rows.append({
+                    "sentence_number": number,
+                    "beat_id": beat.get("beat_id"),
+                    "approve": True,
+                    "swap_path": "",
+                })
+        else:
+            rows.append({
+                "beat_id": beat.get("beat_id"),
+                "approve": True,
+                "swap_path": "",
+            })
     path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"DECISIONS TEMPLATE: {path}")
     return path
 
 
-def apply_review_decisions(result, project_dir):
+def _refresh_swapped_asset(asset, bucket, swap_path, decision, sentence_result, bible):
+    """MA-33: build the replacement record for a manual review swap.
+
+    The replacement inherits NOTHING evidentiary from the original:
+
+    - technical facts come from a FRESH probe of the new file
+      (services.media_probe) — inherited duration/resolution/codec
+      fields are cleared first, so nothing stale survives;
+    - segment evidence is cleared (segment_evidence="none", no
+      clip_start, no download provenance) — the replacement was
+      never segment-verified;
+    - rights are re-stamped honestly: licence "unknown", creator /
+      source from the decision record when it supplies them, else
+      "user_supplied", rights_status "verify_before_publish";
+    - the verification verdict is REPLACED by a fresh
+      story.verify_candidate run against the sentence's scenario
+      (reached via the analyzed sentence embedded in the result).
+      When no scenario is reachable, the verdict is an explicit
+      rejection ("manual_swap_unverified") so every downstream
+      filter treats the swap as unverified instead of inheriting
+      the original's acceptance.
+
+    Returns (refreshed_asset, verification_accepted), or
+    (None, False) when the probe fails — the caller then leaves the
+    original asset untouched and records the failed swap.
+    """
+    kind = bucket
+    if bucket == "visuals":
+        kind = (
+            "videos"
+            if (asset.get("visual_type") or asset.get("type")) == "video"
+            else "images"
+        )
+    probe = probe_video(swap_path) if kind == "videos" else probe_image(swap_path)
+    if not probe:
+        return None, False
+
+    refreshed = dict(asset)
+    refreshed["file_path"] = swap_path
+    refreshed["path"] = swap_path
+    refreshed["swapped_from"] = {
+        "file_path": asset.get("file_path") or asset.get("path") or "",
+        "candidate_id": asset.get("candidate_id") or "",
+    }
+    refreshed["manual_swap"] = True
+
+    for key in (
+        "duration_seconds", "width", "height", "fps", "codec",
+        "format", "has_audio",
+    ):
+        refreshed.pop(key, None)
+    refreshed.update(probe)
+
+    refreshed["segment_evidence"] = "none"
+    for key in (
+        "clip_start", "segment_evidence_basis",
+        "source_duration_seconds", "download_method",
+        "partial_download",
+    ):
+        refreshed.pop(key, None)
+
+    refreshed["license"] = "unknown"
+    refreshed["license_url"] = ""
+    refreshed["creator"] = (
+        decision.get("creator") or decision.get("source") or "user_supplied"
+    )
+    refreshed["source"] = decision.get("source") or "user_supplied"
+    refreshed["source_url"] = decision.get("source_url") or ""
+    refreshed["rights_status"] = "verify_before_publish"
+    refreshed["retrieved_at"] = datetime.now(timezone.utc).isoformat()
+
+    scenario = None
+    embedded = sentence_result.get("sentence")
+    if isinstance(embedded, dict):
+        scenarios = _uve_scenarios_for(embedded)
+        if scenarios:
+            scenario = scenarios[0]
+    candidate_meta = {
+        "title": decision.get("title")
+        or Path(swap_path).stem.replace("_", " ").replace("-", " "),
+        "snippet": decision.get("snippet") or decision.get("description") or "",
+        "description": decision.get("description") or decision.get("snippet") or "",
+        "url": decision.get("source_url") or "",
+        "source": refreshed["source"],
+    }
+    if scenario is not None:
+        verification = story.verify_candidate(
+            candidate_meta, scenario, bible or {}
+        )
+    else:
+        verification = {
+            "accepted": False,
+            "reason": "manual_swap_unverified",
+            "rejection_reason": "manual_swap_unverified",
+        }
+    refreshed["verification"] = verification
+    refreshed["verification_status"] = (
+        "verified" if verification.get("accepted") else "swapped"
+    )
+    return refreshed, bool(verification.get("accepted"))
+
+
+def apply_review_decisions(result, project_dir, bible=None):
     if not isinstance(result, dict):
         return result
     scene_number = result.get("scene_number", 1)
@@ -5654,23 +5770,104 @@ def apply_review_decisions(result, project_dir):
         rows = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return result
-    by_id = {row.get("beat_id"): row for row in rows if isinstance(row, dict)}
+
+    # MA-34: decisions are keyed per SENTENCE first. The old code
+    # indexed rows by beat_id alone, so one decision silently
+    # overwrote EVERY sentence of a beat, and sentences whose
+    # results carry no beat_id were never decided at all. A row
+    # naming a sentence_number targets exactly that sentence; a
+    # beat-only row remains the fallback for its sentences.
+    by_sentence = {}
+    by_beat = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("sentence_number") is not None:
+            by_sentence[row.get("sentence_number")] = row
+        elif row.get("beat_id") is not None:
+            by_beat[row.get("beat_id")] = row
+
+    outcomes = []
+    aggregate_swaps = {}
+
     for sentence in result.get("sentences") or []:
-        decision = by_id.get(sentence.get("beat_id")) or {}
+        sentence_number = sentence.get("sentence_number")
+        decision = None
+        if sentence_number is not None and sentence_number in by_sentence:
+            decision = by_sentence[sentence_number]
+        elif sentence.get("beat_id") is not None:
+            decision = by_beat.get(sentence.get("beat_id"))
+        if not decision:
+            continue
         if decision.get("approve", True) and not decision.get("swap_path"):
             continue
         swap = str(decision.get("swap_path") or "").strip()
         if swap and os.path.exists(swap):
+            # MA-33: evidence-safe swap — see _refresh_swapped_asset.
+            # A failed probe leaves the original asset untouched and
+            # is recorded as a failed swap, never applied silently.
             for bucket in ("images", "videos", "visuals"):
+                refreshed_bucket = []
                 for asset in sentence.get(bucket) or []:
-                    asset["file_path"] = swap
-                    asset["path"] = swap
-                    asset["verification_status"] = "swapped"
+                    refreshed, accepted = _refresh_swapped_asset(
+                        asset, bucket, swap, decision, sentence, bible
+                    )
+                    previous_path = (
+                        asset.get("file_path") or asset.get("path") or ""
+                    )
+                    if refreshed is None:
+                        outcomes.append({
+                            "sentence_number": sentence_number,
+                            "beat_id": sentence.get("beat_id"),
+                            "swap_path": swap,
+                            "previous_file_path": previous_path,
+                            "previous_candidate_id": asset.get("candidate_id") or "",
+                            "outcome": "swap_failed_probe",
+                            "verification_accepted": False,
+                        })
+                        refreshed_bucket.append(asset)
+                        continue
+                    outcomes.append({
+                        "sentence_number": sentence_number,
+                        "beat_id": sentence.get("beat_id"),
+                        "swap_path": swap,
+                        "previous_file_path": previous_path,
+                        "previous_candidate_id": asset.get("candidate_id") or "",
+                        "outcome": "swapped",
+                        "verification_accepted": accepted,
+                    })
+                    aggregate_swaps[previous_path] = refreshed
+                    refreshed_bucket.append(refreshed)
+                sentence[bucket] = refreshed_bucket
             continue
         sentence["images"] = []
         sentence["videos"] = []
         sentence["visuals"] = []
         sentence["rejected_by_review"] = True
+
+    # MA-34: scene aggregates must reference the swapped files too —
+    # otherwise the timeline's rotation pool resurrects the pre-swap
+    # original straight from result["videos"]/["images"]/["visuals"].
+    if aggregate_swaps:
+        for bucket in ("videos", "images", "visuals"):
+            entries = result.get(bucket)
+            if not entries:
+                continue
+            synced = []
+            for entry in entries:
+                old_path = entry.get("file_path") or entry.get("path") or ""
+                refreshed = aggregate_swaps.get(old_path)
+                if refreshed is None:
+                    synced.append(entry)
+                    continue
+                merged = dict(refreshed)
+                if entry.get("visual_type"):
+                    merged["visual_type"] = entry["visual_type"]
+                synced.append(merged)
+            result[bucket] = synced
+
+    if outcomes:
+        result["review_decision_outcomes"] = outcomes
     return result
 def process_scene_media(scene, project_dir, image_count=3, video_count=3):
     """Canonical scene entry point (story-driven visual engine).

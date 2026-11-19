@@ -209,7 +209,12 @@ def test_schematic_not_generated_when_scene_has_verified_visuals(
 ):
     _fake_schematic(monkeypatch)
     _fake_stat_and_summary(monkeypatch)
-    verified = {"file_path": "/x/verified.mp4", "type": "video"}
+    # MA-37: the genuine-visual count requires an explicit acceptance
+    # record; a verdict-less dict no longer counts as verified.
+    verified = {
+        "file_path": "/x/verified.mp4", "type": "video",
+        "verification": {"accepted": True},
+    }
     assets = graphics_pipeline.build_motion_graphics_assets(
         _data(processed_videos=[verified]),
         tmp_path, mode="balanced", targets=[_target()],

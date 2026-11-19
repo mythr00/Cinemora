@@ -35,6 +35,40 @@ def visual_exists(visual):
         return False
 
 
+def timeline_eligible(visual):
+    """MA-36/MA-37: may this visual appear on screen at all?
+
+    ONE standard for every timeline path — per-sentence assignment,
+    the rotation pool and the legacy fallback:
+
+    - an asset with a recorded download failure is out;
+    - a generated motion graphic is eligible as its own honestly
+      labelled class (it never claims to be verified footage);
+    - any other asset needs a verification record carrying an
+      explicit acceptance. A rejected asset is out (VA-16), and an
+      asset with NO verification record is out too: a missing
+      verdict means unverified — never "verified by silence"
+      (MA-37). Before this helper, the rotation pool was filtered
+      by file existence only, so rejected, failed and unreviewed
+      assets in the scene aggregates reached the screen (MA-36).
+    """
+    if not isinstance(visual, dict):
+        return False
+
+    if visual.get("_download_error"):
+        return False
+
+    if visual.get("motion_graphic") or visual.get("generated"):
+        return True
+
+    verification = visual.get("verification")
+
+    if not isinstance(verification, dict):
+        return False
+
+    return verification.get("accepted") is True
+
+
 def get_visual_type(visual):
     visual_type = (
         visual.get("type")
@@ -910,6 +944,11 @@ def build_scene_timeline(
         )
     )
 
+    # MA-36: the scene aggregates are the rotation pool (and the
+    # legacy fallback pool). They are held to the same eligibility
+    # standard as per-sentence assignments — file existence alone
+    # used to be enough, which let rejected/failed/unreviewed
+    # assets rotate onto sentences they were never verified for.
     images = [
         image
         for image in scene_media.get(
@@ -917,6 +956,7 @@ def build_scene_timeline(
             [],
         )
         if visual_exists(image)
+        and timeline_eligible(image)
     ]
 
     videos = [
@@ -926,6 +966,7 @@ def build_scene_timeline(
             [],
         )
         if visual_exists(video)
+        and timeline_eligible(video)
     ]
 
     visuals = []
@@ -963,10 +1004,10 @@ def build_scene_timeline(
             # timeline does not blindly trust that — an asset carrying
             # an explicit rejection or download error is skipped here
             # too, so no code path can put it on screen.
-            verification = candidate.get("verification") or {}
-            if verification.get("accepted") is False:
-                continue
-            if candidate.get("_download_error"):
+            # MA-37: timeline_eligible also skips an asset with NO
+            # verification record — a missing verdict is unverified,
+            # not a silent pass.
+            if not timeline_eligible(candidate):
                 continue
             if visual_exists(candidate):
                 assigned_by_position[position] = candidate
@@ -1198,6 +1239,18 @@ def build_scene_timeline(
                         "motion_graphic": "generated_graphic",
                     }.get(assignment, "not_verified_for_this_sentence"),
 
+                # MA-35: the segment-evidence class of the visual
+                # actually used, carried onto the item itself. A
+                # positional (evidence-free) window is now
+                # distinguishable from an evidence-backed one in the
+                # timeline — not only in the asset report — and the
+                # report/auditor can measure the positional share of
+                # assignments from these stamps.
+                "segment_evidence":
+                    visual.get(
+                        "segment_evidence"
+                    ),
+
                 "motion":
                     "auto",
 
@@ -1409,6 +1462,11 @@ def build_scene_timeline(
                 "selection_score",
                 100,
             ),
+            # MA-35: evidence class travels with the item (see the
+            # sentence-window path above).
+            "segment_evidence": video.get(
+                "segment_evidence"
+            ),
         })
 
         current_time += item_duration
@@ -1480,6 +1538,10 @@ def build_scene_timeline(
             "selection_score": image.get(
                 "selection_score",
                 80,
+            ),
+            # MA-35: evidence class travels with the item.
+            "segment_evidence": image.get(
+                "segment_evidence"
             ),
         })
 

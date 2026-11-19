@@ -1557,7 +1557,12 @@ def build_motion_graphics_assets(
                 continue
             if _v.get("motion_graphic") or _v.get("_download_error"):
                 continue
-            if (_v.get("verification") or {}).get("accepted") is False:
+            # MA-37: only an explicit acceptance counts as a genuine
+            # verified visual. A missing verification record means
+            # unverified — it must not suppress the schematic by
+            # pretending the scene is already covered by a verified
+            # visual.
+            if (_v.get("verification") or {}).get("accepted") is not True:
                 continue
             _genuine += 1
         _verified_by_scene[_sn] = _genuine
