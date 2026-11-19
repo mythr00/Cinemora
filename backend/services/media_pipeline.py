@@ -21,9 +21,11 @@ def download_image(image_url, output_path):
     response.raise_for_status()
     Path(output_path).write_bytes(response.content)
 
+from datetime import datetime, timezone
+
 from services.visual_registry import get_registry
 from services import story_understanding as story
-from services.media_probe import probe_video
+from services.media_probe import probe_image, probe_video
 
 
 # ==========================================================================
@@ -1182,6 +1184,52 @@ def search_web_sources(query, limit=8):
             "link": url,
             "snippet": item.get("snippet", ""),
             "source": "web",
+            "rights_status": "verify_before_publish",
+            "matched_query": query,
+        })
+
+    return output
+
+
+def search_image_sources(query, limit=5):
+    """Real image candidates from Serper image search (AUD-13).
+
+    Normalised to the same candidate shape as the other providers. The
+    licence of a web image is NOT known, so it is recorded as "unknown" —
+    never "royalty-free" (that false label existed in dead helper code and
+    must not come back). Founder restriction: no Pexels/Pixabay retrieval.
+    """
+    from services.search_provider import search_images
+
+    query = str(query or "").strip()
+    if not query:
+        return []
+
+    try:
+        results = search_images(query, limit=max(limit * 2, 10))
+    except Exception as error:
+        print(f"Image search failed: {error}")
+        return []
+
+    output = []
+
+    for item in results[:limit]:
+        image_url = str(item.get("image_url") or "").strip()
+        if not image_url:
+            continue
+
+        page_url = str(item.get("source_url") or item.get("link") or "").strip()
+
+        output.append({
+            "title": item.get("title", ""),
+            "image_url": image_url,
+            "url": image_url,
+            "link": page_url,
+            "source_url": page_url,
+            "snippet": item.get("snippet", "") or item.get("title", ""),
+            "source": item.get("source", ""),
+            "type": "image",
+            "license": "unknown",
             "rights_status": "verify_before_publish",
             "matched_query": query,
         })
@@ -3141,6 +3189,105 @@ def _uve_download_video_candidate(
     return asset
 
 
+def _uve_download_image_candidate(
+    candidate,
+    scene_dir,
+    sentence_number,
+    asset_index,
+):
+    """Download one verified image candidate into a real image asset (AUD-13).
+
+    Mirrors _uve_download_video_candidate: the file is downloaded with real
+    content validation (download_valid_image decodes it via Pillow), then
+    probed so the asset records true dimensions/format. Licence stays
+    "unknown" unless the candidate itself carries evidence — it is never
+    upgraded to a clearance it does not have.
+    """
+    if not isinstance(candidate, dict):
+        return None
+
+    image_url = str(
+        candidate.get("image_url")
+        or candidate.get("url")
+        or ""
+    ).strip()
+
+    if not image_url:
+        return None
+
+    safe_query = str(
+        candidate.get("matched_query")
+        or candidate.get("query")
+        or "image"
+    ).strip()
+    safe_query = re.sub(
+        r"[^A-Za-z0-9_-]+",
+        "_",
+        safe_query,
+    ).strip("_")[:80] or "image"
+
+    url_path = image_url.split("?", 1)[0].lower()
+    extension = ".jpg"
+    for suffix in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        if url_path.endswith(suffix):
+            extension = suffix
+            break
+
+    output_path = Path(scene_dir) / (
+        f"sentence_{int(sentence_number):04d}"
+        f"_image_{int(asset_index):02d}"
+        f"_{safe_query}{extension}"
+    )
+
+    if not download_valid_image(image_url, output_path):
+        return None
+
+    probe = probe_image(output_path)
+    if probe is None:
+        try:
+            output_path.unlink()
+        except OSError:
+            pass
+        return None
+
+    page_url = str(
+        candidate.get("source_url")
+        or candidate.get("link")
+        or ""
+    ).strip()
+
+    asset = dict(candidate)
+    asset.update(
+        {
+            "file_path": str(output_path),
+            "path": str(output_path),
+            "image_url": image_url,
+            "url": page_url or image_url,
+            "source_url": page_url,
+            "type": "image",
+            "visual_type": "image",
+            "sentence_number": sentence_number,
+            "width": probe["width"],
+            "height": probe["height"],
+            "format": probe["format"],
+            "probed": True,
+            "license": candidate.get("license") or "unknown",
+            "rights_status": candidate.get("rights_status")
+            or "verify_before_publish",
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+    print(
+        f"IMAGE ASSET READY: "
+        f"{probe['width']}x{probe['height']} "
+        f"source={candidate.get('source') or ''} "
+        f"path={output_path}"
+    )
+
+    return asset
+
+
 def _uve_scenario_search(
     scenario,
     search_cache,
@@ -3180,9 +3327,11 @@ def _uve_scenario_search(
 
     videos = []
     web_sources = []
+    images = []
 
     seen_video_urls = set()
     seen_web_urls = set()
+    seen_image_urls = set()
 
     # Remove duplicate / near-duplicate search queries before
     # spending Serper calls. Keep the first useful wording.
@@ -3265,6 +3414,10 @@ def _uve_scenario_search(
                 cached.get("web_sources") or []
             )
 
+            images.extend(
+                cached.get("images") or []
+            )
+
             continue
 
         try:
@@ -3291,9 +3444,22 @@ def _uve_scenario_search(
             )
             found_web = []
 
+        try:
+            found_images = search_image_sources(
+                query,
+                limit=5,
+            )
+        except Exception as error:
+            print(
+                f"Image search failed "
+                f"for '{query}': {error}"
+            )
+            found_images = []
+
         search_cache[cache_key] = {
             "videos": found_videos,
             "web_sources": found_web,
+            "images": found_images,
         }
 
         for video in found_videos:
@@ -3329,7 +3495,22 @@ def _uve_scenario_search(
             seen_web_urls.add(url)
             web_sources.append(source)
 
-    return videos, web_sources
+        for image in found_images:
+            image_url = str(
+                image.get("image_url")
+                or ""
+            ).strip()
+
+            if not image_url:
+                continue
+
+            if image_url in seen_image_urls:
+                continue
+
+            seen_image_urls.add(image_url)
+            images.append(image)
+
+    return videos, web_sources, images
 
 def _uve_verify_all(candidates, scenario, bible, shot_need=None):
     scored, seen = [], set()
@@ -3902,8 +4083,8 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                 if shot_need.get("queries"):
                     scenario = dict(scenario)
                     scenario["queries"] = shot_need["queries"]
-                print("      routed=youtube,web")
-                raw_videos, raw_web_sources = _uve_scenario_search(scenario, search_cache, project_id, shot_need)
+                print("      routed=youtube,web,images")
+                raw_videos, raw_web_sources, raw_images = _uve_scenario_search(scenario, search_cache, project_id, shot_need)
                 scored_videos = _uve_verify_all(
                     raw_videos,
                     scenario,
@@ -3916,8 +4097,15 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     bible,
                     shot_need=shot_need,
                 )
-                print(f"      candidates: videos={len(scored_videos)} web={len(scored_web_sources)}")
+                scored_images = _uve_verify_all(
+                    raw_images,
+                    scenario,
+                    bible,
+                    shot_need=shot_need,
+                )
+                print(f"      candidates: videos={len(scored_videos)} web={len(scored_web_sources)} images={len(scored_images)}")
 
+                got_video = False
                 if videos_left > 0:
                     picks = _uve_pick(scored_videos, scenario, registry, used_keys, shot_need=shot_need)
                     asset = _uve_fetch_first(
@@ -3927,14 +4115,28 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     if asset:
                         beat_videos.append(_uve_annotate(asset, scenario, scenario_index, beat.get("text", "")))
                         videos_left -= 1
+                        got_video = True
                         print(f"      + video ({asset.get('verification_status')}, score {asset.get('universal_score')})")
+
+                if not got_video:
+                    # AUD-13: a beat with no verified moving footage falls
+                    # back to a REAL verified image — downloaded and probed —
+                    # before any generated card may be considered.
+                    image_picks = _uve_pick(scored_images, scenario, registry, used_keys, shot_need=shot_need)
+                    image_asset = _uve_fetch_first(
+                        image_picks, _uve_download_image_candidate, scene_dir,
+                        beat["sentence_numbers"][0], len(beat_images) + 1, registry, used_keys,
+                    )
+                    if image_asset:
+                        beat_images.append(_uve_annotate(image_asset, scenario, scenario_index, beat.get("text", "")))
+                        print(f"      + image ({image_asset.get('verification_status')}, score {image_asset.get('universal_score')})")
                 review_records.append({
                     "shot_index": scenario_index,
                     "queries": list(queries or []),
                     "providers": ["youtube", "web"] if shot_need else [],
                     "rejected": [
                         {"title": result_title(item), "reason": item.get("reject_reason")}
-                        for item in (scored_videos + scored_web_sources)
+                        for item in (scored_videos + scored_web_sources + scored_images)
                         if item.get("reject_reason")
                     ][:12],
                     "picked": [result_title(item) for item in beat_videos + beat_images][-2:],
