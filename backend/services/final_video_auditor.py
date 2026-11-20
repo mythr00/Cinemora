@@ -134,7 +134,11 @@ def _audit_verdict(asset_report):
       genuine accepted assets unaccounted for by the rights data
       (recorded + unknown licences cover fewer assets than were
       accepted, i.e. an asset is absent from the rights manifest
-      accounting).
+      accounting);
+    - an audio provenance mismatch (Stage H, M10): the soundtrack
+      records and the exported audio disagree about whether the
+      film contains music. Loudness values themselves NEVER fail —
+      they are measured and reported (M9), not judged here.
 
     WARN (never fail) when —
     - the rotation share of timeline assignments exceeds
@@ -297,6 +301,89 @@ def _audit_verdict(asset_report):
             "assignments rest on positional_no_contract segments)"
         )
 
+    # ---- audio: loudness + provenance (Stage H, M9/M10) -----------
+    # The final file's audio is MEASURED (final_audio) and the
+    # records are cross-checked against the audio itself
+    # (audio_provenance). A loudness VALUE never fails a film here —
+    # off-target loudness is a mix note for Stage J, not a verdict.
+    # What FAILS is a provenance mismatch: the records claim music
+    # the audio does not contain, or the audio contains music the
+    # records deny. Reports built before Stage H carry neither key
+    # and skip this section entirely.
+    audio_check = {}
+    if "final_audio" in asset_report or "audio_provenance" in asset_report:
+        final_audio = asset_report.get("final_audio")
+        provenance = asset_report.get("audio_provenance")
+        audio_check["soundtrack_state"] = (
+            (asset_report.get("soundtrack") or {}).get("state")
+            if isinstance(asset_report.get("soundtrack"), dict)
+            else None
+        )
+        if isinstance(final_audio, dict):
+            audio_check["final_loudness_lufs"] = final_audio.get(
+                "integrated_lufs"
+            )
+            audio_check["final_true_peak_dbtp"] = final_audio.get(
+                "true_peak_dbtp"
+            )
+            audio_check["target_lufs"] = final_audio.get("target_lufs")
+            audio_check["max_true_peak_dbtp"] = final_audio.get(
+                "max_true_peak_dbtp"
+            )
+            if final_audio.get("integrated_lufs") is None:
+                warnings.append(
+                    "final loudness could not be measured on the "
+                    "exported file (reported as unknown)"
+                )
+        else:
+            audio_check["final_loudness_lufs"] = None
+            audio_check["final_true_peak_dbtp"] = None
+            warnings.append(
+                "final audio was not measured on the exported file"
+            )
+        if isinstance(provenance, dict):
+            audio_check["music_detected"] = provenance.get("music_detected")
+            audio_check["difference_rms_dbfs"] = provenance.get(
+                "difference_rms_dbfs"
+            )
+            audio_check["gap_difference_rms_dbfs"] = provenance.get(
+                "gap_difference_rms_dbfs"
+            )
+            audio_check["detection_basis"] = provenance.get(
+                "detection_basis"
+            )
+            audio_check["provenance_consistent"] = provenance.get(
+                "consistent"
+            )
+            if provenance.get("consistent") is False:
+                failures.append(
+                    "provenance_mismatch: soundtrack records claim "
+                    f"state={provenance.get('claimed_state')!r} but the "
+                    "exported audio "
+                    + (
+                        "contains no music bed"
+                        if provenance.get("claimed_state") == "applied"
+                        else "contains music the records do not describe"
+                    )
+                    + f" (narration-gap difference RMS "
+                    f"{provenance.get('gap_difference_rms_dbfs')} dBFS, "
+                    f"threshold {provenance.get('threshold_dbfs')} dBFS; "
+                    f"global difference RMS "
+                    f"{provenance.get('difference_rms_dbfs')} dBFS)"
+                )
+            elif provenance.get("consistent") is None:
+                warnings.append(
+                    "audio provenance could not be verified "
+                    "(final audio could not be compared against the "
+                    "narration it was mixed from)"
+                )
+        else:
+            audio_check["provenance_consistent"] = None
+            warnings.append(
+                "audio provenance was not assessed for this export"
+            )
+    checks["audio"] = audio_check
+
     # ---- missing visuals (informational) ---------------------------
     missing = asset_report.get("missing_visuals") or []
     if missing:
@@ -340,6 +427,14 @@ def validate_final_video(
             "unknown_licensing": asset_report.get("unknown_licensing"),
             "format_mix": (asset_report.get("format_mix") or {}).get("accepted"),
             "authenticity": authenticity,
+        }
+        # Stage H (M9/M10): the measured final audio + provenance
+        # assessment ride along so the audit result itself states
+        # what the exported file's audio is.
+        result["audio"] = {
+            "soundtrack": asset_report.get("soundtrack"),
+            "final_audio": asset_report.get("final_audio"),
+            "audio_provenance": asset_report.get("audio_provenance"),
         }
         result["authentic"] = bool(authenticity.get("authentic"))
         result["format_mix"] = (asset_report.get("format_mix") or {}).get("accepted")

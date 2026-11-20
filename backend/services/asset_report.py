@@ -95,7 +95,7 @@ def _timeline_items(timeline_result) -> list:
     return items
 
 
-def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None, genre_pack=None) -> dict:
+def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None, genre_pack=None, final_audio=None, audio_provenance=None) -> dict:
     """Build the report from real pipeline outputs.
 
     processed_scenes: scene result dicts from the media pipeline.
@@ -113,12 +113,20 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                       monetary_cost_usd is None unless a price table
                       is configured — unknown cost is never reported
                       as zero. None when the caller has no metrics.
-    soundtrack:       the Sound Designer stage's record (Stage 3H):
-                      {"music": "mixed"|"absent", "source": basename
-                      or None, "loudness_lufs": float|None}. Emitted
-                      verbatim as the top-level "soundtrack" key;
-                      None keeps the pre-3H behaviour for other
+    soundtrack:       the Sound Designer stage's record (Stage 3H;
+                      Stage H adds "state", "decided_by",
+                      "source_type" and the track's "identity").
+                      Emitted verbatim as the top-level "soundtrack"
+                      key; None keeps the pre-3H behaviour for other
                       callers.
+    final_audio:      Stage H (M9): loudness + true-peak measured
+                      on the EXPORTED file (services.music
+                      final_audio_record). Emitted verbatim as
+                      "final_audio"; None when unmeasured.
+    audio_provenance: Stage H (M10): the record-vs-audio
+                      consistency assessment (services.music
+                      assess_audio_provenance). Emitted verbatim as
+                      "audio_provenance"; None when not assessed.
     """
     stats = Counter()
     accepted_by_path: dict[str, dict] = {}
@@ -372,6 +380,10 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "execution": execution,
         # Stage 3H: soundtrack honesty record (see docstring).
         "soundtrack": soundtrack,
+        # Stage H (M9/M10): final-file audio measurement and the
+        # record-vs-audio provenance assessment (see docstring).
+        "final_audio": final_audio,
+        "audio_provenance": audio_provenance,
         # Stage 5A: the active genre pack for this run as
         # {"id", "source"} (services.genre_packs) — the pack shaped
         # research queries, graphics template order and engine
@@ -523,13 +535,21 @@ def write_asset_report(project_dir, report) -> Path:
     return path
 
 
-def build_rights_manifest(processed_scenes) -> list:
+def build_rights_manifest(processed_scenes, soundtrack=None) -> list:
     """Per-asset rights evidence for a project (AUD-15).
 
     One entry per accepted asset: where it came from, who created it (when
     the provider reports it), its licence exactly as recorded — "unknown"
     stays "unknown" — and when it was retrieved. This manifest is the
     project's reuse evidence; nothing in it is inferred or upgraded.
+
+    Stage H (M7): when the production's soundtrack record shows an
+    APPLIED track, the manifest gains one "music" entry for it —
+    the track is an asset of the film like any other, and its
+    licence is "unknown" unless the record carries evidence (for
+    operator/editor-supplied files it never does). Narration-only
+    productions (every state other than "applied") gain no entry,
+    so the manifest still covers exactly the accepted assets.
     """
     entries: dict[str, dict] = {}
     sentences_by_path: dict[str, list] = {}
@@ -575,6 +595,27 @@ def build_rights_manifest(processed_scenes) -> list:
                 "rights_status": asset.get("rights_status") or "verify_before_publish",
                 "retrieved_at": asset.get("retrieved_at") or "",
                 "sentence_numbers": sentences_by_path.get(path, []),
+            }
+        )
+    if isinstance(soundtrack, dict) and soundtrack.get("state") == "applied":
+        identity = soundtrack.get("identity") or {}
+        manifest.append(
+            {
+                "file_path": identity.get("file_path")
+                or soundtrack.get("requested_file")
+                or "",
+                "type": "music",
+                "title": "",
+                "source": soundtrack.get("source_type") or "",
+                "source_url": "",
+                "content_url": "",
+                "creator": "",
+                "license": identity.get("license") or "unknown",
+                "license_url": "",
+                "rights_status": "verify_before_publish",
+                "retrieved_at": "",
+                "sentence_numbers": [],
+                "content_sha256": identity.get("content_sha256"),
             }
         )
     return manifest

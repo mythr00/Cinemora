@@ -199,7 +199,17 @@ class ProjectOptionsIn(BaseModel):
     genre: str | None = None
     voice_id: str | None = None
     captions: str | None = None  # "burn" | "sidecar" | "off"
+    # Stage H (M3): the ONE music contract — the same fields the
+    # pipeline (jobs.resolve via services.music.resolve_music_
+    # request) and the run manifest use. music_file is an
+    # operator-placed server path; music_enabled=False disables
+    # music entirely (it beats music_file and any legacy project
+    # background.mp3); volumes are 0.0-2.0, mirroring the editor's
+    # set_volumes range.
     music_file: str | None = None
+    music_enabled: bool | None = None
+    music_volume: float | None = Field(default=None, ge=0.0, le=2.0)
+    narration_volume: float | None = Field(default=None, ge=0.0, le=2.0)
     require_plan_approval: bool = False
 
 
@@ -1240,4 +1250,8 @@ def get_revision_certificate(
         decisions,
         counts,
         editor.final_assets_for_certificate(doc),
+        # Stage H (M7/M8): the certificate's music section describes
+        # THIS revision's music (its own soundtrack record), never
+        # the production's.
+        music=editor.music_certificate_data(doc),
     )

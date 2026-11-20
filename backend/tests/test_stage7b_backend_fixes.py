@@ -262,7 +262,39 @@ def test_certificate_and_assets_survive_revision_render(client, production):
         f"/api/v1/projects/{project_id}/assets", headers=AUTH
     ).json()
     assert assets_after["run_id"] == production["run_id"]
-    assert assets_after["total"] == assets_before["total"]
+    # Stage H deliberate update: the listing's population is every
+    # decision recorded against the run INCLUDING revision-tagged
+    # editor rows, and a revision render now appends exactly one —
+    # the revision's music decision (M7), tagged with the revision
+    # id. The S7-D2 invariant (the listing still describes the
+    # PRODUCTION run, certificate byte-identical above) is intact;
+    # the production's own rows are unchanged in count. (Counts are
+    # relative: earlier tests in this module render revisions too,
+    # and each such render legitimately appends its own music row.)
+    assert assets_after["total"] == assets_before["total"] + 1
+    music_before = [
+        item for item in assets_before["items"]
+        if item["decision_type"] == "music"
+    ]
+    music_after = [
+        item for item in assets_after["items"]
+        if item["decision_type"] == "music"
+    ]
+    assert len(music_after) == len(music_before) + 1
+    new_items = [
+        item for item in music_after
+        if item["revision_id"] == view1["revision_id"]
+    ]
+    assert len(new_items) == 1
+    own_before = [
+        item for item in assets_before["items"]
+        if item["revision_id"] is None
+    ]
+    own_after = [
+        item for item in assets_after["items"]
+        if item["revision_id"] is None
+    ]
+    assert len(own_after) == len(own_before)
 
     # The per-revision certificate is unaffected by the scoping.
     revision_cert = client.get(

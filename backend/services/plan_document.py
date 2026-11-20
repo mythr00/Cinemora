@@ -519,6 +519,35 @@ def _verification_outcome(verification):
     return {"status": verification.get("status")}
 
 
+def _music_section_from_decisions(decisions):
+    """The certificate's music section (Stage H, M7), built from
+    the ledger's music decision row — the LAST one recorded for
+    the scope the caller selected. No music row means the run
+    predates music recording (or its Sound Designer stage never
+    recorded): the section says "not_recorded" rather than
+    guessing a state the records do not contain."""
+    music_rows = [
+        d for d in decisions or []
+        if isinstance(d, dict) and d.get("decision_type") == "music"
+    ]
+    if not music_rows:
+        return {"state": "not_recorded"}
+    row = music_rows[-1]
+    rights = row.get("rights") or {}
+    verification = row.get("verification") or {}
+    asset_key = row.get("asset_key") or ""
+    return {
+        "state": verification.get("status") or "not_recorded",
+        "file_name": Path(asset_key).name if asset_key else None,
+        "content_sha256": row.get("content_hash"),
+        "source_type": rights.get("source") or row.get("provider"),
+        "license": rights.get("license") or "unknown",
+        "rights_status": rights.get("rights_status"),
+        "decided_by": verification.get("decided_by"),
+        "music_volume": verification.get("music_volume"),
+    }
+
+
 def build_certificate(project, run, decisions, counts):
     """Assemble the provenance certificate from ledger records.
     `decisions` are run_ledger.list_decisions rows; `counts` is
@@ -526,6 +555,10 @@ def build_certificate(project, run, decisions, counts):
     records do not support."""
     rows = []
     for decision in decisions:
+        if decision.get("decision_type") == "music":
+            # Music is not a per-sentence visual asset; it is
+            # certified in the dedicated "music" section below.
+            continue
         rights = decision.get("rights") or {}
         rows.append(
             {
@@ -582,6 +615,10 @@ def build_certificate(project, run, decisions, counts):
         },
         "summary": counts,
         "assets": rows,
+        # Stage H (M7): what the film's music is, per the ledger —
+        # state, track identity, source and licence ("unknown"
+        # stays "unknown"; "not_recorded" for pre-Stage-H runs).
+        "music": _music_section_from_decisions(decisions),
         "disclaimers": CERTIFICATE_DISCLAIMERS,
     }
 
@@ -602,7 +639,7 @@ REVISION_CERTIFICATE_DISCLAIMER = (
 
 
 def build_revision_certificate(project, run, revision, decisions, counts,
-                               final_assets):
+                               final_assets, music=None):
     """Certificate for one editor revision, built on the run
     certificate: the trail is the source run's original decisions
     plus the revision chain's appended decisions (the caller
@@ -611,8 +648,17 @@ def build_revision_certificate(project, run, revision, decisions, counts,
     what the exported revision actually contains, with each item's
     classification, evidence class, verification outcome and rights
     as recorded in the document. The original run certificate is
-    unchanged by this builder."""
+    unchanged by this builder.
+
+    Stage H (M7/M8): the certificate's "music" section must
+    describe the REVISION's music, not the production's — the
+    caller passes `music` derived from the revision document (its
+    own soundtrack record). When omitted, the section falls back
+    to the latest music decision in the selected trail, which for
+    an unedited chain is the production's own record."""
     certificate = build_certificate(project, run, decisions, counts)
+    if music is not None:
+        certificate["music"] = music
     certificate["certificate_version"] = 2
     certificate["revision"] = {
         "revision_id": revision.get("revision_id"),

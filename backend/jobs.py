@@ -28,6 +28,7 @@ from services.visual_registry import reset_registry
 
 from services import genre_packs
 from services import media_paths
+from services import music as music_service
 from services import run_context
 from services import run_ledger
 from services import run_metrics
@@ -196,6 +197,11 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
             run_failure={"stage": stage, "error": str(error)},
             execution=run_metrics.snapshot(),
             genre_pack=state.get("genre_pack"),
+            # Stage H: a run that reached the Sound Designer stage
+            # carries its soundtrack record in state — including the
+            # "failed" record for a corrupt music file — and the
+            # failure report must show it.
+            soundtrack=state.get("soundtrack"),
         )
         write_asset_report(project_dir, failure_report)
         print("Asset report (failure): written from partial state.")
@@ -218,6 +224,15 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
                 partial.get("timeline_result"),
                 processed_scenes=partial.get("processed_scenes"),
             )
+            # Stage H (M7): the run's music outcome is a ledger
+            # decision too — recorded AFTER the visual decisions
+            # (record_decisions skips runs that already have rows).
+            if isinstance(state.get("soundtrack"), dict):
+                run_ledger.record_music_decision(
+                    run_id,
+                    Path(project_dir).name,
+                    state["soundtrack"],
+                )
         manifest_path = None
         manifest = state.get("_manifest")
         if isinstance(manifest, dict):
@@ -431,8 +446,9 @@ def test_job(project_id: str):
 
 def enqueue_full_pipeline(project_id: str, script: str, options=None, run_id=None):
     # Stage 3 options plumbing: caller options (recognised keys:
-    # "music_file", "voice_id", "captions") are merged into the
-    # ledger/manifest options snapshot next to the entrypoint.
+    # "music_file", "music_enabled", "music_volume",
+    # "narration_volume", "voice_id", "captions") are merged into
+    # the ledger/manifest options snapshot next to the entrypoint.
     # Unknown keys pass through harmlessly.
     run_options = {"entrypoint": "enqueue_full_pipeline"}
     if isinstance(options, dict):
@@ -638,9 +654,10 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     run_metrics.begin_run()
 
     # Stage 3 options plumbing: recognised keys "music_file" (path),
-    # "voice_id" (str), "captions" ("burn"|"sidecar"|"off", default
-    # "burn"). Unknown keys pass through harmlessly into the
-    # ledger/manifest options snapshot.
+    # "music_enabled" (bool), "music_volume" / "narration_volume"
+    # (0.0-2.0), "voice_id" (str), "captions"
+    # ("burn"|"sidecar"|"off", default "burn"). Unknown keys pass
+    # through harmlessly into the ledger/manifest options snapshot.
     _merged_options = {"entrypoint": "run_full_pipeline"}
     if isinstance(options, dict):
         _merged_options.update(options)
@@ -747,6 +764,10 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     timeline_file = None
     expected_duration = None
     soundtrack_record = None
+    # The exact narration file the soundtrack was mixed from —
+    # the M10 provenance reference (volume-adjusted when the
+    # narration_volume option was applied).
+    soundtrack_reference = narration_file
 
     try:
         run_stage(state, "voice_actor", project_dir)
@@ -1006,23 +1027,70 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         run_stage(state, "sound_designer", project_dir)
         print("Sound Designer")
 
-        # Stage 3H: an explicitly supplied music file (options)
-        # wins; otherwise the legacy project background.mp3 if it
-        # exists. No downloads, no library — user-supplied only.
-        music_option = options.get("music_file")
-        if music_option:
-            soundtrack_music = str(music_option)
-        else:
-            legacy_music = project_dir / "background.mp3"
-            soundtrack_music = (
-                str(legacy_music) if legacy_music.exists() else None
-            )
-
-        soundtrack_record = prepare_soundtrack(
-            narration_file=str(narration_file),
-            output_file=str(soundtrack_file),
-            music_file=soundtrack_music,
+        # Stage H (M1/M3): ONE explicit music contract, resolved by
+        # services.music.resolve_music_request — an explicit
+        # music_enabled=false disables music entirely (a stray
+        # background.mp3 can no longer override it, D2); an explicit
+        # music_file (operator-placed) wins over the legacy project
+        # background.mp3, which is picked up only when nothing was
+        # decided explicitly. No downloads, no library (P3 is
+        # founder-gated) — operator-supplied files only.
+        music_decision = music_service.resolve_music_request(
+            options, project_dir
         )
+
+        # narration_volume (editor parity): adjust the narration
+        # BEFORE the mix, exactly as revision renders do, so the
+        # soundtrack — and the M10 provenance reference — is built
+        # from the narration the audience will hear.
+        mix_narration = narration_file
+        narration_volume = music_decision.get("narration_volume")
+        if narration_volume is not None and abs(narration_volume - 1.0) > 0.001:
+            adjusted = project_dir / "narration_adjusted.wav"
+            music_service.run_ffmpeg(
+                [
+                    "ffmpeg", "-y", "-i", str(narration_file),
+                    "-af", f"volume={narration_volume}",
+                    str(adjusted),
+                ]
+            )
+            mix_narration = adjusted
+        soundtrack_reference = mix_narration
+
+        try:
+            soundtrack_record = prepare_soundtrack(
+                narration_file=str(mix_narration),
+                output_file=str(soundtrack_file),
+                music_file=music_decision["file"],
+                music_volume=(
+                    music_decision["music_volume"]
+                    if music_decision["music_volume"] is not None
+                    else music_service.MUSIC_VOLUME
+                ),
+                source_type=music_decision["source_type"],
+                decided_by=music_decision["decided_by"],
+                requested=music_decision["requested"],
+                disabled=music_decision["disabled"],
+            )
+        except Exception as prep_error:
+            # D10 asymmetry, recorded: a supplied-but-unmixable
+            # (corrupt/unreadable) track fails the run — but the
+            # failure is first RECORDED as a state="failed"
+            # soundtrack record so the failure report, manifest and
+            # ledger show the music outcome instead of silence.
+            failed_record = music_service.failed_music_record(
+                requested_file=music_decision["file"],
+                source_type=music_decision["source_type"],
+                decided_by=music_decision["decided_by"],
+                requested=music_decision["requested"],
+                error=prep_error,
+            )
+            state["soundtrack"] = failed_record
+            (project_dir / "soundtrack.json").write_text(
+                json.dumps(failed_record, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            raise
 
         if not soundtrack_file.exists():
             raise RuntimeError(
@@ -1293,6 +1361,31 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         )
 
         # ----------------------------------------------
+        # Stage H (M9/M10): measure the EXPORTED file's audio
+        # (integrated loudness + true peak — reported, never
+        # normalised in this stage) and cross-check the soundtrack
+        # record against the audio itself: the final file is
+        # compared with the exact narration the soundtrack was
+        # mixed from. A mismatch is a provenance failure the final
+        # auditor will verdict on below.
+        # ----------------------------------------------
+
+        final_audio_measurement = music_service.final_audio_record(
+            final_video
+        )
+        audio_provenance = music_service.assess_audio_provenance(
+            (
+                soundtrack_record.get("state")
+                if isinstance(soundtrack_record, dict)
+                else None
+            ),
+            final_video,
+            soundtrack_reference,
+        )
+        print(f"Final audio measurement: {final_audio_measurement}")
+        print(f"Audio provenance: {audio_provenance}")
+
+        # ----------------------------------------------
         # Asset Manager report (directive section E, AUD-23)
         # ----------------------------------------------
 
@@ -1321,10 +1414,19 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 "id": _genre_info["pack_id"],
                 "source": _genre_info["source"],
             },
+            final_audio=final_audio_measurement,
+            audio_provenance=audio_provenance,
         )
         write_asset_report(project_dir, asset_report)
 
-        rights_manifest = build_rights_manifest(processed_scenes)
+        rights_manifest = build_rights_manifest(
+            processed_scenes,
+            soundtrack=(
+                soundtrack_record
+                if isinstance(soundtrack_record, dict)
+                else None
+            ),
+        )
         write_rights_manifest(project_dir, rights_manifest)
         licensed_count = sum(
             1
@@ -1437,12 +1539,20 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 timeline_result,
                 processed_scenes=processed_scenes,
             )
+            # Stage H (M7): the run's music decision row — after
+            # the visual decisions, as in the failure path.
+            if isinstance(soundtrack_record, dict):
+                run_ledger.record_music_decision(
+                    _run_id, project_id, soundtrack_record
+                )
         manifest_path = None
         if isinstance(_manifest, dict):
             stage_outputs = [
                 name
                 for name in (
                     "narration.wav",
+                    "soundtrack.wav",
+                    "soundtrack.json",
                     "captions.json",
                     "case_bible.json",
                     "timeline.json",

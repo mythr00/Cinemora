@@ -73,7 +73,11 @@ class ProductionOptions(BaseModel):
     maps: bool = True
     graphics: bool = True
     captions: bool = True
-    music: bool = True
+    # Stage H (D9): the legacy "music: bool" field was removed — it
+    # was accepted by this schema and silently discarded (the
+    # legacy handler persists no options at all). The live music
+    # contract is the v1 API's music_file / music_enabled /
+    # music_volume / narration_volume (services.music).
 
 
 # =========================================================

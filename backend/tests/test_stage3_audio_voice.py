@@ -133,6 +133,13 @@ def test_prepare_soundtrack_missing_music_file_is_absent(tmp_path):
         str(narration_file), str(out), music_file=str(tmp_path / "nope.mp3")
     )
     assert record["music"] == "absent"
+    # Stage H (M4/D8) — deliberate update of the Stage 3H pin: a
+    # REQUESTED-but-missing file is now distinguishable from
+    # never-requested. (Callers that request a file pass
+    # requested=True; this bare call keeps the legacy default.)
+    assert record["state"] == "requested_but_missing"
+    assert record["requested_file"].endswith("nope.mp3")
+    assert record["identity"] is None
 
 
 def test_asset_report_soundtrack_key():

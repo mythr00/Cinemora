@@ -579,7 +579,10 @@ def import_production(project_id, run) -> dict:
         "dirty_sentences": [],
     }
 
-    # Music (Stage 3H honest soundtrack record).
+    # Music (Stage 3H honest soundtrack record; Stage H carries
+    # the record's explicit state + the record itself into the
+    # revision, so a revision's music provenance starts from what
+    # the production actually recorded — never re-derived).
     soundtrack = _read_json(project_dir / "soundtrack.json") or {}
     music_file = None
     if soundtrack.get("source"):
@@ -596,10 +599,25 @@ def import_production(project_id, run) -> dict:
         default_music_volume = MUSIC_VOLUME
     except Exception:
         default_music_volume = 0.1
+    # Pre-Stage-H soundtrack records have no "state": derive only
+    # what the old record supports (mixed -> applied; anything else
+    # -> not_requested — disabled/requested_but_missing cannot be
+    # distinguished in old records and are not invented).
+    imported_state = soundtrack.get("state") or (
+        "applied" if soundtrack.get("music") == "mixed" else "not_requested"
+    )
+    if music_file is None and imported_state == "applied":
+        imported_state = "not_requested"
     music = {
         "file": music_file,
         "source": soundtrack.get("source"),
         "mixed": soundtrack.get("music"),
+        "state": imported_state,
+        # D7: editor music entries carry a licence field — for
+        # operator/editor-supplied files it is "unknown", recorded
+        # as unknown, never upgraded.
+        "license": "unknown",
+        "soundtrack_record": soundtrack if soundtrack else None,
     }
 
     # Captions (segments verbatim; words kept until a text edit
@@ -1982,6 +2000,10 @@ def _op_set_music(doc, op, ctx):
     if "music_file" in op and op["music_file"] is None and not op.get("upload_id"):
         music["file"] = None
         music["source"] = None
+        # Stage H (M1): removal is an explicit DISABLE — renders
+        # honour it even when music files exist in the project.
+        music["state"] = "disabled"
+        music["license"] = "unknown"
         return "Music removed."
     if op.get("upload_id"):
         upload = get_upload(ctx.project_id, str(op["upload_id"]))
@@ -1991,6 +2013,8 @@ def _op_set_music(doc, op, ctx):
             raise EditorError(422, "upload_not_audio", "The upload is not an audio file.")
         music["file"] = upload["file_path"]
         music["source"] = "user_supplied"
+        music["state"] = "applied"
+        music["license"] = "unknown"
         return f"Music set to upload {op['upload_id']}."
     path = Path(str(op.get("music_file") or ""))
     if not path.is_absolute():
@@ -2001,6 +2025,8 @@ def _op_set_music(doc, op, ctx):
         raise EditorError(422, "music_unprobeable", "The music file could not be probed as audio.")
     music["file"] = str(path)
     music["source"] = "project_file"
+    music["state"] = "applied"
+    music["license"] = "unknown"
     return f"Music set to {path.name}."
 
 
@@ -2464,6 +2490,154 @@ def _renderer_item(item) -> dict:
     }
 
 
+def _music_source_type(doc, music_track):
+    """How the revision's music file arrived (Stage H source
+    classification). Editor-set tracks carry their classification
+    in the track's "source"; an imported production track falls
+    back to what the production recorded (legacy file vs operator
+    option), else operator_placed — the production's music could
+    only have arrived by an operator's hand."""
+    source = music_track.get("source")
+    if source in ("user_supplied", "project_file"):
+        return source
+    record = music_track.get("soundtrack_record") or {}
+    if record.get("decided_by") == "legacy_background_mp3":
+        return "legacy_project_file"
+    if record.get("source_type"):
+        return record["source_type"]
+    return "operator_placed"
+
+
+def _production_soundtrack_matches(doc, music_track, production_record,
+                                   source_run_id, narration_volume,
+                                   music_volume, music_service):
+    """Whether copying the PRODUCTION soundtrack.wav is honest for
+    this revision (Stage H): the dependency plan compares the
+    revision against its PARENT, but the copy source is the
+    production's soundtrack — so the copy is allowed only when the
+    production's own record matches this revision's music
+    selection AND volumes. Any doubt rebuilds (a rebuild is always
+    honest; a wrong copy is not)."""
+    if not isinstance(production_record, dict):
+        return False
+    run = run_ledger.get_run(source_run_id) or {}
+    run_options = run.get("options") or {}
+    try:
+        production_music_volume = float(
+            run_options.get("music_volume")
+            if run_options.get("music_volume") is not None
+            else music_service.MUSIC_VOLUME
+        )
+        production_narration_volume = float(
+            run_options.get("narration_volume")
+            if run_options.get("narration_volume") is not None
+            else 1.0
+        )
+    except (TypeError, ValueError):
+        return False
+    if abs(production_music_volume - music_volume) > 0.001:
+        return False
+    if abs(production_narration_volume - narration_volume) > 0.001:
+        return False
+    state = production_record.get("state") or (
+        "applied" if production_record.get("music") == "mixed"
+        else "not_requested"
+    )
+    selected = music_track.get("file")
+    if not selected:
+        return state != "applied"
+    if state != "applied":
+        return False
+    identity = production_record.get("identity") or {}
+    recorded_hash = identity.get("content_sha256")
+    if recorded_hash:
+        return recorded_hash == music_service.file_sha256(selected)
+    # Pre-Stage-H records carry only the basename.
+    return production_record.get("source") == Path(str(selected)).name
+
+
+def _copied_soundtrack_record(production_record, music_track,
+                              source_type, music_service):
+    """The revision's soundtrack record when the production
+    soundtrack is reused verbatim: the production's record IS the
+    description of that audio. When no production record exists
+    (very old productions), describe the selection truthfully from
+    the file itself."""
+    if isinstance(production_record, dict) and production_record:
+        return production_record
+    selected = music_track.get("file")
+    if selected:
+        return {
+            "music": "mixed",
+            "source": Path(str(selected)).name,
+            "loudness_lufs": None,
+            "state": "applied",
+            "requested": False,
+            "requested_file": str(selected),
+            "decided_by": "editor_revision",
+            "source_type": source_type,
+            "music_volume": None,
+            "identity": music_service.describe_music_file(
+                selected, source_type
+            ),
+            "error": None,
+            "status": "soundtrack_created",
+            "output_file": None,
+        }
+    return {
+        "music": "absent",
+        "source": None,
+        "loudness_lufs": None,
+        "state": music_track.get("state") or "not_requested",
+        "requested": False,
+        "requested_file": None,
+        "decided_by": "editor_revision",
+        "source_type": None,
+        "music_volume": None,
+        "identity": None,
+        "error": None,
+        "status": "soundtrack_created",
+        "output_file": None,
+    }
+
+
+def music_certificate_data(doc) -> dict:
+    """The revision certificate's music section (Stage H, M7/M8),
+    derived from the revision document: its own soundtrack record
+    when a render (or the production import) produced one, else
+    the track's selection stated plainly. Licence is "unknown"
+    unless the record carries evidence — it never does for
+    operator/editor-supplied files."""
+    music = (doc.get("tracks") or {}).get("music") or {}
+    record = music.get("soundtrack_record")
+    if isinstance(record, dict) and record:
+        identity = record.get("identity") or {}
+        return {
+            "state": record.get("state") or "not_requested",
+            "file_name": identity.get("file_name")
+            or record.get("source"),
+            "content_sha256": identity.get("content_sha256"),
+            "source_type": record.get("source_type")
+            or identity.get("source_type"),
+            "license": identity.get("license") or "unknown",
+            "rights_status": "verify_before_publish",
+            "decided_by": record.get("decided_by"),
+            "music_volume": record.get("music_volume"),
+        }
+    selected = music.get("file")
+    return {
+        "state": music.get("state")
+        or ("applied" if selected else "not_recorded"),
+        "file_name": Path(str(selected)).name if selected else None,
+        "content_sha256": None,
+        "source_type": music.get("source"),
+        "license": music.get("license") or "unknown",
+        "rights_status": "verify_before_publish",
+        "decided_by": None,
+        "music_volume": None,
+    }
+
+
 def run_revision_render(project_id, revision_id, run_id) -> dict:
     """Execute one revision render (called by the jobs worker).
     Runs under the Stage 2 lifecycle: claim -> phases with
@@ -2608,9 +2782,23 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
         music_volume = float(
             (doc.get("volumes") or {}).get("music", music_service.MUSIC_VOLUME)
         )
-        if plan["soundtrack_rebuild"] or not (
-            project_dir / "soundtrack.wav"
-        ).is_file():
+        # Stage H (M8): the render keeps the soundtrack RECORD —
+        # prepare_soundtrack's return is no longer discarded. The
+        # revision gets its own soundtrack.json in its work dir and
+        # the record is stored on the document's music track; the
+        # production's soundtrack.json is never rewritten.
+        music_source_type = _music_source_type(doc, music_track)
+        production_record = _read_json(project_dir / "soundtrack.json")
+        copy_ok = (
+            not plan["soundtrack_rebuild"]
+            and (project_dir / "soundtrack.wav").is_file()
+            and _production_soundtrack_matches(
+                doc, music_track, production_record, source_run_id,
+                narration_volume, music_volume, music_service,
+            )
+        )
+        mix_reference = narration_file
+        if not copy_ok:
             mix_input = narration_file
             if abs(narration_volume - 1.0) > 0.001:
                 adjusted = work_dir / "narration_adjusted.wav"
@@ -2632,14 +2820,44 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
                         f"(volume={narration_volume})."
                     )
                 mix_input = adjusted
-            music_service.prepare_soundtrack(
-                mix_input,
-                soundtrack_file,
-                music_file=music_track.get("file"),
-                music_volume=music_volume,
-            )
+            mix_reference = mix_input
+            try:
+                soundtrack_record = music_service.prepare_soundtrack(
+                    mix_input,
+                    soundtrack_file,
+                    music_file=music_track.get("file"),
+                    music_volume=music_volume,
+                    source_type=music_source_type,
+                    decided_by="editor_revision",
+                    requested=bool(music_track.get("file")),
+                    disabled=music_track.get("state") == "disabled",
+                )
+            except Exception as prep_error:
+                failed_record = music_service.failed_music_record(
+                    requested_file=music_track.get("file"),
+                    source_type=music_source_type,
+                    decided_by="editor_revision",
+                    requested=bool(music_track.get("file")),
+                    error=prep_error,
+                )
+                (work_dir / "soundtrack.json").write_text(
+                    json.dumps(failed_record, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                raise
         else:
             shutil.copy2(project_dir / "soundtrack.wav", soundtrack_file)
+            soundtrack_record = _copied_soundtrack_record(
+                production_record, music_track, music_source_type,
+                music_service,
+            )
+        (work_dir / "soundtrack.json").write_text(
+            json.dumps(soundtrack_record, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        music_track["soundtrack_record"] = soundtrack_record
+        if soundtrack_record.get("state"):
+            music_track["state"] = soundtrack_record["state"]
         _cancel_check()
 
         # ---- visual render ---------------------------------------
@@ -2707,7 +2925,18 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
         # ---- publish + audit -------------------------------------
         revision_final = project_dir / f"revision_{revision_id}_final.mp4"
         shutil.copy2(final, revision_final)
+        # Stage H (M9/M10): measure the exported file's audio and
+        # cross-check the revision's soundtrack record against it,
+        # exactly as productions do — the auditor verdicts on a
+        # provenance mismatch, never on a loudness value.
+        export_audio = music_service.final_audio_record(revision_final)
+        audio_provenance = music_service.assess_audio_provenance(
+            soundtrack_record.get("state"), revision_final, mix_reference
+        )
         report = _revision_asset_report(doc, work_dir)
+        report["soundtrack"] = soundtrack_record
+        report["final_audio"] = export_audio
+        report["audio_provenance"] = audio_provenance
         from services.final_video_auditor import validate_final_video
 
         audit = validate_final_video(
@@ -2773,12 +3002,24 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
             "holdovers": holdovers,
             "audit": verdict,
             "render_plan": plan,
+            # Stage H (M9): the export record carries the measured
+            # audio of the exported file itself.
+            "audio_levels": export_audio,
+            "audio_provenance": audio_provenance,
         }
         doc.setdefault("exports", []).append(export)
         doc["render_state"] = {**(doc.get("render_state") or {}),
                                "completed_at": _now_iso()}
         _update_doc_file(project_id, doc)
         _update_row_status(project_id, revision_id, "exported")
+        # Stage H (M7): the revision's music decision joins the
+        # ledger, tagged with the revision id — the original run's
+        # certificate (revision decisions excluded, D3) is
+        # untouched by it.
+        run_ledger.record_music_decision(
+            source_run_id, project_id, soundtrack_record,
+            revision_id=revision_id,
+        )
         run_ledger.finish_run(
             run_id, "completed",
             execution={"revision_id": revision_id, "entrypoint": "editor_render"},

@@ -1234,6 +1234,98 @@ def record_editor_decision(run_id, project_id, *, revision_id,
         return None
 
 
+def record_music_decision(run_id, project_id, soundtrack_record,
+                          revision_id=None):
+    """Append the run's (or one revision's) MUSIC decision row
+    (Stage H, M7): decision_type "music", carrying the soundtrack
+    record's state, the track's content hash and its rights —
+    licence "unknown" unless the record itself carries evidence
+    (it never does for operator/editor-supplied files; unknown is
+    recorded, never upgraded).
+
+    Idempotent per (run_id, revision_id): a run records its
+    soundtrack once; a revision records one row per revision.
+    Editor rows are tagged with revision_id so the original run's
+    certificate (which excludes revision decisions, D3) never sees
+    them. Returns the row id, or None (fail-soft, and when there is
+    no record to record)."""
+    if not run_id or not isinstance(soundtrack_record, dict):
+        return None
+    try:
+        from models import AssetDecision
+
+        identity = soundtrack_record.get("identity") or {}
+        state = soundtrack_record.get("state") or "not_requested"
+        db = _session()
+        try:
+            revision_filter = (
+                AssetDecision.revision_id == str(revision_id)
+                if revision_id
+                else AssetDecision.revision_id.is_(None)
+            )
+            existing = (
+                db.query(AssetDecision)
+                .filter(
+                    AssetDecision.run_id == str(run_id),
+                    AssetDecision.decision_type == "music",
+                    revision_filter,
+                )
+                .first()
+            )
+            if existing is not None:
+                return existing.id
+            row = AssetDecision(
+                id=_new_uuid(),
+                run_id=str(run_id),
+                project_id=str(project_id),
+                asset_key=(
+                    identity.get("file_path")
+                    or soundtrack_record.get("requested_file")
+                    or f"music:{state}"
+                ),
+                content_hash=identity.get("content_sha256"),
+                source_url=None,
+                provider=(
+                    soundtrack_record.get("source_type")
+                    or soundtrack_record.get("decided_by")
+                    or "none"
+                ),
+                scene_number=None,
+                sentence_number=None,
+                interval_start=None,
+                interval_duration=identity.get("duration_seconds"),
+                evidence_class=None,
+                verification={
+                    "status": state,
+                    "music_volume": soundtrack_record.get("music_volume"),
+                    "soundtrack_loudness_lufs": soundtrack_record.get(
+                        "loudness_lufs"
+                    ),
+                    "decided_by": soundtrack_record.get("decided_by"),
+                },
+                rights={
+                    "license": identity.get("license") or "unknown",
+                    "license_url": "",
+                    "rights_status": "verify_before_publish",
+                    "creator": "",
+                    "source": soundtrack_record.get("source_type") or "",
+                    "retrieved_at": "",
+                },
+                decision_type="music",
+                previous_decision_id=None,
+                revision_id=str(revision_id) if revision_id else None,
+                created_at=_now(),
+            )
+            db.add(row)
+            db.commit()
+            return row.id
+        finally:
+            db.close()
+    except Exception as error:
+        print(f"WARNING: music decision recording failed: {error}")
+        return None
+
+
 def list_decisions_for_revision(project_id, run_id, revision_ids):
     """The decision trail for one revision chain: the source run's
     ORIGINAL decisions (revision_id NULL) plus every decision the
@@ -1491,6 +1583,23 @@ def enrich_manifest(manifest, *, status, execution=None, asset_report=None,
         enriched["missing_visual_count"] = asset_report.get(
             "missing_visual_count"
         )
+        # Stage H (M7): the run's music outcome is part of the
+        # manifest — state, track identity and licence, plus the
+        # final file's measured audio levels when the report has
+        # them. Absent keys stay absent for pre-Stage-H reports.
+        soundtrack = asset_report.get("soundtrack")
+        if isinstance(soundtrack, dict):
+            identity = soundtrack.get("identity") or {}
+            enriched["music"] = {
+                "state": soundtrack.get("state"),
+                "decided_by": soundtrack.get("decided_by"),
+                "source_type": soundtrack.get("source_type"),
+                "file_name": identity.get("file_name"),
+                "content_sha256": identity.get("content_sha256"),
+                "license": identity.get("license") or "unknown",
+            }
+        if isinstance(asset_report.get("final_audio"), dict):
+            enriched["final_audio"] = asset_report["final_audio"]
     if stage_outputs is not None:
         enriched["stage_outputs"] = list(stage_outputs)
     return enriched
