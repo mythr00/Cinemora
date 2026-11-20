@@ -658,3 +658,351 @@ export function getRevisionCertificate(
     { signal },
   );
 }
+
+// ---------------------------------------------------------------------
+// Stage 7 editor (C-03) — the revision editor surface.
+//
+// Types mirror services/editor.py's revision document exactly as
+// the API returns it (see API_CONTRACT.md, "Editor (Stage 6)").
+// The document is the server's truth: the UI renders what these
+// endpoints return and re-reads the revision after every applied
+// batch — it keeps no local copy of timeline state.
+// ---------------------------------------------------------------------
+
+export type RevisionView = {
+  revision_id: string;
+  project_id: string;
+  run_id: string;
+  parent_revision_id: string | null;
+  revision_number: number;
+  status: string;
+  document_path: string;
+  document_hash: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EditorRights = {
+  license: string;
+  license_url?: string | null;
+  rights_status?: string | null;
+  creator?: string | null;
+  source?: string | null;
+  retrieved_at?: string | null;
+} | null;
+
+export type EditorVerification = {
+  accepted?: boolean | null;
+  confidence?: number | null;
+  specificity?: string | null;
+  reason?: string | null;
+  rejection_reason?: string | null;
+  [key: string]: unknown;
+} | null;
+
+export type EditorAsset = {
+  file_path: string | null;
+  type: string;
+  source?: string | null;
+  provider?: string | null;
+  source_url?: string | null;
+  title?: string | null;
+  clip_start: number;
+  source_duration?: number | null;
+  decision_id?: string | null;
+  evidence_class?: string | null;
+  verification?: EditorVerification;
+  rights?: EditorRights;
+  user_supplied?: boolean;
+  generated?: boolean;
+  swapped_from?: { file_path?: string | null; decision_id?: string | null } | null;
+} | null;
+
+export type EditorGraphic = {
+  template?: string | null;
+  family?: string | null;
+  style?: string | null;
+  inputs?: Record<string, unknown> | null;
+  engine_metadata?: Record<string, unknown> | null;
+} | null;
+
+export type VisualItem = {
+  item_id: string;
+  kind: "clip" | "graphic" | "gap";
+  sentence_number: number;
+  scene_number: number;
+  start: number;
+  end: number;
+  duration: number;
+  assignment?: string | null;
+  transition?: string | null;
+  asset: EditorAsset;
+  graphic: EditorGraphic;
+  classification: string;
+  flags: string[];
+  split_group?: string;
+  removed_item_id?: string;
+};
+
+export type NarrationSentence = {
+  sentence_number: number;
+  scene_number: number;
+  text: string;
+  start: number;
+  end: number;
+};
+
+export type CaptionSegment = {
+  start: number;
+  end: number;
+  text: string;
+  words?: Array<{ start: number; end: number; word?: string; text?: string }> | null;
+  edited?: boolean;
+};
+
+export type EditorOpLogEntry = {
+  op_id: string;
+  type: string;
+  actor: string;
+  at: string;
+  summary: string;
+  params?: Record<string, unknown>;
+};
+
+export type RevisionExport = {
+  export_id: string;
+  file: string;
+  file_name: string;
+  sha256: string;
+  at: string;
+  run_id: string;
+  allow_gaps: boolean;
+  gaps_exported: Array<{ item_id: string; sentence_number: number; duration: number }>;
+  holdovers: Array<{
+    gap_item_id: string;
+    sentence_number: number;
+    duration: number;
+    held_file?: string | null;
+  }>;
+  audit: {
+    evaluated: boolean;
+    passed: boolean;
+    failures: string[];
+    warnings: string[];
+    duration_seconds?: number | null;
+    exported_with_gaps: number[];
+  };
+  render_plan: RenderPlan;
+};
+
+export type RenderPlan = {
+  visual: {
+    changed_item_ids: string[];
+    reused_item_ids: string[];
+    new_item_ids: string[];
+    removed_item_ids: string[];
+    gap_item_ids: string[];
+    reuse_level: string;
+  };
+  narration_rebuild: boolean;
+  narration_dirty_sentences: number[];
+  voice_changed: boolean;
+  captions_rebuild: boolean;
+  soundtrack_rebuild: boolean;
+  assembly: boolean;
+  retiming: string;
+  rules: string[];
+};
+
+export type EditorDocument = {
+  version: number;
+  revision_id: string;
+  project_id: string;
+  run_id: string;
+  parent_revision_id: string | null;
+  revision_number: number;
+  status: string;
+  created_at: string;
+  created_from: string;
+  duration_seconds: number;
+  tracks: {
+    visual: VisualItem[];
+    narration: {
+      file: string;
+      voice_id?: string | null;
+      sentences: NarrationSentence[];
+      dirty_sentences: number[];
+    };
+    music: {
+      file: string | null;
+      source?: string | null;
+      mixed?: string | null;
+    };
+    captions: {
+      file: string;
+      mode: string;
+      timing_source?: string | null;
+      provisional: boolean;
+      segments: CaptionSegment[];
+      stale: boolean;
+      stale_reason?: string | null;
+    };
+  };
+  volumes: { narration: number; music: number };
+  op_log: EditorOpLogEntry[];
+  exports: RevisionExport[];
+  render_state: {
+    run_id: string;
+    allow_gaps: boolean;
+    plan: RenderPlan;
+    requested_at: string;
+    completed_at?: string;
+  } | null;
+  last_render_error: string | null;
+};
+
+export type RevisionWithDocument = RevisionView & { document: EditorDocument };
+
+/** An asset spec for add_clip / replace_clip, exactly as
+ * services/editor.py's `_resolve_asset_spec` accepts it. The UI
+ * never offers `file_path` (a server path is not a user concept —
+ * C-04); uploads, ledger decisions and URLs are the user-facing
+ * sources. */
+export type AssetSpec =
+  | { upload_id: string }
+  | { library_decision_id: string }
+  | { source_url: string };
+
+/** The 12 editor operations, with the backend's exact payload
+ * fields (services/editor.py `_OP_HANDLERS`). */
+export type EditorOperation =
+  | { type: "remove_clip"; item_id: string; gap_policy: "leave_gap" | "close_gap" }
+  | { type: "replace_clip"; item_id: string; replacement: AssetSpec }
+  | {
+      type: "add_clip";
+      asset: AssetSpec;
+      sentence_number: number;
+      after_item_id?: string;
+      duration?: number;
+    }
+  | { type: "trim_clip"; item_id: string; clip_start?: number; duration?: number }
+  | { type: "move_clip"; item_id: string; to_sentence_number?: number; after_item_id?: string }
+  | { type: "split_clip"; item_id: string; at_offset: number }
+  | { type: "set_graphic_duration"; item_id: string; duration: number }
+  | { type: "regenerate_graphic"; item_id: string }
+  | { type: "edit_caption"; segment_index: number; text?: string; start?: number; end?: number }
+  | {
+      type: "regenerate_narration_sentence";
+      sentence_number: number;
+      text?: string;
+      voice_id?: string;
+    }
+  | { type: "set_music"; music_file?: string | null; upload_id?: string }
+  | { type: "set_volumes"; narration?: number; music?: number };
+
+export type RevisionRenderResult = {
+  revision_id: string;
+  run_id: string;
+  status: string;
+  allow_gaps: boolean;
+  render_plan: RenderPlan;
+  deduplicated?: boolean;
+};
+
+/** Editor document for the latest revision; creates revision 0
+ * from the latest completed run when none exists (404
+ * no_completed_run when the project has none). */
+export function getEditor(projectId: string, signal?: AbortSignal) {
+  return apiRequest<RevisionWithDocument>(`/api/v1/projects/${projectId}/editor`, { signal });
+}
+
+export function listRevisions(projectId: string, signal?: AbortSignal) {
+  return apiRequest<{ revisions: RevisionView[] }>(
+    `/api/v1/projects/${projectId}/revisions`,
+    { signal },
+  );
+}
+
+export function getRevision(projectId: string, revisionId: string, signal?: AbortSignal) {
+  return apiRequest<RevisionWithDocument>(
+    `/api/v1/projects/${projectId}/revisions/${revisionId}`,
+    { signal },
+  );
+}
+
+/** Branch a new draft from a revision (deep copy, next number,
+ * exports reset), or import a run as a revision 0. */
+export function createRevision(
+  projectId: string,
+  body: { from_revision_id?: string; from_run_id?: string },
+) {
+  return apiRequest<RevisionView>(`/api/v1/projects/${projectId}/revisions`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Apply one atomic operation batch to a revision. On success the
+ * batch becomes the NEXT revision and its view is returned (the
+ * document itself is re-read with getRevision). Any invalid
+ * operation rejects the whole batch with 422 and persists
+ * nothing.
+ */
+export function applyEditorOperations(
+  projectId: string,
+  revisionId: string,
+  operations: EditorOperation[],
+) {
+  return apiRequest<RevisionView>(
+    `/api/v1/projects/${projectId}/revisions/${revisionId}/operations`,
+    { method: "POST", body: JSON.stringify({ operations }) },
+  );
+}
+
+/** Request a revision render (202). Unresolved gaps block the
+ * render with 422 unresolved_gaps unless allowGaps is set, in
+ * which case each gap is covered by a recorded holdover. */
+export function requestRevisionRender(projectId: string, revisionId: string, allowGaps: boolean) {
+  return apiRequest<RevisionRenderResult>(
+    `/api/v1/projects/${projectId}/revisions/${revisionId}/render`,
+    { method: "POST", body: JSON.stringify({ allow_gaps: allowGaps }) },
+  );
+}
+
+export function listRevisionExports(projectId: string, revisionId: string, signal?: AbortSignal) {
+  return apiRequest<{ exports: RevisionExport[] }>(
+    `/api/v1/projects/${projectId}/revisions/${revisionId}/exports`,
+    { signal },
+  );
+}
+
+/**
+ * The media key the backend derives for a project file
+ * (services/plan_document.build_media_index: sha256 of the
+ * project-relative POSIX path, first 20 hex chars). The editor
+ * document carries absolute file paths, not media keys, so the
+ * editor computes the key for a path under the project directory
+ * and fetches through the authenticated media endpoint. Files the
+ * media index does not record — uploads, editor-generated media,
+ * revision exports — answer 404 there; callers must treat that as
+ * "no in-app preview" and fall back honestly, never fake one.
+ */
+export async function mediaKeyForProjectPath(
+  projectId: string,
+  filePath: string,
+): Promise<string | null> {
+  const marker = `/${projectId}/`;
+  const index = filePath.lastIndexOf(marker);
+  if (index < 0) return null;
+  const relative = filePath.slice(index + marker.length);
+  if (!relative || relative.split("/").includes("..")) return null;
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(relative),
+  );
+  const hex = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return hex.slice(0, 20);
+}

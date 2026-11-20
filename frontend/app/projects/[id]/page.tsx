@@ -35,7 +35,8 @@ import {
  * fell back to this overview. The original file, editor included,
  * is preserved verbatim at
  * frontend/preserved/project-legacy-editor-page.tsx. The real
- * revision editor arrives as its own screen (register C-03).
+ * revision editor is its own screen at /projects/[id]/edit
+ * (register C-03, Brief Stage 7), linked below.
  *
  * Brief Stage 5 (C-07): the run history and the asset ledger gained
  * their missing UI on this page — run details fetched per run
@@ -188,7 +189,7 @@ export default function ProjectPage() {
       <h1>{overview.status.title || `${overview.status.category} production`}</h1>
       <p className="overview-status-line">Status: <StatusBadge status={overview.status.status} />{overview.status.current_stage ? ` · Stage: ${overview.status.current_stage.replaceAll("_", " ")}` : ""}</p>
       {overview.status.error && <p className="projects-error">{overview.status.error}</p>}
-      <p><Link className="button button-primary" href={`/projects/${projectId}/plan`}>Production plan</Link>{" "}<Link className="button button-secondary" href={`/projects/${projectId}/certificate`}>Provenance certificate</Link>{" "}<a className="button button-secondary" href="#asset-evidence">Asset evidence</a></p>
+      <p><Link className="button button-primary" href={`/projects/${projectId}/plan`}>Production plan</Link>{" "}<Link className="button button-secondary" href={`/projects/${projectId}/edit`}>Edit video</Link>{" "}<Link className="button button-secondary" href={`/projects/${projectId}/certificate`}>Provenance certificate</Link>{" "}<a className="button button-secondary" href="#asset-evidence">Asset evidence</a></p>
       {overview.outputs && <section aria-label="Outputs"><h2>Outputs</h2><ul className="overview-outputs">
         {overview.outputs.film.exists && <li>Final film — <a href={apiUrl(overview.outputs.film.media_url || "")}>download MP4</a></li>}
         {overview.outputs.captions.srt.exists && <li>Captions (SRT) — <a href={apiUrl(overview.outputs.captions.srt.media_url || "")}>download</a></li>}
