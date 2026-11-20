@@ -26,6 +26,24 @@ import {
  * it is (via classifyApiError, with retry). A code-less 404 is
  * disambiguated with a project fetch before either state is shown.
  */
+/**
+ * Quality Recovery Phase 5: one recorded quality verdict as a
+ * badge. The backend's values are PASS / QUALITY_WARNING / FAIL /
+ * UNKNOWN; a null verdict (nothing evaluable was recorded) renders
+ * as the unknown state — never as a pass.
+ */
+function VerdictBadge({ verdict }: { verdict?: string | null }) {
+  return <StatusBadge status={(verdict || "unknown").toLowerCase()} />;
+}
+
+const OUTCOME_LABELS: Array<[string, string]> = [
+  ["direct", "direct"],
+  ["approved_graphic", "approved graphic"],
+  ["contextual", "contextual"],
+  ["editorial_holdover", "editorial holdover"],
+  ["uncovered", "uncovered"],
+];
+
 export default function CertificatePage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
@@ -117,6 +135,96 @@ export default function CertificatePage() {
               {certificate.run.finished_at ? ` · finished ${new Date(certificate.run.finished_at).toLocaleString()}` : ""}
               {certificate.run.script_hash ? ` · script ${certificate.run.script_hash.slice(0, 12)}…` : ""}
             </p>
+
+            {certificate.quality && (
+              <section className="certificate-quality" aria-label="Production quality">
+                <h2>Production quality</h2>
+                {certificate.quality.state === "recorded" && certificate.quality.verdicts ? (
+                  <>
+                    <p className="plan-meta">
+                      Integrity <VerdictBadge verdict={certificate.quality.verdicts.integrity?.verdict} />
+                      {" · "}Quality <VerdictBadge verdict={certificate.quality.verdicts.quality?.verdict} />
+                      {" · "}Reliability <VerdictBadge verdict={certificate.quality.verdicts.reliability?.verdict} />
+                    </p>
+                    {certificate.quality.metrics && (
+                      <div className="plan-summary" aria-label="Quality metrics">
+                        {certificate.quality.metrics.diversity?.d1_unique_assets != null && (
+                          <div><span>UNIQUE VISUALS (D1)</span><strong>{certificate.quality.metrics.diversity.d1_unique_assets}</strong></div>
+                        )}
+                        {certificate.quality.metrics.diversity?.d1_unique_assets_per_minute != null && (
+                          <div><span>D1 PER MINUTE</span><strong>{certificate.quality.metrics.diversity.d1_unique_assets_per_minute.toFixed(2)}</strong></div>
+                        )}
+                        {certificate.quality.metrics.diversity?.d2_repeated_item_rate != null && (
+                          <div><span>REPEATED-ITEM RATE (D2)</span><strong>{certificate.quality.metrics.diversity.d2_repeated_item_rate.toFixed(3)}</strong></div>
+                        )}
+                        {certificate.quality.metrics.timeline_item_count != null && (
+                          <div><span>TIMELINE ITEMS</span><strong>{certificate.quality.metrics.timeline_item_count}</strong></div>
+                        )}
+                        {certificate.quality.metrics.max_reuse_count != null && (
+                          <div><span>MAX REUSE OF ONE VISUAL</span><strong>{certificate.quality.metrics.max_reuse_count}×</strong></div>
+                        )}
+                      </div>
+                    )}
+                    {certificate.quality.metrics?.sentence_outcomes && (
+                      <p className="plan-meta">
+                        Sentence outcomes
+                        {certificate.quality.metrics.sentence_outcomes.sentence_count != null
+                          ? ` (${certificate.quality.metrics.sentence_outcomes.sentence_count} sentences)`
+                          : ""}
+                        :{" "}
+                        {OUTCOME_LABELS
+                          .filter(([key]) => certificate.quality?.metrics?.sentence_outcomes?.buckets?.[key] != null)
+                          .map(([key, label]) => `${label} ${certificate.quality?.metrics?.sentence_outcomes?.buckets?.[key]}`)
+                          .join(" · ")}
+                        {certificate.quality.metrics.sentence_outcomes.reconciles === true
+                          ? " Outcome counts reconcile to the sentence total."
+                          : certificate.quality.metrics.sentence_outcomes.reconciles === false
+                            ? " Outcome counts do NOT reconcile to the sentence total."
+                            : ""}
+                        {certificate.quality.metrics.sentence_outcomes.sentences_without_verified_visual != null
+                          ? ` ${certificate.quality.metrics.sentence_outcomes.sentences_without_verified_visual} sentence(s) had no verified visual.`
+                          : ""}
+                      </p>
+                    )}
+                    {(() => {
+                      const reasons = [
+                        ...(certificate.quality.verdicts.integrity?.failures ?? []),
+                        ...(certificate.quality.verdicts.quality?.fail_reasons ?? []),
+                        ...(certificate.quality.verdicts.quality?.warning_reasons ?? []),
+                      ];
+                      return reasons.length > 0 ? (
+                        <>
+                          <p className="plan-meta">Reasons recorded with the verdicts:</p>
+                          <ul>
+                            {reasons.map((reason) => (
+                              <li key={reason}>{reason}</li>
+                            ))}
+                          </ul>
+                        </>
+                      ) : null;
+                    })()}
+                    {certificate.quality.reconciliation &&
+                      (certificate.quality.reconciliation.checks?.length ?? 0) > 0 && (
+                        <p className="plan-meta">
+                          Cross-artefact reconciliation:{" "}
+                          {certificate.quality.reconciliation.all_reconciled
+                            ? `all ${certificate.quality.reconciliation.checks?.length} checks matched.`
+                            : `${certificate.quality.reconciliation.checks?.filter((check) => check.status === "match").length} of ${certificate.quality.reconciliation.checks?.length} checks matched` +
+                              ((certificate.quality.reconciliation.failures?.length ?? 0) > 0
+                                ? `; mismatches: ${certificate.quality.reconciliation.failures?.join(", ")}.`
+                                : ".")}
+                        </p>
+                      )}
+                  </>
+                ) : (
+                  <p className="plan-meta">
+                    {certificate.quality.state === "unavailable"
+                      ? "A production quality report exists for this run but could not be read, so no verdicts are shown."
+                      : "No production quality report was recorded for this run — the run predates quality reporting, or its measurement failed and was recorded in the asset report instead. No verdict is shown, and the absence of a report is not a pass."}
+                  </p>
+                )}
+              </section>
+            )}
 
             <div className="plan-table-wrap">
               <table className="plan-table">

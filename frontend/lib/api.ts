@@ -294,8 +294,65 @@ export type ProjectOutputs = {
   plan_url: string;
 };
 
+/**
+ * Quality Recovery Phase 5: the production quality section the
+ * certificate endpoint attaches from the run's recorded
+ * production_report.json + visual_quality.json (Phase 3). `state`
+ * is "recorded" only when a report was actually recorded;
+ * "not_recorded" (the production predates the report, or its
+ * measurement failed and was recorded in the asset report instead)
+ * and "unavailable" (the artefact exists but cannot be read) both
+ * carry null sections — the UI shows those states honestly and
+ * never renders them as a verdict. Verdict values are the
+ * backend's own: PASS / QUALITY_WARNING / FAIL / UNKNOWN, or null
+ * where a verdict was not computable.
+ */
+export type QualityVerdict = {
+  verdict?: string | null;
+  failures?: string[];
+  warnings?: string[];
+  fail_reasons?: string[];
+  warning_reasons?: string[];
+  unknown_metrics?: string[];
+};
+
+export type CertificateQuality = {
+  state: string;
+  schema?: string | null;
+  verdicts?: {
+    integrity?: QualityVerdict | null;
+    quality?: QualityVerdict | null;
+    reliability?: QualityVerdict | null;
+  } | null;
+  metrics?: {
+    diversity?: {
+      d1_unique_assets?: number | null;
+      d1_unique_assets_per_minute?: number | null;
+      d2_repeated_items?: number | null;
+      d2_repeated_item_rate?: number | null;
+      variety_ratio?: number | null;
+    } | null;
+    sentence_outcomes?: {
+      sentence_count?: number | null;
+      buckets?: Record<string, number> | null;
+      shares?: Record<string, number | null> | null;
+      reconciles?: boolean | null;
+      sentences_without_verified_visual?: number | null;
+    } | null;
+    timeline_item_count?: number | null;
+    max_reuse_count?: number | null;
+  } | null;
+  reconciliation?: {
+    all_reconciled?: boolean | null;
+    failures?: string[];
+    checks?: Array<{ name?: string | null; status?: string | null }>;
+  } | null;
+};
+
 export type Certificate = {
   certificate_version: number;
+  /** Present on the run certificate only (not on revision certificates). */
+  quality?: CertificateQuality | null;
   project: { id: string; title?: string | null; category?: string | null };
   run: {
     run_id: string | null;

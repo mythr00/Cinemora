@@ -1107,6 +1107,84 @@ def serve_media(project_id: str, asset_key: str, _=Depends(require_api_token)):
     )
 
 
+def _read_project_json(project_dir: Path, filename: str):
+    try:
+        return json.loads((project_dir / filename).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _quality_section(project_id: str) -> dict:
+    """Quality Recovery Phase 5: the production's recorded quality
+    report, surfaced on the certificate exactly as the production
+    flow recorded it. jobs.py writes production_report.json (the
+    three verdicts + cross-artefact reconciliation) and
+    visual_quality.json (the measurement) into the project
+    directory and embeds both in the asset report. This endpoint
+    recomputes nothing and invents nothing:
+
+    - no production_report.json — a production that predates the
+      report, or one whose measurement failed (jobs.py records
+      that failure in the asset report instead) -> "not_recorded";
+    - the file exists but cannot be parsed -> "unavailable";
+    - otherwise -> "recorded": the verdicts pass through untouched
+      (PASS / QUALITY_WARNING / FAIL / UNKNOWN, or null where a
+      verdict itself was not computable) with a summary of the
+      measurement (diversity D1/D2 and the per-sentence outcome
+      accounting, without the per-sentence listing).
+    """
+    empty = {
+        "schema": None,
+        "verdicts": None,
+        "metrics": None,
+        "reconciliation": None,
+    }
+    project_dir = media_paths.project_dir(project_id)
+    if not (project_dir / "production_report.json").is_file():
+        return {"state": "not_recorded", **empty}
+    report = _read_project_json(project_dir, "production_report.json")
+    if not isinstance(report, dict):
+        return {"state": "unavailable", **empty}
+    reconciliation = report.get("reconciliation") or {}
+    checks = reconciliation.get("checks") or []
+    metrics = None
+    measurement = _read_project_json(project_dir, "visual_quality.json")
+    if isinstance(measurement, dict):
+        outcomes = measurement.get("sentence_outcomes") or {}
+        timeline_block = measurement.get("timeline") or {}
+        metrics = {
+            "diversity": measurement.get("diversity"),
+            "sentence_outcomes": {
+                "sentence_count": outcomes.get("sentence_count"),
+                "buckets": outcomes.get("buckets"),
+                "shares": outcomes.get("shares"),
+                "reconciles": outcomes.get("reconciles"),
+                "sentences_without_verified_visual": outcomes.get(
+                    "sentences_without_verified_visual"
+                ),
+            }
+            if outcomes
+            else None,
+            "timeline_item_count": timeline_block.get("timeline_item_count"),
+            "max_reuse_count": timeline_block.get("max_reuse_count"),
+        }
+    return {
+        "state": "recorded",
+        "schema": report.get("schema"),
+        "verdicts": report.get("verdicts"),
+        "metrics": metrics,
+        "reconciliation": {
+            "all_reconciled": reconciliation.get("all_reconciled"),
+            "failures": reconciliation.get("failures") or [],
+            "checks": [
+                {"name": check.get("name"), "status": check.get("status")}
+                for check in checks
+                if isinstance(check, dict)
+            ],
+        },
+    }
+
+
 @router.get("/projects/{project_id}/certificate")
 def get_certificate(project_id: str, _=Depends(require_api_token)):
     db = SessionLocal()
@@ -1141,9 +1219,17 @@ def get_certificate(project_id: str, _=Depends(require_api_token)):
     counts = run_ledger.decision_counts(
         latest["run_id"], include_revision_decisions=False
     )
-    return plan_document.build_certificate(
+    certificate = plan_document.build_certificate(
         project_view, latest, decisions, counts
     )
+    # Quality Recovery Phase 5: surface the recorded production
+    # quality report (Phase 3) alongside the ledger certificate.
+    # Additive only — the ledger sections are unchanged, and the
+    # quality artefacts are production records the editor never
+    # writes, so the original-certificate guarantees (Stage 6 D3)
+    # are unaffected.
+    certificate["quality"] = _quality_section(project_id)
+    return certificate
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,12 @@ import {
  *   `exported`, `failed`. (The editor UI itself is C-03; the badge
  *   already speaks its vocabulary so that stage reuses this
  *   component instead of growing a second system.)
+ * - Production quality verdicts (services/quality_verdict.py,
+ *   Quality Recovery Phase 5): `pass`, `quality_warning`, `fail`,
+ *   `unknown` — the backend's PASS / QUALITY_WARNING / FAIL /
+ *   UNKNOWN values, lowercased by the caller. `unknown` is a real
+ *   verdict state (nothing evaluable was recorded), rendered
+ *   neutrally — never as a pass.
  *
  * An unlisted status is rendered as a neutral badge carrying the
  * humanised raw value — never hidden, never guessed at.
@@ -61,6 +67,10 @@ const STATUS_PRESENTATION: Record<string, StatusPresentation> = {
   cancelled: { label: "Cancelled", tone: "neutral", Icon: Ban },
   draft: { label: "Draft", tone: "neutral", Icon: FilePen },
   exported: { label: "Exported", tone: "success", Icon: Download },
+  pass: { label: "Pass", tone: "success", Icon: CircleCheck },
+  quality_warning: { label: "Quality warning", tone: "attention", Icon: CircleExclamationPoint },
+  fail: { label: "Fail", tone: "danger", Icon: CircleExclamationPoint },
+  unknown: { label: "Unknown", tone: "neutral", Icon: CircleDashed },
 };
 
 /**
