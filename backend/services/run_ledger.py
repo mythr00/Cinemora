@@ -933,6 +933,14 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                     continue
                 if record.get("outcome") != "rejected":
                     continue
+                # Stage 1 / R5: the ledger row carries the full
+                # rejection event the report record holds — primary
+                # reason, score and category — inside the existing
+                # verification JSON column (no migration), and the
+                # sentence linkage when the record carries it. Older
+                # records without these fields produce the same row
+                # shape as before, with None values.
+                _sentences = record.get("sentence_numbers") or []
                 rows.append({
                     "run_id": str(run_id),
                     "project_id": str(project_id),
@@ -941,7 +949,9 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                     "source_url": record.get("url") or None,
                     "provider": str(record.get("provider") or "unknown"),
                     "scene_number": record.get("scene"),
-                    "sentence_number": None,
+                    "sentence_number": (
+                        _sentences[0] if _sentences else None
+                    ),
                     "interval_start": None,
                     "interval_duration": None,
                     "evidence_class": None,
@@ -949,6 +959,14 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                         "accepted": False,
                         "stage": record.get("stage"),
                         "reason": record.get("reason"),
+                        "primary_rejection_reason": (
+                            record.get("primary_rejection_reason")
+                            or record.get("reason")
+                        ),
+                        "score": record.get("score"),
+                        "score_basis": record.get("score_basis"),
+                        "category": record.get("category"),
+                        "kind": record.get("kind"),
                     },
                     "rights": None,
                     "decision_type": "rejected",

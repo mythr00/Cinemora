@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 
 from services.visual_registry import get_registry
 from services import run_metrics
+from services import rejection_diagnostics
 from services import story_understanding as story
 from services.media_probe import probe_image, probe_video
 from services.http_retry import request_with_retry, classify_error
@@ -425,6 +426,48 @@ def drain_discovery_failures():
     failures = list(_DISCOVERY_FAILURES)
     _DISCOVERY_FAILURES.clear()
     return failures
+
+
+# Stage 1 / R5: candidates dropped by _uve_verify_all's dedupe
+# (duplicate canonical key, or no key at all) previously vanished
+# silently — they inflated "discovered" counts but appeared in no
+# rejection record. They are now recorded with the same drain
+# pattern and surfaced in scene_stats as dedupe_drops, so the
+# funnel arithmetic (discovered vs evaluated) can be reconciled.
+_DEDUPE_DROPS: list = []
+
+
+def _record_dedupe_drop(candidate, key):
+    _DEDUPE_DROPS.append(
+        {
+            "candidate_id": (candidate or {}).get("candidate_id"),
+            "url": (
+                (candidate or {}).get("url")
+                or (candidate or {}).get("video_url")
+                or (candidate or {}).get("image_url")
+                or ""
+            ),
+            "provider": str(
+                (candidate or {}).get("provider")
+                or (candidate or {}).get("source")
+                or "unknown"
+            ),
+            "outcome": "rejected",
+            "stage": "dedupe",
+            "reason": (
+                rejection_diagnostics.DEDUPE_REASON
+                if key
+                else rejection_diagnostics.MISSING_KEY_REASON
+            ),
+        }
+    )
+
+
+def drain_dedupe_drops():
+    """Return and clear the dedupe drops recorded since last drain."""
+    drops = list(_DEDUPE_DROPS)
+    _DEDUPE_DROPS.clear()
+    return drops
 
 
 MAX_CONSECUTIVE_SEARCH_FAILURES = 8
@@ -850,6 +893,11 @@ def build_shot_needs(beat, bible=None):
             "shot_index": index,
             "shot_type": kind,
             "specificity": specificity,
+            # Stage 1 / R7: the category profile this need is judged
+            # under (explicit scenario category wins; otherwise it
+            # derives from specificity). Recorded on the need so the
+            # gate, diagnostics and reports all agree on it.
+            "visual_category": story.resolve_visual_category(scenario),
             "description": description,
             "required_subject_id": subject_id or None,
             "required_subject": required_subject,
@@ -4802,6 +4850,10 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
         key = _uve_candidate_key(candidate)
 
         if not key or key in seen:
+            # Stage 1 / R5: a dropped duplicate/keyless candidate is
+            # a recorded rejection event (stage "dedupe"), not a
+            # silent disappearance.
+            _record_dedupe_drop(candidate, key)
             continue
 
         seen.add(key)
@@ -4879,6 +4931,27 @@ def _title_blob(candidate):
     ]).lower()
 
 
+def _place_satisfied(place, blob):
+    """Whether a need's place requirement is met by the metadata blob.
+
+    Stage 1 compound-place fix: a compound place string ("King Road
+    house, Moscow, Idaho") names a set of place components; the old
+    check required EVERY token of the whole compound to appear,
+    which almost no real title+snippet satisfies (881 missing_place
+    rejections in the stored Kohberger run). Each comma-separated
+    component is now an alternative: the component's full string, or
+    all of its significant parts, satisfies the requirement. A
+    single-component place behaves exactly as before."""
+    components = [c.strip() for c in str(place or "").split(",") if c.strip()]
+    for component in components or [str(place or "")]:
+        if component and component in blob:
+            return True
+        parts = [p for p in component.split() if len(p) > 2]
+        if parts and all(p in blob for p in parts):
+            return True
+    return False
+
+
 def gate_shot_need(candidate, shot_need):
     """
     Strict metadata gate for a visual contract.
@@ -4940,6 +5013,18 @@ def gate_shot_need(candidate, shot_need):
         or ""
     ).lower()
 
+    # Stage 1 / R7: category-aware profile. The absence checks below
+    # are REQUIRED-field checks, and which fields are required is a
+    # property of the visual category the need belongs to (see
+    # story_understanding.CATEGORY_PROFILES): evidence and contextual
+    # needs keep the named-subject contract; atmosphere (generic)
+    # needs have no subject/place contract to enforce at the gate —
+    # verify_candidate's topical-evidence rules and threshold remain
+    # their acceptance bar. Contradictions, forbidden terms, banned
+    # providers and foreign provenance above/below are NOT profiled:
+    # they reject in every category.
+    _profile = story.category_profile(story.resolve_visual_category(need))
+
     # Explicit forbidden terms always win.
     for banned in (
         need.get("forbidden")
@@ -4979,10 +5064,12 @@ def gate_shot_need(candidate, shot_need):
             if _named(other):
                 return False, story.CONTRADICTORY_PLACE
 
-    # Exact person/entity contracts require the requested
-    # subject to appear in the searchable metadata.
+    # Named-subject contracts require the requested subject to
+    # appear in the searchable metadata — in the categories whose
+    # profile requires a subject (evidence, contextual).
     if (
-        kind == "person"
+        _profile["subject_required"]
+        and kind == "person"
         and subject
     ):
         subject_parts = [
@@ -5001,9 +5088,11 @@ def gate_shot_need(candidate, shot_need):
             ):
                 return False, "missing_person"
 
-    # Exact entity/location contracts require the subject.
+    # Entity/location contracts require the subject (same profile
+    # condition as the person contract above).
     if (
-        kind in {
+        _profile["subject_required"]
+        and kind in {
             "location",
             "organization",
             "event",
@@ -5027,24 +5116,11 @@ def gate_shot_need(candidate, shot_need):
             ):
                 return False, "missing_subject"
 
-    # If a specific place is required, it must appear in
-    # the candidate metadata.
-    if place:
-        place_parts = [
-            part
-            for part in place.split()
-            if len(part) > 2
-        ]
-
-        if place not in blob:
-            if (
-                not place_parts
-                or not all(
-                    part in blob
-                    for part in place_parts
-                )
-            ):
-                return False, "missing_place"
+    # If the category profile requires a place, it must appear in
+    # the candidate metadata (compound places: any one component).
+    if _profile["place_required"] and place:
+        if not _place_satisfied(place, blob):
+            return False, "missing_place"
 
     # Exact contracts require all explicit identity
     # information to survive the metadata gate.
@@ -5067,21 +5143,8 @@ def gate_shot_need(candidate, shot_need):
                     return False, "missing_subject"
 
         if place:
-            place_parts = [
-                part
-                for part in place.split()
-                if len(part) > 2
-            ]
-
-            if place not in blob:
-                if (
-                    not place_parts
-                    or not all(
-                        part in blob
-                        for part in place_parts
-                    )
-                ):
-                    return False, "missing_place"
+            if not _place_satisfied(place, blob):
+                return False, "missing_place"
 
     return True, ""
 
@@ -5623,7 +5686,14 @@ def _uve_search_and_pick(
         len(raw_videos) + len(raw_web_sources) + len(raw_images)
     )
 
-    scene_stats["candidates_considered"] += len(scored_videos) + len(scored_images)
+    # Stage 1 counter fix: web sources were counted in
+    # candidates_rejected (below) and in every funnel but EXCLUDED
+    # here, so the asset report could show rejected > considered and
+    # every verified web candidate was invisible in the considered
+    # total. All three scored pools are considered.
+    scene_stats["candidates_considered"] += (
+        len(scored_videos) + len(scored_web_sources) + len(scored_images)
+    )
     scene_stats["candidates_rejected"] += sum(
         1
         for item in (scored_videos + scored_web_sources + scored_images)
@@ -5736,29 +5806,63 @@ def _uve_search_and_pick(
     # so the asset report's aggregates are built from the same records
     # an operator can inspect individually.
     _records = scene_stats.setdefault("candidate_records", [])
-    for _item in (scored_videos + scored_web_sources + scored_images):
-        _base = {
-            "candidate_id": _item.get("candidate_id"),
-            "url": (
+    # Stage 1 / R5: records are evaluation EVENTS (Architecture Review
+    # C.A) — each carries its kind, the need's specificity/category,
+    # the score (or gate_pre_scoring basis), the verifier's
+    # contributions and contributing reasons, and the shot/sentence
+    # linkage, so the asset report's rejection funnel can explain the
+    # decision instead of merely counting it. The legacy keys
+    # (candidate_id/url/provider/outcome/stage/reason) are unchanged.
+    _need_category = story.resolve_visual_category(shot_need or scenario)
+    _need_specificity = str(
+        (shot_need or {}).get("specificity")
+        or (scenario or {}).get("specificity")
+        or ""
+    )
+    _sentence_numbers = list((beat or {}).get("sentence_numbers") or [])
+
+    def _event_for(_item, _kind, _outcome, _stage, _reason):
+        _verdict = _item.get("verification") or {}
+        return rejection_diagnostics.build_event(
+            candidate_id=_item.get("candidate_id"),
+            url=(
                 _item.get("url") or _item.get("video_url")
                 or _item.get("image_url") or ""
             ),
-            "provider": str(
+            provider=str(
                 _item.get("provider") or _item.get("source") or "unknown"
             ),
-        }
-        if _item.get("reject_reason"):
-            _records.append({
-                **_base,
-                "outcome": "rejected",
-                "stage": _item.get("rejection_stage") or "scoring",
-                "reason": _item.get("reject_reason"),
-            })
-        elif (_item.get("verification") or {}).get("accepted"):
-            _records.append({
-                **_base, "outcome": "verified",
-                "stage": "verification", "reason": "",
-            })
+            kind=_kind,
+            outcome=_outcome,
+            stage=_stage,
+            reason=_reason,
+            score=_verdict.get("score"),
+            contributions=_verdict.get("contributions"),
+            verdict_reasons=_verdict.get("reasons"),
+            specificity=_need_specificity,
+            category=_need_category,
+            matched_query=str(_item.get("matched_query") or ""),
+            shot_index=scenario_index,
+            beat_id=(beat or {}).get("beat_id"),
+            sentence_numbers=_sentence_numbers,
+        )
+
+    for _pool, _kind in (
+        (scored_videos, "video"),
+        (scored_web_sources, "web"),
+        (scored_images, "image"),
+    ):
+        for _item in _pool:
+            if _item.get("reject_reason"):
+                _records.append(_event_for(
+                    _item, _kind, "rejected",
+                    _item.get("rejection_stage") or "scoring",
+                    _item.get("reject_reason"),
+                ))
+            elif (_item.get("verification") or {}).get("accepted"):
+                _records.append(_event_for(
+                    _item, _kind, "verified", "verification", "",
+                ))
     for _item in combined_pool:
         # Selection-stage rejections are stamped by _uve_pick on the
         # pool copies; verification-stage ones are already recorded
@@ -5828,6 +5932,20 @@ def _uve_search_and_pick(
     _discovery_failures = drain_discovery_failures()
     if _discovery_failures:
         scene_stats.setdefault("discovery_failures", []).extend(_discovery_failures)
+    # Stage 1 / R5: dedupe drops recorded during this pass's
+    # verification become candidate_records events (stage "dedupe"),
+    # so discovered-vs-evaluated arithmetic reconciles in the report.
+    for _drop in drain_dedupe_drops():
+        _records.append({
+            **_drop,
+            "primary_rejection_reason": _drop.get("reason", ""),
+            "kind": "",
+            "specificity": _need_specificity,
+            "category": _need_category,
+            "shot_index": scenario_index,
+            "beat_id": (beat or {}).get("beat_id"),
+            "sentence_numbers": _sentence_numbers,
+        })
     return accepted_asset
 
 

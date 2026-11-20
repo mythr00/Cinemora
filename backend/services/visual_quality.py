@@ -424,6 +424,64 @@ def measure_visual_quality(
         kind_totals.setdefault(kind, 0.0)
         assignment_method_totals.setdefault(kind, 0.0)
 
+    # Stage 1 / §2.6: FORMAT runtime accounting — an orthogonal
+    # dimension to the kind totals above (whose definitions are
+    # frozen). Timeline items are joined by file path to the format
+    # each accepted asset was classified as in the asset report
+    # (footage / photograph / map / document / diagram / graphic /
+    # text_card / uncertain), so moving footage, stills and graphics
+    # are accounted separately and a still is never counted as
+    # footage. Reports produced before accepted_asset_formats existed
+    # yield an honest not_recorded state, never a fabricated split.
+    _formats = report.get("accepted_asset_formats")
+    if isinstance(_formats, list) and _formats:
+        _format_by_path = {
+            str(e.get("file_path")): str(e.get("visual_format") or UNKNOWN)
+            for e in _formats
+            if isinstance(e, dict) and e.get("file_path")
+        }
+        _format_runtime: Counter = Counter()
+        _format_counts: Counter = Counter()
+        _joined = 0
+        for _item, _duration in zip(items, durations):
+            _path = str(_item.get("file_path") or _item.get("path") or "")
+            _fmt = _format_by_path.get(_path)
+            if _fmt is None:
+                _fmt = UNKNOWN
+            else:
+                _joined += 1
+            _format_runtime[_fmt] += _duration
+            _format_counts[_fmt] += 1
+        runtime_share_by_format = {
+            "state": "recorded",
+            "source": "asset_report.accepted_asset_formats joined on file_path",
+            "joined_items": _joined,
+            "total_items": len(items),
+            "by_format": {
+                fmt: {
+                    "count": _format_counts[fmt],
+                    "runtime_seconds": round(_format_runtime[fmt], 6),
+                    "runtime_share": _share(_format_runtime[fmt], total_runtime),
+                }
+                for fmt in sorted(_format_counts)
+            },
+            "moving_footage_runtime_share": _share(
+                _format_runtime.get("footage", 0.0), total_runtime
+            ),
+        }
+    else:
+        runtime_share_by_format = {
+            "state": "not_recorded",
+            "source": "asset_report.accepted_asset_formats",
+            "note": (
+                "This production's asset report does not expose "
+                "per-asset formats; the format runtime split is "
+                "unknown, not zero."
+            ),
+            "by_format": {},
+            "moving_footage_runtime_share": None,
+        }
+
     accepted_source_counts = Counter()
     accepted_type_counts = Counter()
     for entry in manifest:
@@ -765,6 +823,7 @@ def measure_visual_quality(
             "reuse_per_asset": reuse,
         },
         "runtime_share": _runtime_block(dict(kind_totals), total_runtime),
+        "runtime_share_by_format": runtime_share_by_format,
         "runtime_share_assignment_method": _runtime_block(
             dict(assignment_method_totals), total_runtime
         ),

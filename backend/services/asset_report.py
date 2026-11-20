@@ -36,6 +36,8 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
+from services import rejection_diagnostics
+
 # The verifier's representative-specificity acceptance threshold
 # (story_understanding.verify_candidate). Accepted assets below it are
 # reported as low-confidence selections.
@@ -178,9 +180,17 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 )
         for record in scene_stats.get("candidate_records") or []:
             if isinstance(record, dict):
-                candidate_records.append(
-                    {"scene": scene.get("scene_number"), **record}
-                )
+                merged = {"scene": scene.get("scene_number"), **record}
+                # Stage 1 / R5: every event carries its stable id
+                # (older records constructed without one get it here,
+                # where the scene number is known).
+                if not merged.get("event_id"):
+                    merged["event_id"] = rejection_diagnostics.event_id_for(
+                        merged.get("scene"),
+                        merged.get("shot_index"),
+                        merged.get("candidate_id"),
+                    )
+                candidate_records.append(merged)
         for attempt in scene_stats.get("recovery_attempts") or []:
             if isinstance(attempt, dict):
                 recovery_attempts.append(
@@ -490,6 +500,26 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             ),
             "records": candidate_records,
         },
+        # Stage 1 / R5: the structured rejection funnel, aggregated
+        # FROM the event records above (primary reasons additive and
+        # summing to rejected events; contributing reasons reported
+        # separately and never summed in; distinct-candidate view
+        # deduplicated by candidate_id with best-outcome precedence).
+        "rejection_funnel": rejection_diagnostics.aggregate_funnel(
+            candidate_records
+        ),
+        # Stage 1 / §2.6: per-accepted-asset format exposure so
+        # visual_quality can join timeline items to the format each
+        # accepted asset was classified as (footage / photograph /
+        # document / map / diagram / graphic / uncertain) and produce
+        # honest runtime-weighted coverage accounting.
+        "accepted_asset_formats": [
+            {
+                "file_path": str(a.get("file_path") or a.get("path") or ""),
+                "visual_format": _format_of(a),
+            }
+            for a in accepted
+        ],
         "missing_visuals": missing_visuals,
         "missing_visual_count": len(missing_visuals),
         "repeated_footage": repeated,

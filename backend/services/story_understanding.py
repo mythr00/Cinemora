@@ -21,6 +21,7 @@ import hashlib
 import json
 import re
 from collections import Counter
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1012,22 +1013,51 @@ def compose_queries(scenario, plan, bible, max_queries=4):
     year = _year_or_decade(scenario.get("era") or plan.get("time"))
     specificity = scenario.get("specificity")
 
+    # Stage 1 query fixes (diagnosis D1/D2/D4): the era must survive
+    # into at least one query even when it is a range ("1950s–1961")
+    # or non-numeric ("Cold War era") — _year_or_decade alone kept
+    # only the first year token, so 19 of 69 stored Berlin shot needs
+    # had NO query carrying their era. The full era phrase is used
+    # when it says more than the extracted year.
+    era_raw = str(scenario.get("era") or plan.get("time") or "").strip()
+    era_phrase = era_raw if (era_raw and era_raw.lower() != year.lower()) else ""
+
     candidates = []
     if specificity == "exact":
         candidates += [
             _clean_query([anchor, event, year]),
             _clean_query([anchor, event]),
-            _clean_query([anchor, terms[0] if terms else "", year]),
-            _clean_query([anchor, place]),
+            # Place joins the term query (was confined to the last
+            # candidate, which the max_queries cap often cut).
+            _clean_query([anchor, terms[0] if terms else "", place, year]),
+            _clean_query([anchor, place, era_phrase]),
         ]
     elif specificity == "representative":
-        for term in terms[:2]:
-            candidates += [_clean_query([term, place, year]), _clean_query([term, year]), _clean_query([term])]
+        # D1: a named PERSON subject must survive into at least one
+        # query — previously the anchor was appended only for
+        # non-person subjects, so person-led needs searched bare
+        # terms unless the LLM had embedded the name in search_terms.
+        if anchor and subject and subject["type"] == "person":
+            candidates.append(
+                _clean_query([anchor, terms[0] if terms else event, year])
+            )
+        for i, term in enumerate(terms[:2]):
+            # The first variant of the first term carries the full
+            # era phrase when it says more than the extracted year,
+            # so the era survives the max_queries cap.
+            first_year = (era_phrase or year) if i == 0 else year
+            candidates += [_clean_query([term, place, first_year]), _clean_query([term, year]), _clean_query([term])]
         if anchor and subject and subject["type"] != "person":
             candidates.append(_clean_query([anchor, terms[0] if terms else event]))
     else:  # generic
-        for term in terms[:2]:
-            candidates.append(_clean_query([term]))
+        # D2: generic queries dropped anchor/place/era entirely; the
+        # first query now carries the place (or anchor) so generic
+        # b-roll stays geographically anchored, the rest stay bare.
+        for i, term in enumerate(terms[:2]):
+            if i == 0:
+                candidates.append(_clean_query([term, place or anchor, era_phrase or year]))
+            else:
+                candidates.append(_clean_query([term]))
 
     queries = []
     for query in candidates:
@@ -1041,6 +1071,79 @@ def compose_queries(scenario, plan, bible, max_queries=4):
 # --------------------------------------------------------------------------
 
 ACCEPT_THRESHOLD = {"exact": 0.55, "representative": 0.34, "generic": 0.22}
+
+# ---------------------------------------------------------------------------
+# Stage 1 / R7 foundation: CATEGORY-AWARE VERIFICATION PROFILES.
+#
+# Diagnosis (ASSET_MANAGER_DIAGNOSIS_2026-11-20, from the stored Berlin
+# and Kohberger artefacts): the metadata gate was the dominant funnel
+# stage (Berlin 2,410 of 4,727 evaluation rows; Kohberger 3,813 of
+# 4,195) and it applied ONE uniform contract — named subject and named
+# place present in title+snippet — whatever the sentence actually
+# needed. Profiles separate what a category legitimately REQUIRES at
+# the gate from what is merely scored evidence:
+#
+# - evidence (specificity "exact"): the sentence claims a specific
+#   person/place/event; subject AND place stay REQUIRED at the gate,
+#   exactly as before.
+# - contextual (specificity "representative"): the subject stays
+#   REQUIRED at the gate (pinned by the strict-gate tests — a named
+#   subject is the contract of a representative need), and place stays
+#   required, BUT a compound place ("King Road house, Moscow, Idaho")
+#   is a set of alternative components, not one indivisible string:
+#   any one fully-named component satisfies it (see gate_shot_need).
+# - atmosphere (specificity "generic"): generic b-roll/atmosphere has
+#   no specific subject or place contract, so neither is required at
+#   the gate. Acceptance is still governed by verify_candidate's
+#   topical-evidence rules and the generic threshold — the gate simply
+#   stops pre-empting the scorer with a contract the category never
+#   had.
+#
+# Universal rules are NOT profiled: banned providers, foreign
+# provenance, forbidden terms and every positive-contradiction reject
+# apply identically in all categories, and the topical-evidence gates
+# in verify_candidate are unchanged. Thresholds are unchanged.
+# A scenario/need may carry an explicit "visual_category" (the Visual
+# Director seam, Stage 8); until then the category derives from
+# specificity, which is the only per-need verification modulator the
+# pipeline has ever had.
+# ---------------------------------------------------------------------------
+
+VISUAL_CATEGORIES = ("evidence", "contextual", "atmosphere")
+
+_CATEGORY_BY_SPECIFICITY = {
+    "exact": "evidence",
+    "representative": "contextual",
+    "generic": "atmosphere",
+}
+
+CATEGORY_PROFILES = {
+    "evidence": {"subject_required": True, "place_required": True},
+    "contextual": {"subject_required": True, "place_required": True},
+    "atmosphere": {"subject_required": False, "place_required": False},
+}
+
+
+def resolve_visual_category(source):
+    """The visual category for a scenario or shot need dict.
+
+    An explicit ``visual_category`` wins; otherwise the category
+    derives from ``specificity`` (unknown specificity defaults to
+    contextual, mirroring verify_candidate's 0.34 default)."""
+    source = source or {}
+    explicit = str(source.get("visual_category") or "").strip().lower()
+    if explicit in VISUAL_CATEGORIES:
+        return explicit
+    specificity = str(source.get("specificity") or "").strip().lower()
+    return _CATEGORY_BY_SPECIFICITY.get(specificity, "contextual")
+
+
+def category_profile(category):
+    """The gate-requirement profile for a visual category."""
+    return CATEGORY_PROFILES.get(
+        str(category or "").strip().lower(),
+        CATEGORY_PROFILES["contextual"],
+    )
 
 # ---------------------------------------------------------------------------
 # Quality Recovery Phase 1/2 helpers: banned providers, date maths and
@@ -1092,14 +1195,30 @@ def is_banned_provider(candidate):
     rejected by the verification chain itself.
     """
     provider = candidate_provider(candidate)
-    if not provider:
-        return False
-    if provider in _BANNED_PROVIDERS:
-        return True
-    # Tolerate decorated labels (a banned name plus decoration, or a
-    # banned provider's domain used as the source label).
-    head = re.split(r"[\s./]", provider)[0]
-    return head in _BANNED_PROVIDERS
+    if provider:
+        if provider in _BANNED_PROVIDERS:
+            return True
+        # Tolerate decorated labels (a banned name plus decoration, or a
+        # banned provider's domain used as the source label).
+        head = re.split(r"[\s./]", provider)[0]
+        if head in _BANNED_PROVIDERS:
+            return True
+    # Stage 1 gap closure: the label check alone missed candidates
+    # whose labels are innocuous but whose URL points at a banned
+    # host (e.g. Serper image results carry a site label and no
+    # provider key), and the head-token rule missed "www."-prefixed
+    # domains. Inspect the URL host's tokens as a second signal: any
+    # host label equal to a banned name rejects the candidate.
+    if isinstance(candidate, dict):
+        for key in ("url", "video_url", "image_url", "download_url", "link"):
+            raw = str(candidate.get(key) or "").strip()
+            if not raw:
+                continue
+            host = urlparse(raw if "://" in raw else f"https://{raw}").hostname or ""
+            tokens = [t for t in re.split(r"[.\-_]", host.lower()) if t]
+            if any(t in _BANNED_PROVIDERS for t in tokens):
+                return True
+    return False
 
 
 def candidate_project_id(candidate):
@@ -1320,6 +1439,7 @@ def verify_candidate(candidate, scenario, bible):
             "reasons": [f"banned provider {candidate_provider(candidate)}"],
             "contributions": {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0},
             "rejection_reason": BANNED_PROVIDER_REASON,
+            "category": resolve_visual_category(scenario),
         }
 
     # Plan §3.3 item 1 (tests 17-18): a candidate whose recorded
@@ -1334,6 +1454,7 @@ def verify_candidate(candidate, scenario, bible):
             "reasons": [f"foreign provenance {candidate_project_id(candidate)}"],
             "contributions": {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0},
             "rejection_reason": FOREIGN_PROVENANCE_REASON,
+            "category": resolve_visual_category(scenario),
         }
 
     text = _norm(" ".join(str(candidate.get(k) or "") for k in ("title", "snippet", "description", "url", "source")))
@@ -1435,6 +1556,12 @@ def verify_candidate(candidate, scenario, bible):
         "reasons": reasons,
         "contributions": contributions,
         "rejection_reason": rejection_reason,
+        # Stage 1 / R7: the category profile this verdict was judged
+        # under, recorded so diagnostics can slice by category. The
+        # gate (media_pipeline.gate_shot_need) applies the profile's
+        # required/optional contract; the scorer's rules above are
+        # category-independent.
+        "category": resolve_visual_category(scenario),
     }
 
 
