@@ -412,6 +412,7 @@ export default function EditorPage() {
               />
               <PropertiesPanel
                 key={`${current.revision_id}:${selectionKey}`}
+                projectId={projectId}
                 doc={current.document}
                 selection={selection}
                 pendingSpec={pendingSpec}

@@ -330,6 +330,11 @@ def _audit_verdict(asset_report):
             audio_check["max_true_peak_dbtp"] = final_audio.get(
                 "max_true_peak_dbtp"
             )
+            # Stage J (P4): whether the soundtrack was normalised
+            # to the target is part of the export record — reported
+            # here, never judged (a loudness value still never
+            # fails; only a provenance mismatch does).
+            audio_check["normalised"] = final_audio.get("normalised")
             if final_audio.get("integrated_lufs") is None:
                 warnings.append(
                     "final loudness could not be measured on the "

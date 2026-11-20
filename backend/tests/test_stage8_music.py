@@ -307,8 +307,16 @@ def test_difference_and_provenance(tmp_path, tone_music):
     plain = tmp_path / "plain.wav"
     music.prepare_soundtrack(str(narration_file), str(plain))
 
+    # Stage J deliberate update: the narration-only soundtrack is
+    # now loudness-NORMALISED (a pure gain change), so the RAW
+    # global difference against the un-normalised narration
+    # measures the gain, not the content — it is reported, never
+    # decisive (see audio_difference_analysis). Content identity
+    # is asserted through the gain-matched gap statistic below:
+    # the plain soundtrack's gaps differ from the narration's by
+    # codec noise only.
     identical = music.audio_difference_rms_dbfs(plain, narration_file)
-    assert identical is not None and identical < -45.0
+    assert identical is not None  # measurable; value is gain-dominated
     # The GLOBAL difference is deliberately NOT the detector (a
     # ducked bed dilutes into it); the narration-gap statistic is.
     analysis = music.audio_difference_analysis(mixed, narration_file)

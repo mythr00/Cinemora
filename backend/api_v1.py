@@ -210,6 +210,19 @@ class ProjectOptionsIn(BaseModel):
     music_enabled: bool | None = None
     music_volume: float | None = Field(default=None, ge=0.0, le=2.0)
     narration_volume: float | None = Field(default=None, ge=0.0, le=2.0)
+    # Stage J (P4): mix overrides for services.music.resolve_mix_
+    # config — each beats the genre pack's mix_preset and the env
+    # overrides; all are optional and recorded in the soundtrack
+    # record's mix section when a soundtrack is built.
+    music_fade_in_seconds: float | None = Field(default=None, ge=0.0, le=30.0)
+    music_fade_out_seconds: float | None = Field(default=None, ge=0.0, le=30.0)
+    music_loop_crossfade_seconds: float | None = Field(
+        default=None, ge=0.0, le=10.0
+    )
+    duck_threshold: float | None = Field(default=None, gt=0.0, le=1.0)
+    duck_ratio: float | None = Field(default=None, ge=1.0, le=100.0)
+    duck_attack_ms: float | None = Field(default=None, ge=0.0, le=10000.0)
+    duck_release_ms: float | None = Field(default=None, ge=0.0, le=60000.0)
     require_plan_approval: bool = False
 
 

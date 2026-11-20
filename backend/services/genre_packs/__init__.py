@@ -19,6 +19,12 @@ in pipeline code. Each pack declares:
 - pacing: informational targets only (narration is not retimed),
 - music_mood: a metadata label only. NO music library is
   integrated — that selection is founder-gated.
+- mix_preset (Stage J, P4): the genre's default mix parameters
+  for services.music.prepare_soundtrack — music_volume,
+  fade_in_seconds, fade_out_seconds, duck_ratio. DATA only: the
+  mix resolver (services.music.resolve_mix_config) treats them as
+  defaults an explicit option or an env override beats, and the
+  applied preset is recorded in the soundtrack record.
 
 Resolution order in resolve_genre_pack: an explicit known genre in
 the run options wins; otherwise a conservative script detector;

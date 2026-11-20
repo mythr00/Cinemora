@@ -837,6 +837,8 @@ export type EditorDocument = {
       file: string | null;
       source?: string | null;
       mixed?: string | null;
+      state?: string | null;
+      license?: string | null;
     };
     captions: {
       file: string;

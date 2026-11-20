@@ -1039,6 +1039,17 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             options, project_dir
         )
 
+        # Stage J (P4): resolve the mix configuration ONCE — the
+        # genre pack's mix_preset supplies defaults, env overrides
+        # beat the preset, explicit options beat everything. The
+        # decision's music_volume (None when not explicitly set)
+        # is what lets a preset volume apply at all.
+        mix_config = music_service.resolve_mix_config(
+            options=options,
+            genre_pack=_genre_pack,
+            music_volume=music_decision["music_volume"],
+        )
+
         # narration_volume (editor parity): adjust the narration
         # BEFORE the mix, exactly as revision renders do, so the
         # soundtrack — and the M10 provenance reference — is built
@@ -1062,15 +1073,12 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 narration_file=str(mix_narration),
                 output_file=str(soundtrack_file),
                 music_file=music_decision["file"],
-                music_volume=(
-                    music_decision["music_volume"]
-                    if music_decision["music_volume"] is not None
-                    else music_service.MUSIC_VOLUME
-                ),
+                music_volume=mix_config["music_volume"],
                 source_type=music_decision["source_type"],
                 decided_by=music_decision["decided_by"],
                 requested=music_decision["requested"],
                 disabled=music_decision["disabled"],
+                mix_config=mix_config,
             )
         except Exception as prep_error:
             # D10 asymmetry, recorded: a supplied-but-unmixable
@@ -1371,7 +1379,12 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         # ----------------------------------------------
 
         final_audio_measurement = music_service.final_audio_record(
-            final_video
+            final_video,
+            soundtrack_record=(
+                soundtrack_record
+                if isinstance(soundtrack_record, dict)
+                else None
+            ),
         )
         audio_provenance = music_service.assess_audio_provenance(
             (

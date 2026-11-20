@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import type {
-  EditorDocument,
-  EditorOperation,
-  UploadRecord,
-  VisualItem,
+import { useEffect, useState } from "react";
+import {
+  fetchMediaObjectUrl,
+  mediaKeyForProjectPath,
+  type EditorDocument,
+  type EditorOperation,
+  type UploadRecord,
+  type VisualItem,
 } from "@/lib/api";
 import { ClassificationChip } from "./classification-chip";
 import type { PendingSpec } from "./asset-panel";
@@ -37,7 +39,77 @@ function parseSeconds(value: string): number | null {
   return value.trim() !== "" && Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+/**
+ * Preview of the revision's selected music track (Stage J, P5).
+ * The track is fetched through the authenticated media path, like
+ * every other preview in this editor: the media endpoint serves
+ * files RECORDED in the project (revision music selections and
+ * uploads are recorded; an operator path outside the project
+ * folder is not). When the file cannot be served, the panel says
+ * so plainly — it never fakes a preview.
+ */
+function MusicPreview({ projectId, file }: { projectId: string; file: string }) {
+  const [state, setState] = useState<
+    | { kind: "loading" }
+    | { kind: "ready"; url: string }
+    | { kind: "unavailable"; reason: string }
+  >({ kind: "loading" });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    void (async () => {
+      const key = await mediaKeyForProjectPath(projectId, file);
+      if (!key) {
+        if (!controller.signal.aborted) {
+          setState({
+            kind: "unavailable",
+            reason:
+              "Preview unavailable — this file sits outside the project folder, so the media endpoint does not serve it.",
+          });
+        }
+        return;
+      }
+      try {
+        const result = await fetchMediaObjectUrl(projectId, key, controller.signal);
+        objectUrl = result.url;
+        if (!controller.signal.aborted) setState({ kind: "ready", url: result.url });
+      } catch {
+        if (!controller.signal.aborted) {
+          setState({
+            kind: "unavailable",
+            reason:
+              "Preview unavailable — the media endpoint does not serve this file in this build.",
+          });
+        }
+      }
+    })();
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [projectId, file]);
+
+  if (state.kind === "loading") {
+    return <p className="editor-panel-note">Loading music preview…</p>;
+  }
+  if (state.kind === "unavailable") {
+    return <p className="editor-panel-note">{state.reason}</p>;
+  }
+  return (
+    // eslint-disable-next-line jsx-a11y/media-has-caption -- a music bed has no captions to offer
+    <audio
+      className="editor-music-preview"
+      src={state.url}
+      controls
+      preload="metadata"
+      aria-label={`Preview of ${fileNameOf(file)}`}
+    />
+  );
+}
+
 export function PropertiesPanel({
+  projectId,
   doc,
   selection,
   pendingSpec,
@@ -45,6 +117,7 @@ export function PropertiesPanel({
   busy,
   onApply,
 }: {
+  projectId: string;
   doc: EditorDocument;
   selection: EditorSelection;
   pendingSpec: PendingSpec | null;
@@ -593,7 +666,12 @@ export function PropertiesPanel({
               : "No music track"}
           </dd></div>
           <div><dt>Mix state</dt><dd>{doc.tracks.music.mixed || "not recorded"}</dd></div>
+          <div><dt>Music state</dt><dd>{doc.tracks.music.state || "not recorded"}</dd></div>
+          <div><dt>Licence</dt><dd>{doc.tracks.music.license || "unknown"}</dd></div>
         </dl>
+        {doc.tracks.music.file && (
+          <MusicPreview projectId={projectId} file={doc.tracks.music.file} />
+        )}
         <div className="editor-field-row">
           <label>
             Set music from upload

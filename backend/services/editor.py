@@ -2510,16 +2510,34 @@ def _music_source_type(doc, music_track):
 
 def _production_soundtrack_matches(doc, music_track, production_record,
                                    source_run_id, narration_volume,
-                                   music_volume, music_service):
+                                   music_volume, music_service,
+                                   mix_config=None):
     """Whether copying the PRODUCTION soundtrack.wav is honest for
     this revision (Stage H): the dependency plan compares the
     revision against its PARENT, but the copy source is the
     production's soundtrack — so the copy is allowed only when the
     production's own record matches this revision's music
-    selection AND volumes. Any doubt rebuilds (a rebuild is always
-    honest; a wrong copy is not)."""
+    selection AND volumes. Stage J adds the mix shape: when the
+    production record carries a "mix" section and the revision's
+    resolved mix_config is supplied, their fingerprints must match
+    — a production mixed with different fades/ducking/
+    normalisation is a different soundtrack. A production record
+    WITHOUT a mix section predates Stage J; its audio was shaped
+    by the legacy chain, so the revision rebuilds with the current
+    chain rather than silently shipping legacy-shaped audio. Any
+    doubt rebuilds (a rebuild is always honest; a wrong copy is
+    not)."""
     if not isinstance(production_record, dict):
         return False
+    if mix_config is not None:
+        production_mix = production_record.get("mix")
+        if not isinstance(production_mix, dict):
+            return False
+        if (
+            music_service.mix_fingerprint(production_mix)
+            != music_service.mix_fingerprint(mix_config)
+        ):
+            return False
     run = run_ledger.get_run(source_run_id) or {}
     run_options = run.get("options") or {}
     try:
@@ -2580,6 +2598,7 @@ def _copied_soundtrack_record(production_record, music_track,
             "identity": music_service.describe_music_file(
                 selected, source_type
             ),
+            "mix": None,
             "error": None,
             "status": "soundtrack_created",
             "output_file": None,
@@ -2595,6 +2614,7 @@ def _copied_soundtrack_record(production_record, music_track,
         "source_type": None,
         "music_volume": None,
         "identity": None,
+        "mix": None,
         "error": None,
         "status": "soundtrack_created",
         "output_file": None,
@@ -2612,6 +2632,8 @@ def music_certificate_data(doc) -> dict:
     record = music.get("soundtrack_record")
     if isinstance(record, dict) and record:
         identity = record.get("identity") or {}
+        mix = record.get("mix") or {}
+        normalisation = mix.get("normalisation") or {}
         return {
             "state": record.get("state") or "not_requested",
             "file_name": identity.get("file_name")
@@ -2623,6 +2645,15 @@ def music_certificate_data(doc) -> dict:
             "rights_status": "verify_before_publish",
             "decided_by": record.get("decided_by"),
             "music_volume": record.get("music_volume"),
+            # Stage J (P5): the revision's mix provenance — the
+            # preset that shaped it and whether the soundtrack was
+            # normalised, with the measured result.
+            "mix_preset": (mix.get("preset") or {}).get("name"),
+            "normalised": bool(normalisation.get("applied")),
+            "normalisation_target_lufs": normalisation.get("target_lufs"),
+            "normalisation_post_lufs": normalisation.get(
+                "post_integrated_lufs"
+            ),
         }
     selected = music.get("file")
     return {
@@ -2789,12 +2820,23 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
         # production's soundtrack.json is never rewritten.
         music_source_type = _music_source_type(doc, music_track)
         production_record = _read_json(project_dir / "soundtrack.json")
+        # Stage J (P4): the revision's mix configuration — the
+        # document's music volume is explicit; fades/ducking/
+        # normalisation resolve from env, the production run's
+        # genre preset, or defaults, exactly as jobs resolves them.
+        source_run = run_ledger.get_run(source_run_id) or {}
+        source_options = source_run.get("options") or {}
+        mix_config = music_service.resolve_mix_config(
+            genre_pack=source_options.get("genre_pack"),
+            music_volume=music_volume,
+        )
         copy_ok = (
             not plan["soundtrack_rebuild"]
             and (project_dir / "soundtrack.wav").is_file()
             and _production_soundtrack_matches(
                 doc, music_track, production_record, source_run_id,
                 narration_volume, music_volume, music_service,
+                mix_config=mix_config,
             )
         )
         mix_reference = narration_file
@@ -2831,6 +2873,7 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
                     decided_by="editor_revision",
                     requested=bool(music_track.get("file")),
                     disabled=music_track.get("state") == "disabled",
+                    mix_config=mix_config,
                 )
             except Exception as prep_error:
                 failed_record = music_service.failed_music_record(
@@ -2929,7 +2972,9 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
         # cross-check the revision's soundtrack record against it,
         # exactly as productions do — the auditor verdicts on a
         # provenance mismatch, never on a loudness value.
-        export_audio = music_service.final_audio_record(revision_final)
+        export_audio = music_service.final_audio_record(
+            revision_final, soundtrack_record=soundtrack_record
+        )
         audio_provenance = music_service.assess_audio_provenance(
             soundtrack_record.get("state"), revision_final, mix_reference
         )

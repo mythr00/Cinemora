@@ -425,9 +425,11 @@ def build_media_index(project_id, project_dir):
     artefacts: timeline items, the rights manifest, the pipeline
     result, recorded plan-decision replacements, the pipeline's
     canonical output files that exist on disk, the exports recorded
-    in editor revision documents (Stage 6), and the files recorded
-    in the project's upload index. Every indexed path is verified
-    to live under the project directory."""
+    in editor revision documents (Stage 6), the music files
+    recorded in revision documents and in the production's
+    soundtrack record (Stage J), and the files recorded in the
+    project's upload index. Every indexed path is verified to live
+    under the project directory."""
     project_dir = Path(project_dir).resolve()
     index = {}
 
@@ -476,6 +478,26 @@ def build_media_index(project_id, project_dir):
         for export in document.get("exports") or []:
             if isinstance(export, dict):
                 _add(export.get("file"), "revision_export")
+        # Stage J (P5): a revision's RECORDED music selection is
+        # servable for editor preview, under the same
+        # recorded-paths-only rule — the document's music track
+        # file and its soundtrack record's identity. A music file
+        # outside the project directory (an operator path the
+        # editor accepted) is not under the project dir and stays
+        # unserved; the UI reports preview unavailable for it.
+        music_track = (document.get("tracks") or {}).get("music") or {}
+        _add(music_track.get("file"), "revision_music")
+        record_identity = (
+            (music_track.get("soundtrack_record") or {}).get("identity")
+            or {}
+        )
+        _add(record_identity.get("file_path"), "revision_music")
+    # The production's applied music (Stage H identity recorded in
+    # soundtrack.json) is likewise a recorded path.
+    soundtrack_record = _read_json(project_dir / "soundtrack.json")
+    if isinstance(soundtrack_record, dict):
+        identity = soundtrack_record.get("identity") or {}
+        _add(identity.get("file_path"), "music")
     uploads_index = _read_json(project_dir / "uploads" / "index.json")
     if isinstance(uploads_index, dict):
         for upload in uploads_index.get("uploads") or []:

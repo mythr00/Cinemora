@@ -1495,6 +1495,7 @@ span.media-thumb { display: flex; flex-direction: column; align-items: center; j
 .editor-panel h3 { font-size: 13.5px; margin: 18px 0 8px; }
 .editor-panel h4 { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted); margin: 16px 0 6px; }
 .editor-panel-note { color: var(--ink-muted); font-size: 12.5px; line-height: 1.55; margin: 6px 0; }
+.editor-music-preview { width: 100%; margin: 6px 0; }
 .editor-detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 16px; margin: 8px 0; }
 .editor-detail-grid dt { font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); }
 .editor-detail-grid dd { margin: 2px 0 0; font-size: 13px; color: var(--ink-soft); overflow-wrap: anywhere; }
