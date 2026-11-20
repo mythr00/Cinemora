@@ -163,10 +163,20 @@ def _audit_verdict(asset_report):
     checks = {}
 
     if not isinstance(asset_report, dict):
+        # INT-102: an audit that could not be evaluated is NOT a
+        # pass. This shape previously returned passed=True, and any
+        # consumer that consulted "passed" without checking
+        # "evaluated" shipped an unaudited film as passed. The
+        # verdict now states the truth on both fields: not
+        # evaluated, therefore not passed, with the reason recorded
+        # as a failure entry.
         return {
-            "passed": True,
+            "passed": False,
             "evaluated": False,
-            "failures": failures,
+            "failures": [
+                "audit_not_evaluated: no asset report was supplied, "
+                "so the film's authenticity was not evaluated"
+            ],
             "warnings": warnings,
             "checks": checks,
         }
@@ -541,6 +551,11 @@ def validate_final_video(
         # MA-14: a failed verdict is printed as a failure — the word
         # PASSED is never attached to a film the report condemns.
         print("FINAL VIDEO AUDIT FAILED")
+        for failure in result["verdict"]["failures"]:
+            print(f"  - {failure}")
+    elif not result["verdict"]["evaluated"]:
+        # INT-102: an unevaluated audit is never printed as a pass.
+        print("FINAL VIDEO AUDIT NOT EVALUATED")
         for failure in result["verdict"]["failures"]:
             print(f"  - {failure}")
     else:

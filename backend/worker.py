@@ -16,6 +16,41 @@ queues = [
 ]
 
 
+def ensure_schema_ready():
+    """BLOCK-002: verify the database schema before the worker
+    starts consuming jobs — the same gate the API applies in its
+    lifespan (database.check_schema, IA-09). The worker previously
+    never called it, so a worker started against a missing/behind
+    schema degraded silently through the fail-soft ledger instead
+    of surfacing the problem.
+
+    Semantics match the API exactly: a SchemaVersionError (missing
+    tables, behind/unknown stamp) is FATAL — SystemExit(1) with the
+    gate's own clear reason; the unstamped-legacy result is a loud
+    warning and startup proceeds, exactly as serving does. Returns
+    the check_schema result dict on success.
+    """
+    from database import SchemaVersionError, check_schema
+
+    try:
+        result = check_schema()
+    except SchemaVersionError as error:
+        print(f"ERROR: worker cannot start: {error}")
+        raise SystemExit(1) from error
+    if result.get("status") == "unstamped_legacy":
+        print(
+            "WARNING: database has no alembic_version stamp "
+            "(legacy schema) — proceeding as the API does; see "
+            "database.check_schema for the stamping guidance."
+        )
+    else:
+        print(
+            "Schema check OK: database at Alembic head "
+            f"{result.get('expected_head')}."
+        )
+    return result
+
+
 if __name__ == "__main__":
     print("========================================")
     print("DOCUMENTARY STUDIO WORKER")
@@ -27,6 +62,12 @@ if __name__ == "__main__":
     print()
     print("Using Windows-compatible SimpleWorker...")
     print()
+
+    # BLOCK-002: schema gate, before any job is consumed (and
+    # before reconciliation touches the ledger). A schema that is
+    # not ready stops the worker loudly here instead of degrading
+    # silently mid-production.
+    ensure_schema_ready()
 
     # Stage 2B (AUD-08): stale-run reconciliation. This process just
     # started, so any production run still recorded as "running" in

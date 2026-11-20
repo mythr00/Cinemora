@@ -47,8 +47,17 @@ class LLMResponseError(RuntimeError):
         self.kind = kind
 
 
-if not BREWKEG_API_KEY:
-    raise RuntimeError("BREWKEG_API_KEY is not configured")
+def _require_api_key():
+    """BLOCK-001: the BrewKeg key is required at first USE, not at
+    import. This check used to sit at module top level, so importing
+    llm_client (directly, or transitively via script_analyzer)
+    crashed the whole process — including the API, even for
+    read-only routes that never call the LLM — whenever the key was
+    unset. Importing this module now always succeeds; an actual LLM
+    call without a key fails here with the same clear error, before
+    any HTTP request is attempted."""
+    if not BREWKEG_API_KEY:
+        raise RuntimeError("BREWKEG_API_KEY is not configured")
 
 
 def _request(
@@ -59,6 +68,8 @@ def _request(
     temperature=0.1,
     max_tokens=16000,
 ):
+    _require_api_key()
+
     payload = {
         "model": model or BREWKEG_MODEL,
         "max_tokens": max_tokens,

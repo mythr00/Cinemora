@@ -54,6 +54,15 @@ video_queue = Queue(
     default_timeout=3600,
 )
 
+# PIPE-101: queue ordering policy is FIFO. Every enqueue in this
+# module appends to the BACK of the queue (RQ's default); no call
+# site passes at_front. The blanket at_front=True that used to sit
+# on every enqueue made the queue LIFO — newer submissions jumped
+# ahead of older ones and could starve them — and no call site had
+# a genuine priority need. If a future call site truly needs
+# priority, it must introduce an explicit, documented priority
+# mechanism rather than reviving a blanket at_front.
+
 SENTENCES_PER_SCENE = 40
 
 # Stage A: cap on UNTARGETED stat motion graphics per project.
@@ -433,7 +442,7 @@ def build_production_scenes(script: str, project_id: str = "", project_dir=None,
 
 
 def enqueue_test_job(project_id: str):
-    job = video_queue.enqueue(test_job, project_id, at_front=True)
+    job = video_queue.enqueue(test_job, project_id)
     print(f"Queued test job: {job.id}")
     return job.id
 
@@ -489,7 +498,6 @@ def enqueue_full_pipeline(project_id: str, script: str, options=None, run_id=Non
             script,
             run_id=run_id,
             options=run_options,
-            at_front=True,
         )
     except Exception as error:
         if run_id:
@@ -513,7 +521,6 @@ def enqueue_analysis_phase(project_id: str, script: str, run_id: str, options=No
             script,
             run_id=run_id,
             options=options,
-            at_front=True,
         )
     except Exception as error:
         if run_id:
@@ -541,7 +548,6 @@ def enqueue_revision_render(project_id: str, revision_id: str, run_id: str):
             project_id,
             revision_id,
             run_id,
-            at_front=True,
         )
     except Exception as error:
         if run_id:
@@ -767,6 +773,36 @@ def _attach_motion_graphics(motion_graphics, processed_scenes):
         target_scene.setdefault("videos", []).append(visual)
         attached += 1
     return attached, skipped
+
+
+def _honour_final_audit(final_audit):
+    """INT-102 / MA-14: the completion gate over the auditor's verdict.
+
+    The gate is TOTAL over verdict shapes. A production may be
+    recorded as completed only when the auditor actually evaluated
+    the film AND passed it:
+
+    - evaluated + passed  -> return (the caller proceeds);
+    - evaluated + failed  -> RuntimeError carrying the auditor's
+      reasons (the path that was already closed before INT-102);
+    - unevaluated / missing / malformed verdict -> RuntimeError.
+      An audit that never ran is not a successful audit: the
+      previous gate consulted the verdict only when "evaluated"
+      was truthy, so the auditor's unevaluated shape (no asset
+      report) silently bypassed the gate and the run completed.
+    """
+    verdict = (final_audit or {}).get("verdict") or {}
+    if not verdict.get("evaluated"):
+        raise RuntimeError(
+            "Final video audit NOT EVALUATED: the auditor returned "
+            "no evaluated verdict, so this production cannot be "
+            "recorded as completed."
+        )
+    if not verdict.get("passed", False):
+        raise RuntimeError(
+            "Final video audit FAILED: "
+            + "; ".join(verdict.get("failures") or ["unspecified"])
+        )
 
 
 def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=None):
@@ -1629,17 +1665,15 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             asset_report=asset_report,
         )
 
-        # MA-14: honour the auditor's verdict. A failed verdict
-        # fails the production through the normal fail path — the
-        # rendered file may exist, but the recorded outcome (project
-        # status + failure asset report) is a failure carrying the
-        # auditor's reasons. Warnings alone never fail a run.
-        _verdict = final_audit.get("verdict") or {}
-        if _verdict.get("evaluated") and not _verdict.get("passed", True):
-            raise RuntimeError(
-                "Final video audit FAILED: "
-                + "; ".join(_verdict.get("failures") or ["unspecified"])
-            )
+        # MA-14 + INT-102: honour the auditor's verdict. A failed
+        # verdict fails the production through the normal fail
+        # path — the rendered file may exist, but the recorded
+        # outcome (project status + failure asset report) is a
+        # failure carrying the auditor's reasons. An UNEVALUATED
+        # verdict also fails the gate (see _honour_final_audit):
+        # it is never interpreted as a successful audit. Warnings
+        # alone never fail a run.
+        _honour_final_audit(final_audit)
 
         print(
             "Final video audit complete: "
@@ -1661,14 +1695,14 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         )
 
 
-    state["status"] = "completed"
-    state["current_stage"] = None
-    # AUD-30: completed_at was declared in the state schema but never
-    # set; a finished run now carries its finish time.
-    state["completed_at"] = utc_now()
-    save_production_state(project_dir, state)
-    _set_project_status(project_id, "completed")
-
+    # INT-101: the project/state must NOT be marked "completed"
+    # yet. The ledger run is finished FIRST (the block below), and
+    # only then is completion recorded — see the marking block
+    # after the ledger work. The old order marked the project
+    # completed before finish_run; a crash in that window left a
+    # completed project whose run was still "running", which the
+    # next worker-start reconciliation then marked FAILED — a
+    # successful production recorded as failed.
     visual_count = sum(
         len(s.get("images", [])) + len(s.get("videos", []))
         for s in processed_scenes
@@ -1751,6 +1785,20 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     if "_run_context_previous" in state:
         run_context.deactivate(state.pop("_run_context_previous"))
 
+    # INT-101: completion is recorded ONLY NOW — after the ledger
+    # run has been finished as "completed" above. Project row,
+    # production state and run record therefore transition in an
+    # order where no interleaving (crash, kill, DB outage in the
+    # ledger block) can leave a "completed" project behind a
+    # not-yet-finished run for reconciliation to mark failed.
+    state["status"] = "completed"
+    state["current_stage"] = None
+    # AUD-30: completed_at was declared in the state schema but never
+    # set; a finished run now carries its finish time.
+    state["completed_at"] = utc_now()
+    save_production_state(project_dir, state)
+    _set_project_status(project_id, "completed")
+
     print()
     print("=" * 70)
     print("DOCUMENTARY PIPELINE COMPLETE")
@@ -1761,7 +1809,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
 
 def enqueue_script_analysis(project_id: str, script: str):
     job = video_queue.enqueue(
-        analyze_project_script, project_id, script, at_front=True
+        analyze_project_script, project_id, script
     )
     print(f"Queued analysis job: {job.id}")
     return job.id
@@ -1774,7 +1822,7 @@ def analyze_project_script(project_id: str, script: str):
     )
     scenes = production_data["scenes"]
     media_job = video_queue.enqueue(
-        process_project_media, project_id, scenes, at_front=True
+        process_project_media, project_id, scenes
     )
     return {
         "project_id": project_id,
@@ -1787,7 +1835,7 @@ def analyze_project_script(project_id: str, script: str):
 
 def enqueue_media_processing(project_id: str, scenes: list):
     job = video_queue.enqueue(
-        process_project_media, project_id, scenes, at_front=True
+        process_project_media, project_id, scenes
     )
     print(f"Queued media job: {job.id}")
     return job.id

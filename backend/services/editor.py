@@ -3089,7 +3089,12 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
         failures = list(verdict.get("failures") or [])
         warnings = list(verdict.get("warnings") or [])
         evaluated = bool(verdict.get("evaluated"))
-        passed = (not evaluated) or bool(verdict.get("passed", True))
+        # INT-102: an unevaluated verdict is NOT a pass. The export
+        # decision previously treated "not evaluated" as passed,
+        # the same gate-bypass shape as the production completion
+        # gate; an audit that never ran must stop the export, not
+        # wave it through.
+        passed = evaluated and bool(verdict.get("passed", False))
         gaps = gap_items(doc)
         exported_with_gaps: list[int] = []
         if not passed and allow_gaps and gaps:
