@@ -29,6 +29,51 @@ DEFAULT_MAX_DELAY = 60.0
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 
 
+def is_transient_status(status) -> bool:
+    """Transient HTTP failure (Quality Recovery Phase 2, workstream D):
+    429 and 5xx are worth retrying; every other 4xx is a definitive
+    answer and is NOT retried. Matches the retry behaviour this module
+    and search_provider already implement — this names it so failure
+    records can carry the classification."""
+    try:
+        code = int(status)
+    except (TypeError, ValueError):
+        return False
+    return code == 429 or 500 <= code <= 599
+
+
+def classify_error(error) -> dict:
+    """Classify a provider/transport error for failure records:
+    {error_class, http_status, transient}. Transport failures
+    (timeout / connection) are transient; an HTTP error's class comes
+    from its status; anything else is recorded by exception type with
+    transient=None (unknown — never silently zero/false)."""
+    status = None
+    response = getattr(error, "response", None)
+    if response is not None:
+        status = getattr(response, "status_code", None)
+    if status is None and hasattr(error, "status_code"):
+        status = getattr(error, "status_code")
+    if status is not None:
+        try:
+            status = int(status)
+        except (TypeError, ValueError):
+            status = None
+    if status is not None:
+        return {
+            "error_class": f"http_{status}",
+            "http_status": status,
+            "transient": is_transient_status(status),
+        }
+    name = type(error).__name__ if error is not None else "UnknownError"
+    lowered = name.lower()
+    if "timeout" in lowered:
+        return {"error_class": "timeout", "http_status": None, "transient": True}
+    if "connection" in lowered or "transport" in lowered:
+        return {"error_class": "transport", "http_status": None, "transient": True}
+    return {"error_class": lowered, "http_status": None, "transient": None}
+
+
 def parse_retry_after(value, now=None):
     """Return the Retry-After delay in seconds, or None if unparsable."""
     if value is None:

@@ -15,6 +15,70 @@ except ImportError:  # flat-layout fallback
 DEFAULT_DURATION = 10.0
 MIN_SENTENCE_DURATION = 2.0
 
+# Quality Recovery Phase 1 (workstream B; DM-02 / DM-07 / VV-02 /
+# VV-07 / VV-08): rotation is a bounded, labelled fallback — never an
+# unbounded filler. A rotation draw may not push a file's TOTAL
+# on-screen uses (direct + graphic + rotation) past the selection
+# cap, prefers the least-used eligible file (fair draw — the old
+# verbatim `visuals[sentence_index % len(visuals)]` modulo loop and
+# its videos-first ordering bias are gone), avoids repeating the
+# immediately preceding file, and avoids pushing one file past half
+# the scene's runtime — the consecutive/share preferences yield only
+# when no other eligible file exists, the use cap never does. When
+# every eligible file is at the cap, the sentence stays UNCOVERED:
+# no cap violation, no borrowing from ineligible assets, no filler.
+TIMELINE_MAX_FILE_USES = 3
+TIMELINE_MAX_FILE_RUNTIME_SHARE = 0.5
+
+
+def _pick_rotation_visual(visuals, usage_counts, usage_durations,
+                          previous_path, item_duration, scene_duration):
+    """Fair, capped rotation draw. Returns the chosen visual or None
+    when the eligible pool is exhausted under the use cap (the caller
+    then leaves the sentence uncovered)."""
+    pool = [
+        visual for visual in visuals
+        if not visual.get("motion_graphic") and not visual.get("generated")
+    ]
+    if not pool:
+        return None
+
+    def count_of(visual):
+        return usage_counts.get(get_visual_path(visual), 0)
+
+    def duration_of(visual):
+        return usage_durations.get(get_visual_path(visual), 0.0)
+
+    def under_cap(visual):
+        return count_of(visual) < TIMELINE_MAX_FILE_USES
+
+    def not_consecutive(visual):
+        return get_visual_path(visual) != previous_path
+
+    def under_share(visual):
+        if not scene_duration or scene_duration <= 0:
+            return True
+        projected = duration_of(visual) + max(float(item_duration or 0.0), 0.0)
+        return projected / scene_duration <= TIMELINE_MAX_FILE_RUNTIME_SHARE
+
+    # Least-used first (count, then accumulated duration, then pool
+    # order for determinism): stranded eligible assets are drawn
+    # before any file is repeated (VV-07).
+    ordered = sorted(
+        enumerate(pool),
+        key=lambda pair: (count_of(pair[1]), duration_of(pair[1]), pair[0]),
+    )
+    tiers = [
+        lambda v: under_cap(v) and not_consecutive(v) and under_share(v),
+        lambda v: under_cap(v) and not_consecutive(v),
+        lambda v: under_cap(v),
+    ]
+    for tier in tiers:
+        for _, visual in ordered:
+            if tier(visual):
+                return visual
+    return None
+
 
 # ============================================================
 # HELPERS
@@ -1078,6 +1142,15 @@ def build_scene_timeline(
 
         items = []
 
+        # Phase 1 rotation accounting: total on-screen uses per file
+        # (every assignment kind), accumulated durations, the previous
+        # item's file (consecutive rule) and the sentences left
+        # uncovered because the eligible pool hit the cap.
+        usage_counts = {}
+        usage_durations = {}
+        previous_path = ""
+        uncovered_sentence_indexes = []
+
         for sentence_index, timing in enumerate(
             sentence_timings
         ):
@@ -1144,10 +1217,18 @@ def build_scene_timeline(
                 visual = assigned_graphics[0]
                 assignment = "motion_graphic"
             else:
-                visual = visuals[
-                    sentence_index
-                    % len(visuals)
-                ]
+                # Phase 1: bounded fair draw instead of the verbatim
+                # modulo loop. Pool exhausted under the cap -> the
+                # sentence stays uncovered (recorded, no item built).
+                visual = _pick_rotation_visual(
+                    visuals, usage_counts, usage_durations,
+                    previous_path, sentence_duration, duration,
+                )
+                if visual is None:
+                    uncovered_sentence_indexes.append(
+                        timing["sentence_index"]
+                    )
+                    continue
                 assignment = "rotation"
 
             visual_type = get_visual_type(
@@ -1157,6 +1238,12 @@ def build_scene_timeline(
             path = get_visual_path(
                 visual
             )
+
+            usage_counts[path] = usage_counts.get(path, 0) + 1
+            usage_durations[path] = (
+                usage_durations.get(path, 0.0) + sentence_duration
+            )
+            previous_path = path
 
             item = {
                 "type":
@@ -1374,6 +1461,12 @@ def build_scene_timeline(
 
             "sentence_timings":
                 sentence_timings,
+
+            # Phase 1: sentences no item was built for because the
+            # eligible rotation pool hit its caps — visibly uncovered,
+            # never silently filled.
+            "uncovered_sentence_indexes":
+                uncovered_sentence_indexes,
         }
 
     # --------------------------------------------------------

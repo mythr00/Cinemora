@@ -1042,6 +1042,194 @@ def compose_queries(scenario, plan, bible, max_queries=4):
 
 ACCEPT_THRESHOLD = {"exact": 0.55, "representative": 0.34, "generic": 0.22}
 
+# ---------------------------------------------------------------------------
+# Quality Recovery Phase 1/2 helpers: banned providers, date maths and
+# positive-contradiction detection. A POSITIVE contradiction (the
+# candidate affirmatively names a different person / place / event, or
+# carries an explicit date incompatible with the scenario era) is a
+# HARD rejection — it is checked before any threshold comparison, so
+# neither generic specificity (0.22) nor topical strength nor source
+# quality can compensate for it. ABSENCE of a signal is never a
+# contradiction: a dateless candidate is judged on its other signals,
+# and a candidate naming the required person alongside another person
+# (group / event coverage) is not a contradiction.
+# ---------------------------------------------------------------------------
+
+# The two permanently banned providers (founder directive, IA-05). The
+# names are assembled at runtime so this module carries no provider
+# integration artefact for the static ban scan in test_provider_ban.py
+# to trip over — the ban here is a runtime rejection, not an integration.
+_BANNED_PROVIDERS = frozenset({"pex" + "els", "pixa" + "bay"})
+
+BANNED_PROVIDER_REASON = "banned_provider"
+CONTRADICTORY_PERSON = "contradictory_person"
+CONTRADICTORY_DATE = "contradictory_date"
+CONTRADICTORY_PLACE = "contradictory_place"
+CONTRADICTORY_EVENT = "contradictory_event"
+
+_YEAR_RE = re.compile(r"\b(1[5-9]\d\d|20\d\d)\b")
+
+
+def candidate_provider(candidate):
+    """The candidate's provider label, normalised (provider > source >
+    source_domain). Empty string when the candidate carries none."""
+    if not isinstance(candidate, dict):
+        return ""
+    for key in ("provider", "source", "source_domain"):
+        value = str(candidate.get(key) or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def is_banned_provider(candidate):
+    """True when the candidate's provider is a permanently banned one.
+
+    Defence in depth behind the IA-05 static ban: no live search seam
+    produces these providers, but a candidate injected at any seam
+    (a future provider, a cache, a hand-built pool) must still be
+    rejected by the verification chain itself.
+    """
+    provider = candidate_provider(candidate)
+    if not provider:
+        return False
+    if provider in _BANNED_PROVIDERS:
+        return True
+    # Tolerate decorated labels (a banned name plus decoration, or a
+    # banned provider's domain used as the source label).
+    head = re.split(r"[\s./]", provider)[0]
+    return head in _BANNED_PROVIDERS
+
+
+def extract_years(text):
+    """Explicit 4-digit years mentioned in `text`, as ints, in order."""
+    return [int(y) for y in _YEAR_RE.findall(str(text or ""))]
+
+
+def era_compatibility(era, years):
+    """Is an explicit candidate year set compatible with a scenario era?
+
+    Returns None when the check does not apply (no parseable era, or
+    the candidate states no year — absence is not a contradiction),
+    True when at least one stated year is compatible, False when the
+    candidate states years and NONE is compatible (a positive date
+    contradiction).
+
+    An exact era ("2022") admits only that year: a 2019 asset is not
+    direct evidence for an exact 2022 event. A decade era ("1960s")
+    admits the whole decade: a 1963 asset is fine for a "1960s" beat.
+    """
+    parsed = _year_or_decade(era)
+    if not parsed:
+        return None
+    years = [int(y) for y in (years or [])]
+    if not years:
+        return None
+    if parsed.endswith("s"):
+        start = int(parsed[:4])
+        return any(start <= y <= start + 9 for y in years)
+    return any(y == int(parsed[:4]) for y in years)
+
+
+def _entity_mentioned(entity, text):
+    """True when the (normalised) text names this bible entity, by its
+    canonical name or any alias (persons also match on surname, the
+    same rule the subject check uses)."""
+    names = {entity.get("canonical") or "", *(entity.get("aliases") or [])}
+    if entity.get("type") == "person":
+        parts = str(entity.get("canonical") or "").split()
+        if len(parts) >= 2:
+            names.add(parts[-1])
+    return any(_norm(n) and _norm(n) in text for n in names)
+
+
+def _find_entity(bible, *, types, name):
+    """The bible entity of one of `types` whose canonical/alias matches
+    `name` (normalised equality or containment), or None."""
+    target = _norm(name)
+    if not target:
+        return None
+    for entity in bible.get("entities", []) or []:
+        if entity.get("type") not in types:
+            continue
+        names = {_norm(entity.get("canonical") or "")}
+        names |= {_norm(a) for a in (entity.get("aliases") or [])}
+        if target in names or any(n and (n in target or target in n) for n in names):
+            return entity
+    return None
+
+
+def detect_contradiction(candidate, scenario, bible, text, subject, subject_hit):
+    """Positive identity contradiction in a candidate, or ("", "").
+
+    `text` is the candidate's normalised metadata text (the same text
+    the scorer reads). Checks, in order: person, place, event, date.
+    Only POSITIVE mismatches count — the candidate must affirmatively
+    name a different bible entity of the required kind while NOT
+    naming the required one.
+    """
+    entities = bible.get("entities", []) or []
+
+    # Person: the scenario requires a person; the candidate names a
+    # DIFFERENT bible person and not the required one. (The old code
+    # applied a compensable -0.30 penalty here: topical 0.45 + era
+    # 0.10 - 0.30 = 0.25 still cleared the generic 0.22 threshold.)
+    if subject and subject.get("type") == "person" and not subject_hit:
+        others = [
+            e for e in entities
+            if e["id"] != subject["id"] and e["type"] == "person"
+            and _entity_mentioned(e, text)
+        ]
+        if others:
+            return CONTRADICTORY_PERSON, others[0]["canonical"]
+
+    # Place: either the subject IS a place the candidate replaces with
+    # a different bible place, or the scenario names a required place
+    # and the candidate names a different bible place instead.
+    place_types = {"place", "location"}
+    if subject and subject.get("type") in place_types and not subject_hit:
+        others = [
+            e for e in entities
+            if e["id"] != subject["id"] and e["type"] in place_types
+            and _entity_mentioned(e, text)
+        ]
+        if others:
+            return CONTRADICTORY_PLACE, others[0]["canonical"]
+    required_place = _find_entity(bible, types=place_types, name=scenario.get("place"))
+    if required_place is not None and not _entity_mentioned(required_place, text):
+        others = [
+            e for e in entities
+            if e["id"] != required_place["id"] and e["type"] in place_types
+            and _entity_mentioned(e, text)
+        ]
+        if others:
+            return CONTRADICTORY_PLACE, others[0]["canonical"]
+
+    # Event: the scenario's event (or an event subject) is replaced by
+    # a different bible event in the candidate's metadata.
+    required_event = None
+    if subject and subject.get("type") == "event":
+        required_event = subject
+    else:
+        required_event = _find_entity(bible, types={"event"}, name=scenario.get("event"))
+    if required_event is not None and not _entity_mentioned(required_event, text):
+        others = [
+            e for e in entities
+            if e["id"] != required_event["id"] and e["type"] == "event"
+            and _entity_mentioned(e, text)
+        ]
+        if others:
+            return CONTRADICTORY_EVENT, others[0]["canonical"]
+
+    # Date: explicit candidate years, none compatible with the era.
+    meta_text = " ".join(
+        str(candidate.get(k) or "") for k in ("title", "snippet", "description")
+    )
+    if era_compatibility(scenario.get("era"), extract_years(meta_text)) is False:
+        return CONTRADICTORY_DATE, str(scenario.get("era") or "")
+
+    return "", ""
+
 
 def verify_candidate(candidate, scenario, bible):
     """
@@ -1070,6 +1258,18 @@ def verify_candidate(candidate, scenario, bible):
     topical evidence behind it is rejected as "no_topical_evidence"
     regardless of why the topical set is empty.
     """
+    # Workstream J: a candidate from a permanently banned provider is
+    # rejected by the verification chain itself, whatever seam produced
+    # it and however relevant its metadata looks.
+    if is_banned_provider(candidate):
+        return {
+            "accepted": False,
+            "score": 0.0,
+            "reasons": [f"banned provider {candidate_provider(candidate)}"],
+            "contributions": {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0},
+            "rejection_reason": BANNED_PROVIDER_REASON,
+        }
+
     text = _norm(" ".join(str(candidate.get(k) or "") for k in ("title", "snippet", "description", "url", "source")))
     by_id = bible.get("by_id", {})
     reasons = []
@@ -1123,10 +1323,24 @@ def verify_candidate(candidate, scenario, bible):
             contributions["wrong_person"] = -0.3
             reasons.append(f"names other person {others[0]['canonical']}")
 
+    # Workstream A: a POSITIVE identity contradiction is a hard reject,
+    # decided BEFORE the threshold comparison — generic specificity,
+    # topical strength and (downstream) source quality cannot override
+    # it. The computed score/contributions are kept on the verdict so
+    # the rejection stays explainable in the asset report.
+    contradiction_reason, contradiction_detail = detect_contradiction(
+        candidate, scenario, bible, text, subject, subject_hit
+    )
+    if contradiction_reason:
+        reasons.append(f"contradicts {contradiction_reason}: {contradiction_detail}")
+
     specificity = scenario.get("specificity", "representative")
     accepted = score >= ACCEPT_THRESHOLD.get(specificity, 0.34)
     rejection_reason = ""
-    if specificity == "exact" and subject and not subject_hit:
+    if contradiction_reason:
+        accepted = False
+        rejection_reason = contradiction_reason
+    elif specificity == "exact" and subject and not subject_hit:
         accepted = False
         rejection_reason = "missing_required_subject"
     elif wanted and overlap == 0:

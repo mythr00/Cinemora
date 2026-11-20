@@ -9,7 +9,18 @@ same source may not overlap (plus a small padding).
 All existing call signatures keep working. New optional arguments:
   can_use(..., start=, end=, source_duration=)
   register(..., start=, end=)
+
+Quality Recovery Phase 2 (workstream C): SOURCE identity is canonical
+(services.canonical_media) — the same YouTube video spelled as
+youtu.be/X and as watch?v=X, or the same archive.org item as a details
+and a download URL, is ONE source for usage counts, recency and
+segment ranges. File/path/title identity is unchanged.
 """
+
+try:
+    from services.canonical_media import canonical_source_key
+except ImportError:  # flat-layout fallback
+    from canonical_media import canonical_source_key
 
 
 class VisualRegistry:
@@ -44,13 +55,18 @@ class VisualRegistry:
     def _scoped(self, value):
         return f"{self.project_id}|{self._norm(value)}"
 
+    def _scoped_source(self, url):
+        """Project-scoped CANONICAL source key (Phase 2): respelled
+        URLs of one source share usage counts and segment ranges."""
+        return f"{self.project_id}|{canonical_source_key(url)}"
+
     # ------------------------------------------------------------ checks
 
     def is_file_used(self, path):
         return self._scoped(path) in self.used_files
 
     def is_source_used(self, url):
-        return self._scoped(url) in self.used_sources
+        return self._scoped_source(url) in self.used_sources
 
     def is_title_used(self, title):
         t = self._norm(title)
@@ -64,7 +80,7 @@ class VisualRegistry:
         return self._scoped(clip_key) in self.used_clips
 
     def is_recent_source(self, url, within=6):
-        n = self._scoped(url)
+        n = self._scoped_source(url)
         if not n.endswith("|") and n:
             return n in self.recent_sources[-within:]
         return False
@@ -72,13 +88,13 @@ class VisualRegistry:
     def segments_for(self, url):
         """Used (start, end) ranges for a source - lets the timestamp
         selector avoid them before it even proposes a segment."""
-        return list(self.used_segments.get(self._scoped(url), []))
+        return list(self.used_segments.get(self._scoped_source(url), []))
 
     def is_segment_used(self, url, start, end, pad=None):
         if not url or start is None or end is None:
             return False
         pad = self.segment_pad if pad is None else pad
-        for s, e in self.used_segments.get(self._scoped(url), []):
+        for s, e in self.used_segments.get(self._scoped_source(url), []):
             if start < e + pad and end > s - pad:
                 return True
         return False
@@ -116,7 +132,7 @@ class VisualRegistry:
             return False, "segment_overlap"
 
         if url:
-            source_key = self._scoped(url)
+            source_key = self._scoped_source(url)
             source_uses = self.usage_counts.get(source_key, 0)
 
             if source_uses >= self._cap_for(source_duration):
@@ -146,7 +162,7 @@ class VisualRegistry:
     def source_usage_count(self, url):
         if not url:
             return 0
-        return self.usage_counts.get(self._scoped(url), 0)
+        return self.usage_counts.get(self._scoped_source(url), 0)
 
     # ------------------------------------------------------------ writes
 
@@ -156,7 +172,7 @@ class VisualRegistry:
             self.used_files.add(self._scoped(path))
 
         if url:
-            n = self._scoped(url)
+            n = self._scoped_source(url)
             self.used_sources.add(n)
             self.recent_sources.append(n)
             self.usage_counts[n] = self.usage_counts.get(n, 0) + 1

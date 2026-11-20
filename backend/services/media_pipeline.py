@@ -30,7 +30,18 @@ from services.visual_registry import get_registry
 from services import run_metrics
 from services import story_understanding as story
 from services.media_probe import probe_image, probe_video
-from services.http_retry import request_with_retry
+from services.http_retry import request_with_retry, classify_error
+
+try:
+    from services.canonical_media import (
+        canonical_candidate_key,
+        canonical_source_key,
+    )
+except ImportError:  # flat-layout fallback
+    from canonical_media import (  # noqa: F401
+        canonical_candidate_key,
+        canonical_source_key,
+    )
 
 try:
     from services import process_utils
@@ -41,6 +52,21 @@ except ImportError:  # flat-layout fallback
 # ==========================================================================
 # EVIDENCE CLASSIFICATION
 # ==========================================================================
+# DM-18 DISPOSITION (Quality Recovery Phase 1, recorded — not deleted):
+# the evidence-scoring subsystem in this section
+# (classify_evidence_type / calculate_visual_evidence_score /
+# rank_visuals_by_evidence and their helpers, media_pipeline.py:80-308
+# at the audited HEAD) is NOT called by the selection path — live
+# selection is verify_candidate + universal_score + the bounded
+# format-intent bonus, and no score from this subsystem influences any
+# acceptance, ranking or timeline decision. It is quarantined IN PLACE
+# as formally classified dead code pending the founder-gated IA-18
+# deletion decision; it must not be wired into selection silently
+# (that would be a behaviour change requiring its own tests and
+# approval), and test_degraded_* pins that the selection path does
+# not call it. The fabricated-default half of DM-18 (timeline
+# selection_score defaults) is a reporting concern for Phase 3, not
+# touched here.
 
 EVIDENCE_IDENTITY = "identity"
 EVIDENCE_LOCATION = "location"
@@ -358,12 +384,38 @@ _FAILED_DOWNLOAD_URLS: set = set()
 _DISCOVERY_FAILURES: list = []
 
 
-def _record_discovery_failure(provider, query, error):
+def _record_discovery_failure(provider, query, error, *, attempt=1, retry_count=0):
+    """Record one discovery (provider search) failure.
+
+    Quality Recovery Phase 2 (workstream D; DM-09): the record carries
+    the full failure shape the brief requires — provider, query,
+    attempt number, error-class enum, HTTP status where available,
+    transient/non-transient classification, retry count and circuit-
+    breaker state — so a provider failure is never collapsed with an
+    empty result set (zero failures recorded != failures unknown; the
+    artefact-level distinction is completed in Phase 3 reporting).
+    The legacy "error" string is kept for existing consumers.
+    """
+    classification = classify_error(error)
     _DISCOVERY_FAILURES.append(
         {
             "provider": str(provider),
             "query": str(query)[:160],
             "error": f"{type(error).__name__}: {error}"[:200],
+            "attempt": int(attempt or 1),
+            "error_class": classification["error_class"],
+            "http_status": classification["http_status"],
+            "transient": classification["transient"],
+            "retry_count": int(retry_count or 0),
+            "breaker_state": {
+                "consecutive_failures": int(
+                    _search_failure_state.get("consecutive_failures") or 0
+                ),
+                "tripped": bool(
+                    (_search_failure_state.get("consecutive_failures") or 0)
+                    >= MAX_CONSECUTIVE_SEARCH_FAILURES
+                ),
+            },
         }
     )
 
@@ -1188,10 +1240,14 @@ def _beat_scenarios(beat):
     scenarios = []
     if not beat.get("searchable", True):
         return scenarios
-    for sentence in beat.get("sentences") or []:
+    for offset, sentence in enumerate(beat.get("sentences") or []):
         if _sentence_role(sentence) in NO_SEARCH_ROLES:
             continue
         for scenario in _uve_scenarios_for(sentence):
+            # DM-17: remember which sentence this scenario came from,
+            # so distribution can deal its assets to that sentence
+            # only (see _distribute_beat_assets).
+            scenario["_sentence_offset"] = offset
             scenarios.append(scenario)
     unique, seen = [], set()
     for scenario in scenarios:
@@ -1201,6 +1257,65 @@ def _beat_scenarios(beat):
         seen.add(key)
         unique.append(scenario)
     return unique[:6]
+
+
+def _beat_scenario_owner_offsets(beat):
+    """Map flattened beat scenario_index (1-based, in _beat_scenarios
+    order) -> the offset within the beat of the sentence that OWNS
+    that scenario, from the _sentence_offset stamps _beat_scenarios
+    leaves on each scenario it builds."""
+    owners = {}
+    for index, scenario in enumerate(_beat_scenarios(beat), start=1):
+        offset = scenario.get("_sentence_offset")
+        if isinstance(offset, int):
+            owners[index] = offset
+    return owners
+
+
+def _distribute_beat_assets(beat, beat_videos, beat_images):
+    """Direct per-sentence assignments for a beat (canonical DM-17).
+
+    An asset is dealt ONLY to the sentence that owns the scenario it
+    was verified for (its stamped scenario_index). The old code dealt
+    beat_videos[offset] / beat_images[offset] by position, so a
+    sentence could receive a SIBLING scenario's asset labelled as its
+    direct assignment. An asset whose scenario owner is unknown is
+    not dealt as direct at all — it stays in the scene aggregates,
+    where the timeline may use it only as honestly labelled rotation.
+    Returns a list, per sentence offset, of (videos, images)."""
+    count = len(beat.get("sentences") or [])
+    owners = _beat_scenario_owner_offsets(beat)
+    per_sentence = [([], []) for _ in range(count)]
+
+    if not owners:
+        # No scenario->sentence linkage exists for this beat (the
+        # scenarios did not come from _beat_scenarios — e.g. a caller
+        # supplied them directly). DM-17 has nothing to enforce
+        # against, so keep the legacy positional dealing rather than
+        # dropping verified assets on the floor.
+        for offset in range(count):
+            if offset < len(beat_videos or []):
+                per_sentence[offset][0].append(dict(beat_videos[offset]))
+            if offset < len(beat_images or []):
+                per_sentence[offset][1].append(dict(beat_images[offset]))
+        return per_sentence
+
+    def owner_of(asset):
+        try:
+            index = int(asset.get("scenario_index"))
+        except (TypeError, ValueError):
+            return None
+        return owners.get(index)
+
+    for asset in beat_videos or []:
+        owner = owner_of(asset)
+        if owner is not None and owner < count:
+            per_sentence[owner][0].append(dict(asset))
+    for asset in beat_images or []:
+        owner = owner_of(asset)
+        if owner is not None and owner < count:
+            per_sentence[owner][1].append(dict(asset))
+    return per_sentence
 
 
 def dry_run_beats(script, project_dir, project_id="beats_dry_run", llm="auto"):
@@ -3746,18 +3861,23 @@ def _uve_annotate(asset, scenario, scenario_index, sentence_text):
     return asset
 
 def _uve_candidate_key(candidate):
+    """Dedup/selection key for a candidate.
+
+    Quality Recovery Phase 2 (workstream C; canonical DM-16): the base
+    is the CANONICAL source key (services.canonical_media), not the
+    raw URL string — youtu.be/X and watch?v=X are one candidate, and
+    tracking parameters never mint a "new" candidate. Segment identity
+    stays distinct from source identity: a stamped clip_start makes
+    the key segment-specific, and an unstamped YouTube candidate keeps
+    the "|pending" form so the same source may be selected again for
+    a different segment (the registry's overlap blocking then applies
+    on the canonical source)."""
     if not isinstance(candidate, dict):
         return ""
 
-    url = str(
-        candidate.get("url")
-        or candidate.get("video_url")
-        or candidate.get("image_url")
-        or candidate.get("link")
-        or ""
-    ).strip().lower()
+    base = canonical_candidate_key(candidate)
 
-    if not url:
+    if not base:
         return ""
 
     # Search candidates do not have a timestamp yet.
@@ -3772,14 +3892,14 @@ def _uve_candidate_key(candidate):
         except (TypeError, ValueError):
             start = str(start)
 
-        return f"{url}|{start}"
+        return f"{base}|{start}"
 
     # Allow the same YouTube source to be selected again.
     # _youtube_start() will choose a different segment.
-    if "youtube.com" in url or "youtu.be" in url:
-        return f"{url}|pending"
+    if base.startswith("youtube:"):
+        return f"{base}|pending"
 
-    return url
+    return base
 
 
 def _remote_duration_seconds(url):
@@ -4641,25 +4761,41 @@ def _uve_scenario_search(
 def _candidate_id_for(candidate):
     """Stable per-run candidate identifier (VA-08).
 
-    Derived from the candidate URL, so the same candidate carries the
-    same id through verification, selection, download and reporting
-    within a run.
+    Derived from the candidate's CANONICAL source identity (Phase 2,
+    canonical DM-16), so the same source carries the same id through
+    verification, selection, download and reporting within a run —
+    however its URL was spelled by whichever search seam found it.
     """
     import hashlib
 
-    url = str(
-        candidate.get("url")
-        or candidate.get("video_url")
-        or candidate.get("image_url")
-        or candidate.get("download_url")
-        or candidate.get("link")
-        or ""
-    )
-    return "cand_" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+    key = canonical_candidate_key(candidate)
+    return "cand_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
 
 
 def _uve_verify_all(candidates, scenario, bible, shot_need=None):
     scored, seen = [], set()
+
+    # Phase 1: enrich the gate's shot need (a COPY — the caller's dict
+    # is never mutated) with the bible's other people/places so the
+    # gate can judge positive contradictions where it has the data;
+    # verify_candidate applies the same rules from the bible directly.
+    gate_need = shot_need
+    if shot_need is not None and bible:
+        gate_need = dict(shot_need)
+        _entities = bible.get("entities") or []
+        _req_id = shot_need.get("required_subject_id")
+        gate_need.setdefault("other_people", [
+            e.get("canonical") for e in _entities
+            if e.get("type") == "person" and e.get("id") != _req_id
+            and e.get("canonical")
+        ])
+        _place_norm = str(shot_need.get("place") or "").strip().lower()
+        gate_need.setdefault("other_places", [
+            e.get("canonical") for e in _entities
+            if e.get("type") in {"place", "location"}
+            and e.get("canonical")
+            and str(e.get("canonical")).strip().lower() != _place_norm
+        ])
 
     for candidate in candidates:
         candidate["candidate_id"] = _candidate_id_for(candidate)
@@ -4673,7 +4809,7 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
         # Cheap metadata gate BEFORE expensive LLM verification.
         ok, reason = gate_shot_need(
             candidate,
-            shot_need,
+            gate_need,
         )
 
         if not ok:
@@ -4756,6 +4892,25 @@ def gate_shot_need(candidate, shot_need):
 
     blob = _title_blob(candidate)
 
+    # Workstream J: banned providers are rejected at the gate too —
+    # the canonical banned-provider outcome, whatever seam produced
+    # the candidate (verify_candidate enforces the same rejection for
+    # direct callers).
+    if story.is_banned_provider(candidate):
+        return False, story.BANNED_PROVIDER_REASON
+
+    # Quality Recovery Phase 1 (workstream A): POSITIVE contradictions
+    # the shot need carries enough data to judge. An explicit date
+    # incompatible with the need's era is a contradiction; a missing
+    # date is not. When the caller supplies the bible's OTHER people /
+    # places (see _uve_verify_all), naming one of them while not
+    # naming the required subject/place is a contradiction — absence
+    # alone stays on the missing_* paths below.
+    if story.era_compatibility(
+        need.get("era"), story.extract_years(blob)
+    ) is False:
+        return False, story.CONTRADICTORY_DATE
+
     subject = str(
         need.get("required_subject")
         or ""
@@ -4790,6 +4945,30 @@ def gate_shot_need(candidate, shot_need):
             and banned_text in blob
         ):
             return False, "forbidden_term"
+
+    # Positive person/place contradictions (only when the caller
+    # supplied the alternatives — _uve_verify_all enriches the need
+    # from the case bible; direct callers without them skip to the
+    # absence checks, and verify_candidate still applies the full
+    # bible-based contradiction rules).
+    def _named(name):
+        text = str(name or "").strip().lower()
+        if not text:
+            return False
+        if text in blob:
+            return True
+        parts = [p for p in text.split() if len(p) > 2]
+        return bool(parts) and all(p in blob for p in parts)
+
+    if subject and not _named(subject):
+        for other in need.get("other_people") or []:
+            if _named(other):
+                return False, story.CONTRADICTORY_PERSON
+    _need_place = str(need.get("place") or "").strip().lower()
+    if _need_place and not _named(_need_place):
+        for other in need.get("other_places") or []:
+            if _named(other):
+                return False, story.CONTRADICTORY_PLACE
 
     # Exact person/entity contracts require the requested
     # subject to appear in the searchable metadata.
@@ -4897,6 +5076,17 @@ def gate_shot_need(candidate, shot_need):
 
     return True, ""
 
+# Quality Recovery Phase 2 (workstream C): selection-time REUSE
+# PENALTY per prior use of a candidate's canonical source. Bounded by
+# construction: at the hard cap of 3 uses the maximum differential is
+# 2 x 0.05 = 0.10, so a candidate that is MATERIALLY more relevant
+# (raw-score gap > 0.10) can never be overtaken by a fresher one, and
+# the pool here contains only verifier-ACCEPTED candidates, so the
+# penalty can never promote an unverified candidate. The hard source
+# cap stays absolute and is enforced separately below.
+REUSE_PENALTY_PER_USE = 0.05
+
+
 def _uve_pick(
     scored,
     scenario,
@@ -4904,6 +5094,7 @@ def _uve_pick(
     used_keys,
     limit=3,
     shot_need=None,
+    reuse_penalty_per_use=None,
 ):
     pool = []
 
@@ -4933,20 +5124,55 @@ def _uve_pick(
     # none were accepted, the beat falls back honestly (real image, then a
     # counted card) instead of using rejected footage.
 
+    # Phase 2 reuse penalty: re-rank the ACCEPTED pool by effective
+    # score (raw selection score minus penalty x canonical source
+    # uses), so a fresh near-equal source beats a reused one. Stable
+    # sort: equal effective scores keep the relevance order.
+    _per_use = (
+        REUSE_PENALTY_PER_USE
+        if reuse_penalty_per_use is None
+        else float(reuse_penalty_per_use)
+    )
+    if _per_use:
+        def _effective(candidate):
+            raw = candidate.get("_selection_score")
+            if raw is None:
+                raw = candidate.get("universal_score") or 0
+            try:
+                uses = registry.source_usage_count(
+                    str(
+                        candidate.get("url")
+                        or candidate.get("video_url")
+                        or candidate.get("link")
+                        or ""
+                    )
+                )
+            except Exception:
+                uses = 0
+            penalty = _per_use * uses
+            candidate["reuse_penalty"] = round(penalty, 3)
+            candidate["_effective_score"] = round((raw or 0) - penalty, 3)
+            return (raw or 0) - penalty
+
+        pool = sorted(pool, key=_effective, reverse=True)
+
     picked = []
     source_counts = {}
 
     for candidate in pool:
         # MS-1: the per-source usage cap applies to EVERY provider
         # equally. Previously it applied only to YouTube URLs.
+        # Phase 2: counted on the CANONICAL source key, so respelled
+        # URLs of one source share the cap.
         candidate_url = str(
             candidate.get("url")
             or candidate.get("video_url")
             or candidate.get("link")
             or ""
-        ).strip().split("&", 1)[0]
+        ).strip()
+        source_key = canonical_source_key(candidate_url)
 
-        batch_uses = source_counts.get(candidate_url.lower(), 0)
+        batch_uses = source_counts.get(source_key, 0)
         try:
             existing_uses = registry.source_usage_count(candidate_url)
         except Exception:
@@ -4997,7 +5223,6 @@ def _uve_pick(
 
         picked.append(item)
 
-        source_key = candidate_url.lower()
         source_counts[source_key] = source_counts.get(source_key, 0) + 1
 
         if len(picked) >= limit:
@@ -5017,6 +5242,11 @@ def _apply_source_quality_tiebreak(picked):
     re-ordered by source-quality (domain) score; a relevance gap
     larger than the epsilon can NEVER be overridden by provider
     prestige. Every pick is stamped with source_quality for reporting.
+
+    Phase 2: grouping uses the Phase 2 EFFECTIVE score (raw minus
+    reuse penalty) when _uve_pick stamped one — otherwise the
+    penalty's fresh-source preference at a near-tie would be undone
+    here by the very domain prestige it must not be overridden by.
     """
     if len(picked) < 2:
         return picked
@@ -5048,9 +5278,13 @@ def _apply_source_quality_tiebreak(picked):
             )
             group.clear()
 
+    def _rank_score(item):
+        effective = item.get("_effective_score")
+        return effective if effective is not None else (item.get("universal_score") or 0)
+
     for item in picked:
-        score = item.get("universal_score") or 0
-        if group and abs((group[0].get("universal_score") or 0) - score) > _TIEBREAK_EPSILON:
+        score = _rank_score(item)
+        if group and abs(_rank_score(group[0]) - score) > _TIEBREAK_EPSILON:
             flush()
         group.append(item)
     flush()
@@ -5080,7 +5314,11 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
             or candidate.get("image_url")
             or ""
         )
-        if candidate_url and candidate_url in _FAILED_DOWNLOAD_URLS:
+        # Phase 2: the failed-download guard keys on the CANONICAL
+        # source identity — a failed candidate is never re-downloaded
+        # within a run, however its URL is respelled.
+        candidate_key = canonical_source_key(candidate_url)
+        if candidate_url and candidate_key in _FAILED_DOWNLOAD_URLS:
             # Already failed once this run (throttled, dead, invalid):
             # never re-request it; record the skip as a failure too.
             if failures is not None:
@@ -5108,7 +5346,7 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
 
         if not asset:
             if candidate_url:
-                _FAILED_DOWNLOAD_URLS.add(candidate_url)
+                _FAILED_DOWNLOAD_URLS.add(candidate_key)
             # MS-2: a failed download is recorded with its actual reason
             # (stashed on the candidate by the downloader) — never silent,
             # never substituted with unrelated footage.
@@ -5206,12 +5444,16 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
             used_keys.add(key)
 
         try:
+            # Phase 2: registry identity is canonical (the registry
+            # canonicalises internally too); the clip key is built on
+            # the canonical source key so segment bookkeeping is
+            # spelling-independent.
             registry_url = str(
                 asset.get("video_url")
                 or asset.get("url")
                 or key
                 or ""
-            ).split("&", 1)[0]
+            )
 
             clip_start = asset.get("clip_start")
 
@@ -5221,7 +5463,9 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                 except (TypeError, ValueError):
                     clip_start = str(clip_start)
 
-                clip_key = f"{registry_url}|{clip_start}"
+                clip_key = (
+                    f"{canonical_source_key(registry_url)}|{clip_start}"
+                )
             else:
                 clip_key = key
 
@@ -5595,6 +5839,82 @@ def _query_signature(query):
     )
 
 
+# Quality Recovery Phase 2 (workstream D; DM-06): FACET signatures.
+# A query's facet set is the set of meaningful search facets it uses —
+# person / organisation / place / date / event / evidence-medium —
+# derived from the beat's own shot contracts. Reformulation must
+# change the facet set, not just reword: a pure rewording (same facet
+# set, near-identical words) is recognised as already tried and never
+# re-executed, and every executed recovery query is recorded with its
+# facet signature alongside its string.
+_FACET_MEDIUM_TERMS = {
+    "photograph", "photo", "archive", "archival", "footage",
+    "documentary", "newsreel", "image", "video",
+}
+
+
+def _facet_words(value):
+    return {
+        w.strip(".,;:!?\"'()").lower()
+        for w in str(value or "").split()
+        if len(w.strip(".,;:!?\"'()")) >= 3
+    }
+
+
+def _query_facets(query, beat=None):
+    """The facet set a query uses, judged against the beat's contracts."""
+    words = _facet_words(query)
+    facets = set()
+    if not words:
+        return frozenset()
+    if words & _FACET_MEDIUM_TERMS:
+        facets.add("evidence")
+    if any(re.fullmatch(r"(1[5-9]\d\d|20\d\d)s?", w) for w in words):
+        facets.add("date")
+    beat = beat or {}
+    needs = beat.get("shot_needs") or []
+    subject_hit = False
+    for need in needs:
+        subject_words = _facet_words(need.get("required_subject"))
+        if subject_words and subject_words & words:
+            subject_hit = True
+            kind = str(need.get("required_type") or "").lower()
+            facets.add(
+                "organisation" if kind == "organization"
+                else "person" if kind == "person"
+                else "subject"
+            )
+        if _facet_words(need.get("place")) & words:
+            facets.add("place")
+        if _facet_words(need.get("event")) & words:
+            facets.add("event")
+        era_words = _facet_words(need.get("era"))
+        if era_words & words:
+            facets.add("date")
+    if not subject_hit and _facet_words(
+        str(beat.get("subject_id") or "").replace("_", " ")
+    ) & words:
+        facets.add("person")
+    if _facet_words(beat.get("place")) & words:
+        facets.add("place")
+    return frozenset(facets)
+
+
+def _facet_signature(query, beat=None):
+    """Stable facet signature string for one query (sorted facets)."""
+    return "|".join(sorted(_query_facets(query, beat)))
+
+
+def _word_set(query):
+    return {w for w in _query_signature(query).split() if w}
+
+
+def _jaccard_words(a, b):
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
 def _recovery_queries(beat, tried_queries, broad=False, limit=4):
     """Alternative targeted queries for a beat that found no asset.
 
@@ -5622,6 +5942,12 @@ def _recovery_queries(beat, tried_queries, broad=False, limit=4):
             ]
         else:
             templates = [
+                # Phase 2: the full-facet combination first — its
+                # facet set {person, event, place, date} differs from
+                # every initial-query facet set, so at least one
+                # recovery query reformulates by FACETS, not wording
+                # (required test 14(b)).
+                (subject, event, place, era),
                 (subject, place, era),
                 (subject, event),
                 (subject, place),
@@ -5647,13 +5973,31 @@ def _recovery_queries(beat, tried_queries, broad=False, limit=4):
         if keywords:
             candidates.append(" ".join(keywords))
 
-    tried_signatures = {_query_signature(q) for q in tried_queries}
+    # Phase 2: a candidate is already-tried when its WORD signature
+    # was tried, or when it is a pure rewording of a tried query —
+    # same facet set with near-identical words (Jaccard >= 0.75, the
+    # pipeline's existing near-duplicate threshold). A query whose
+    # facet set is new is a genuine reformulation and executes.
+    tried = [
+        (_query_signature(q), _query_facets(q, beat), _word_set(q))
+        for q in tried_queries
+    ]
+    tried_signatures = {sig for sig, _, _ in tried}
     out = []
     for query in candidates:
         signature = _query_signature(query)
         if not signature or signature in tried_signatures:
             continue
+        facets = _query_facets(query, beat)
+        words = _word_set(query)
+        if any(
+            facets == tried_facets
+            and _jaccard_words(words, tried_words) >= 0.75
+            for _, tried_facets, tried_words in tried
+        ):
+            continue
         tried_signatures.add(signature)
+        tried.append((signature, facets, words))
         out.append(query)
         if len(out) >= limit:
             break
@@ -5794,6 +6138,14 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                         "beat_id": beat.get("beat_id"),
                         "round": round_no,
                         "queries": recovery_queries,
+                        # Phase 2: every executed query is recorded
+                        # with its facet signature as well as its
+                        # string, so reformulation is auditable and a
+                        # tried signature is never re-executed.
+                        "facet_signatures": [
+                            _facet_signature(q, beat)
+                            for q in recovery_queries
+                        ],
                         "outcome": "covered" if recovered_asset else "no_asset",
                     }
                 )
@@ -5833,6 +6185,12 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
 
         write_review_log(project_dir, scene_number, beat, review_records)
 
+        # DM-17: deal each asset to the sentence that owns its
+        # scenario (stamped scenario_index), never by raw position.
+        _distribution = _distribute_beat_assets(
+            beat, beat_videos, beat_images
+        )
+
         for offset, sentence in enumerate(beat.get("sentences") or []):
             sentence_number = beat["sentence_numbers"][offset]
             people = _people_for_sentence(sentence, bible)
@@ -5840,13 +6198,7 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
             # Assign each downloaded clip to the sentence/scenario that
             # produced it instead of copying the entire beat asset list
             # onto every sentence.
-            sentence_videos = []
-            if offset < len(beat_videos):
-                sentence_videos.append(dict(beat_videos[offset]))
-
-            sentence_images = []
-            if offset < len(beat_images):
-                sentence_images.append(dict(beat_images[offset]))
+            sentence_videos, sentence_images = _distribution[offset]
 
             result = _uve_prepare_sentence_result(
                 sentence,
