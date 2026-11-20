@@ -163,6 +163,10 @@ def run_stage(state: dict, stage: str, project_dir: Path):
                 f"Run {run_id} was cancelled before stage '{stage}'."
             )
         run_ledger.set_run_stage(run_id, stage)
+        # Stage 3 (R2): a stage boundary is also a heartbeat — even
+        # if the run's heartbeat thread died, crossing into a new
+        # stage refreshes the run's liveness evidence.
+        run_ledger.touch_run(run_id)
     start_stage(state, stage)
     run_metrics.stage_started(stage)
     save_production_state(project_dir, state)
@@ -600,6 +604,10 @@ def run_analysis_phase(project_id: str, script: str, run_id: str = None, options
                     "run_id": run_id,
                     "deduplicated_execution": True,
                 }
+        # Stage 3 (R2): heartbeat for the analysis run, as in the
+        # full pipeline — it stops itself when the run parks in
+        # awaiting_approval or finishes.
+        run_ledger.start_heartbeat(run_id)
 
     _set_project_status(project_id, "running")
     try:
@@ -886,6 +894,13 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             script,
             options=_merged_options,
         )
+
+    # Stage 3 (R2): the run is ours (claimed atomically or begun
+    # here) — beat for it until it leaves "running", so liveness
+    # tooling and heartbeat-aware reconciliation can tell a live
+    # production from an orphan. The thread is self-terminating
+    # and fail-soft; it never gates the pipeline.
+    run_ledger.start_heartbeat(_run_id)
 
     state = create_production_state()
     state["genre_pack"] = {

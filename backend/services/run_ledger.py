@@ -30,7 +30,9 @@ import hashlib
 import json
 import os
 import re
+import socket
 import tempfile
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -70,6 +72,128 @@ def script_sha256(script) -> str:
 
 
 # ---------------------------------------------------------------------
+# Worker presence — identity, ownership, heartbeat (Stage 3, R2)
+# ---------------------------------------------------------------------
+# PIPE-005 / DATA-005: before this stage a run carried no record of
+# WHICH worker owned it and no liveness signal at all — the only
+# timestamps were started_at / finished_at, so a run whose worker
+# died mid-production sat in "running" until the next worker process
+# started, and that worker's startup reconciliation failed EVERY
+# running run unconditionally, including runs a second, live worker
+# was actively processing.
+#
+# Presence is recorded in the run row's existing free-form
+# ``progress`` JSON (schema authority 0002 — no migration needed):
+#
+#     {"worker_id": ..., "claimed_at": ..., "heartbeat_at": ...}
+#
+# - worker_id: the claiming process's identity (current_worker_id).
+# - claimed_at: when the atomic claim stamped ownership.
+# - heartbeat_at: refreshed by touch_run — at stage boundaries and
+#   by the heartbeat thread start_heartbeat installs for the run's
+#   execution. reconcile_stale_runs(stale_after_seconds=...) treats
+#   a running run as orphaned ONLY when this liveness evidence (or
+#   its started_at fallback, for rows that predate presence) is
+#   older than the threshold.
+
+_WORKER_ID = None
+_WORKER_ID_LOCK = threading.Lock()
+
+# Defaults: a beat every 30s; a run is stale after 180s without one
+# (six missed beats). Both are environment-tunable for tests and for
+# deployments on slower storage.
+HEARTBEAT_INTERVAL_SECONDS = float(
+    os.getenv("CINEMORA_RUN_HEARTBEAT_SECONDS", "30") or 30
+)
+STALE_AFTER_SECONDS = float(
+    os.getenv("CINEMORA_RUN_STALE_SECONDS", "180") or 180
+)
+
+
+def current_worker_id() -> str:
+    """This process's worker identity: hostname:pid:random.
+
+    Generated lazily once per process, so every run a process
+    claims carries the same owner id, and two processes — including
+    two on one host — never share one.
+    """
+    global _WORKER_ID
+    if _WORKER_ID is None:
+        with _WORKER_ID_LOCK:
+            if _WORKER_ID is None:
+                _WORKER_ID = (
+                    f"{socket.gethostname()}:{os.getpid()}:"
+                    f"{uuid.uuid4().hex[:8]}"
+                )
+    return _WORKER_ID
+
+
+def _presence_payload(worker_id=None):
+    """The progress-JSON presence record stamped at claim/begin."""
+    now = _now().isoformat()
+    return {
+        "worker_id": worker_id or current_worker_id(),
+        "claimed_at": now,
+        "heartbeat_at": now,
+    }
+
+
+def _parse_timestamp(value):
+    """Parse an ISO timestamp / datetime into an aware datetime.
+
+    Naive values are read as UTC (SQLite round-trips DateTime
+    columns without tzinfo). Returns None for anything unparseable.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def run_presence(run) -> dict:
+    """Liveness view of a run dict (as returned by get_run).
+
+    Returns {"worker_id", "heartbeat_at", "age_seconds", "live"}:
+    the recorded owner, the freshest liveness timestamp (the
+    heartbeat when present, else started_at, else created_at —
+    the fallback chain rows predating presence are judged by),
+    its age in seconds at call time, and whether that evidence is
+    fresher than STALE_AFTER_SECONDS. A run with NO liveness
+    evidence at all reports age_seconds=None and live=False.
+    """
+    run = run or {}
+    progress = run.get("progress") or {}
+    worker_id = progress.get("worker_id")
+    heartbeat = _parse_timestamp(progress.get("heartbeat_at"))
+    if heartbeat is None:
+        heartbeat = _parse_timestamp(run.get("started_at"))
+    if heartbeat is None:
+        heartbeat = _parse_timestamp(run.get("created_at"))
+    if heartbeat is None:
+        return {
+            "worker_id": worker_id,
+            "heartbeat_at": None,
+            "age_seconds": None,
+            "live": False,
+        }
+    age = max(0.0, (_now() - heartbeat).total_seconds())
+    return {
+        "worker_id": worker_id,
+        "heartbeat_at": heartbeat.isoformat(),
+        "age_seconds": age,
+        "live": age <= STALE_AFTER_SECONDS,
+    }
+
+
+# ---------------------------------------------------------------------
 # Run lifecycle — creation / finishing (2A)
 # ---------------------------------------------------------------------
 
@@ -88,7 +212,11 @@ def _insert_run(project_id, script_text, options, status):
             project_id=str(project_id),
             status=status,
             stage=None,
-            progress=None,
+            # Stage 3 (R2): a run inserted directly in "running"
+            # (begin_run) is owned by this process from birth —
+            # stamp its presence so liveness tooling never has to
+            # guess. Queued runs are stamped at claim time instead.
+            progress=_presence_payload() if status == "running" else None,
             options=options or {},
             script_hash=digest,
             manifest_path=None,
@@ -329,52 +457,137 @@ def get_run(run_id):
 # ---------------------------------------------------------------------
 
 
+# Statuses that make a submission a duplicate of an existing run.
+# "awaiting_approval" is included beyond ACTIVE_STATUSES (Stage 3,
+# R2 / INT-103): a plan-gated run parked at the approval gate is
+# still THE active run for its project+script — the v1 route has
+# always guarded this itself (api_v1 checks all three statuses
+# before submitting), but a direct ledger caller could mint a
+# second run for a parked script and the two would collide on the
+# project's artefacts. The ledger now enforces what the route
+# assumed. ACTIVE_STATUSES itself is unchanged: other callers
+# (revision-render dedup) rely on its exact membership.
+DEDUP_STATUSES = ACTIVE_STATUSES + ("awaiting_approval",)
+
+
+class _SubmissionMutex:
+    """Cross-process mutex for submission check-then-insert (R2).
+
+    The dedup contract is "check for an active run, insert if none"
+    — two steps that race when two processes submit the same
+    project+script concurrently (DATA-005): both checks pass, both
+    insert, and two runs of one production exist. The atomic claim
+    cannot help there (the runs are different rows). Redis is the
+    one store every submitting process already shares (it carries
+    the queue itself), so the mutex is a Redis lock keyed by
+    project+script.
+
+    Fail-soft, like everything in this module: when Redis is
+    unreachable the submission proceeds WITHOUT the lock (with a
+    printed warning) — a Redis outage already fails the enqueue
+    that follows and marks the run failed; it must not also wedge
+    submission itself.
+    """
+
+    def __init__(self, key):
+        self._key = key
+        self._lock = None
+
+    def __enter__(self):
+        try:
+            from redis import Redis
+
+            connection = Redis.from_url(
+                os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+            lock = connection.lock(
+                self._key, timeout=30, blocking_timeout=10
+            )
+            if lock.acquire():
+                self._lock = lock
+            else:
+                print(
+                    "WARNING: submission mutex not acquired for "
+                    f"{self._key}; proceeding without it"
+                )
+        except Exception as error:
+            print(
+                "WARNING: submission mutex unavailable "
+                f"({error}); proceeding without it"
+            )
+        return self
+
+    def __exit__(self, *exc):
+        if self._lock is not None:
+            try:
+                self._lock.release()
+            except Exception:
+                pass
+            self._lock = None
+        return False
+
+
 def submit_production(project_id, script_text, options=None):
     """Submit a production, deduplicated (AUD-07).
 
-    If an ACTIVE run (queued or running) already exists for the same
+    If an ACTIVE run (queued, running, or parked in
+    awaiting_approval — DEDUP_STATUSES) already exists for the same
     project + same full script hash, that run is returned with
     deduplicated=True and NO new row is created — a double submission
     is one logical run. Otherwise a new "queued" run row is created.
-    Returns the run dict, or None when the ledger is unavailable.
+    The check and the insert run under a per-project+script Redis
+    mutex (Stage 3, R2) so concurrent submitters cannot both pass
+    the check. Returns the run dict, or None when the ledger is
+    unavailable.
     """
-    try:
-        from models import ProductionRun
-
-        digest = script_sha256(script_text)
-        db = _session()
+    digest = script_sha256(script_text)
+    with _SubmissionMutex(
+        f"cinemora:submit:{project_id}:{digest}"
+    ):
         try:
-            existing = (
-                db.query(ProductionRun)
-                .filter(
-                    ProductionRun.project_id == str(project_id),
-                    ProductionRun.script_hash == digest,
-                    ProductionRun.status.in_(ACTIVE_STATUSES),
+            from models import ProductionRun
+
+            db = _session()
+            try:
+                existing = (
+                    db.query(ProductionRun)
+                    .filter(
+                        ProductionRun.project_id == str(project_id),
+                        ProductionRun.script_hash == digest,
+                        ProductionRun.status.in_(DEDUP_STATUSES),
+                    )
+                    .order_by(ProductionRun.created_at.asc())
+                    .first()
                 )
-                .order_by(ProductionRun.created_at.asc())
-                .first()
-            )
-            if existing is not None:
-                return {
-                    "run_id": existing.id,
-                    "project_id": existing.project_id,
-                    "status": existing.status,
-                    "script_hash": existing.script_hash,
-                    "deduplicated": True,
-                }
-        finally:
-            db.close()
-    except Exception as error:
-        print(f"WARNING: run ledger dedup check failed: {error}")
-        return None
-    return _insert_run(project_id, script_text, options, "queued")
+                if existing is not None:
+                    return {
+                        "run_id": existing.id,
+                        "project_id": existing.project_id,
+                        "status": existing.status,
+                        "script_hash": existing.script_hash,
+                        "deduplicated": True,
+                    }
+            finally:
+                db.close()
+        except Exception as error:
+            print(f"WARNING: run ledger dedup check failed: {error}")
+            return None
+        return _insert_run(project_id, script_text, options, "queued")
 
 
-def _claim_row(row_id, from_statuses=("queued",)):
+def _claim_row(row_id, from_statuses=("queued",), worker_id=None):
     """Atomically move one run to running (conditional UPDATE
     guarded on the expected status — exactly one claimant can win).
     The default claim source is 'queued'; the Stage 4 plan-approval
-    release claims from 'awaiting_approval' instead."""
+    release claims from 'awaiting_approval' instead.
+
+    Stage 3 (R2): the SAME atomic UPDATE also stamps the winner's
+    presence (progress JSON: worker_id / claimed_at / heartbeat_at),
+    so ownership is recorded by the very write that grants it — a
+    run can never be running without a recorded owner, and a losing
+    claimant can never overwrite the winner's stamp."""
     from models import ProductionRun
     from sqlalchemy import update
 
@@ -386,7 +599,11 @@ def _claim_row(row_id, from_statuses=("queued",)):
                 ProductionRun.id == row_id,
                 ProductionRun.status.in_(tuple(from_statuses)),
             )
-            .values(status="running", started_at=_now())
+            .values(
+                status="running",
+                started_at=_now(),
+                progress=_presence_payload(worker_id),
+            )
         )
         db.commit()
         return result.rowcount == 1
@@ -394,15 +611,21 @@ def _claim_row(row_id, from_statuses=("queued",)):
         db.close()
 
 
-def claim_run(run_id, from_statuses=("queued",)):
+def claim_run(run_id, from_statuses=("queued",), worker_id=None):
     """Claim a specific queued run (used when an enqueue carries its
     run_id). Returns the run dict when this caller won the claim,
-    else None (already claimed / cancelled / finished / unknown)."""
+    else None (already claimed / cancelled / finished / unknown).
+    The winner's worker identity (default: this process's) is
+    recorded on the run by the claim itself."""
     if not run_id:
         return None
     for attempt in range(3):
         try:
-            if _claim_row(str(run_id), from_statuses=from_statuses):
+            if _claim_row(
+                str(run_id),
+                from_statuses=from_statuses,
+                worker_id=worker_id,
+            ):
                 return get_run(run_id)
             return None
         except Exception as error:
@@ -414,6 +637,95 @@ def claim_run(run_id, from_statuses=("queued",)):
             print(f"WARNING: run claim failed: {error}")
             return None
     return None
+
+
+def _touch_run(run_id, worker_id=None):
+    """Heartbeat write. Returns "ok" (beat recorded), "done" (the
+    run is no longer running, or is owned by a DIFFERENT worker —
+    this caller must stop beating for it), or "error" (transient
+    ledger problem; the caller should beat again next interval).
+
+    Ownership is enforced here, not just recorded: a heartbeat from
+    a worker that does not own the run is refused, so a second
+    worker can never keep another worker's run alive — or claim it
+    by beating for it.
+    """
+    if not run_id:
+        return "done"
+    try:
+        from models import ProductionRun
+
+        db = _session()
+        try:
+            row = db.get(ProductionRun, str(run_id))
+            if row is None or row.status != "running":
+                return "done"
+            progress = dict(row.progress or {})
+            owner = progress.get("worker_id")
+            caller = worker_id or current_worker_id()
+            if owner is not None and owner != caller:
+                return "done"
+            progress["worker_id"] = caller
+            if not progress.get("claimed_at"):
+                progress["claimed_at"] = _now().isoformat()
+            progress["heartbeat_at"] = _now().isoformat()
+            row.progress = progress
+            db.commit()
+            return "ok"
+        finally:
+            db.close()
+    except Exception as error:
+        print(f"WARNING: run heartbeat failed: {error}")
+        return "error"
+
+
+def touch_run(run_id, worker_id=None) -> bool:
+    """Record a heartbeat for a running run owned by this worker.
+
+    Returns True when the beat was recorded. False means the run is
+    finished/cancelled, owned by another worker, unknown, or the
+    ledger is unavailable — callers treat False as "stop beating",
+    never as an error worth failing a production over (fail-soft).
+    """
+    return _touch_run(run_id, worker_id=worker_id) == "ok"
+
+
+def start_heartbeat(run_id, interval_seconds=None):
+    """Start the daemon heartbeat thread for one run's execution.
+
+    Beats every interval (default HEARTBEAT_INTERVAL_SECONDS) until
+    the run leaves "running" or another worker owns it. Transient
+    ledger errors do NOT stop the thread — a beat is retried at the
+    next interval, because a heartbeat that dies on the first DB
+    hiccup would leave a live run looking orphaned. The thread is a
+    daemon: it never blocks process exit. Returns the thread, or
+    None when no run_id was given.
+    """
+    if not run_id:
+        return None
+    interval = (
+        HEARTBEAT_INTERVAL_SECONDS
+        if interval_seconds is None
+        else float(interval_seconds)
+    )
+
+    def _beat():
+        while True:
+            time.sleep(interval)
+            try:
+                outcome = _touch_run(run_id)
+            except Exception:
+                outcome = "error"
+            if outcome == "done":
+                return
+
+    thread = threading.Thread(
+        target=_beat,
+        name=f"run-heartbeat-{run_id}",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def claim_next_run():
@@ -482,21 +794,77 @@ def is_cancel_requested(run_id):
     return bool(run["cancel_requested"]) or run["status"] == "cancelled"
 
 
-def reconcile_stale_runs():
-    """Mark every run still recorded as "running" as failed with
-    error "interrupted" (AUD-08 recovery). Called at worker startup:
-    a freshly started process owns no running runs, so any "running"
-    row is an orphan of a dead process. Returns the count reconciled
-    (0 when the ledger is unavailable)."""
+def reconcile_stale_runs(stale_after_seconds=None):
+    """Mark orphaned "running" runs failed with error "interrupted"
+    (AUD-08 recovery). Returns the count reconciled (0 when the
+    ledger is unavailable).
+
+    Two modes, deliberately distinct (Stage 3, R2 — PIPE-005 /
+    DATA-005):
+
+    - stale_after_seconds=None — TOTAL reconciliation, the original
+      AUD-08 semantics: EVERY running run is failed. This is only
+      sound for a caller that has PROVEN no other worker is live —
+      worker.py's startup, which runs it only after acquiring the
+      worker singleton lock: holding that lock is the proof that
+      any running row is an orphan of a dead predecessor.
+
+    - stale_after_seconds=N — HEARTBEAT-AWARE reconciliation, the
+      only mode a caller without that proof may use (the worker's
+      periodic reconciler): a running run is failed ONLY when its
+      liveness evidence — heartbeat_at, falling back to started_at
+      / created_at for rows predating presence — is older than N
+      seconds. A run with a live heartbeat is NEVER touched, so a
+      live worker's in-flight production cannot be failed out from
+      under it by another process's housekeeping.
+    """
     try:
         from models import ProductionRun
         from sqlalchemy import update
 
         db = _session()
         try:
+            if stale_after_seconds is None:
+                result = db.execute(
+                    update(ProductionRun)
+                    .where(ProductionRun.status == "running")
+                    .values(
+                        status="failed",
+                        error="interrupted",
+                        finished_at=_now(),
+                    )
+                )
+                db.commit()
+                return int(result.rowcount or 0)
+
+            rows = (
+                db.query(ProductionRun)
+                .filter(ProductionRun.status == "running")
+                .all()
+            )
+            stale_ids = []
+            for row in rows:
+                presence = run_presence(
+                    {
+                        "progress": row.progress,
+                        "started_at": row.started_at,
+                        "created_at": row.created_at,
+                    }
+                )
+                age = presence["age_seconds"]
+                if age is None or age > float(stale_after_seconds):
+                    stale_ids.append(row.id)
+            if not stale_ids:
+                return 0
             result = db.execute(
                 update(ProductionRun)
-                .where(ProductionRun.status == "running")
+                .where(
+                    ProductionRun.id.in_(stale_ids),
+                    # Re-guard on the status inside the UPDATE: a run
+                    # that finished between the scan and the write
+                    # must not be overwritten.
+                    ProductionRun.status == "running",
+                )
                 .values(
                     status="failed",
                     error="interrupted",
@@ -1484,53 +1852,58 @@ def submit_revision_render(project_id, script_text, revision_id,
     Deduplicated per revision: an ACTIVE render run (queued or
     running) for the same revision is returned instead of queueing
     a second one. The run's options carry kind="revision_render" so
-    lifecycle tooling can tell renders from productions. Returns
-    the run dict (with deduplicated flag), or None when the ledger
-    is unavailable — the caller must then refuse the render rather
-    than run it unrecorded."""
-    try:
-        from models import ProductionRun
-
-        db = _session()
+    lifecycle tooling can tell renders from productions. The check
+    and the insert run under the same per-project mutex as
+    submit_production (Stage 3, R2). Returns the run dict (with
+    deduplicated flag), or None when the ledger is unavailable —
+    the caller must then refuse the render rather than run it
+    unrecorded."""
+    with _SubmissionMutex(
+        f"cinemora:submit:{project_id}:revision:{revision_id}"
+    ):
         try:
-            active = (
-                db.query(ProductionRun)
-                .filter(
-                    ProductionRun.project_id == str(project_id),
-                    ProductionRun.status.in_(ACTIVE_STATUSES),
+            from models import ProductionRun
+
+            db = _session()
+            try:
+                active = (
+                    db.query(ProductionRun)
+                    .filter(
+                        ProductionRun.project_id == str(project_id),
+                        ProductionRun.status.in_(ACTIVE_STATUSES),
+                    )
+                    .order_by(ProductionRun.created_at.asc())
+                    .all()
                 )
-                .order_by(ProductionRun.created_at.asc())
-                .all()
-            )
-            for row in active:
-                options = row.options or {}
-                if (
-                    options.get("kind") == "revision_render"
-                    and str(options.get("revision_id")) == str(revision_id)
-                ):
-                    return {
-                        "run_id": row.id,
-                        "project_id": row.project_id,
-                        "status": row.status,
-                        "script_hash": row.script_hash,
-                        "deduplicated": True,
-                    }
-        finally:
-            db.close()
-    except Exception as error:
-        print(f"WARNING: revision render dedup check failed: {error}")
-        return None
-    return _insert_run(
-        project_id,
-        script_text,
-        {
-            "kind": "revision_render",
-            "revision_id": str(revision_id),
-            "source_run_id": str(source_run_id),
-            "entrypoint": "editor_render",
-        },
-        "queued",
-    )
+                for row in active:
+                    options = row.options or {}
+                    if (
+                        options.get("kind") == "revision_render"
+                        and str(options.get("revision_id")) == str(revision_id)
+                    ):
+                        return {
+                            "run_id": row.id,
+                            "project_id": row.project_id,
+                            "status": row.status,
+                            "script_hash": row.script_hash,
+                            "deduplicated": True,
+                        }
+            finally:
+                db.close()
+        except Exception as error:
+            print(f"WARNING: revision render dedup check failed: {error}")
+            return None
+        return _insert_run(
+            project_id,
+            script_text,
+            {
+                "kind": "revision_render",
+                "revision_id": str(revision_id),
+                "source_run_id": str(source_run_id),
+                "entrypoint": "editor_render",
+            },
+            "queued",
+        )
 
 
 # ---------------------------------------------------------------------

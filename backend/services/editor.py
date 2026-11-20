@@ -2793,6 +2793,11 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
             _update_row_status(project_id, revision_id, "draft")
         return {"status": status or "not_claimed", "run_id": run_id}
 
+    # Stage 3 (R2): heartbeat for the render run while it executes,
+    # exactly as for production runs in jobs — self-terminating when
+    # the run leaves "running", fail-soft throughout.
+    run_ledger.start_heartbeat(run_id)
+
     def _cancel_check():
         if run_ledger.is_cancel_requested(run_id):
             raise _RenderCancelled()
