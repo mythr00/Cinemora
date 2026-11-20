@@ -397,13 +397,36 @@ def _audit_verdict(asset_report):
             "verified visual (reported, never substituted)"
         )
 
-    return {
+    verdict = {
         "passed": not failures,
         "evaluated": True,
         "failures": failures,
         "warnings": warnings,
         "checks": checks,
     }
+    # Phase 3: when the report embeds a visual-quality measurement,
+    # attach the three separate verdicts (integrity / quality /
+    # reliability). "passed" above remains the integrity verdict —
+    # a quality FAIL never rewrites it, and a quality warning never
+    # bypasses an integrity failure.
+    if isinstance(asset_report.get("visual_quality"), dict):
+        try:
+            from services.quality_verdict import (
+                composite_quality_verdict,
+                integrity_verdict,
+                reliability_verdict,
+            )
+        except ImportError:  # direct-module import context
+            from quality_verdict import (  # type: ignore
+                composite_quality_verdict,
+                integrity_verdict,
+                reliability_verdict,
+            )
+        measurement = asset_report["visual_quality"]
+        verdict["quality"] = composite_quality_verdict(measurement, asset_report)
+        verdict["integrity"] = integrity_verdict(verdict)
+        verdict["reliability"] = reliability_verdict(measurement, asset_report)
+    return verdict
 
 
 def validate_final_video(
@@ -478,6 +501,14 @@ def validate_final_video(
     # the technical checks pass — callers (jobs.py) honour it by
     # recording the production as failed when it does not pass.
     result["verdict"] = _audit_verdict(asset_report)
+    _quality = result["verdict"].get("quality") if isinstance(result["verdict"], dict) else None
+    if isinstance(_quality, dict) and _quality.get("verdict") is not None:
+        print()
+        print(f"QUALITY VERDICT: {_quality['verdict']}")
+        for _reason in _quality.get("fail_reasons") or []:
+            print(f"  - FAIL: {_reason}")
+        for _reason in _quality.get("warning_reasons") or []:
+            print(f"  - WARNING: {_reason}")
     if result["verdict"]["warnings"]:
         print()
         print("!" * 70)

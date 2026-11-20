@@ -136,6 +136,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     missing_visuals: list = []
     rejection_reasons: Counter = Counter()
     discovery_failures: list = []
+    discovery_failures_collected = False
     recovery_attempts: list = []
     candidate_records: list = []
 
@@ -143,6 +144,8 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         if not isinstance(scene, dict):
             continue
         scene_stats = scene.get("asset_stats") or {}
+        if "discovery_failures" in scene_stats:
+            discovery_failures_collected = True
         for key in ("candidates_considered", "candidates_rejected", "downloads_failed"):
             try:
                 stats[key] += int(scene_stats.get(key) or 0)
@@ -522,6 +525,12 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "download_failures": download_failures,
         "rejection_reasons": dict(rejection_reasons),
         "discovery_failures": discovery_failures,
+        # Phase 3 zero-vs-unknown: "recorded" only when at least one
+        # scene's asset_stats actually carried the discovery_failures
+        # key (even empty); otherwise the collection never happened.
+        "discovery_failures_state": (
+            "recorded" if discovery_failures_collected else "not_collected"
+        ),
         "recovery_attempts": recovery_attempts,
         "coverage": coverage,
         "rights": rights,

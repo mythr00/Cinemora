@@ -10,8 +10,8 @@ fixtures.
 
 Beat registry B01-B13 and misleading-candidate registry M01-M12 from
 the test specification are represented by the factories below plus the
-named builders in MISLEADING; only the entries the Phase 1/2 tests use
-are materialised.
+named builders in MISLEADING; Phase 4 materialised the remaining
+M02/M04-M09/M12 factories.
 """
 
 from services import story_understanding as story
@@ -119,6 +119,106 @@ def _m01_wrong_person():
     )
 
 
+def _m02_right_country_wrong_event():
+    """M02: right place + era + broad topic, WRONG event — a campus
+    fire/protest in the same city and year as the arrest beat. Event
+    tokens for the required event are absent, so it must score below
+    (and never be selected over) the correct-event candidate."""
+    return candidate(
+        title="Campus fire protest in Moscow, Idaho, 2022",
+        snippet="Fire crews and a protest outside a house in Moscow in 2022",
+        description="fire protest house Moscow 2022",
+        url="https://www.youtube.com/watch?v=WRONGEVEN2",
+        video_url="https://www.youtube.com/watch?v=WRONGEVEN2",
+    )
+
+
+def _m04_generic_stock():
+    """M04: generic stock-style footage — a topical token or two
+    (police) but NO subject, place or event tokens. Fails the gate
+    for a named-person beat and can never be direct evidence."""
+    return candidate(
+        title="Police cars on a night street",
+        snippet="Police cars patrol a city street at night",
+        description="police cars street night",
+        url="https://www.youtube.com/watch?v=GENERIC001",
+        video_url="https://www.youtube.com/watch?v=GENERIC001",
+    )
+
+
+def _m05_wrong_era():
+    """M05: right person, right place, right event — era decades
+    off (1985 for a 2022 beat). A positive date contradiction."""
+    return candidate(
+        title="Bryan Kohberger arrest in Moscow, Idaho, 1985",
+        snippet="Police arrest Bryan Kohberger outside the house in Moscow in 1985",
+        description="Arrest police house Moscow 1985",
+        url="https://www.youtube.com/watch?v=WRONGERA01",
+        video_url="https://www.youtube.com/watch?v=WRONGERA01",
+    )
+
+
+def _m06_high_quality_unrelated():
+    """M06: high-quality unrelated video — long duration, prestige
+    source domain, zero topical/subject/place/event tokens. Source
+    quality and production polish must not rescue irrelevance."""
+    return candidate(
+        title="Ocean giants: a prestige nature documentary",
+        snippet="Award winning ocean documentary in high resolution",
+        description="ocean whales documentary",
+        url="https://www.bbc.co.uk/programmes/ocean1",
+        video_url="https://www.bbc.co.uk/programmes/ocean1",
+        source="bbc.co.uk",
+        provider="bbc.co.uk",
+        duration_seconds=3600,
+        duration="60:00",
+    )
+
+
+def _m07_unknown_rights():
+    """M07: fully relevant candidate whose licence is honestly
+    "unknown" (the candidate() default). Selected under allow_all
+    and recorded "unknown" — never upgraded, never blocked."""
+    return candidate()
+
+
+def _m08_failing_verification():
+    """M08: metadata-relevant long video whose segment evidence is
+    "none" (no timed evidence for the chosen window). This is the
+    post-segment-evidence shape: it models the state the segment
+    stage stamps, not a discovery record, and such an asset must
+    never reach a timeline as verified segment evidence."""
+    return candidate(
+        segment_evidence="none",
+        duration_seconds=3600,
+        duration="60:00",
+        url="https://www.youtube.com/watch?v=NOEVIDENC1",
+        video_url="https://www.youtube.com/watch?v=NOEVIDENC1",
+    )
+
+
+def _m09_contextual_only():
+    """M09: contextual-only asset — era/place-related to the arrest
+    beat (Moscow, Idaho, 2022) and verifiable against a PLACE beat,
+    but it names no required person/event, so for the person beat it
+    is usable only as labelled contextual/rotation material."""
+    return candidate(
+        title="Moscow, Idaho in 2022",
+        snippet="Views of Moscow, Idaho streets and police house in 2022",
+        description="Moscow streets 2022",
+        url="https://www.youtube.com/watch?v=CONTEXT001",
+        video_url="https://www.youtube.com/watch?v=CONTEXT001",
+    )
+
+
+def _m12_duplicate_segment():
+    """M12: duplicate-segment candidate — the SAME canonical video
+    as candidate() (VALIDID001) with a clip_start overlapping the
+    first segment's 0-8s range. The registry must block the overlap
+    while allowing a non-overlapping second segment."""
+    return candidate(clip_start=4, duration_seconds=8)
+
+
 def _m03_wrong_date():
     """M03: right event keywords, explicit contradictory year."""
     return candidate(
@@ -150,15 +250,27 @@ def _m11_banned_provider():
 
 MISLEADING = {
     "M01": _m01_wrong_person,
+    "M02": _m02_right_country_wrong_event,
     "M03": _m03_wrong_date,
+    "M04": _m04_generic_stock,
+    "M05": _m05_wrong_era,
+    "M06": _m06_high_quality_unrelated,
+    "M07": _m07_unknown_rights,
+    "M08": _m08_failing_verification,
+    "M09": _m09_contextual_only,
     "M10": _m10_same_video_other_spelling,
     "M11": _m11_banned_provider,
+    "M12": _m12_duplicate_segment,
 }
 
 BEATS = {
     "B01": "named person, exact (scenario()/shot_need() defaults)",
     "B02": "historical event, exact (scenario with era)",
+    "B03": "location, exact (scenario subject_id='moscow_idaho')",
+    "B04": "date/timeline beat (targeted-graphics path)",
     "B08": "broad context / generic (scenario(specificity='generic'))",
     "B09": "scarce-footage beat (recovery tests in test_degraded_states)",
+    "B10": "stills-appropriate beat (format_intent photograph)",
+    "B11": "moving-footage-required beat (format_intent footage)",
     "B12": "no-acceptable-media beat (pool of misleading candidates only)",
 }

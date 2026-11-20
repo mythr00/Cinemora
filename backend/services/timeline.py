@@ -7,6 +7,11 @@ try:
 except ImportError:  # flat-layout fallback
     import media_paths
 
+try:
+    from services import run_context
+except ImportError:  # flat-layout fallback
+    import run_context
+
 
 # ============================================================
 # CONFIGURATION
@@ -104,6 +109,47 @@ def visual_exists(visual):
         return False
 
 
+def _recorded_stamp(record, key):
+    """A provenance stamp recorded on an asset record, normalised
+    to a non-empty string, or None when the record carries none."""
+    value = record.get(key)
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def _foreign_provenance(visual):
+    """Plan §3.3 item 1 (test 18): True when the asset's RECORDED
+    run or project provenance positively mismatches the current
+    run — the asset was produced under another production run's
+    contract, and its verification does not transfer to this run.
+
+    Positive-mismatch rule, mirroring the contradiction doctrine:
+    a MISSING stamp is not a mismatch. Pipeline-produced assets and
+    legacy/stored records carry no run stamp and are judged by the
+    other eligibility rules exactly as before; only a stamp that is
+    present AND different from the current run's identity (the
+    active RunContext) marks the asset foreign."""
+    try:
+        ctx = run_context.current_context()
+    except Exception:
+        return False
+    if ctx is None:
+        return False
+    run_stamp = _recorded_stamp(visual, "run_id")
+    if run_stamp is not None:
+        current_run = getattr(ctx, "run_id", None)
+        if current_run is None or run_stamp != str(current_run):
+            return True
+    project_stamp = _recorded_stamp(visual, "project_id")
+    if project_stamp is not None:
+        current_project = getattr(ctx, "project_id", None)
+        if current_project is None or project_stamp != str(current_project):
+            return True
+    return False
+
+
 def timeline_eligible(visual):
     """MA-36/MA-37: may this visual appear on screen at all?
 
@@ -111,6 +157,10 @@ def timeline_eligible(visual):
     the rotation pool and the legacy fallback:
 
     - an asset with a recorded download failure is out;
+    - an asset whose recorded run/project provenance belongs to a
+      different production run is out (plan §3.3 item 1): its
+      verification was earned under another run's contract and does
+      not transfer;
     - a generated motion graphic is eligible as its own honestly
       labelled class (it never claims to be verified footage);
     - any other asset needs a verification record carrying an
@@ -125,6 +175,9 @@ def timeline_eligible(visual):
         return False
 
     if visual.get("_download_error"):
+        return False
+
+    if _foreign_provenance(visual):
         return False
 
     if visual.get("motion_graphic") or visual.get("generated"):

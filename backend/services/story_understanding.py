@@ -1062,6 +1062,7 @@ ACCEPT_THRESHOLD = {"exact": 0.55, "representative": 0.34, "generic": 0.22}
 _BANNED_PROVIDERS = frozenset({"pex" + "els", "pixa" + "bay"})
 
 BANNED_PROVIDER_REASON = "banned_provider"
+FOREIGN_PROVENANCE_REASON = "foreign_provenance"
 CONTRADICTORY_PERSON = "contradictory_person"
 CONTRADICTORY_DATE = "contradictory_date"
 CONTRADICTORY_PLACE = "contradictory_place"
@@ -1099,6 +1100,57 @@ def is_banned_provider(candidate):
     # banned provider's domain used as the source label).
     head = re.split(r"[\s./]", provider)[0]
     return head in _BANNED_PROVIDERS
+
+
+def candidate_project_id(candidate):
+    """The project identity RECORDED on a candidate record, or None.
+
+    Discovery candidates produced by the current run's own search
+    carry no project stamp — a stamp exists only on records that
+    were produced or stored under some project/run context (asset
+    records, cached records, hand-built injections)."""
+    if not isinstance(candidate, dict):
+        return None
+    value = candidate.get("project_id")
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def _current_project_id():
+    """The project the CURRENT run belongs to (the active
+    RunContext), or None when no production run is active."""
+    try:
+        from services import run_context
+    except ImportError:  # flat-layout fallback
+        import run_context
+    try:
+        ctx = run_context.current_context()
+    except Exception:
+        return None
+    project_id = getattr(ctx, "project_id", None)
+    return str(project_id) if project_id is not None else None
+
+
+def is_foreign_provenance(candidate):
+    """True when the candidate's RECORDED project identity positively
+    mismatches the current run's project (plan §3.3 item 1: wrong
+    project / production is a hard rejection, tests 17-18).
+
+    Positive-mismatch rule, mirroring the contradiction doctrine: a
+    MISSING stamp is not a mismatch — unstamped discovery candidates
+    and legacy/stored records are judged on their other signals. A
+    stamp that is present and differs from the current run's project
+    is foreign. When no run is active the current project is unknown,
+    and a stamped record cannot be shown to belong to the chain being
+    built either: provenance stamps are only ever written by a
+    project/run context, so a present stamp is foreign to an
+    unstamped discovery chain."""
+    stamp = candidate_project_id(candidate)
+    if stamp is None:
+        return False
+    return stamp != _current_project_id()
 
 
 def extract_years(text):
@@ -1268,6 +1320,20 @@ def verify_candidate(candidate, scenario, bible):
             "reasons": [f"banned provider {candidate_provider(candidate)}"],
             "contributions": {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0},
             "rejection_reason": BANNED_PROVIDER_REASON,
+        }
+
+    # Plan §3.3 item 1 (tests 17-18): a candidate whose recorded
+    # project provenance belongs to another project is rejected by
+    # the verification chain itself, whatever seam produced it and
+    # however relevant its metadata looks — acceptance earned under
+    # another project's contract does not transfer.
+    if is_foreign_provenance(candidate):
+        return {
+            "accepted": False,
+            "score": 0.0,
+            "reasons": [f"foreign provenance {candidate_project_id(candidate)}"],
+            "contributions": {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0},
+            "rejection_reason": FOREIGN_PROVENANCE_REASON,
         }
 
     text = _norm(" ".join(str(candidate.get(k) or "") for k in ("title", "snippet", "description", "url", "source")))

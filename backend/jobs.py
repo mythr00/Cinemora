@@ -25,6 +25,8 @@ from services.asset_report import (
     write_rights_manifest,
 )
 from services.visual_registry import reset_registry
+from services import production_report as production_report_service
+from services import visual_quality as visual_quality_service
 
 from services import genre_packs
 from services import media_paths
@@ -1454,7 +1456,6 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             final_audio=final_audio_measurement,
             audio_provenance=audio_provenance,
         )
-        write_asset_report(project_dir, asset_report)
 
         rights_manifest = build_rights_manifest(
             processed_scenes,
@@ -1484,6 +1485,74 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             f"substitutions={asset_report['substitutions']} "
             f"authentic={asset_report['authentic']}"
         )
+
+        # ----------------------------------------------
+        # Phase 3: visual-quality measurement + reconciling
+        # production report. Fail-soft by design — measurement must
+        # never break a render — but a failure to measure is VISIBLE
+        # in the report (visual_quality_error), never silent. The
+        # single write_asset_report for this run happens after the
+        # embedding so asset_report.json carries the new keys. A
+        # quality FAIL is reported, not converted into a run
+        # failure (run-completion semantics are unchanged).
+        # ----------------------------------------------
+        try:
+            _mg_record = None
+            _mg_file = project_dir / "motion_graphics" / "motion_graphics.json"
+            if _mg_file.exists():
+                try:
+                    _mg_record = json.loads(
+                        _mg_file.read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError):
+                    _mg_record = None
+            _measurement = visual_quality_service.measure_visual_quality(
+                timeline=timeline_result,
+                asset_report=asset_report,
+                rights_manifest=rights_manifest,
+                motion_graphics=_mg_record,
+                run_manifest_present=(project_dir / "run_manifest.json").exists(),
+                project_id=project_id,
+                project_dir=str(project_dir),
+            )
+            _production_report = production_report_service.build_production_report(
+                measurement=_measurement,
+                asset_report=asset_report,
+                timeline=timeline_result,
+                rights_manifest=rights_manifest,
+                renderer_audit=renderer_audit,
+                run_ledger_summary={
+                    "state": "unavailable",
+                    "note": "run ledger is written after the final audit in this flow",
+                },
+                revision_summary={
+                    "state": "unavailable",
+                    "note": "no revision records exist at production time",
+                },
+            )
+            asset_report["visual_quality"] = _measurement
+            asset_report["quality_verdicts"] = _production_report["verdicts"]
+            (project_dir / "visual_quality.json").write_text(
+                json.dumps(_measurement, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (project_dir / "production_report.json").write_text(
+                json.dumps(_production_report, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            print(
+                "Production report: quality verdict "
+                f"{(_production_report['verdicts'].get('quality') or {}).get('verdict')}"
+            )
+        except Exception as _measure_error:
+            asset_report["visual_quality_error"] = (
+                f"{type(_measure_error).__name__}: {_measure_error}"
+            )
+            print(
+                "WARNING: visual-quality measurement failed and was "
+                f"recorded in the asset report: {_measure_error}"
+            )
+        write_asset_report(project_dir, asset_report)
 
         # ----------------------------------------------
         # Final audit
@@ -1596,6 +1665,8 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                     "documentary_final_output.mp4",
                     "asset_report.json",
                     "rights_manifest.json",
+                    "visual_quality.json",
+                    "production_report.json",
                     "production_state.json",
                     "pipeline_result.json",
                 )

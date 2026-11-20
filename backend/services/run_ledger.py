@@ -579,6 +579,34 @@ def _timeline_items(timeline):
     return collected
 
 
+def _foreign_to_run(asset, project_id, own_run_stamps):
+    """Plan §3.3 item 1 (test 18, ledger leg): True when an asset in
+    a run's scene aggregates carries RECORDED provenance that
+    positively mismatches the run being recorded — a project stamp
+    naming a different project, or a run stamp absent from the run
+    identities this run's own sentence assignments carry
+    (own_run_stamps). Such an asset was produced by another project
+    or production run; its acceptance does not transfer, so it must
+    not be recorded as this run's decision.
+
+    Positive-mismatch rule: a MISSING stamp is not a mismatch.
+    Pipeline-produced assets and legacy/stored records carry no
+    stamps and are recorded exactly as before; when no sentence
+    assignment carries a run stamp, no run identity is established
+    and no asset is excluded on run grounds."""
+    if not isinstance(asset, dict):
+        return False
+    project_stamp = asset.get("project_id")
+    if project_stamp is not None and str(project_stamp).strip():
+        if str(project_stamp).strip() != str(project_id):
+            return True
+    run_stamp = asset.get("run_id")
+    if run_stamp is not None and str(run_stamp).strip():
+        if own_run_stamps and str(run_stamp).strip() not in own_run_stamps:
+            return True
+    return False
+
+
 def record_decisions(run_id, project_id, asset_report, timeline,
                      processed_scenes=None):
     """Translate a built asset report (+ timeline) into ledger rows.
@@ -625,6 +653,34 @@ def record_decisions(run_id, project_id, asset_report, timeline,
             accepted: list[tuple[dict, object, list]] = []
             if processed_scenes is not None:
                 by_path: dict[str, tuple[dict, object, list]] = {}
+                # Plan §3.3 item 1 (test 18, ledger leg): the run
+                # identities this run's OWN sentence assignments
+                # carry, collected across every scene before any
+                # aggregate is read — the reference the aggregate
+                # guard (_foreign_to_run) judges foreign run stamps
+                # against. Empty when no assignment is stamped (the
+                # normal pipeline shape), which disables the guard.
+                own_run_stamps: set = set()
+                for _scene in processed_scenes or []:
+                    if not isinstance(_scene, dict):
+                        continue
+                    _sentences = _scene.get("sentences")
+                    if not _sentences:
+                        _sentences = (
+                            (_scene.get("scene") or {}).get("sentences")
+                            or []
+                        )
+                    for _sentence in _sentences:
+                        if not isinstance(_sentence, dict):
+                            continue
+                        for _asset in (
+                            list(_sentence.get("videos") or [])
+                            + list(_sentence.get("images") or [])
+                        ):
+                            if isinstance(_asset, dict):
+                                _stamp = _asset.get("run_id")
+                                if _stamp is not None and str(_stamp).strip():
+                                    own_run_stamps.add(str(_stamp).strip())
                 for scene in processed_scenes or []:
                     if not isinstance(scene, dict):
                         continue
@@ -669,6 +725,8 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                         + list(scene.get("images") or [])
                     ):
                         if not isinstance(asset, dict):
+                            continue
+                        if _foreign_to_run(asset, project_id, own_run_stamps):
                             continue
                         path = str(
                             asset.get("file_path")

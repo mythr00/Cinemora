@@ -384,3 +384,101 @@ def test_16_recovered_candidates_pass_the_same_verification_chain():
     scored = mp._uve_verify_all(
         [fx.candidate()], fx.scenario(), fx.bible(), shot_need=fx.shot_need())
     assert (scored[0].get("verification") or {}).get("accepted") is True
+
+# ------------------------------------------------------------ test 12
+
+def test_12_no_acceptable_media_beat_records_honest_gap(tmp_path, monkeypatch):
+    """Required test 12 (honest-gap behaviour; DM-08/DM-09 family):
+    B12 — a beat whose pool is ONLY misleading candidates (M01 wrong
+    person, M04 generic stock, M06 high-quality unrelated) — ends
+    with NO accepted asset, a missing_visuals record for EVERY
+    sentence of the beat carrying the typed outcome reason
+    "no_verified_asset", zero text cards and zero placeholder clips,
+    and the asset report shows the gap. The renderer/timeline legs
+    of this honesty contract are pinned by
+    test_no_placeholders::test_renderer_refuses_when_scene_has_no_genuine_media
+    and test_degraded_timeline::test_no_visuals_produces_no_items_and_no_placeholder;
+    the renderer leg below ties the same loud failure to THIS beat's
+    scene shape."""
+    import uuid
+
+    import pytest
+
+    from services import renderer
+    from services.asset_report import build_asset_report
+
+    sentences = [
+        {"sentence_number": 1,
+         "text": "Police arrested Bryan Kohberger in Moscow in 2022."},
+        {"sentence_number": 2,
+         "text": "The arrest closed the search for the suspect."},
+    ]
+    beat = {
+        "beat_id": "beat_12", "subject_id": "bryan_kohberger",
+        "place": "Moscow, Idaho", "searchable": True, "role": "event",
+        "sentence_numbers": [1, 2], "sentences": sentences,
+        "text": " ".join(s["text"] for s in sentences),
+        "shot_needs": [fx.shot_need()],
+    }
+    pool_factories = (
+        fx.MISLEADING["M01"], fx.MISLEADING["M04"], fx.MISLEADING["M06"],
+    )
+
+    def fake_search(scenario, cache, pid, shot_need=None):
+        pool = [factory() for factory in pool_factories]
+        return (pool, [], [])
+
+    monkeypatch.setattr(mp, "build_story_beats", lambda s, b: [beat])
+    monkeypatch.setattr(mp, "_load_case_bible", lambda s, p: fx.bible())
+    monkeypatch.setattr(mp, "_beat_scenarios", lambda b: [fx.scenario()])
+    monkeypatch.setattr(mp, "_uve_scenario_search", fake_search)
+
+    scene = {
+        "scene_number": 1,
+        "project_id": f"b12-{uuid.uuid4()}",
+        "sentences": sentences,
+    }
+    result = mp._uve_process_scene_media(scene, str(tmp_path))
+
+    # No asset was accepted — for the scene or for any sentence.
+    assert result["videos"] == [] and result["images"] == []
+    for sentence in result["sentences"]:
+        assert not sentence.get("videos") and not sentence.get("images")
+
+    stats = result["asset_stats"]
+    # One typed missing-visual record per sentence of the beat.
+    missing = stats["missing_visuals"]
+    assert [m["sentence_number"] for m in missing] == [1, 2]
+    for record in missing:
+        assert record["reason"] == "no_verified_asset"
+        assert record["specificity"] == "exact"
+        assert record["recovery_rounds"] >= 1  # recovery ran first
+    # Nothing fabricated anywhere.
+    assert stats["text_cards"] == 0
+    assert not list(tmp_path.rglob("card_*.jpg"))
+
+    report = build_asset_report(
+        [result], renderer_audit={"placeholder_count": 0},
+    )
+    assert report["placeholder_clips"] == 0
+    assert report["text_cards"] == 0
+    assert report["total_accepted_assets"] == 0
+    # Genuine coverage shows the gap, by sentence number.
+    assert report["missing_visual_count"] == 2
+    assert [m["sentence_number"] for m in report["missing_visuals"]] == [1, 2]
+
+    # Renderer leg (this beat's shape): a scene whose only timeline
+    # item points at media that does not exist has NO genuine media
+    # to hold over, so the renderer fails loudly instead of
+    # fabricating a placeholder.
+    broken_scene = {
+        "scene_number": 1,
+        "items": [{
+            "type": "image",
+            "file_path": str(tmp_path / "never-downloaded.png"),
+            "start": 0.0, "end": 1.0, "duration": 1.0,
+            "sentence_index": 0, "sentence": sentences[0]["text"],
+        }],
+    }
+    with pytest.raises(RuntimeError, match="refusing to substitute a placeholder"):
+        renderer.render_scene(broken_scene, str(tmp_path))

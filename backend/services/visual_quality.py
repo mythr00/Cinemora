@@ -504,6 +504,213 @@ def measure_visual_quality(
         if item.get("assignment") == "motion_graphic" and cid in generated_files
     )
 
+    # ---- Phase 3: diversity, sentence outcomes, relevance, integrity,
+    # provider failures (reporting only; no existing field changes) ----
+    uncovered_block = _uncovered_beats(report, timeline)
+    rejection_block = _rejection_reasons(report)
+
+    def _sentence_number_of(item):
+        value = item.get("sentence_number")
+        if _is_number(value):
+            return int(value)
+        index = item.get("sentence_index")
+        if _is_number(index):
+            return int(index) + 1
+        return None
+
+    item_sentence_numbers = [_sentence_number_of(item) for item in items]
+
+    runtime_minutes = (total_runtime / 60.0) if total_runtime else 0.0
+    unique_count = len(per_asset)
+    seen_ids: set = set()
+    repeated_items = 0
+    for cid in canonical_ids:
+        if cid in seen_ids:
+            repeated_items += 1
+        else:
+            seen_ids.add(cid)
+    item_count = len(items)
+    diversity = {
+        "d1_unique_assets": unique_count,
+        "d1_unique_assets_per_minute": (
+            unique_count / runtime_minutes if runtime_minutes else None
+        ),
+        "d1_counting_rule": (
+            "timeline counting rule — distinct canonical identities among "
+            "timeline items (the canonical D1 rule; supersedes the metrics "
+            "document's asset-report arithmetic which counted looped items "
+            "differently)"
+        ),
+        "d2_repeated_items": repeated_items,
+        "d2_repeated_item_rate": (
+            repeated_items / item_count if item_count else None
+        ),
+        "items_per_minute": (
+            item_count / runtime_minutes if runtime_minutes else None
+        ),
+        "variety_ratio": (unique_count / item_count if item_count else None),
+    }
+
+    # Sentence count N: asset_report coverage first, then the
+    # timeline's own sentence_count field, then the max seen.
+    coverage_report = report.get("coverage")
+    n_value = None
+    if isinstance(coverage_report, dict) and _is_number(
+        coverage_report.get("total_sentences")
+    ):
+        n_value = int(coverage_report["total_sentences"])
+    elif _is_number(timeline.get("sentence_count")):
+        n_value = int(timeline["sentence_count"])
+    seen_numbers = [n for n in item_sentence_numbers if n is not None]
+    missing_list = report.get("missing_visuals")
+    if isinstance(missing_list, list):
+        for entry in missing_list:
+            if isinstance(entry, dict) and _is_number(entry.get("sentence_number")):
+                seen_numbers.append(int(entry["sentence_number"]))
+    max_seen = max(seen_numbers) if seen_numbers else 0
+    if n_value is None:
+        n_value = max_seen
+    elif max_seen > n_value:
+        n_value = max_seen
+    sentence_count_n = int(n_value)
+
+    items_by_sentence: dict = {}
+    for item, number in zip(items, item_sentence_numbers):
+        if number is not None:
+            items_by_sentence.setdefault(number, []).append(item)
+    buckets = {
+        "direct": 0,
+        "approved_graphic": 0,
+        "contextual": 0,
+        "editorial_holdover": 0,
+        "uncovered": 0,
+    }
+    per_sentence = []
+    for number in range(1, sentence_count_n + 1):
+        group = items_by_sentence.get(number, [])
+        assignments = {i.get("assignment") for i in group}
+        if "sentence" in assignments:
+            outcome = "direct"
+        elif "motion_graphic" in assignments:
+            outcome = "approved_graphic"
+        elif "holdover" in assignments or any(i.get("holdover") for i in group):
+            outcome = "editorial_holdover"
+        elif "rotation" in assignments:
+            outcome = "contextual"
+        else:
+            outcome = "uncovered"
+        buckets[outcome] += 1
+        per_sentence.append({"sentence_number": number, "outcome": outcome})
+    sentence_outcomes = {
+        "sentence_count": sentence_count_n,
+        "buckets": buckets,
+        "shares": {
+            key: (value / sentence_count_n if sentence_count_n else None)
+            for key, value in buckets.items()
+        },
+        "reconciles": sum(buckets.values()) == sentence_count_n,
+        "sentences_without_verified_visual": uncovered_block.get("count"),
+        "per_sentence": per_sentence,
+    }
+
+    relevance = {
+        "direct_assignment_share": (
+            buckets["direct"] / sentence_count_n if sentence_count_n else None
+        ),
+        "pipeline_sentence_assignment_accuracy": report.get(
+            "sentence_assignment_accuracy"
+        ),
+        "human_adjudicated_relevance": {
+            "value": None,
+            "state": "unknown",
+            "basis": "PROVISIONAL",
+            "note": (
+                "No labelled dataset exists; human relevance is never "
+                "inferred from pipeline scores."
+            ),
+        },
+    }
+
+    suspect_numbers = []
+    suspect_count = 0
+    for item, number in zip(items, item_sentence_numbers):
+        status = item.get("relevance_status")
+        is_suspect = item.get("assignment") == "rotation" or (
+            isinstance(status, str)
+            and bool(status)
+            and status not in ("verified_for_sentence", "generated_graphic")
+        )
+        if is_suspect:
+            suspect_count += 1
+            if number is not None:
+                suspect_numbers.append(number)
+    rejection_distribution = rejection_block.get("distribution") or {}
+    contradiction_rejections = {
+        str(k): int(v)
+        for k, v in rejection_distribution.items()
+        if str(k).startswith("contradictory_")
+    }
+    integrity_categories = {
+        "confirmed_contradiction": {
+            "count": None,
+            "state": "unknown",
+            "note": (
+                "No frame-level or human confirmation source is recorded "
+                "in the stored artefacts; a metadata label is not a "
+                "confirmed contradiction."
+            ),
+        },
+        "metadata_suspected_mismatch": {
+            "count": suspect_count,
+            "state": "recorded",
+            "basis": "metadata",
+            "sentence_numbers": sorted(suspect_numbers),
+        },
+        "human_reviewed_metadata_classification": {
+            "count": None,
+            "state": "unknown",
+            "note": "No human review classification is recorded.",
+        },
+        "frame_level_confirmation": {
+            "count": None,
+            "state": "not_performed",
+            "note": (
+                "VA-01 excluded by founder order; metadata labels are "
+                "never frame proof."
+            ),
+        },
+        "unreviewed": {"count": sentence_count_n, "state": "unreviewed"},
+        "contradiction_rejections_recorded": contradiction_rejections,
+    }
+
+    if "discovery_failures" not in report:
+        provider_failures = {
+            "count": None,
+            "state": "unknown",
+            "note": (
+                "discovery_failures is absent from the asset report; "
+                "the collection state is unknown, not zero."
+            ),
+        }
+    elif report.get("discovery_failures_state") == "recorded":
+        failures_list = report.get("discovery_failures")
+        provider_failures = {
+            "count": len(failures_list) if isinstance(failures_list, list) else 0,
+            "state": "recorded",
+            "note": "Provider failures were collected for this production.",
+        }
+    else:
+        failures_list = report.get("discovery_failures")
+        provider_failures = {
+            "count": len(failures_list) if isinstance(failures_list, list) else 0,
+            "state": "unknown",
+            "note": (
+                "Legacy stored report: discovery_failures is present "
+                "without discovery_failures_state, so an empty list "
+                "cannot be distinguished from not-collected."
+            ),
+        }
+
     return {
         "schema": "cinemora.visual_quality/1",
         "project_id": project_id
@@ -570,8 +777,13 @@ def measure_visual_quality(
             }
             for key in sorted(assignment_counts)
         },
-        "uncovered_beats": _uncovered_beats(report, timeline),
-        "rejection_reasons": _rejection_reasons(report),
+        "uncovered_beats": uncovered_block,
+        "rejection_reasons": rejection_block,
+        "diversity": diversity,
+        "sentence_outcomes": sentence_outcomes,
+        "relevance": relevance,
+        "integrity_categories": integrity_categories,
+        "provider_failures": provider_failures,
         "source_distribution": {
             "timeline": {
                 key: {

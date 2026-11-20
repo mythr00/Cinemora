@@ -4899,6 +4899,15 @@ def gate_shot_need(candidate, shot_need):
     if story.is_banned_provider(candidate):
         return False, story.BANNED_PROVIDER_REASON
 
+    # Plan §3.3 item 1 (tests 17-18): wrong-project provenance is
+    # rejected at the gate too — a candidate record stamped with
+    # another project's identity never enters this run's pool
+    # (verify_candidate enforces the same rejection for direct
+    # callers). A missing stamp is not a mismatch: unstamped
+    # discovery candidates pass through to the checks below.
+    if story.is_foreign_provenance(candidate):
+        return False, story.FOREIGN_PROVENANCE_REASON
+
     # Quality Recovery Phase 1 (workstream A): POSITIVE contradictions
     # the shot need carries enough data to judge. An explicit date
     # incompatible with the need's era is a contradiction; a missing
