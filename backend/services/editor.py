@@ -547,6 +547,13 @@ def import_production(project_id, run) -> dict:
                         "style": item.get("style"),
                         "inputs": item.get("engine_inputs"),
                         "engine_metadata": item.get("engine_metadata"),
+                        # Phase 2 (MG-03): the complete recorded
+                        # regeneration recipe, carried from the
+                        # production asset record through the
+                        # timeline item. None for graphics produced
+                        # before recipes were recorded — regeneration
+                        # then honestly refuses (inputs not recorded).
+                        "recipe": item.get("graphic_recipe"),
                     }
                 items.append(
                     {
@@ -1853,50 +1860,139 @@ def _op_set_graphic_duration(doc, op, ctx):
     return f"Graphic {item['item_id']} duration set to {new_duration:.2f}s."
 
 
+def _discard_regen_tmp(tmp_path):
+    try:
+        Path(tmp_path).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _op_regenerate_graphic(doc, op, ctx):
     item = _find_item(doc, op.get("item_id"))
     if item["kind"] != "graphic":
         raise EditorError(422, "not_a_graphic", "Only graphics can be regenerated.")
     graphic = item.get("graphic") or {}
+    recipe = graphic.get("recipe")
     template = graphic.get("template")
     inputs = graphic.get("inputs")
-    if not template or inputs is None:
+
+    # Phase 2 (MG-03): production graphics carry a complete recorded
+    # recipe (template + full inputs for engine graphics; the exact
+    # render inputs for the native families). A graphic explicitly
+    # marked non-regenerable refuses with its recorded reason —
+    # never with a false "inputs not recorded" claim.
+    if isinstance(recipe, dict) and recipe.get("regenerable") is False:
+        raise EditorError(
+            422, "graphic_not_regenerable",
+            "This graphic was recorded as non-regenerable: "
+            + str(recipe.get("non_regenerable_reason") or "no reason recorded")
+            + ". Replace it or leave it as rendered.",
+        )
+    if not isinstance(recipe, dict) and (not template or inputs is None):
         raise EditorError(
             422, "graphic_inputs_not_recorded",
             "This graphic's template inputs were not recorded by the "
             "production, so it cannot be regenerated without inventing "
             "data. Replace it or leave it as rendered.",
         )
-    from services.motion_engine import templates as engine
 
-    template_fn = engine.TEMPLATES.get(template)
-    if template_fn is None:
-        raise EditorError(422, "unknown_template", f"No template {template}.")
+    from services import graphics_pipeline
+
     ctx.media_dir.mkdir(parents=True, exist_ok=True)
     out_path = ctx.media_dir / f"graphic_{item['item_id']}.mp4"
-    rendered, metadata = template_fn(
-        copy.deepcopy(inputs),
-        graphic.get("style") or "editorial",
-        out_path,
-        duration=float(item["duration"]),
-        sentence_index=None,
-        scene_number=item.get("scene_number"),
+    tmp_path = ctx.media_dir / f"graphic_{item['item_id']}.regenerating.mp4"
+    duration = float(item["duration"])
+    label = (
+        (recipe or {}).get("template")
+        or template
+        or (recipe or {}).get("family")
+        or "graphic"
     )
-    if not rendered:
-        reason = (metadata or {}).get("reason") or "template_refused"
+
+    # Transactional regeneration: render to a temporary file,
+    # validate it under the Phase 1 contract, and promote it over
+    # the previous asset ONLY on success. Any failure — refusal,
+    # exception (MG-11), or invalid output — leaves the item and
+    # its previous valid asset completely untouched.
+    try:
+        if isinstance(recipe, dict):
+            rendered, metadata = (
+                graphics_pipeline.render_graphic_from_recipe(
+                    recipe, tmp_path, duration=duration
+                )
+            )
+        else:
+            from services.motion_engine import templates as engine
+
+            template_fn = engine.TEMPLATES.get(template)
+            if template_fn is None:
+                raise EditorError(
+                    422, "unknown_template", f"No template {template}."
+                )
+            rendered, metadata = template_fn(
+                copy.deepcopy(inputs),
+                graphic.get("style") or "editorial",
+                tmp_path,
+                duration=duration,
+                sentence_index=None,
+                scene_number=item.get("scene_number"),
+            )
+        if not rendered:
+            reason = (metadata or {}).get("reason") or "template_refused"
+            raise EditorError(
+                422, "graphic_render_failed",
+                f"The {label} template refused the recorded inputs: {reason}.",
+            )
+        verdict = graphics_pipeline.validate_graphic_output(
+            tmp_path, expected_duration=duration
+        )
+        if not verdict["passed"]:
+            # Server-side diagnostics keep the precise failure; the
+            # client receives the structured refusal.
+            print(
+                f"REGENERATE GRAPHIC VALIDATION FAILED "
+                f"({item['item_id']}): {verdict['detail']}"
+            )
+            raise EditorError(
+                422, "graphic_render_failed",
+                "The regenerated graphic failed validation and was "
+                "not promoted; the previous graphic is unchanged.",
+            )
+    except EditorError:
+        _discard_regen_tmp(tmp_path)
+        raise
+    except Exception as error:
+        # MG-11: a template/render exception maps to the structured
+        # 422 contract — it must never escape as an unhandled
+        # server error. The original error stays in server-side
+        # diagnostics; no internals are exposed to the client.
+        print(f"REGENERATE GRAPHIC FAILED ({item['item_id']}): {error!r}")
+        _discard_regen_tmp(tmp_path)
         raise EditorError(
             422, "graphic_render_failed",
-            f"The {template} template refused the recorded inputs: {reason}.",
+            "The graphic could not be regenerated from its recorded "
+            "inputs; the previous graphic is unchanged.",
         )
+    os.replace(tmp_path, out_path)
+
+    # The recorded source names the family that actually rendered
+    # the regeneration (engine vs native pipeline), not a blanket
+    # engine label.
+    _regen_source = (
+        "cinemora_motion_engine"
+        if (recipe or {}).get("family") == "motion_engine"
+        or (not isinstance(recipe, dict) and template)
+        else "cinemora_motion_graphics"
+    )
     new_asset = {
         "file_path": str(out_path),
         "type": "video",
-        "source": "cinemora_motion_engine",
-        "provider": "cinemora_motion_engine",
+        "source": _regen_source,
+        "provider": _regen_source,
         "source_url": None,
         "title": (item.get("asset") or {}).get("title"),
         "clip_start": 0.0,
-        "source_duration": float(item["duration"]),
+        "source_duration": duration,
         "decision_id": None,
         "evidence_class": None,
         "verification": None,
@@ -1921,7 +2017,7 @@ def _op_regenerate_graphic(doc, op, ctx):
         )
 
     ctx.ledger_actions.append(_ledger)
-    return f"Regenerated graphic {item['item_id']} from its recorded inputs ({template})."
+    return f"Regenerated graphic {item['item_id']} from its recorded inputs ({label})."
 
 
 def _op_edit_caption(doc, op, ctx):

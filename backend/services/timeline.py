@@ -1417,6 +1417,38 @@ def build_scene_timeline(
                     "cut",
             }
 
+            # Phase 2 (MG-03): a generated graphic's identity and
+            # regeneration recipe ride onto the timeline item. The
+            # item constructor previously copied an explicit field
+            # list with NO graphic fields, so the editor import —
+            # which reads template / engine_inputs / graphic_recipe
+            # from the item — always found None and regeneration
+            # always refused. Fields are copied only when present;
+            # ordinary footage items are unchanged. The item is
+            # also stamped with the graphic identity itself
+            # (motion_graphic / generator): real production items
+            # previously carried only assignment="motion_graphic",
+            # which the editor import does not read, so imported
+            # graphics were misclassified as ordinary footage.
+            if visual.get("motion_graphic") or visual.get("graphic_recipe"):
+                item["motion_graphic"] = True
+                _recipe = visual.get("graphic_recipe") or {}
+                if (
+                    visual.get("family") == "motion_engine"
+                    or _recipe.get("family") == "motion_engine"
+                ):
+                    item["generator"] = "motion_engine"
+                for _graphic_field in (
+                    "template",
+                    "family",
+                    "style",
+                    "engine_inputs",
+                    "engine_metadata",
+                    "graphic_recipe",
+                ):
+                    if visual.get(_graphic_field) is not None:
+                        item[_graphic_field] = visual.get(_graphic_field)
+
             if visual_type == "video":
 
                 item["video_url"] = visual.get(

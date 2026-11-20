@@ -33,6 +33,20 @@ def _install_fakes(monkeypatch):
         lambda path, *a, **k: (fake_write(path), "proportional")[1],
     )
     monkeypatch.setattr(graphics_pipeline, "_render_process_graphic", fake_write)
+    # MG-05 (Motion Graphics programme Phase 1): registration now
+    # validates rendered output before an asset is recorded. These
+    # are logic tests whose fake renderers write non-media bytes,
+    # so the validator is stubbed at the same seam; the real
+    # validator is covered by dedicated real-file tests in
+    # tests/test_motion_graphics_programme.py.
+    monkeypatch.setattr(
+        graphics_pipeline, "validate_graphic_output",
+        lambda path, expected_duration=None, **kwargs: {
+            "passed": True, "failure_kind": None, "detail": "",
+            "checks": {}, "probe": None,
+        },
+    )
+
     # The schematic stage must not intercept these targets.
     monkeypatch.setattr(
         "services.vector_graphics.select_schematic_motif", lambda *a, **k: None

@@ -696,6 +696,79 @@ def _build_graphic_targets(processed_scenes):
     return graphic_targets
 
 
+# MG-07: closed vocabulary for graphics the attach step refuses.
+ATTACH_SKIP_REASONS = frozenset({
+    "not_delivered",            # builder did not mark it delivered
+    "graphic_validation_failed",  # no passing validation verdict recorded
+    "missing_graphic_file",     # recorded file is not on disk
+    "missing_scene_association",  # no scene_number, or scene not found
+})
+
+
+def _attach_motion_graphics(motion_graphics, processed_scenes):
+    """Attach standalone motion graphics to their target scenes.
+
+    MG-07: only graphics the builder explicitly marked `delivered`
+    AND that carry a passing Phase 1 validation verdict may be
+    attached — the previous loop attached anything with a
+    scene_number, so undelivered graphics stayed off screen only
+    incidentally. Every refused graphic is returned in the skipped
+    list with a typed reason (ATTACH_SKIP_REASONS); nothing is
+    attached silently or refused silently.
+
+    Returns (attached_count, skipped) where skipped entries are
+    {"graphic": <id/type>, "reason": <typed reason>}.
+    """
+    attached = 0
+    skipped = []
+    for graphic in motion_graphics or []:
+        label = (
+            graphic.get("motion_graphic_id")
+            or graphic.get("graphic_type")
+            or "unknown"
+        )
+        if graphic.get("delivered") is not True:
+            skipped.append({"graphic": label, "reason": "not_delivered"})
+            continue
+        validation = graphic.get("validation") or {}
+        if validation.get("passed") is not True:
+            skipped.append(
+                {"graphic": label, "reason": "graphic_validation_failed"}
+            )
+            continue
+        file_path = graphic.get("file_path") or graphic.get("path")
+        if not file_path or not Path(file_path).is_file():
+            skipped.append(
+                {"graphic": label, "reason": "missing_graphic_file"}
+            )
+            continue
+        scene_number = graphic.get("scene_number")
+        target_scene = None
+        if scene_number is not None:
+            for processed_scene in processed_scenes:
+                scene = processed_scene.get("scene") or {}
+                if scene.get("scene_number") == scene_number:
+                    target_scene = processed_scene
+                    break
+        if target_scene is None:
+            skipped.append(
+                {"graphic": label, "reason": "missing_scene_association"}
+            )
+            continue
+
+        visual = dict(graphic)
+        visual["type"] = "video"
+        visual["source"] = "cinemora_motion_graphics"
+        visual["motion_graphic"] = True
+        visual["sentence_index"] = graphic.get("sentence_index")
+        visual["file_path"] = file_path
+        visual["path"] = file_path
+
+        target_scene.setdefault("videos", []).append(visual)
+        attached += 1
+    return attached, skipped
+
+
 def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=None):
     print()
     print("=" * 70)
@@ -1015,29 +1088,17 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             genre_pack=_genre_pack,
         )
 
-        # Attach each standalone motion graphic to its target scene/sentence
-        for graphic in motion_graphics:
-            scene_number = graphic.get("scene_number")
-            sentence_index = graphic.get("sentence_index")
-
-            if scene_number is None:
-                continue
-
-            for processed_scene in processed_scenes:
-                scene = processed_scene.get("scene") or {}
-                if scene.get("scene_number") != scene_number:
-                    continue
-
-                visual = dict(graphic)
-                visual["type"] = "video"
-                visual["source"] = "cinemora_motion_graphics"
-                visual["motion_graphic"] = True
-                visual["sentence_index"] = sentence_index
-                visual["file_path"] = graphic.get("file_path") or graphic.get("path")
-                visual["path"] = visual["file_path"]
-
-                processed_scene.setdefault("videos", []).append(visual)
-                break
+        # Attach each standalone motion graphic to its target
+        # scene/sentence — delivered + validated graphics only
+        # (MG-07); refusals are printed with their typed reasons.
+        _attached, _attach_skipped = _attach_motion_graphics(
+            motion_graphics, processed_scenes
+        )
+        for _skip in _attach_skipped:
+            print(
+                f"Motion graphic not attached [{_skip['graphic']}]: "
+                f"{_skip['reason']}"
+            )
 
         print(f"Motion graphics generated: {len(motion_graphics)}")
         print(f"Motion graphics attached to timeline candidates: {sum(1 for s in processed_scenes for v in s.get("videos", []) if v.get("motion_graphic"))}")

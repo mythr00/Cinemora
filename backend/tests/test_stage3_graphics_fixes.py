@@ -111,7 +111,21 @@ def _fake_renders(monkeypatch):
     monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_write)
     monkeypatch.setattr(graphics_pipeline, "_render_timeline_graphic", fake_timeline)
     monkeypatch.setattr(graphics_pipeline, "_render_process_graphic", fake_process)
+    # MG-05 (Motion Graphics programme Phase 1): registration now
+    # validates rendered output before an asset is recorded. These
+    # are logic tests whose fake renderers write non-media bytes,
+    # so the validator is stubbed at the same seam; the real
+    # validator is covered by dedicated real-file tests in
+    # tests/test_motion_graphics_programme.py.
+    monkeypatch.setattr(
+        graphics_pipeline, "validate_graphic_output",
+        lambda path, expected_duration=None, **kwargs: {
+            "passed": True, "failure_kind": None, "detail": "",
+            "checks": {}, "probe": None,
+        },
+    )
     return captured
+
 
 
 def _bible_data(scenes=None):
@@ -295,6 +309,20 @@ def test_schematic_fires_when_only_own_sentence_uncovered(tmp_path, monkeypatch)
         path.write_bytes(b"\x00" * 2048)
 
     monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_write)
+    # MG-05 (Motion Graphics programme Phase 1): registration now
+    # validates rendered output before an asset is recorded. These
+    # are logic tests whose fake renderers write non-media bytes,
+    # so the validator is stubbed at the same seam; the real
+    # validator is covered by dedicated real-file tests in
+    # tests/test_motion_graphics_programme.py.
+    monkeypatch.setattr(
+        graphics_pipeline, "validate_graphic_output",
+        lambda path, expected_duration=None, **kwargs: {
+            "passed": True, "failure_kind": None, "detail": "",
+            "checks": {}, "probe": None,
+        },
+    )
+
 
     sentence_a = {"text": "The admiral inspected the fleet at anchor.",
                   "sentence_number": 1}

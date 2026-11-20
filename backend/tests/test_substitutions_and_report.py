@@ -89,6 +89,20 @@ def test_working_graphic_is_registered(tmp_path, monkeypatch):
             }
         ],
     }
+    # MG-05 (Motion Graphics programme Phase 1): registration now
+    # validates rendered output before an asset is recorded. These
+    # are logic tests whose fake renderers write non-media bytes,
+    # so the validator is stubbed at the same seam; the real
+    # validator is covered by dedicated real-file tests in
+    # tests/test_motion_graphics_programme.py.
+    monkeypatch.setattr(
+        graphics_pipeline, "validate_graphic_output",
+        lambda path, expected_duration=None, **kwargs: {
+            "passed": True, "failure_kind": None, "detail": "",
+            "checks": {}, "probe": None,
+        },
+    )
+
     assets = graphics_pipeline.build_motion_graphics_assets(data, tmp_path, mode="balanced")
     assert len(assets) == 1
     assert assets[0]["graphic_type"] == "stat"

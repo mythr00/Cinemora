@@ -96,6 +96,20 @@ def _fake_renders(monkeypatch):
         graphics_pipeline, "_render_timeline_graphic", fake_timeline
     )
     monkeypatch.setattr(graphics_pipeline, "_render_process_graphic", fake_write)
+    # MG-05 (Motion Graphics programme Phase 1): registration now
+    # validates rendered output before an asset is recorded. These
+    # are logic tests whose fake renderers write non-media bytes,
+    # so the validator is stubbed at the same seam; the real
+    # validator is covered by dedicated real-file tests in
+    # tests/test_motion_graphics_programme.py.
+    monkeypatch.setattr(
+        graphics_pipeline, "validate_graphic_output",
+        lambda path, expected_duration=None, **kwargs: {
+            "passed": True, "failure_kind": None, "detail": "",
+            "checks": {}, "probe": None,
+        },
+    )
+
 
 
 def _attach(assets):
@@ -152,7 +166,11 @@ def test_targeted_sentence_without_value_is_skipped_and_recorded(
     assert len(skips) == 1
     assert skips[0]["scene_number"] == 2
     assert skips[0]["sentence_index"] == 1
-    assert skips[0]["reason"] == "no_stat_value"
+    # MG-08: the historical "no_stat_value" fall-through conflated
+    # several distinct causes; under the closed typed vocabulary
+    # this sentence's actual condition is that it carries no usable
+    # statistic (and no other graphic purpose fit).
+    assert skips[0]["reason"] == "no_usable_statistic"
 
 
 def test_timeline_and_process_graphics_are_anchored(tmp_path, monkeypatch):
@@ -590,6 +608,20 @@ def test_jobs_target_scenario_reaches_graphics_builder_and_timeline(
         path.write_bytes(b"\x00" * 2048)
 
     monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_write)
+    # MG-05 (Motion Graphics programme Phase 1): registration now
+    # validates rendered output before an asset is recorded. These
+    # are logic tests whose fake renderers write non-media bytes,
+    # so the validator is stubbed at the same seam; the real
+    # validator is covered by dedicated real-file tests in
+    # tests/test_motion_graphics_programme.py.
+    monkeypatch.setattr(
+        graphics_pipeline, "validate_graphic_output",
+        lambda path, expected_duration=None, **kwargs: {
+            "passed": True, "failure_kind": None, "detail": "",
+            "checks": {}, "probe": None,
+        },
+    )
+
 
     bare_sentence = {"text": text, "sentence_number": 3}
     data = {

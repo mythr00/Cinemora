@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import re
@@ -215,6 +216,187 @@ def probe_media_duration(path):
             f"ffprobe returned a non-numeric duration for '{path}': "
             f"{result.stdout.strip()!r}"
         )
+
+
+# =========================================================
+# GRAPHIC OUTPUT VALIDATION (MG-05) + SKIP VOCABULARY (MG-08)
+# =========================================================
+#
+# Phase 1 of the merged Motion Graphics programme: EVERY production
+# graphic family (ffmpeg-native stat/timeline/process, PIL event
+# schematic, Motion Engine templates) passes ONE validation contract
+# before its asset record may be registered. Before this, only the
+# Motion Engine path probed its output (inside core.render_video);
+# the native families were registered on trust.
+#
+# The probe itself reuses services.media_probe.probe_video — the
+# codebase's single "what is actually in this file?" authority
+# (AUD-17) — plus a full decode pass, which is the only check that
+# catches truncated/corrupt output whose headers still parse.
+
+MIN_GRAPHIC_FILE_BYTES = 5000
+GRAPHIC_DURATION_TOLERANCE_SECONDS = 0.5
+GRAPHIC_FPS_TOLERANCE = 1.5
+
+# Closed skip-reason vocabulary for graphics outcomes (MG-08). Every
+# reason names a real code path; the historical fall-through string
+# "no_stat_value" — which conflated "no extractable statistic",
+# "schematic not eligible" and "nothing else fit" — is retired.
+# Reasons considered and deliberately NOT included (no recorded
+# production path produces them today): duplicate_decision (target
+# dedup is silent normalisation, not a recorded skip),
+# missing_geographical_data and missing_narration_timing (no
+# production graphics path consumes geography or narration timing
+# yet — both are Phase 3/4 territory).
+GRAPHIC_SKIP_REASONS = frozenset({
+    "no_sentence_text",          # target carried no sentence text
+    "no_usable_statistic",       # extract_stat found no defensible value
+    "range_not_representable",   # range with conflicting endpoint units
+    "missing_required_input",    # engine template refused its data
+    "unsupported_template",      # template name not in the engine registry
+    "missing_document_source",   # document cue but no genuine document asset
+    "no_schematic_labels",       # event/place labels absent for a schematic
+    "no_schematic_motif",        # no schematic motif fits the labels
+    "schematic_cap_reached",     # one schematic per scene already produced
+    "no_eligible_graphic_purpose",  # chain exhausted / schematic ineligible
+    "comparison_not_rendered",   # comparison present, no template rendered it
+    "rendering_failure",         # a renderer raised
+    "validation_failed",         # probed OK but spec mismatch (dims/fps/duration)
+    "invalid_graphic_output",    # missing/empty/undecodable/no video stream
+})
+
+# Fact-basis classes for rendered factual claims (MG-09). The three
+# classes are never conflated: only research_supported — with a
+# recorded evidence reference — may carry the VERIFIED stamp.
+FACT_BASIS_RESEARCH = "research_supported"
+FACT_BASIS_SCRIPT = "script_claim"
+FACT_BASIS_ASSET = "verified_asset_metadata"
+_STAT_STAMPS = {
+    FACT_BASIS_RESEARCH: "DATA / VERIFIED",
+    FACT_BASIS_ASSET: "DATA / VERIFIED ASSET",
+    FACT_BASIS_SCRIPT: "DATA / SCRIPT CLAIM",
+}
+
+
+def validate_graphic_output(path, expected_duration=None, expected_fps=FPS):
+    """Validate one rendered graphic file against the production
+    contract. Returns a verdict dict:
+
+        {"passed": bool,
+         "failure_kind": None | "invalid_graphic_output" | "validation_failed",
+         "detail": str, "checks": {...}, "probe": {...} | None}
+
+    Checks: existence, non-zero size, minimum reasonable size,
+    ffprobe success, a real video stream, 1920x1080 dimensions, a
+    valid frame rate (≈ expected), a valid duration consistent with
+    `expected_duration` when one is known, and full decodability.
+    File existence alone is never treated as proof of validity.
+    """
+    checks = {}
+    probe = None
+
+    def _fail(kind, detail):
+        return {
+            "passed": False,
+            "failure_kind": kind,
+            "detail": detail,
+            "checks": checks,
+            "probe": probe,
+        }
+
+    candidate = Path(path)
+    if not candidate.is_file():
+        checks["exists"] = False
+        return _fail(
+            "invalid_graphic_output", f"graphic file does not exist: {path}"
+        )
+    checks["exists"] = True
+
+    size = candidate.stat().st_size
+    checks["size_bytes"] = size
+    if size <= 0:
+        return _fail("invalid_graphic_output", "graphic file is empty")
+    if size < MIN_GRAPHIC_FILE_BYTES:
+        return _fail(
+            "invalid_graphic_output",
+            f"graphic file is implausibly small: {size} bytes "
+            f"(< {MIN_GRAPHIC_FILE_BYTES})",
+        )
+
+    try:
+        from services.media_probe import probe_video
+
+        probe = probe_video(candidate)
+    except Exception as error:  # probe machinery itself failed
+        checks["probe_error"] = str(error)
+        probe = None
+    if probe is None:
+        return _fail(
+            "invalid_graphic_output",
+            "ffprobe could not read a video stream from the graphic file",
+        )
+    checks["has_video_stream"] = True
+    checks["width"] = probe.get("width")
+    checks["height"] = probe.get("height")
+    if probe.get("width") != 1920 or probe.get("height") != 1080:
+        return _fail(
+            "validation_failed",
+            f"graphic dimensions {probe.get('width')}x{probe.get('height')}, "
+            "expected 1920x1080",
+        )
+    fps = probe.get("fps")
+    checks["fps"] = fps
+    if not fps or fps <= 0:
+        return _fail("validation_failed", "graphic has no valid frame rate")
+    if expected_fps and abs(float(fps) - float(expected_fps)) > GRAPHIC_FPS_TOLERANCE:
+        return _fail(
+            "validation_failed",
+            f"graphic frame rate {fps}, expected ~{expected_fps}",
+        )
+    duration = probe.get("duration_seconds")
+    checks["duration_seconds"] = duration
+    if not duration or duration <= 0:
+        return _fail("validation_failed", "graphic has no valid duration")
+    if expected_duration:
+        tolerance = max(
+            GRAPHIC_DURATION_TOLERANCE_SECONDS, 0.1 * float(expected_duration)
+        )
+        if abs(float(duration) - float(expected_duration)) > tolerance:
+            return _fail(
+                "validation_failed",
+                f"graphic duration {duration}s differs from the expected "
+                f"{expected_duration}s by more than {tolerance:.2f}s",
+            )
+
+    # Full decode: the only check that catches truncated output
+    # whose container headers still parse.
+    try:
+        decode = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(candidate), "-f", "null", "-"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        checks["decodable"] = decode.returncode == 0
+        if decode.returncode != 0:
+            return _fail(
+                "invalid_graphic_output",
+                "graphic does not decode cleanly: "
+                + (decode.stderr or "").strip()[:200],
+            )
+    except (OSError, subprocess.SubprocessError) as error:
+        checks["decodable"] = False
+        return _fail(
+            "invalid_graphic_output", f"graphic decode check failed: {error}"
+        )
+
+    return {
+        "passed": True,
+        "failure_kind": None,
+        "detail": "",
+        "checks": checks,
+        "probe": probe,
+    }
 
 
 # =========================================================
@@ -862,8 +1044,16 @@ def _render_stat_graphic(
     headline,
     subtext="",
     duration=4.0,
+    fact_basis=FACT_BASIS_SCRIPT,
 ):
     duration = _graphic_duration(0, duration, 3.0, 8.0)
+    # MG-09: the card's evidence stamp follows the value's fact
+    # basis. Script-derived values are labelled as script claims;
+    # the VERIFIED stamp is reserved for research-supported values
+    # (whose evidence chain the caller must have recorded — see
+    # _make_stat's downgrade rule). An unknown basis falls back to
+    # the weakest label, never to VERIFIED.
+    stamp = _STAT_STAMPS.get(fact_basis, _STAT_STAMPS[FACT_BASIS_SCRIPT])
 
     filters = _graphic_background()
 
@@ -893,7 +1083,7 @@ def _render_stat_graphic(
         "t=fill",
 
         _ffmpeg_text_filter(
-            "DATA / VERIFIED",
+            stamp,
             "190",
             "235",
             24,
@@ -1430,15 +1620,128 @@ def _percent_value(text):
         return None
 
 
+_RANGE_ENDPOINT = (
+    r"(\$)?\s*(\d[\d,]*(?:\.\d+)?)\s*(million|billion|trillion|%|M\b|K\b)?"
+)
+
+
+def _normalise_range_scale(scale, prefix):
+    scale = (scale or "").lower()
+    if scale == "m":
+        return "million" if prefix else "m"
+    if scale == "k":
+        return "thousand" if prefix else "k"
+    return scale
+
+
+def _format_range_endpoint(prefix, number, scale):
+    rendered = f"{prefix or ''}{number}"
+    if scale == "%" or (scale and len(scale) == 1):
+        # Compact suffixes attach directly: 15%, $2M, 40K.
+        return rendered + scale
+    if scale:
+        return f"{rendered} {scale}"
+    return rendered
+
+
+# Words that follow a range constantly in prose but are never units.
+_RANGE_TRAILING_STOP_WORDS = frozenset({
+    "by", "in", "of", "and", "the", "a", "an", "on", "at", "for",
+    "with", "from", "over", "under", "than", "were", "was", "are",
+    "is", "it", "its", "during", "within", "across", "into", "per",
+    "to", "as", "or", "when", "while", "after", "before", "between",
+})
+
+
+def _extract_range(text):
+    """Faithful range extraction (MG-09).
+
+    Returns one of:
+    - {"display", "range_start", "range_end"}: BOTH endpoints are
+      preserved in the display string, with the shared currency
+      prefix / scale / unit distributed across both ("$2 million –
+      $4 million", "15% – 25%", "20 – 40 feet").
+    - {"unrepresentable": detail}: a range is clearly present but
+      its endpoints carry conflicting units, so no faithful display
+      exists — the caller refuses the graphic rather than dropping
+      an endpoint.
+    - None: no range present (a bare year span or a date fragment
+      is a date, not a statistic).
+    """
+    match = re.search(
+        r"\bbetween\s+" + _RANGE_ENDPOINT + r"\s+and\s+" + _RANGE_ENDPOINT,
+        text, re.I,
+    ) or re.search(
+        _RANGE_ENDPOINT + r"\s*(?:-|\u2013|\u2014| to )\s*" + _RANGE_ENDPOINT,
+        text, re.I,
+    )
+    if not match:
+        return None
+    groups = match.groups()
+    prefix1, number1, scale1 = groups[0], groups[1], groups[2] or ""
+    prefix2, number2, scale2 = groups[3], groups[4], groups[5] or ""
+    # The trailing unit word is scanned AFTER the match: the second
+    # endpoint's own optional whitespace would otherwise swallow the
+    # separating space and the unit would be lost. Prose stop-words
+    # ("by", "in", ...) are never units.
+    trailing_unit = ""
+    trailing_match = re.match(
+        r"\s*([A-Za-z][A-Za-z\-]*)", text[match.end():]
+    )
+    if trailing_match:
+        candidate = trailing_match.group(1)
+        if candidate.lower() not in _RANGE_TRAILING_STOP_WORDS:
+            trailing_unit = candidate
+
+    def _bare_year(number):
+        return (
+            len(number.replace(",", "")) == 4
+            and "," not in number
+            and "." not in number
+        )
+
+    # A pair of bare 4-digit years is a date span, not a stat; a
+    # bare year followed by a small number is a date fragment
+    # ("1961-08"), not a range.
+    if not scale1 and not scale2 and not prefix1 and not prefix2:
+        if _bare_year(number1) and _bare_year(number2):
+            return None
+        if _bare_year(number1):
+            try:
+                if float(number2.replace(",", "")) <= 31:
+                    return None
+            except ValueError:
+                pass
+
+    norm1 = _normalise_range_scale(scale1, prefix1)
+    norm2 = _normalise_range_scale(scale2, prefix2)
+    if norm1 and norm2 and norm1 != norm2:
+        return {
+            "unrepresentable": (
+                f"range endpoints carry conflicting units "
+                f"({scale1} vs {scale2})"
+            )
+        }
+    scale = scale1 or scale2
+    prefix = prefix1 or prefix2 or ""
+    start = _format_range_endpoint(prefix, number1, scale)
+    end = _format_range_endpoint(prefix, number2, scale)
+    display = f"{start} \u2013 {end}"
+    if trailing_unit and scale != "%":
+        display = f"{display} {trailing_unit}"
+    return {"display": display, "range_start": start, "range_end": end}
+
+
 def extract_stat(text, sentence_record=None):
     """MA-05: extract ONE defensible statistic from a sentence.
 
     Returns {"display", "kind", ...} or None. Kinds: money,
-    percent, count, range. Order: the analysed sentence record's
-    `money` field first (structured analysis beats regex), then
-    ranges (first value is the headline, the range is recorded),
-    percentages, money in text, then plain counts — a number plus
-    ANY following noun, not a whitelist of units.
+    percent, count, range, range_unrepresentable. Order: the
+    analysed sentence record's `money` field first (structured
+    analysis beats regex), then ranges (BOTH endpoints preserved
+    in the display — MG-09), percentages, money in text, then
+    plain counts — a number plus ANY following noun, not a
+    whitelist of units.
     """
     text = clean_text(text)
     if sentence_record and isinstance(sentence_record, dict):
@@ -1453,24 +1756,18 @@ def extract_stat(text, sentence_record=None):
     if not text:
         return None
 
-    range_match = re.search(
-        r"\bbetween\s+(\d[\d,]*(?:\.\d+)?)\s+and\s+(\d[\d,]*(?:\.\d+)?)"
-        r"(?:\s+([A-Za-z%]+))?"
-        r"|(\d[\d,]*(?:\.\d+)?)\s*(?:-|\u2013| to )\s*(\d[\d,]*(?:\.\d+)?)"
-        r"(?:\s+([A-Za-z%]+))?",
-        text, re.I,
-    )
-    if range_match:
-        first = range_match.group(1) or range_match.group(4)
-        second = range_match.group(2) or range_match.group(5)
-        unit = range_match.group(3) or range_match.group(6) or ""
-        # A pair of bare 4-digit years is a date span, not a stat.
-        if not (len(first.replace(",", "")) == 4
-                and len(second.replace(",", "")) == 4
-                and "," not in first and "." not in first):
-            display = f"{first} {unit}".strip() if unit else first
-            return {"display": display, "kind": "range",
-                    "range_end": second, "source": "regex_range"}
+    range_result = _extract_range(text)
+    if range_result is not None:
+        if range_result.get("unrepresentable"):
+            # MG-09: a range that cannot be displayed faithfully is
+            # refused, never truncated to a single endpoint.
+            return {"kind": "range_unrepresentable",
+                    "detail": range_result["unrepresentable"],
+                    "source": "regex_range"}
+        return {"display": range_result["display"], "kind": "range",
+                "range_start": range_result["range_start"],
+                "range_end": range_result["range_end"],
+                "source": "regex_range"}
 
     percent_match = re.search(
         r"(\d[\d,]*(?:\.\d+)?)\s*(?:%|percent\b)", text, re.I
@@ -1610,6 +1907,11 @@ def build_motion_graphics_assets(
 
     assets = []
     index = 0
+    # MG-05: every graphic that fails post-render validation is
+    # recorded here (and in the manifest) with the original failure
+    # information — it is NOT registered, the timeline can never see
+    # it, and the corresponding sentence stays uncovered.
+    graphic_failures = []
 
     def register_asset(
         path,
@@ -1618,8 +1920,37 @@ def build_motion_graphics_assets(
         duration,
         text="",
         subtext="",
+        recipe=None,
+        fact_basis=None,
     ):
+        """Validate, then register one rendered graphic.
+
+        Returns the asset record on success, None when validation
+        fails (the failure is appended to graphic_failures and the
+        caller records the skip against its target). Callers must
+        stamp anchors/flags onto the RETURNED record — never onto
+        assets[-1], which after a refused registration is a
+        different graphic.
+        """
         nonlocal index
+        verdict = validate_graphic_output(
+            path, expected_duration=duration
+        )
+        if not verdict["passed"]:
+            graphic_failures.append({
+                "graphic_type": graphic_type,
+                "purpose": purpose,
+                "stage": "validation",
+                "file_path": str(path),
+                "reason": verdict["failure_kind"],
+                "detail": verdict["detail"],
+                "checks": verdict["checks"],
+            })
+            print(
+                f"MOTION GRAPHIC REJECTED (validation) "
+                f"[{graphic_type}]: {verdict['detail']}"
+            )
+            return None
         index += 1
 
         record = {
@@ -1641,9 +1972,49 @@ def build_motion_graphics_assets(
             "text": clean_text(text),
             "subtext": clean_text(subtext),
             "included": True,
+            # MG-05/MG-07: the validation verdict rides on the
+            # record; `delivered` starts False and is flipped True
+            # only by the producing family once the graphic is
+            # anchored — jobs.py attaches delivered+valid graphics
+            # only.
+            "validation": verdict,
+            "delivered": False,
         }
+        if recipe is not None:
+            record["graphic_recipe"] = recipe
+        if fact_basis is not None:
+            record["fact_basis"] = fact_basis
 
         assets.append(record)
+        return record
+
+    def _recipe(
+        family, renderer, inputs, duration, purpose,
+        scene_number=None, sentence_index=None, sentence_number=None,
+        template=None, style=None, source_references=None,
+    ):
+        """The complete regeneration recipe for one graphic
+        (Phase 2 / MG-03): everything render_graphic_from_recipe
+        needs to rebuild the graphic without re-reading the script
+        or guessing. `template_version` is None because the Motion
+        Engine has no versioning concept today — recorded
+        explicitly, never invented."""
+        return {
+            "family": family,
+            "renderer": renderer,
+            "template": template,
+            "template_version": None,
+            "inputs": inputs,
+            "style": style,
+            "duration": duration,
+            "purpose": purpose,
+            "scene_number": scene_number,
+            "sentence_index": sentence_index,
+            "sentence_number": sentence_number,
+            "source_references": source_references or [],
+            "regenerable": True,
+            "non_regenerable_reason": None,
+        }
 
     # -----------------------------------------------------
     # STAGE A: normalise targets and choose anchors for the
@@ -1764,30 +2135,54 @@ def build_motion_graphics_assets(
                 timeline_events,
                 duration=6.0,
             )
-            register_asset(
+            record = register_asset(
                 path,
                 "timeline",
                 "chronology",
                 6.0,
                 "STORY TIMELINE",
+                recipe=_recipe(
+                    "timeline", "ffmpeg_timeline",
+                    {"events": copy.deepcopy(timeline_events)},
+                    6.0, "chronology",
+                    scene_number=(
+                        timeline_anchor or {}
+                    ).get("scene_number"),
+                    sentence_index=(
+                        timeline_anchor or {}
+                    ).get("sentence_index"),
+                    sentence_number=(
+                        timeline_anchor or {}
+                    ).get("sentence_number"),
+                    source_references=[{"type": "case_bible_timeline"}],
+                ),
             )
-            _stamp_anchor(assets[-1], timeline_anchor)
-            assets[-1]["timeline_spacing"] = (
-                spacing_mode or "even_fallback"
-            )
-            assets[-1]["anchor_reason"] = timeline_anchor_reason
-            assets[-1]["family"] = "timeline"
-            if timeline_anchor is None:
-                assets[-1]["delivered"] = False
-                undelivered.append({
-                    "graphic_type": "timeline",
-                    "reason": "no_anchor_available",
-                })
-            else:
-                assets[-1]["delivered"] = True
+            if record is not None:
+                _stamp_anchor(record, timeline_anchor)
+                record["timeline_spacing"] = (
+                    spacing_mode or "even_fallback"
+                )
+                record["anchor_reason"] = timeline_anchor_reason
+                record["family"] = "timeline"
+                if timeline_anchor is None:
+                    record["delivered"] = False
+                    undelivered.append({
+                        "graphic_type": "timeline",
+                        "reason": "no_anchor_available",
+                    })
+                else:
+                    record["delivered"] = True
         except Exception as error:
             # AUD-21: one failing graphic must not kill the whole job.
             print(f"MOTION GRAPHIC SKIPPED (timeline): {error}")
+            graphic_failures.append({
+                "graphic_type": "timeline",
+                "purpose": "chronology",
+                "stage": "render",
+                "file_path": str(path),
+                "reason": "rendering_failure",
+                "detail": str(error),
+            })
 
     # -----------------------------------------------------
     # NUMERICAL / SCALE GRAPHICS
@@ -1795,13 +2190,27 @@ def build_motion_graphics_assets(
 
     def _make_stat(scene_number, sentence_index, sentence_number,
                    text, targeted, target=None):
-        """Render + register one stat graphic. Returns True when an
-        asset was created, False when the sentence carries no
-        defensible stat value. MA-05: extraction is extract_stat
-        (percent / plain counts / ranges / money, plus the analysed
-        sentence record's `money` field when reachable — via the
-        target dict itself or the matching scene sentence record
-        in `data["scenes"]`). The stat's kind is recorded."""
+        """Render + register one stat graphic.
+
+        Returns (True, None, "") when an asset was created, else
+        (False, reason, detail) with a typed MG-08 reason: no
+        usable statistic, an unrepresentable range, a rendering
+        failure, or a validation failure are DISTINCT outcomes —
+        the historical bare False conflated them.
+
+        MA-05: extraction is extract_stat (percent / plain counts /
+        ranges / money, plus the analysed sentence record's `money`
+        field when reachable — via the target dict itself or the
+        matching scene sentence record in `data["scenes"]`). The
+        stat's kind is recorded.
+
+        MG-09 fact basis: every extraction source available today
+        is script-derived (regex over the sentence, or the analysis
+        record's money field — itself extracted from the script),
+        so the basis is script_claim. A research_supported basis is
+        honoured only when the extraction carries a recorded
+        evidence reference; without one it is downgraded to
+        script_claim rather than stamped VERIFIED on trust."""
         sentence_record = _sentences_by_key.get(
             (scene_number, sentence_index)
         )
@@ -1812,49 +2221,87 @@ def build_motion_graphics_assets(
             record_for_stat = sentence_record
         info = extract_stat(text, sentence_record=record_for_stat)
         if not info:
-            return False
+            return False, "no_usable_statistic", ""
+        if info.get("kind") == "range_unrepresentable":
+            return False, "range_not_representable", info.get("detail", "")
 
         value = clean_text(info["display"])
+
+        fact_basis = info.get("fact_basis") or FACT_BASIS_SCRIPT
+        if fact_basis == FACT_BASIS_RESEARCH and not info.get("evidence_ref"):
+            fact_basis = FACT_BASIS_SCRIPT
 
         path = (
             output_dir
             / f"motion_graphic_stat_{index + 1:03d}.mp4"
         )
 
+        headline = value.upper()
+        subtext = shorten(text, 72)
         try:
             _render_stat_graphic(
                 path,
-                value.upper(),
-                shorten(text, 72),
+                headline,
+                subtext,
                 duration=4.0,
+                fact_basis=fact_basis,
             )
         except Exception as error:
             # AUD-21: skip this graphic; never fail the whole job.
             print(f"MOTION GRAPHIC SKIPPED (stat): {error}")
-            return False
+            return False, "rendering_failure", str(error)
 
-        register_asset(
+        record = register_asset(
             path,
             "stat",
             "quantitative_explanation",
             4.0,
-            value.upper(),
+            headline,
             text,
+            recipe=_recipe(
+                "stat", "ffmpeg_stat",
+                {
+                    "headline": headline,
+                    "subtext": subtext,
+                    "fact_basis": fact_basis,
+                    "extraction": {
+                        "kind": info["kind"],
+                        "source": info.get("source", ""),
+                        "display": value,
+                        "range_start": info.get("range_start"),
+                        "range_end": info.get("range_end"),
+                    },
+                },
+                4.0, "quantitative_explanation",
+                scene_number=scene_number,
+                sentence_index=sentence_index,
+                sentence_number=sentence_number or sentence_index + 1,
+                source_references=[{
+                    "type": "script_sentence",
+                    "scene_number": scene_number,
+                    "sentence_number": sentence_number or sentence_index + 1,
+                }],
+            ),
+            fact_basis=fact_basis,
         )
+        if record is None:
+            failure = graphic_failures[-1]
+            return False, failure["reason"], failure["detail"]
 
-        assets[-1]["scene_number"] = scene_number
-        assets[-1]["sentence_index"] = sentence_index
-        assets[-1]["sentence_number"] = (
+        record["scene_number"] = scene_number
+        record["sentence_index"] = sentence_index
+        record["sentence_number"] = (
             sentence_number or sentence_index + 1
         )
-        assets[-1]["targeted"] = bool(targeted)
-        assets[-1]["family"] = "stat"
-        assets[-1]["stat_kind"] = info["kind"]
-        assets[-1]["stat_display"] = value
-        assets[-1]["stat_source"] = info.get("source", "")
+        record["targeted"] = bool(targeted)
+        record["family"] = "stat"
+        record["stat_kind"] = info["kind"]
+        record["stat_display"] = value
+        record["stat_source"] = info.get("source", "")
+        record["delivered"] = True
         if info.get("range_end"):
-            assets[-1]["stat_range_end"] = info["range_end"]
-        return True
+            record["stat_range_end"] = info["range_end"]
+        return True, None, ""
 
     # -----------------------------------------------------
     # EVENT SCHEMATIC support: the fallback for a targeted
@@ -1965,7 +2412,7 @@ def build_motion_graphics_assets(
 
     _schematic_scenes = set()
 
-    def _schematic_eligible(target):
+    def _schematic_eligibility(target):
         """Stage 3D per-sentence reachability: eligible when the
         scene is known to hold no verified visual at all (the
         original trigger), OR when the target sentence's OWN
@@ -1973,30 +2420,39 @@ def build_motion_graphics_assets(
         to this sentence — while other sentences in the scene do
         have linked verified coverage. When no verified asset in
         the scene carries any sentence link, per-sentence coverage
-        is unknowable and the scene-level rule decides alone."""
+        is unknowable and the scene-level rule decides alone.
+
+        Returns (eligible, blocked_reason): blocked_reason is None
+        when eligibility could not be decided (coverage unknown —
+        the schematic stage then contributes no specific skip
+        reason), and "no_eligible_graphic_purpose" when coverage
+        positively blocks the schematic. MG-08: ineligibility is
+        NEVER again reported as "no_stat_value"."""
         scene_number = target["scene_number"]
         if scene_number not in _verified_by_scene:
-            return False
+            return False, None
         if _verified_by_scene[scene_number] == 0:
-            return True
+            return True, None
         key = (scene_number, target["sentence_index"])
         if key in _verified_sentences:
-            return False
-        return scene_number in _linked_verified_scenes
+            return False, "no_eligible_graphic_purpose"
+        if scene_number in _linked_verified_scenes:
+            return True, None
+        return False, "no_eligible_graphic_purpose"
 
     def _make_schematic(target):
         """Render + register one event schematic for a target.
-        Returns None on success, otherwise the skip reason. When
-        the target is not eligible the historical "no_stat_value"
-        reason is preserved unchanged."""
+        Returns (True, None, "") on success, otherwise
+        (False, reason, detail) with a typed MG-08 reason."""
         scene_number = target["scene_number"]
-        if not _schematic_eligible(target):
-            return "no_stat_value"
+        eligible, blocked_reason = _schematic_eligibility(target)
+        if not eligible:
+            return False, blocked_reason, ""
         if scene_number in _schematic_scenes:
-            return "schematic_cap_reached"
+            return False, "schematic_cap_reached", ""
         labels = _schematic_labels(target)
         if labels is None:
-            return "no_schematic_labels"
+            return False, "no_schematic_labels", ""
         event, place, era = labels
 
         path = (
@@ -2012,7 +2468,7 @@ def build_motion_graphics_assets(
         except Exception:
             motif = None
         if motif is None:
-            return "no_schematic_motif"
+            return False, "no_schematic_motif", ""
         try:
             from services.vector_graphics import render_event_schematic
 
@@ -2026,42 +2482,81 @@ def build_motion_graphics_assets(
         except Exception as error:
             # AUD-21: skip this graphic; never fail the whole job.
             print(f"MOTION GRAPHIC SKIPPED (event_schematic): {error}")
-            return "schematic_render_failed"
+            return False, "rendering_failure", str(error)
         if rendered is None:
-            return "no_schematic_motif"
+            return False, "no_schematic_motif", ""
 
-        register_asset(
+        record = register_asset(
             path,
             "event_schematic",
             "event_schematic",
             6.0,
             event,
             target["text"],
+            recipe=_recipe(
+                "event_schematic", "pil_schematic",
+                {
+                    "event_label": event,
+                    "place_label": place,
+                    "era_label": era,
+                    "motif": motif,
+                },
+                6.0, "event_schematic",
+                scene_number=scene_number,
+                sentence_index=target["sentence_index"],
+                sentence_number=(
+                    target["sentence_number"] or target["sentence_index"] + 1
+                ),
+                source_references=[{
+                    "type": "script_sentence_analysis",
+                    "scene_number": scene_number,
+                    "sentence_number": (
+                        target["sentence_number"]
+                        or target["sentence_index"] + 1
+                    ),
+                }],
+            ),
         )
-        assets[-1]["scene_number"] = scene_number
-        assets[-1]["sentence_index"] = target["sentence_index"]
-        assets[-1]["sentence_number"] = (
+        if record is None:
+            failure = graphic_failures[-1]
+            return False, failure["reason"], failure["detail"]
+        record["scene_number"] = scene_number
+        record["sentence_index"] = target["sentence_index"]
+        record["sentence_number"] = (
             target["sentence_number"] or target["sentence_index"] + 1
         )
-        assets[-1]["targeted"] = True
-        assets[-1]["family"] = "event_schematic"
-        assets[-1]["schematic_motif"] = motif
+        record["targeted"] = True
+        record["family"] = "event_schematic"
+        record["schematic_motif"] = motif
+        record["delivered"] = True
         _schematic_scenes.add(scene_number)
-        return None
+        return True, None, ""
 
     def _make_engine_graphic(target, template_name, engine_data,
                              style="editorial", duration=3.0):
         """Stage 3E integration: render one Motion Engine template
         for a target and register it with the SAME asset shape and
-        honesty stamps as the ffmpeg/PIL graphics. Returns True on
-        success, False (with the reason printed) otherwise."""
+        honesty stamps as the ffmpeg/PIL graphics.
+
+        Returns (True, None, "") on success, else (False, reason,
+        detail): an unknown template, a template refusal (its own
+        reason preserved in `detail`), a template exception and a
+        validation failure are DISTINCT outcomes (MG-08).
+
+        Phase 2 (MG-03): the COMPLETE template inputs are recorded
+        on the asset record (`engine_inputs`, a deepcopy) together
+        with the style and a full `graphic_recipe`, so the editor
+        can regenerate this graphic without reconstructing anything
+        from the script. Before this, only an input SUMMARY
+        (engine_metadata) survived and the raw data was discarded.
+        """
         try:
             from services.motion_engine import templates as _engine
 
             template_fn = _engine.TEMPLATES[template_name]
         except Exception as error:
             print(f"MOTION GRAPHIC SKIPPED (motion_engine): {error}")
-            return False
+            return False, "unsupported_template", str(error)
         path = (
             output_dir
             / f"motion_graphic_{template_name}_{index + 1:03d}.mp4"
@@ -2074,23 +2569,53 @@ def build_motion_graphics_assets(
             )
         except Exception as error:
             print(f"MOTION GRAPHIC SKIPPED (motion_engine {template_name}): {error}")
-            return False
+            return False, "rendering_failure", str(error)
         if not rendered:
-            return False
-        register_asset(
+            return (
+                False,
+                "missing_required_input",
+                (metadata or {}).get("reason", ""),
+            )
+        record = register_asset(
             path, template_name, f"motion_engine_{template_name}",
             duration, target["text"], target["text"],
+            recipe=_recipe(
+                "motion_engine", "motion_engine",
+                copy.deepcopy(engine_data),
+                duration, f"motion_engine_{template_name}",
+                scene_number=target["scene_number"],
+                sentence_index=target["sentence_index"],
+                sentence_number=(
+                    target["sentence_number"] or target["sentence_index"] + 1
+                ),
+                template=template_name,
+                style=style,
+                source_references=[{
+                    "type": "script_sentence",
+                    "scene_number": target["scene_number"],
+                    "sentence_number": (
+                        target["sentence_number"]
+                        or target["sentence_index"] + 1
+                    ),
+                }],
+            ),
         )
-        assets[-1]["scene_number"] = target["scene_number"]
-        assets[-1]["sentence_index"] = target["sentence_index"]
-        assets[-1]["sentence_number"] = (
+        if record is None:
+            failure = graphic_failures[-1]
+            return False, failure["reason"], failure["detail"]
+        record["scene_number"] = target["scene_number"]
+        record["sentence_index"] = target["sentence_index"]
+        record["sentence_number"] = (
             target["sentence_number"] or target["sentence_index"] + 1
         )
-        assets[-1]["targeted"] = True
-        assets[-1]["family"] = "motion_engine"
-        assets[-1]["template"] = template_name
-        assets[-1]["engine_metadata"] = metadata
-        return True
+        record["targeted"] = True
+        record["family"] = "motion_engine"
+        record["template"] = template_name
+        record["style"] = style
+        record["engine_inputs"] = copy.deepcopy(engine_data)
+        record["engine_metadata"] = metadata
+        record["delivered"] = True
+        return True, None, ""
 
     covered = set()
     targeted_generated = 0
@@ -2205,14 +2730,15 @@ def build_motion_graphics_assets(
                     return ("stat_comparison", {
                         "items": comparison, "title": shorten(text, 60),
                     }, "editorial")
-                if has_document:
-                    return ("document_presentation", {
-                        "title": shorten(text, 52),
-                        "source_label": "Narration sentence",
-                        "date_label": detect_date(text) or "",
-                        "body": text,
-                        "highlight": "",
-                    }, "history")
+                # MG-09: document_presentation is NOT offered for a
+                # bare document-marker sentence. The chain has no
+                # genuine document asset — feeding it the narration
+                # sentence as a fabricated "document" body presented
+                # script text as a source document. The refusal is
+                # recorded as missing_document_source when the chain
+                # exhausts (see the skip-reason priority below). The
+                # engine template itself is unchanged and remains
+                # available to callers with a genuine document.
                 return None
             candidates = []
             if percent is not None:
@@ -2233,14 +2759,8 @@ def build_motion_graphics_assets(
                 candidates.append(("ring_badges", {
                     "badges": _badges_from_items(comparison),
                 }, _style_for("editorial")))
-            if has_document:
-                candidates.append(("document_presentation", {
-                    "title": shorten(text, 52),
-                    "source_label": "Narration sentence",
-                    "date_label": detect_date(text) or "",
-                    "body": text,
-                    "highlight": "",
-                }, _style_for("history")))
+            # MG-09: no document_presentation candidate — see the
+            # no-pack branch above (missing_document_source).
             if not candidates:
                 return None
             return _order_by_motif(candidates)[0]
@@ -2248,12 +2768,19 @@ def build_motion_graphics_assets(
         produced_family = None
         produced_reason = ""
 
+        _stat_reason = None
+        _stat_detail = ""
+        _engine_reason = None
+        _engine_detail = ""
+
         # Variety pre-pass: if the previous target used the stat
         # family and an engine alternative fits this one, try the
         # alternative FIRST (stat remains the fallback below).
         if _last_family == "stat" and comparison is None:
             _alt = _engine_alternative()
-            if _alt and _make_engine_graphic(target, _alt[0], _alt[1], style=_alt[2]):
+            if _alt and _make_engine_graphic(
+                target, _alt[0], _alt[1], style=_alt[2]
+            )[0]:
                 produced_family = "motion_engine"
                 produced_reason = f"variety_alternative:{_alt[0]}"
 
@@ -2261,14 +2788,15 @@ def build_motion_graphics_assets(
         # NOT reduced to a single-value stat card — it falls
         # through to the stat_comparison template below.
         if produced_family is None and comparison is None:
-            if _make_stat(
+            _stat_ok, _stat_reason, _stat_detail = _make_stat(
                 target["scene_number"],
                 target["sentence_index"],
                 target["sentence_number"],
                 text,
                 targeted=True,
                 target=target,
-            ):
+            )
+            if _stat_ok:
                 produced_family = "stat"
                 produced_reason = "stat_value"
 
@@ -2295,9 +2823,12 @@ def build_motion_graphics_assets(
 
         # 4) Event schematic (conservative trigger, motif-gated).
         _schematic_reason = None
+        _schematic_detail = ""
         if produced_family is None:
-            _schematic_reason = _make_schematic(target)
-            if _schematic_reason is None:
+            _schematic_ok, _schematic_reason, _schematic_detail = (
+                _make_schematic(target)
+            )
+            if _schematic_ok:
                 produced_family = "event_schematic"
                 produced_reason = "schematic"
 
@@ -2322,13 +2853,8 @@ def build_motion_graphics_assets(
                     _candidates.append(("ring_badges", {
                         "badges": _badges_from_items(comparison),
                     }, _style_for("editorial")))
-                if has_document:
-                    _candidates.append(("document_presentation", {
-                        "title": shorten(text, 52),
-                        "source_label": "Narration sentence",
-                        "date_label": detect_date(text) or "",
-                        "body": text, "highlight": "",
-                    }, _style_for("history")))
+                # MG-09: no document_presentation candidate (see
+                # _engine_alternative — missing_document_source).
                 if percent is not None:
                     _candidates.append(("data_gauge", {
                         "percent": percent, "label": shorten(text, 52),
@@ -2343,20 +2869,20 @@ def build_motion_graphics_assets(
                     _candidates.append(("stat_comparison", {
                         "items": comparison, "title": shorten(text, 60),
                     }, "editorial"))
-                if has_document:
-                    _candidates.append(("document_presentation", {
-                        "title": shorten(text, 52),
-                        "source_label": "Narration sentence",
-                        "date_label": detect_date(text) or "",
-                        "body": text, "highlight": "",
-                    }, "history"))
+                # MG-09: no document_presentation candidate (see
+                # _engine_alternative — missing_document_source).
                 if percent is not None:
                     _candidates.append(("data_gauge", {
                         "percent": percent, "label": shorten(text, 52),
                         "sublabel": text,
                     }, "editorial"))
             for _name, _data, _style in _candidates:
-                if _make_engine_graphic(target, _name, _data, style=_style):
+                _engine_ok, _engine_reason, _engine_detail = (
+                    _make_engine_graphic(
+                        target, _name, _data, style=_style
+                    )
+                )
+                if _engine_ok:
                     produced_family = "motion_engine"
                     produced_reason = f"motion_engine:{_name}"
                     break
@@ -2367,20 +2893,72 @@ def build_motion_graphics_assets(
             _last_family = produced_family
             _record_outcome(target, "generated", produced_family, produced_reason)
         else:
-            # Precise skip reason: a specific schematic reason wins;
-            # otherwise the historical no_stat_value.
-            _reason = _schematic_reason or "no_stat_value"
-            if comparison:
+            # MG-08: ONE typed reason from the closed vocabulary,
+            # chosen by specificity — an attempted render/validation
+            # failure first, then a truthfulness refusal, then the
+            # schematic stage's specific reason, then the
+            # sentence-shape reasons (comparison / document), then
+            # the engine/stat stage outcomes, and only as a last
+            # resort the generic no-purpose fall-through. The
+            # historical "no_stat_value" conflated all of these;
+            # the original failure detail rides along in `detail`.
+            _hard_reasons = {
+                "rendering_failure", "validation_failed",
+                "invalid_graphic_output",
+            }
+            _reason = None
+            _detail = ""
+            for _cand_reason, _cand_detail in (
+                (_engine_reason, _engine_detail),
+                (_stat_reason, _stat_detail),
+                (_schematic_reason, _schematic_detail),
+            ):
+                if _cand_reason in _hard_reasons:
+                    _reason, _detail = _cand_reason, _cand_detail
+                    break
+            if _reason is None and _stat_reason == "range_not_representable":
+                _reason, _detail = _stat_reason, _stat_detail
+            if _reason is None and _schematic_reason in (
+                "no_schematic_labels", "no_schematic_motif",
+                "schematic_cap_reached",
+            ):
+                _reason, _detail = _schematic_reason, _schematic_detail
+            if _reason is None and (
+                _schematic_reason == "no_eligible_graphic_purpose"
+            ):
+                _reason = "no_eligible_graphic_purpose"
+            if _reason is None and comparison:
                 _reason = "comparison_not_rendered"
+            if _reason is None and has_document:
+                _reason = "missing_document_source"
+            if _reason is None and _engine_reason:
+                _reason, _detail = _engine_reason, _engine_detail
+            if _reason is None and _stat_reason:
+                _reason, _detail = _stat_reason, _stat_detail
+            if _reason is None:
+                _reason = "no_eligible_graphic_purpose"
+            if _reason not in GRAPHIC_SKIP_REASONS:
+                # Closed-vocabulary guard: an unvocabularied string
+                # must never reach the manifest as a "reason"; the
+                # original is preserved in the detail.
+                _detail = f"unvocabularied reason {_reason!r}: {_detail}"
+                _reason = "no_eligible_graphic_purpose"
             target_skips.append(
                 {
                     "scene_number": target["scene_number"],
                     "sentence_index": target["sentence_index"],
                     "sentence_number": target["sentence_number"],
                     "reason": _reason,
+                    "detail": _detail,
                 }
             )
             _record_outcome(target, "skipped", None, _reason)
+            # A targeted sentence with a recorded outcome — generated
+            # OR skipped — is DECIDED: the untargeted sweep below
+            # must not silently retry it and double-record the same
+            # failure (or turn a refused graphic into an untargeted
+            # second attempt).
+            covered.add((target["scene_number"], target["sentence_index"]))
 
     # Untargeted stats, capped by max_stats (Stage A: parameterised;
     # historically a hardcoded 3 in balanced mode).
@@ -2416,7 +2994,7 @@ def build_motion_graphics_assets(
                 sentence.get("sentence_number"),
                 text,
                 targeted=False,
-            ):
+            )[0]:
                 covered.add((scene_number, sentence_index))
                 stats_created += 1
     # -----------------------------------------------------
@@ -2451,32 +3029,58 @@ def build_motion_graphics_assets(
                     duration=5.0,
                 )
 
-                register_asset(
+                record = register_asset(
                     path,
                     "process",
                     "process_or_transformation",
                     5.0,
                     "PROCESS",
+                    recipe=_recipe(
+                        "process", "ffmpeg_process",
+                        {"steps": copy.deepcopy(steps)},
+                        5.0, "process_or_transformation",
+                        scene_number=(
+                            process_anchor or {}
+                        ).get("scene_number"),
+                        sentence_index=(
+                            process_anchor or {}
+                        ).get("sentence_index"),
+                        sentence_number=(
+                            process_anchor or {}
+                        ).get("sentence_number"),
+                        source_references=[{
+                            "type": "case_bible_timeline",
+                        }],
+                    ),
                 )
-                _stamp_anchor(assets[-1], process_anchor)
-                assets[-1]["anchor_reason"] = process_anchor_reason
-                assets[-1]["family"] = "process"
-                assets[-1]["process_steps"] = [
-                    s["label"] for s in steps
-                ]
-                if process_anchor is None:
-                    # MA-03: rendered but undeliverable — recorded
-                    # as undelivered, not silently counted.
-                    assets[-1]["delivered"] = False
-                    undelivered.append({
-                        "graphic_type": "process",
-                        "reason": "no_anchor_no_targets",
-                    })
-                else:
-                    assets[-1]["delivered"] = True
+                if record is not None:
+                    _stamp_anchor(record, process_anchor)
+                    record["anchor_reason"] = process_anchor_reason
+                    record["family"] = "process"
+                    record["process_steps"] = [
+                        s["label"] for s in steps
+                    ]
+                    if process_anchor is None:
+                        # MA-03: rendered but undeliverable — recorded
+                        # as undelivered, not silently counted.
+                        record["delivered"] = False
+                        undelivered.append({
+                            "graphic_type": "process",
+                            "reason": "no_anchor_no_targets",
+                        })
+                    else:
+                        record["delivered"] = True
             except Exception as error:
                 # AUD-21: skip this graphic; never fail the whole job.
                 print(f"MOTION GRAPHIC SKIPPED (process): {error}")
+                graphic_failures.append({
+                    "graphic_type": "process",
+                    "purpose": "process_or_transformation",
+                    "stage": "render",
+                    "file_path": str(path),
+                    "reason": "rendering_failure",
+                    "detail": str(error),
+                })
 
     manifest = output_dir / "motion_graphics.json"
 
@@ -2495,6 +3099,11 @@ def build_motion_graphics_assets(
                     "outcomes": target_outcomes,
                 },
                 "undelivered": undelivered,
+                # MG-05: graphics that were rendered but refused
+                # registration (validation) or failed to render —
+                # recorded with their original failure information,
+                # never silently dropped.
+                "graphic_failures": graphic_failures,
             },
             indent=2,
             ensure_ascii=False,
@@ -2507,5 +3116,99 @@ def build_motion_graphics_assets(
     )
 
     return assets
+
+
+def render_graphic_from_recipe(recipe, out_path, duration=None):
+    """Re-render one graphic from its recorded regeneration recipe
+    (Phase 2 / MG-03) — the single dispatch used by the editor's
+    regenerate_graphic operation, so production and regeneration
+    share one rendering path per family.
+
+    `duration` overrides the recipe's recorded duration (the editor
+    passes the item's recorded timeline window); the recipe's own
+    duration is the default. Returns (path, metadata) on success
+    and (None, {"reason": ...}) when a template/renderer refuses
+    the recorded inputs; raises on hard render failures and on a
+    recipe that is explicitly marked non-regenerable. The caller
+    validates the output (validate_graphic_output) and promotes it
+    transactionally — this function never touches the previous
+    asset.
+    """
+    if not isinstance(recipe, dict):
+        raise ValueError("graphic recipe is not a recorded dict")
+    if recipe.get("regenerable") is False:
+        raise ValueError(
+            "graphic is marked non-regenerable: "
+            + str(recipe.get("non_regenerable_reason") or "no reason recorded")
+        )
+    family = recipe.get("family")
+    inputs = copy.deepcopy(recipe.get("inputs") or {})
+    effective_duration = (
+        float(duration)
+        if duration
+        else float(recipe.get("duration") or inputs.get("duration") or 3.0)
+    )
+    out_path = Path(out_path)
+
+    if family == "motion_engine":
+        from services.motion_engine import templates as _engine
+
+        template_name = recipe.get("template")
+        template_fn = _engine.TEMPLATES.get(template_name)
+        if template_fn is None:
+            return None, {"reason": f"unknown_template:{template_name}"}
+        rendered, metadata = template_fn(
+            inputs,
+            recipe.get("style") or "editorial",
+            out_path,
+            duration=effective_duration,
+            sentence_index=recipe.get("sentence_index"),
+            scene_number=recipe.get("scene_number"),
+        )
+        if not rendered:
+            return None, metadata or {"reason": "template_refused"}
+        return str(out_path), metadata or {}
+
+    if family == "stat":
+        _render_stat_graphic(
+            out_path,
+            inputs.get("headline", ""),
+            inputs.get("subtext", ""),
+            duration=effective_duration,
+            fact_basis=inputs.get("fact_basis") or FACT_BASIS_SCRIPT,
+        )
+        return str(out_path), {}
+
+    if family == "timeline":
+        spacing = _render_timeline_graphic(
+            out_path,
+            inputs.get("events") or [],
+            duration=effective_duration,
+        )
+        return str(out_path), {"timeline_spacing": spacing}
+
+    if family == "process":
+        _render_process_graphic(
+            out_path,
+            inputs.get("steps") or [],
+            duration=effective_duration,
+        )
+        return str(out_path), {}
+
+    if family == "event_schematic":
+        from services.vector_graphics import render_event_schematic
+
+        rendered = render_event_schematic(
+            out_path,
+            event_label=inputs.get("event_label", ""),
+            place_label=inputs.get("place_label", ""),
+            era_label=inputs.get("era_label", ""),
+            duration=effective_duration,
+        )
+        if rendered is None:
+            return None, {"reason": "no_schematic_motif"}
+        return str(out_path), {"schematic_motif": inputs.get("motif")}
+
+    raise ValueError(f"unknown graphic family in recipe: {family!r}")
 
 

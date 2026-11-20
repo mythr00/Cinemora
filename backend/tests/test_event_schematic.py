@@ -148,7 +148,21 @@ def _fake_schematic(monkeypatch):
     monkeypatch.setattr(
         "services.vector_graphics.render_event_schematic", fake_render
     )
+    # MG-05 (Motion Graphics programme Phase 1): registration now
+    # validates rendered output before an asset is recorded. These
+    # are logic tests whose fake renderers write non-media bytes,
+    # so the validator is stubbed at the same seam; the real
+    # validator is covered by dedicated real-file tests in
+    # tests/test_motion_graphics_programme.py.
+    monkeypatch.setattr(
+        graphics_pipeline, "validate_graphic_output",
+        lambda path, expected_duration=None, **kwargs: {
+            "passed": True, "failure_kind": None, "detail": "",
+            "checks": {}, "probe": None,
+        },
+    )
     return calls
+
 
 
 def _fake_stat_and_summary(monkeypatch):
@@ -215,7 +229,13 @@ def test_schematic_not_generated_when_scene_has_verified_visuals(
     ]
     manifest = json.loads((tmp_path / "motion_graphics.json").read_text())
     assert manifest["targets"]["generated"] == 0
-    assert manifest["targets"]["skipped"][0]["reason"] == "no_stat_value"
+    # MG-08: this skip was historically recorded as "no_stat_value",
+    # which was untrue — the sentence was blocked because the scene
+    # already holds verified visuals (schematic ineligible). The
+    # closed typed vocabulary names the actual condition.
+    assert manifest["targets"]["skipped"][0]["reason"] == (
+        "no_eligible_graphic_purpose"
+    )
 
 
 def test_schematic_skipped_and_recorded_without_labels(

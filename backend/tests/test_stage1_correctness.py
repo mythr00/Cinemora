@@ -166,6 +166,20 @@ def test_verdictless_visual_does_not_suppress_event_schematic(
 
     monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_write)
 
+    # MG-05 (Motion Graphics programme Phase 1): registration now
+    # validates rendered output before an asset is recorded. These
+    # are logic tests whose fake renderers write non-media bytes,
+    # so the validator is stubbed at the same seam; the real
+    # validator is covered by dedicated real-file tests in
+    # tests/test_motion_graphics_programme.py.
+    monkeypatch.setattr(
+        graphics_pipeline, "validate_graphic_output",
+        lambda path, expected_duration=None, **kwargs: {
+            "passed": True, "failure_kind": None, "detail": "",
+            "checks": {}, "probe": None,
+        },
+    )
+
     sentence = {
         "text": "Crowds poured through the opened checkpoint at dawn.",
         "sentence_number": 3,
