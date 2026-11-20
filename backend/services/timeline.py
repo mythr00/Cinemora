@@ -17,6 +17,13 @@ try:
 except ImportError:  # flat-layout fallback
     import run_context
 
+try:
+    from services import narration as narration_service
+    from services import timing as timing_service
+except ImportError:  # flat-layout fallback
+    import narration as narration_service
+    import timing as timing_service
+
 
 # ============================================================
 # CONFIGURATION
@@ -433,639 +440,6 @@ def get_scene_sentences(scene):
         ]
 
     return []
-
-
-# ============================================================
-# NARRATION ALIGNMENT
-# ============================================================
-
-
-
-def align_sentences_to_segments(
-    sentences,
-    caption_segments,
-    narration_duration,
-):
-    """
-    Align script sentences to Whisper word timestamps.
-
-    Whisper may:
-    - combine multiple script sentences into one segment
-    - split one script sentence across multiple segments
-    - omit punctuation
-    - slightly alter wording
-
-    Therefore alignment is performed against the complete
-    Whisper word sequence rather than assuming one segment
-    equals one script sentence.
-    """
-
-    import difflib
-    import re
-
-    def normalize_token(value):
-        value = str(value or "").lower()
-
-        value = re.sub(
-            r"[^a-z0-9']+",
-            "",
-            value,
-        )
-
-        return value
-
-    # ---------------------------------------------------------
-    # 1. Normalize script sentences
-    # ---------------------------------------------------------
-
-    normalized_sentences = []
-
-    script_tokens = []
-
-    for index, sentence in enumerate(sentences or []):
-
-        if isinstance(sentence, dict):
-            sentence_text = str(
-                sentence.get("text", "")
-            ).strip()
-        else:
-            sentence_text = str(sentence).strip()
-
-        tokens = [
-            normalize_token(token)
-            for token in sentence_text.split()
-        ]
-
-        tokens = [
-            token
-            for token in tokens
-            if token
-        ]
-
-        start_token = len(script_tokens)
-
-        script_tokens.extend(tokens)
-
-        end_token = len(script_tokens)
-
-        normalized_sentences.append(
-            {
-                "index": index,
-                "text": sentence_text,
-                "tokens": tokens,
-                "token_start": start_token,
-                "token_end": end_token,
-            }
-        )
-
-    # ---------------------------------------------------------
-    # 2. Flatten Whisper words
-    # ---------------------------------------------------------
-
-    whisper_words = []
-
-    for segment in caption_segments or []:
-
-        for word in segment.get("words", []) or []:
-
-            raw_word = str(
-                word.get("word", "")
-            ).strip()
-
-            normalized = normalize_token(
-                raw_word
-            )
-
-            if not normalized:
-                continue
-
-            start_time = float(
-                word.get("start", 0.0)
-            )
-
-            end_time = float(
-                word.get(
-                    "end",
-                    start_time,
-                )
-            )
-
-            if end_time < start_time:
-                end_time = start_time
-
-            whisper_words.append(
-                {
-                    "text": raw_word,
-                    "normalized": normalized,
-                    "start": start_time,
-                    "end": end_time,
-                }
-            )
-
-    whisper_tokens = [
-        word["normalized"]
-        for word in whisper_words
-    ]
-
-    total_script_tokens = len(
-        script_tokens
-    )
-
-    total_whisper_words = len(
-        whisper_words
-    )
-
-    if not normalized_sentences:
-        return []
-
-    if not whisper_words:
-
-        duration = float(
-            narration_duration or 0.0
-        )
-
-        sentence_duration = (
-            duration
-            / len(normalized_sentences)
-        )
-
-        results = []
-
-        for i, sentence in enumerate(
-            normalized_sentences
-        ):
-
-            start_time = (
-                i * sentence_duration
-            )
-
-            end_time = (
-                (i + 1)
-                * sentence_duration
-            )
-
-            results.append(
-                {
-                    "sentence_index": sentence["index"],
-                    "text": sentence["text"],
-                    "start": round(
-                        start_time,
-                        3,
-                    ),
-                    "end": round(
-                        end_time,
-                        3,
-                    ),
-                    "duration": round(
-                        max(
-                            0.0,
-                            end_time - start_time,
-                        ),
-                        3,
-                    ),
-                    "word_start": 0,
-                    "word_end": 0,
-                    "alignment_score": 0.0,
-                    "alignment_method": "uniform_fallback",
-                }
-            )
-
-        return results
-
-    # ---------------------------------------------------------
-    # 3. Global token alignment
-    # ---------------------------------------------------------
-
-    matcher = difflib.SequenceMatcher(
-        None,
-        script_tokens,
-        whisper_tokens,
-        autojunk=False,
-    )
-
-    matching_blocks = matcher.get_matching_blocks()
-
-    # Map each script token position to a Whisper word index.
-    script_to_whisper = {}
-
-    for block in matching_blocks:
-
-        script_start = block.a
-        whisper_start = block.b
-        size = block.size
-
-        for offset in range(size):
-
-            script_index = (
-                script_start + offset
-            )
-
-            whisper_index = (
-                whisper_start + offset
-            )
-
-            script_to_whisper[
-                script_index
-            ] = whisper_index
-
-    # ---------------------------------------------------------
-    # 4. Interpolate unmatched script tokens
-    # ---------------------------------------------------------
-
-    matched_positions = sorted(
-        script_to_whisper.keys()
-    )
-
-    def estimate_whisper_position(
-        script_position,
-    ):
-
-        if not matched_positions:
-            return int(
-                (
-                    script_position
-                    / max(
-                        1,
-                        total_script_tokens,
-                    )
-                )
-                * total_whisper_words
-            )
-
-        if script_position <= matched_positions[0]:
-
-            return script_to_whisper[
-                matched_positions[0]
-            ]
-
-        if script_position >= matched_positions[-1]:
-
-            return min(
-                total_whisper_words - 1,
-                script_to_whisper[
-                    matched_positions[-1]
-                ]
-                + (
-                    script_position
-                    - matched_positions[-1]
-                ),
-            )
-
-        left = matched_positions[0]
-        right = matched_positions[-1]
-
-        for i in range(
-            len(matched_positions) - 1
-        ):
-
-            current = matched_positions[i]
-            following = matched_positions[i + 1]
-
-            if (
-                current
-                <= script_position
-                <= following
-            ):
-
-                left = current
-                right = following
-                break
-
-        left_whisper = script_to_whisper[
-            left
-        ]
-
-        right_whisper = script_to_whisper[
-            right
-        ]
-
-        span_script = (
-            right - left
-        )
-
-        if span_script <= 0:
-            return left_whisper
-
-        ratio = (
-            script_position - left
-        ) / span_script
-
-        estimate = (
-            left_whisper
-            + ratio
-            * (
-                right_whisper
-                - left_whisper
-            )
-        )
-
-        return int(round(estimate))
-
-    # ---------------------------------------------------------
-    # 5. Build sentence timing windows
-    # ---------------------------------------------------------
-
-    results = []
-
-    previous_end_time = 0.0
-
-    for sentence_position, sentence in enumerate(
-        normalized_sentences
-    ):
-
-        token_start = sentence[
-            "token_start"
-        ]
-
-        token_end = sentence[
-            "token_end"
-        ]
-
-        if token_end <= token_start:
-
-            start_time = previous_end_time
-            end_time = start_time
-
-            results.append(
-                {
-                    "sentence_index": sentence["index"],
-                    "text": sentence["text"],
-                    "start": round(
-                        start_time,
-                        3,
-                    ),
-                    "end": round(
-                        end_time,
-                        3,
-                    ),
-                    "duration": 0.0,
-                    "word_start": 0,
-                    "word_end": 0,
-                    "alignment_score": 0.0,
-                    "alignment_method": "empty_sentence",
-                }
-            )
-
-            continue
-
-        mapped_indices = []
-
-        for script_position in range(
-            token_start,
-            token_end,
-        ):
-
-            if script_position in script_to_whisper:
-
-                mapped_indices.append(
-                    script_to_whisper[
-                        script_position
-                    ]
-                )
-
-        # -----------------------------------------------------
-        # Direct matched words
-        # -----------------------------------------------------
-
-        if mapped_indices:
-
-            word_start = min(
-                mapped_indices
-            )
-
-            word_end = max(
-                mapped_indices
-            ) + 1
-
-        # -----------------------------------------------------
-        # No direct match: estimate from neighboring
-        # sentence boundaries.
-        # -----------------------------------------------------
-
-        else:
-
-            estimated_start = (
-                estimate_whisper_position(
-                    token_start
-                )
-            )
-
-            estimated_end = (
-                estimate_whisper_position(
-                    max(
-                        token_start,
-                        token_end - 1,
-                    )
-                )
-                + 1
-            )
-
-            word_start = max(
-                0,
-                min(
-                    total_whisper_words - 1,
-                    estimated_start,
-                ),
-            )
-
-            word_end = max(
-                word_start + 1,
-                min(
-                    total_whisper_words,
-                    estimated_end,
-                ),
-            )
-
-        # -----------------------------------------------------
-        # Clamp to chronological sequence
-        # -----------------------------------------------------
-
-        if results:
-
-            minimum_word = results[-1][
-                "word_end"
-            ]
-
-            if word_start < minimum_word:
-
-                word_start = minimum_word
-
-            if word_end <= word_start:
-
-                word_end = min(
-                    total_whisper_words,
-                    word_start + 1,
-                )
-
-        if word_start >= total_whisper_words:
-
-            word_start = max(
-                0,
-                total_whisper_words - 1,
-            )
-
-        if word_end > total_whisper_words:
-
-            word_end = total_whisper_words
-
-        selected_words = whisper_words[
-            word_start:word_end
-        ]
-
-        # -----------------------------------------------------
-        # Timestamp calculation
-        # -----------------------------------------------------
-
-        if selected_words:
-
-            start_time = selected_words[0][
-                "start"
-            ]
-
-            end_time = selected_words[-1][
-                "end"
-            ]
-
-        else:
-
-            start_time = previous_end_time
-            end_time = previous_end_time
-
-        if start_time < previous_end_time:
-
-            start_time = previous_end_time
-
-        if end_time < start_time:
-
-            end_time = start_time
-
-        # -----------------------------------------------------
-        # Alignment score
-        # -----------------------------------------------------
-
-        expected = set(
-            sentence["tokens"]
-        )
-
-        actual = set(
-            word["normalized"]
-            for word in selected_words
-        )
-
-        if expected:
-
-            alignment_score = (
-                len(
-                    expected & actual
-                )
-                / len(expected)
-            )
-
-        else:
-
-            alignment_score = 0.0
-
-        results.append(
-            {
-                "sentence_index": sentence["index"],
-                "text": sentence["text"],
-                "start": round(
-                    start_time,
-                    3,
-                ),
-                "end": round(
-                    end_time,
-                    3,
-                ),
-                "duration": round(
-                    max(
-                        0.0,
-                        end_time - start_time,
-                    ),
-                    3,
-                ),
-                "word_start": word_start,
-                "word_end": word_end,
-                "alignment_score": round(
-                    alignment_score,
-                    4,
-                ),
-                "alignment_method": "global_token_alignment",
-            }
-        )
-
-        previous_end_time = end_time
-
-    # ---------------------------------------------------------
-    # 6. Final boundary
-    # ---------------------------------------------------------
-
-    narration_duration = float(
-        narration_duration or 0.0
-    )
-
-    if results:
-
-        results[-1]["end"] = round(
-            narration_duration,
-            3,
-        )
-
-        if (
-            results[-1]["start"]
-            > results[-1]["end"]
-        ):
-
-            results[-1]["start"] = results[-1][
-                "end"
-            ]
-
-        results[-1]["duration"] = round(
-            max(
-                0.0,
-                results[-1]["end"]
-                - results[-1]["start"],
-            ),
-            3,
-        )
-
-    # ---------------------------------------------------------
-    # 7. Final chronological safety
-    # ---------------------------------------------------------
-
-    for i in range(
-        1,
-        len(results),
-    ):
-
-        if (
-            results[i]["start"]
-            < results[i - 1]["end"]
-        ):
-
-            results[i]["start"] = results[
-                i - 1
-            ]["end"]
-
-        if (
-            results[i]["end"]
-            < results[i]["start"]
-        ):
-
-            results[i]["end"] = results[
-                i
-            ]["start"]
-
-        results[i]["duration"] = round(
-            max(
-                0.0,
-                results[i]["end"]
-                - results[i]["start"],
-            ),
-            3,
-        )
-
-    return results
 
 
 def build_scene_timeline(
@@ -1854,6 +1228,7 @@ def build_project_timeline(
     processed_scenes,
     output_dir=None,
     artefact_dir=None,
+    parts_manifest=None,
 ):
 
     if output_dir is None:
@@ -1880,23 +1255,39 @@ def build_project_timeline(
     ) / "timeline.json"
 
     # --------------------------------------------------------
-    # LOAD NARRATION TIMINGS
+    # LOAD THE MEASURED PARTS MANIFEST (Stage 5 / R4)
+    #
+    # Production sentence windows are MEASURED part durations
+    # (services.timing), never reconstructed from captions —
+    # the pre-R4 code loaded captions.json here and aligned
+    # script sentences to Whisper word timings, degrading to a
+    # uniform total/N split when Whisper failed (AUDIO-001).
+    # Resolution: an explicit parts_manifest argument (dict, or
+    # a path loaded/upgraded by measurement) wins; otherwise the
+    # conventional narration_parts/parts_manifest.json under the
+    # project directory. No manifest -> timing_unavailable.
     # --------------------------------------------------------
 
-    caption_data = load_caption_data(
-        project_id,
-        output_dir,
-    )
+    if isinstance(parts_manifest, dict):
+        manifest_data = parts_manifest
+    else:
+        manifest_path = (
+            Path(parts_manifest)
+            if parts_manifest is not None
+            else project_dir / "narration_parts" / "parts_manifest.json"
+        )
+        manifest_data = narration_service.load_parts_manifest_data(
+            manifest_path
+        )
 
-    narration_duration = float(
-        caption_data[
-            "duration"
-        ]
-    )
-
-    caption_segments = caption_data[
-        "segments"
-    ]
+    if manifest_data is None:
+        raise timing_service.TimingUnavailableError(
+            "timing_unavailable: no narration parts manifest "
+            f"for project {project_id} — production sentence "
+            "windows require measured part durations "
+            "(services.timing) and are never reconstructed "
+            "from captions."
+        )
 
     # --------------------------------------------------------
     # COLLECT PRODUCTION SENTENCES
@@ -1944,16 +1335,37 @@ def build_project_timeline(
                 )
 
     # --------------------------------------------------------
-    # ALIGN SCRIPT TO NARRATION
+    # MEASURED SENTENCE WINDOWS (Stage 5 / R4)
     # --------------------------------------------------------
 
-    sentence_timings = (
-        align_sentences_to_segments(
-            all_sentences,
-            caption_segments,
-            narration_duration,
-        )
+    windows = timing_service.sentence_windows(
+        manifest_data
     )
+
+    if len(windows) != len(all_sentences):
+
+        raise timing_service.TimingUnavailableError(
+            "timing_unavailable: parts manifest describes "
+            f"{len(windows)} sentences but the production "
+            f"has {len(all_sentences)} — refusing to build "
+            "windows on a mismatched clock."
+        )
+
+    narration_duration = timing_service.total_duration(
+        manifest_data
+    )
+
+    sentence_timings = [
+        {
+            **window,
+            "text":
+                sentence_text,
+        }
+        for window, sentence_text in zip(
+            windows,
+            all_sentences,
+        )
+    ]
 
     # --------------------------------------------------------
     # BUILD SCENE TIMELINES
@@ -2219,17 +1631,23 @@ def build_project_timeline(
         "items":
             all_items,
 
+        # Stage 5 (R4): window provenance — every window in this
+        # timeline derives from measured narration part durations
+        # (services.timing). The pre-R4 record claimed
+        # timing_source "captions.json" with a Whisper alignment
+        # block; alignment is a captions-only concern now and is
+        # recorded in captions.json, not here.
         "timing_source":
-            "captions.json",
+            "measured_part",
 
-        "alignment":
+        "timing":
             {
-                "method":
-                    "whisper_word_alignment",
+                "source":
+                    "measured_part",
 
-                "whisper_segments":
+                "parts":
                     len(
-                        caption_segments
+                        sentence_timings
                     ),
 
                 "script_sentences":
@@ -2237,10 +1655,8 @@ def build_project_timeline(
                         all_sentences
                     ),
 
-                "aligned_sentences":
-                    len(
-                        sentence_timings
-                    ),
+                "total_duration_seconds":
+                    narration_duration,
             },
     }
 
@@ -2269,8 +1685,8 @@ def build_project_timeline(
     )
 
     print(
-        f"Whisper segments: "
-        f"{len(caption_segments)}"
+        f"Narration parts (measured): "
+        f"{len(sentence_timings)}"
     )
 
     print(

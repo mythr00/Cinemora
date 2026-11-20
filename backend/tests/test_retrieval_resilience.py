@@ -468,6 +468,32 @@ def _write_captions(media_root, project_id, segments):
     (project_dir / "captions.json").write_text(
         json.dumps({"duration": duration, "segments": segments}), encoding="utf-8"
     )
+    # Stage 5 (R4): production windows derive from MEASURED
+    # narration parts — real WAV part files plus a v2 parts
+    # manifest whose recorded durations match the segments.
+    import wave
+
+    parts_dir = project_dir / "narration_parts"
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for index, segment in enumerate(segments):
+        seconds = float(segment["end"]) - float(segment["start"])
+        name = f"part_{index:03d}.wav"
+        with wave.open(str(parts_dir / name), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(22050)
+            wav.writeframes(b"\x00\x00" * int(22050 * seconds))
+        parts.append({
+            "index": index, "file": name,
+            "hash": f"fixture-{index}",
+            "sentence_sha256": f"fixture-{index}",
+            "measured_duration_seconds": seconds,
+            "duration_source": "ffprobe_part",
+        })
+    (parts_dir / "parts_manifest.json").write_text(json.dumps(
+        {"version": 2, "model": "fixture", "parts": parts}
+    ))
 
 
 def _visual(tmp_path, name):

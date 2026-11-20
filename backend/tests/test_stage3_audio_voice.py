@@ -188,12 +188,21 @@ def test_resolve_voice_known_and_unknown():
 
 class _CapturedPiper:
     """Replaces subprocess.run inside narration._run_piper: records
-    the command, writes a real tiny WAV to the -f target."""
+    the command, writes a real tiny WAV to the -f target.
+
+    Stage 5 (R4): generate_narration now also probes each part
+    through media_probe (ffprobe) to record its measured duration,
+    and the patch target is the shared subprocess module — so
+    non-Piper commands are delegated to the real subprocess.run
+    instead of being mistaken for Piper invocations."""
 
     def __init__(self):
         self.commands = []
+        self._real_run = subprocess.run
 
     def __call__(self, command, **kwargs):
+        if "piper" not in command:
+            return self._real_run(command, **kwargs)
         self.commands.append(list(command))
         out = Path(command[command.index("-f") + 1])
         with wave.open(str(out), "wb") as wav:

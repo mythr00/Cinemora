@@ -30,6 +30,9 @@ from services import visual_quality as visual_quality_service
 
 from services import genre_packs
 from services import media_paths
+from services import media_probe
+from services import narration as narration_service
+from services import timing as timing_service
 from services.atomic_write import write_json_atomic, write_text_atomic
 from services import music as music_service
 from services import run_context
@@ -967,6 +970,10 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
 
     timeline_file = None
     expected_duration = None
+    # Stage 5 (R4): the measured parts manifest data for this run,
+    # loaded by the voice_actor stage and handed to the timeline
+    # build — the run's single timing authority.
+    parts_manifest_data = None
     soundtrack_record = None
     # The exact narration file the soundtrack was mixed from —
     # the M10 provenance reference (volume-adjusted when the
@@ -987,10 +994,58 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         if not narration_file.exists():
             raise RuntimeError("narration.wav was not created.")
         print(f"Voiceover created: {narration_file}")
+        # Stage 5 (R4): load the measured parts manifest — the
+        # run's timing authority (v1 entries upgraded by
+        # measurement on load). It is handed to build_captions
+        # (event placement inside measured windows) and to the
+        # timeline build (the windows themselves).
+        parts_manifest_data = narration_service.load_parts_manifest_data(
+            project_dir / "narration_parts" / "parts_manifest.json"
+        )
+        if parts_manifest_data is None:
+            raise RuntimeError(
+                "timing_unavailable: the narration parts manifest "
+                "was not written by generate_narration."
+            )
         # Stage 3I: captions.py is the single caption writer —
-        # Whisper word timings when usable, proportional segments
-        # (stamped provisional) otherwise; SRT/VTT sidecars always.
-        build_captions(str(narration_file), script, str(captions_json))
+        # Whisper word timings place caption events inside the
+        # measured windows when usable; otherwise single events
+        # on the measured windows, stamped provisional (Stage 5);
+        # SRT/VTT sidecars always.
+        captions_data = build_captions(
+            str(narration_file),
+            script,
+            str(captions_json),
+            parts_manifest=parts_manifest_data,
+        )
+        if isinstance(captions_data, dict) and isinstance(
+            captions_data.get("captions_alignment"), dict
+        ):
+            # Annex D2.2.6: the alignment aggregate is a run-level
+            # record — a film with approximate captions says so.
+            state["captions_alignment"] = captions_data[
+                "captions_alignment"
+            ]
+        # Annex D2.2.3: Σ parts vs the concatenated narration file.
+        # Divergence beyond tolerance is recorded (state -> asset
+        # report) and printed — never silently absorbed.
+        _concat_facts = media_probe.probe_audio(narration_file)
+        if _concat_facts is not None:
+            _consistency = timing_service.timing_consistency(
+                timing_service.total_duration(parts_manifest_data),
+                _concat_facts["duration_seconds"],
+            )
+            state["timing_consistency"] = _consistency
+            if not _consistency["within_tolerance"]:
+                print(
+                    "WARNING: narration timing consistency — parts "
+                    f"total {_consistency['parts_total_seconds']}s "
+                    "vs concatenated file "
+                    f"{_consistency['concatenated_duration_seconds']}s "
+                    f"(divergence {_consistency['divergence_seconds']}s "
+                    f"> tolerance {_consistency['tolerance_seconds']}s); "
+                    "recorded in the asset report."
+                )
         if not captions_json.exists():
             raise RuntimeError("Caption transcription failed.")
         print(f"Captions generated: {captions_json}")
@@ -1307,6 +1362,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             processed_scenes,
             output_dir=str(media_paths.media_root()),
             artefact_dir=artefact_dir,
+            parts_manifest=parts_manifest_data,
         )
 
         if not isinstance(timeline_result, dict):
@@ -1591,6 +1647,21 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             final_audio=final_audio_measurement,
             audio_provenance=audio_provenance,
         )
+
+        # Stage 5 (R4, annex D2.2.3/D2.2.6): the run's timing
+        # records ride the asset report — the captions alignment
+        # aggregate (a film with approximate captions says so at
+        # run level) and the Σ-parts consistency check (a
+        # divergent concatenation is a recorded warning, never
+        # silently absorbed).
+        if isinstance(state.get("captions_alignment"), dict):
+            asset_report["captions_alignment"] = state[
+                "captions_alignment"
+            ]
+        if isinstance(state.get("timing_consistency"), dict):
+            asset_report["timing_consistency"] = state[
+                "timing_consistency"
+            ]
 
         rights_manifest = build_rights_manifest(
             processed_scenes,

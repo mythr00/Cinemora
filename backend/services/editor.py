@@ -2783,6 +2783,7 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
     from services import music as music_service
     from services import narration as narration_service
     from services import renderer
+    from services import timing as timing_service
 
     project_id = str(project_id)
     claimed = run_ledger.claim_run(run_id)
@@ -2840,17 +2841,31 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
                 narration_file,
                 voice_id=narration_track.get("voice_id"),
             )
-            # Re-derive windows from the new part durations and
-            # retime proportionally inside each window.
-            manifest = _read_json(parts_dir / "parts_manifest.json") or {}
-            part_durations = {}
-            for entry in manifest.get("parts") or []:
-                duration = narration_service._audio_duration(
-                    parts_dir / entry["file"]
+            # Re-derive windows from the measured part durations
+            # and retime proportionally inside each window. Stage 5
+            # (R4): the windows come from services.timing — the
+            # same authority production uses, so revision and
+            # production timing can never diverge in method —
+            # replacing this block's private per-part duration
+            # loop. A part without a measurement fails the render
+            # loudly (timing_unavailable); the old loop silently
+            # kept the previous window for any unmeasured part.
+            manifest = narration_service.load_parts_manifest_data(
+                parts_dir / "parts_manifest.json"
+            )
+            if manifest is None:
+                raise timing_service.TimingUnavailableError(
+                    "timing_unavailable: the revision's narration "
+                    "parts manifest is missing — cannot retime."
                 )
-                if duration:
-                    part_durations[int(entry["index"])] = float(duration)
-            if part_durations:
+            windows = timing_service.sentence_windows(manifest)
+            if len(windows) != len(sentences):
+                raise timing_service.TimingUnavailableError(
+                    "timing_unavailable: the revision's parts "
+                    f"manifest describes {len(windows)} sentences "
+                    f"but the revision has {len(sentences)}."
+                )
+            if windows:
                 cursor = 0.0
                 retimed = {}
                 visual = _visual(doc)
@@ -2858,10 +2873,11 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
                     number = sentence["sentence_number"]
                     old_start = float(sentence["start"])
                     old_end = float(sentence["end"])
-                    new_duration = part_durations.get(
-                        index, old_end - old_start
+                    new_duration = windows[index]["duration"]
+                    new_start, new_end = (
+                        windows[index]["start"],
+                        windows[index]["end"],
                     )
-                    new_start, new_end = cursor, cursor + new_duration
                     scale = (
                         (new_end - new_start) / (old_end - old_start)
                         if old_end > old_start else 1.0

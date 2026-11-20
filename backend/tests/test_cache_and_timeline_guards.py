@@ -79,6 +79,34 @@ def _visual(tmp_path, name):
     }
 
 
+def _write_measured_parts(media_dir, durations):
+    """Stage 5 (R4): production windows derive from MEASURED
+    narration parts — real WAV part files plus a v2 parts manifest
+    whose recorded durations match the files exactly."""
+    import wave
+
+    parts_dir = media_dir / "narration_parts"
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for index, seconds in enumerate(durations):
+        name = f"part_{index:03d}.wav"
+        with wave.open(str(parts_dir / name), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(22050)
+            wav.writeframes(b"\x00\x00" * int(22050 * seconds))
+        parts.append({
+            "index": index, "file": name,
+            "hash": f"fixture-{index}",
+            "sentence_sha256": f"fixture-{index}",
+            "measured_duration_seconds": float(seconds),
+            "duration_source": "ffprobe_part",
+        })
+    (parts_dir / "parts_manifest.json").write_text(json.dumps(
+        {"version": 2, "model": "fixture", "parts": parts}
+    ))
+
+
 def test_timeline_skips_rejected_assets(tmp_path):
     project_id = f"guard-{uuid.uuid4()}"
     media_dir = tmp_path / "media" / project_id
@@ -90,6 +118,7 @@ def test_timeline_skips_rejected_assets(tmp_path):
     (media_dir / "captions.json").write_text(json.dumps(
         {"duration": 10.0, "segments": segments}
     ))
+    _write_measured_parts(media_dir, [5.0, 5.0])
     good = _visual(tmp_path, "good.mp4")
     rejected = _visual(tmp_path, "rejected.mp4")
     rejected["verification"] = {"accepted": False}

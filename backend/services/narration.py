@@ -6,6 +6,7 @@ import sys
 import wave
 from pathlib import Path
 
+from services import media_probe
 from services.atomic_write import write_json_atomic
 
 
@@ -46,14 +47,27 @@ def resolve_voice(voice_id):
 
 
 def _audio_duration(audio_file):
-    with wave.open(str(audio_file), "rb") as wav:
-        frames = wav.getnframes()
-        rate = wav.getframerate()
+    """Duration of an audio file, measured by the single probing
+    authority (Stage 5 / R4, annex D2.1): media_probe.probe_audio
+    (ffprobe). The WAV-header reader this used to be was a second
+    measuring authority and is retired; an unprobeable file raises,
+    exactly as a corrupt narration file already failed loudly."""
+    facts = media_probe.probe_audio(audio_file)
+    if facts is None:
+        raise RuntimeError(
+            f"Could not measure audio duration (unprobeable): {audio_file}"
+        )
+    return facts["duration_seconds"]
 
-    if rate <= 0:
-        raise RuntimeError("Invalid narration sample rate.")
 
-    return frames / float(rate)
+def _measure_part_duration(part_file):
+    """Measured duration of one narration part via probe_audio, or
+    None when the part cannot be probed (corrupt — the caller
+    fails loudly; a duration is never estimated)."""
+    facts = media_probe.probe_audio(part_file)
+    if facts is None:
+        return None
+    return facts["duration_seconds"]
 
 
 def _split_sentences(text):
@@ -236,7 +250,11 @@ def _load_parts_manifest(manifest_file):
 
 def _write_parts_manifest(manifest_file, parts, model_name=None):
     data = {
-        "version": 1,
+        # Stage 5 (R4): manifest v2 — every entry carries its
+        # measured duration (see generate_narration); v1 readers
+        # ignore the new fields, and v1 manifests are upgraded by
+        # measurement on load (load_parts_manifest_data).
+        "version": 2,
         "model": model_name or PIPER_MODEL.name,
         "parts": parts,
     }
@@ -244,6 +262,52 @@ def _write_parts_manifest(manifest_file, parts, model_name=None):
     # Atomic (Stage 4): the parts manifest is the narration resume
     # record — a truncated copy would corrupt resume decisions.
     write_json_atomic(manifest_file, data)
+
+
+def load_parts_manifest_data(manifest_file):
+    """Load a parts manifest as its full data dict, upgraded to
+    measured (v2) form.
+
+    A v1 manifest — or any entry lacking a recorded measurement —
+    is upgraded BY MEASURING the existing part files through
+    probe_audio (annex D2.2.2: files are on disk, so migration is
+    measurement, never estimation). An entry whose file is missing
+    or unprobeable is left unmeasured; services.timing then raises
+    timing_unavailable for it, loudly, at the consumer. Returns
+    None when the manifest file does not exist or cannot be read.
+    """
+    manifest_file = Path(manifest_file)
+    try:
+        with open(manifest_file, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, ValueError):
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    parts = []
+    for entry in data.get("parts") or []:
+        if not isinstance(entry, dict):
+            continue
+        entry = dict(entry)
+        if entry.get("measured_duration_seconds") is None:
+            part_file = manifest_file.parent / str(entry.get("file") or "")
+            measured = (
+                _measure_part_duration(part_file)
+                if entry.get("file") and part_file.is_file()
+                else None
+            )
+            if measured is not None:
+                entry["measured_duration_seconds"] = round(measured, 3)
+                entry["duration_source"] = "ffprobe_part"
+        parts.append(entry)
+
+    return {
+        "version": 2,
+        "model": data.get("model") or PIPER_MODEL.name,
+        "parts": parts,
+    }
 
 
 def _concatenate_parts(part_files, output_file):
@@ -382,6 +446,22 @@ def generate_narration(
 
             if last_error is not None:
                 raise last_error
+
+        # Stage 5 (R4, annex D2.1/D2.2): measure the part — whether
+        # just synthesised or reused — through the single probing
+        # authority, and record the measurement on the manifest
+        # entry. An unprobeable part is corrupt narration: fail the
+        # stage loudly here rather than let an unmeasured duration
+        # flow into timing downstream.
+        measured = _measure_part_duration(part_file)
+        if measured is None:
+            raise RuntimeError(
+                f"Narration part {part_name} could not be probed "
+                "for a measured duration; refusing to record an "
+                "unmeasured part."
+            )
+        entry["measured_duration_seconds"] = round(measured, 3)
+        entry["duration_source"] = "ffprobe_part"
 
         manifest_parts.append(entry)
         part_files.append(part_file)

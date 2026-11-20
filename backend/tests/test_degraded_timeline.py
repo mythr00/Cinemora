@@ -700,6 +700,35 @@ def test_18_run1_report_and_ledger_unchanged_by_run2(tmp_path):
         cleanup()
 
 
+def _write_measured_parts(media_dir, durations):
+    """Stage 5 (R4): production windows derive from MEASURED
+    narration parts — real WAV part files plus a v2 parts manifest
+    whose recorded durations match the files exactly."""
+    import json as _json
+    import wave
+
+    parts_dir = media_dir / "narration_parts"
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for index, seconds in enumerate(durations):
+        name = f"part_{index:03d}.wav"
+        with wave.open(str(parts_dir / name), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(22050)
+            wav.writeframes(b"\x00\x00" * int(22050 * seconds))
+        parts.append({
+            "index": index, "file": name,
+            "hash": f"fixture-{index}",
+            "sentence_sha256": f"fixture-{index}",
+            "measured_duration_seconds": float(seconds),
+            "duration_source": "ffprobe_part",
+        })
+    (parts_dir / "parts_manifest.json").write_text(_json.dumps(
+        {"version": 2, "model": "fixture", "parts": parts}
+    ))
+
+
 # --------------------------------------------------------------- test 19
 
 def test_19_no_random_or_unrelated_fallback_is_selected(tmp_path):
@@ -754,6 +783,7 @@ def test_19_no_random_or_unrelated_fallback_is_selected(tmp_path):
     (media_dir / "captions.json").write_text(_json.dumps(
         {"segments": segments, "words": [], "duration": 10.0}
     ))
+    _write_measured_parts(media_dir, [5.0, 5.0])
     scene1 = {
         "scene": {"scene_number": 1}, "scene_number": 1,
         "duration_seconds": 5, "videos": [sibling], "images": [],
@@ -945,6 +975,7 @@ def _t20_production(tmp_path):
     (media_dir / "captions.json").write_text(_json.dumps(
         {"segments": segments, "words": [], "duration": 40.0}
     ))
+    _write_measured_parts(media_dir, [5.0] * 8)
     timeline = build_project_timeline(
         project_id, [scene1, scene2], output_dir=str(tmp_path / "media"),
     )

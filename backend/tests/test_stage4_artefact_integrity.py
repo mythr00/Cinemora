@@ -420,6 +420,34 @@ def test_fail_pipeline_writes_into_the_failed_runs_dir(project_id, tmp_path):
 # DATA-004 — timeline builder artefact_dir
 # ---------------------------------------------------------------------
 
+def _write_measured_parts(media_dir, durations):
+    """Stage 5 (R4): production windows derive from MEASURED
+    narration parts — real WAV part files plus a v2 parts manifest
+    whose recorded durations match the files exactly."""
+    import wave
+
+    parts_dir = media_dir / "narration_parts"
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for index, seconds in enumerate(durations):
+        name = f"part_{index:03d}.wav"
+        with wave.open(str(parts_dir / name), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(22050)
+            wav.writeframes(b"\x00\x00" * int(22050 * seconds))
+        parts.append({
+            "index": index, "file": name,
+            "hash": f"fixture-{index}",
+            "sentence_sha256": f"fixture-{index}",
+            "measured_duration_seconds": float(seconds),
+            "duration_source": "ffprobe_part",
+        })
+    (parts_dir / "parts_manifest.json").write_text(json.dumps(
+        {"version": 2, "model": "fixture", "parts": parts}
+    ))
+
+
 def _timeline_fixture(tmp_path, project_id):
     media_dir = tmp_path / "media" / project_id
     media_dir.mkdir(parents=True)
@@ -430,6 +458,7 @@ def _timeline_fixture(tmp_path, project_id):
     (media_dir / "captions.json").write_text(
         json.dumps({"duration": 10.0, "segments": segments})
     )
+    _write_measured_parts(media_dir, [5.0, 5.0])
     visual_path = tmp_path / "visual.mp4"
     visual_path.write_bytes(b"\x00" * 4096)
     visual = {

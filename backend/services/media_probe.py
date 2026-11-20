@@ -12,6 +12,10 @@ file?" using ffprobe (video) and Pillow (images):
 - ``probe_video(path)`` -> dict with the REAL duration, resolution, fps,
   codec and audio presence, or ``None`` when the file is missing, unreadable,
   has no video stream, or reports no usable duration.
+- ``probe_audio(path)`` -> dict with the REAL duration, codec, sample rate
+  and channels, or ``None`` when the file is missing, unreadable, has no
+  audio stream, or reports no usable duration (Stage 5 / R4: the probing
+  authority for narration part durations).
 - ``probe_image(path)`` -> dict with real dimensions/format, or ``None``.
 
 Nothing here fabricates values: unknown stays ``None`` and callers must
@@ -104,6 +108,80 @@ def probe_video(path) -> dict | None:
         "fps": _parse_fps(video.get("avg_frame_rate") or video.get("r_frame_rate")),
         "codec": video.get("codec_name"),
         "has_audio": any(s.get("codec_type") == "audio" for s in streams),
+    }
+
+
+def probe_audio(path) -> dict | None:
+    """Return real stream facts for an audio file, or None if
+    unverifiable (Stage 5 / R4, annex D2.1).
+
+    The audio sibling of probe_video: narration parts are WAV, which
+    probe_video correctly refuses (it requires a video stream). Same
+    discipline — ffprobe facts or None, nothing fabricated: the file
+    must exist, carry an audio stream, and report a usable duration.
+    This is the single probing authority for narration durations;
+    narration._audio_duration delegates here so the old WAV-header
+    reader no longer stands as a second authority.
+    """
+    path = Path(path)
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_FFPROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    try:
+        data = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        return None
+
+    streams = data.get("streams") or []
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    if audio is None:
+        return None
+
+    duration = None
+    fmt = data.get("format") or {}
+    for raw in (fmt.get("duration"), audio.get("duration")):
+        try:
+            if raw is not None:
+                duration = float(raw)
+                break
+        except (TypeError, ValueError):
+            continue
+    if duration is None or duration <= 0:
+        return None
+
+    try:
+        sample_rate = int(audio.get("sample_rate") or 0) or None
+    except (TypeError, ValueError):
+        sample_rate = None
+    try:
+        channels = int(audio.get("channels") or 0) or None
+    except (TypeError, ValueError):
+        channels = None
+
+    return {
+        "duration_seconds": round(duration, 3),
+        "codec": audio.get("codec_name"),
+        "sample_rate": sample_rate,
+        "channels": channels,
     }
 
 
