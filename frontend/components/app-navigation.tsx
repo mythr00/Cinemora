@@ -6,23 +6,26 @@ import { useEffect, useState } from "react";
 import { BrandLockup } from "@/components/brand-lockup";
 import { ApiConnectionBadge } from "@/components/connection-status";
 import { listProjects } from "@/lib/api";
-import { ArrowUpRight, BellRing } from "lucide-react";
+import { BellRing, CirclePlus, FolderOpen, LayoutDashboard } from "lucide-react";
 
 // Brief Stage 3 (C-02): /channel-lab, /thumbnail and /viral-clips
-// were removed — their backends do not exist in this build and the
-// routes now serve honest unavailable states (see register C-02).
+// were removed from navigation — their backends do not exist in
+// this build and the routes now serve honest unavailable states.
 // They must not reappear here.
 //
-// Brief Stage 4 (C-11): this is the ONE studio navigation. Every
-// studio page renders it; the active item is derived from the
-// pathname (project detail, plan and certificate routes belong to
-// Projects) instead of being passed in by each caller, and the
-// Create page's private sidebar — different labels for the same
-// destinations, a brand link to the landing page — is retired.
+// Redesign F0 (plan §2.6): the ONE studio shell. A slim top bar
+// (brand → /studio, the authenticated connection badge, the
+// awaiting-approval indicator — the IA-11 system strip's real
+// data, folded in) plus a left rail for the application
+// sections. The rail is icon+label, collapses to icons on
+// tablet, and becomes a bottom bar on phone (CSS, globals.css).
+// The active item is derived from the pathname (project detail,
+// plan, assets, graphics, editor and certificate routes belong
+// to Projects) instead of being passed in by each caller.
 const links = [
-  ["/studio", "Dashboard"],
-  ["/projects", "Projects"],
-  ["/create", "New production"],
+  { href: "/studio", label: "Dashboard", Icon: LayoutDashboard },
+  { href: "/projects", label: "Projects", Icon: FolderOpen },
+  { href: "/create", label: "New production", Icon: CirclePlus },
 ] as const;
 
 function activeFor(pathname: string | null): string {
@@ -42,13 +45,12 @@ export function AppNavigation({
   active: _legacyActive,
 }: { active?: string } = {}) {
   void _legacyActive;
-  const [open, setOpen] = useState(false);
   const active = activeFor(usePathname());
 
-  // IA-11 system strip: the awaiting-approval count comes from
-  // the real project list (the same data the dashboard queue
-  // uses). When the list cannot be loaded the count is simply
-  // not shown — never estimated, never faked.
+  // The awaiting-approval count comes from the real project list
+  // (the same data the dashboard queue uses). When the list
+  // cannot be loaded the count is simply not shown — never
+  // estimated, never faked.
   const [awaitingCount, setAwaitingCount] = useState<number | null>(null);
   useEffect(() => {
     const controller = new AbortController();
@@ -73,32 +75,28 @@ export function AppNavigation({
 
   return (
     <>
-    <header className="app-nav">
-      <Link className="app-brand" href="/studio" aria-label="Cinemora studio home" onClick={() => setOpen(false)}>
-        <BrandLockup priority />
-      </Link>
-      <nav className={`app-nav-links ${open ? "is-open" : ""}`} id="studio-menu" aria-label="Studio navigation">
-        {links.map(([href, label]) => (
-          <Link key={href} href={href} aria-current={active === href ? "page" : undefined} onClick={() => setOpen(false)}>
-            {label}
+      <header className="app-topbar">
+        <Link className="app-brand" href="/studio" aria-label="Cinemora studio home">
+          <BrandLockup size="app" priority />
+        </Link>
+        <div className="app-topbar-right">
+          {awaitingCount !== null && awaitingCount > 0 && (
+            <Link className="app-approvals" href="/studio">
+              <BellRing size={14} strokeWidth={2} aria-hidden />
+              {awaitingCount} awaiting approval
+            </Link>
+          )}
+          <ApiConnectionBadge />
+        </div>
+      </header>
+      <nav className="app-rail" aria-label="Studio navigation">
+        {links.map(({ href, label, Icon }) => (
+          <Link key={href} href={href} aria-current={active === href ? "page" : undefined}>
+            <Icon size={18} strokeWidth={1.8} aria-hidden />
+            <span className="app-rail-label">{label}</span>
           </Link>
         ))}
       </nav>
-      <Link className="app-nav-cta" href="/create">Create a film <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link>
-      <button className="app-menu-toggle" type="button" aria-expanded={open} aria-controls="studio-menu" aria-label={open ? "Close studio navigation" : "Open studio navigation"} onClick={() => setOpen((current) => !current)}>
-        <span /><span />
-      </button>
-    </header>
-    <div className="system-strip">
-      <ApiConnectionBadge />
-      <span className="system-strip-identity">Single operator</span>
-      {awaitingCount !== null && awaitingCount > 0 && (
-        <Link className="system-strip-approvals" href="/studio">
-          <BellRing size={13} strokeWidth={2} aria-hidden />
-          {awaitingCount} awaiting approval
-        </Link>
-      )}
-    </div>
     </>
   );
 }

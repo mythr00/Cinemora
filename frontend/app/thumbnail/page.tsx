@@ -17,7 +17,7 @@ export default function ThumbnailUnavailable() {
     <div className="tool-page-content">
       <section className="tool-page-heading">
         <p className="eyebrow">IMAGE WORKSPACE</p>
-        <h1>Thumbnail generation<br /><em>isn't available in this build.</em></h1>
+        <h1>Thumbnail generation isn’t available in this build.</h1>
         <p>The image-generation service this page depended on is not part of the current Cinemora backend, so the tool has been withdrawn rather than left in place to fail. Your projects, finished films and production records — plans, outputs and provenance certificates — are all in the project library.</p>
       </section>
       <p>

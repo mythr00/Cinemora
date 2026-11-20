@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, GitBranch, Redo2, Undo2 } from "lucide-react";
 import {
-  fetchMediaObjectUrl,
+  downloadAuthenticatedMedia,
   getRevisionCertificate,
+  listRevisionExports,
+  mediaKeyForFileName,
   mediaKeyForProjectPath,
   type RevisionCertificate,
   type RevisionExport,
@@ -24,9 +26,20 @@ import { formatDuration } from "./shared";
  * parent; Redo returns along the path Undo took. Both are pure
  * navigation — no revision is ever rewritten — and a fresh edit
  * from an undone state branches, which the hint under the buttons
- * states plainly. Exports are the current revision's own records
- * from its document; a failed or interrupted render records no
- * export, and this panel shows only what the server recorded.
+ * states plainly. Exports are the current revision's own records;
+ * a failed or interrupted render records no export, and this
+ * panel shows only what the server recorded.
+ *
+ * UI-001 (redesign F2): the export list is read from the
+ * backend's exports route (listRevisionExports), which has
+ * existed since Stage 7 — the document's embedded copy can lag
+ * a just-completed render, and the previous build had no caller
+ * for the route at all. If the route cannot be read, the panel
+ * falls back to the document's embedded records. Downloads go
+ * through the authenticated media endpoint: revision exports
+ * ARE recorded in the media index (Stage 7B), so the old "in-app
+ * download is unavailable for revision exports" note was stale
+ * and is gone; a failed fetch now reports itself as a failure.
  */
 
 export function RevisionPanel({
@@ -61,6 +74,33 @@ export function RevisionPanel({
   const doc = current.document;
   const gaps = doc.tracks.visual.filter((item) => item.kind === "gap");
   const rendering = current.status === "rendering";
+
+  // UI-001: the current revision's exports, read from the
+  // exports route and refreshed when the revision changes or a
+  // render completes (status flips to "exported"). Tagged with
+  // the revision they belong to; while the tag is stale — or if
+  // the route read failed — the document's embedded records are
+  // shown instead, so the list never displays another revision's
+  // exports.
+  const [routeExports, setRouteExports] = useState<{
+    revisionId: string;
+    items: RevisionExport[];
+  } | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    listRevisionExports(projectId, current.revision_id, controller.signal)
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setRouteExports({ revisionId: current.revision_id, items: data.exports || [] });
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [projectId, current.revision_id, current.status]);
+  const exports =
+    routeExports && routeExports.revisionId === current.revision_id
+      ? routeExports.items
+      : doc.exports;
   const [certificate, setCertificate] = useState<
     | { revisionId: string; status: "loading" }
     | { revisionId: string; status: "ready"; data: RevisionCertificate }
@@ -262,14 +302,14 @@ export function RevisionPanel({
       )}
 
       <h3>Exports of this revision</h3>
-      {doc.exports.length === 0 ? (
+      {exports.length === 0 ? (
         <p className="editor-panel-note">
           No exports recorded for Revision {current.revision_number} yet. Exports appear here
           only when the server records a completed render.
         </p>
       ) : (
         <ul className="editor-export-list">
-          {doc.exports.map((entry) => (
+          {exports.map((entry) => (
             <ExportCard key={entry.export_id} projectId={projectId} entry={entry} />
           ))}
         </ul>
@@ -280,23 +320,27 @@ export function RevisionPanel({
 
 function ExportCard({ projectId, entry }: { projectId: string; entry: RevisionExport }) {
   const [downloadState, setDownloadState] = useState<
-    { status: "idle" } | { status: "busy" } | { status: "unavailable" }
+    { status: "idle" } | { status: "busy" } | { status: "failed" }
   >({ status: "idle" });
 
   async function download() {
     setDownloadState({ status: "busy" });
     try {
-      const key = await mediaKeyForProjectPath(projectId, entry.file);
-      if (!key) throw new Error("no key");
-      const { url } = await fetchMediaObjectUrl(projectId, key);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = entry.file_name;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      // UI-001: the media key is the sha256 of the export's
+      // project-relative path. The recorded absolute path does
+      // not always carry the /{projectId}/ segment the path
+      // derivation looks for, so fall back to the file-name
+      // derivation — exports sit at the project root, where the
+      // relative path is the file name (the backend's own test
+      // derives the key exactly this way). The download itself
+      // goes through the shared authenticated helper.
+      const key =
+        (await mediaKeyForProjectPath(projectId, entry.file)) ??
+        (await mediaKeyForFileName(entry.file_name));
+      await downloadAuthenticatedMedia({ projectId, mediaKey: key, filename: entry.file_name });
       setDownloadState({ status: "idle" });
     } catch {
-      setDownloadState({ status: "unavailable" });
+      setDownloadState({ status: "failed" });
     }
   }
 
@@ -340,11 +384,11 @@ function ExportCard({ projectId, entry }: { projectId: string; entry: RevisionEx
           <Download size={13} aria-hidden />{" "}
           {downloadState.status === "busy" ? "Preparing…" : "Download"}
         </button>
-        {downloadState.status === "unavailable" && (
-          <span className="editor-panel-note">
-            In-app download is unavailable for revision exports in this build — the media
-            endpoint serves recorded production artefacts only. The file is stored on the
-            server as {entry.file_name}.
+        {downloadState.status === "failed" && (
+          <span className="editor-panel-note" role="alert">
+            Download failed — the export file could not be fetched from the media endpoint.
+            The file is stored on the server as {entry.file_name}; try again, and check the
+            API connection if it keeps failing.
           </span>
         )}
       </span>

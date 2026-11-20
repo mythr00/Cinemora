@@ -107,9 +107,11 @@ export function apiRequest<T>(path: string, init: RequestOptions = {}): Promise<
  * IA-10 / F-06: KEPT deliberately. It has no active caller, but
  * the quarantined implementations under frontend/preserved/ call
  * it and are part of the typecheck; removing it would break
- * their compilation. (The other F-06 dead exports, getHealth and
- * listRevisionExports, had no caller anywhere — preserved code
- * included — and were removed.)
+ * their compilation. (The other F-06 dead export, getHealth,
+ * had no caller anywhere — preserved code included — and was
+ * removed. listRevisionExports was removed in the same pass and
+ * returned in redesign F2 with its caller, the revision panel —
+ * see UI-001 at its definition.)
  */
 export function legacyRequest<T>(path: string, init: RequestOptions = {}): Promise<T> {
   return request<T>(path, init, false);
@@ -933,12 +935,36 @@ export type EditorAsset = {
   swapped_from?: { file_path?: string | null; decision_id?: string | null } | null;
 } | null;
 
+/**
+ * The complete regeneration recipe the backend records for a
+ * graphic (MG-03) and serves inside the editor document's
+ * graphic payload (services/editor.py). Fields are optional
+ * because graphics produced before recipes were recorded carry
+ * none — regeneration then honestly refuses.
+ */
+export type GraphicRecipe = {
+  family?: string | null;
+  renderer?: string | null;
+  template?: string | null;
+  template_version?: string | null;
+  inputs?: Record<string, unknown> | null;
+  style?: string | null;
+  duration?: number | null;
+  purpose?: string | null;
+  scene_number?: number | null;
+  sentence_number?: number | null;
+  source_references?: unknown[] | null;
+  regenerable?: boolean | null;
+  non_regenerable_reason?: string | null;
+};
+
 export type EditorGraphic = {
   template?: string | null;
   family?: string | null;
   style?: string | null;
   inputs?: Record<string, unknown> | null;
   engine_metadata?: Record<string, unknown> | null;
+  recipe?: GraphicRecipe | null;
 } | null;
 
 export type VisualItem = {
@@ -1147,6 +1173,22 @@ export function getRevision(projectId: string, revisionId: string, signal?: Abor
   );
 }
 
+/**
+ * The exports recorded for one revision, from the dedicated
+ * route (GET /projects/{id}/revisions/{rev}/exports — the
+ * backend has served it since Stage 7; the document's embedded
+ * copy can lag a just-completed render). Redesign F2 / UI-001:
+ * this helper existed once before and was removed as dead
+ * (IA-10) because nothing called it; it returns WITH its caller
+ * — the revision panel's export list — which is the fix.
+ */
+export function listRevisionExports(projectId: string, revisionId: string, signal?: AbortSignal) {
+  return apiRequest<{ exports: RevisionExport[] }>(
+    `/api/v1/projects/${projectId}/revisions/${revisionId}/exports`,
+    { signal },
+  );
+}
+
 /** Branch a new draft from a revision (deep copy, next number,
  * exports reset), or import a run as a revision 0. */
 export function createRevision(
@@ -1193,10 +1235,12 @@ export function requestRevisionRender(projectId: string, revisionId: string, all
  * project-relative POSIX path, first 20 hex chars). The editor
  * document carries absolute file paths, not media keys, so the
  * editor computes the key for a path under the project directory
- * and fetches through the authenticated media endpoint. Files the
- * media index does not record — uploads, editor-generated media,
- * revision exports — answer 404 there; callers must treat that as
- * "no in-app preview" and fall back honestly, never fake one.
+ * and fetches through the authenticated media endpoint. The index
+ * is built exclusively from recorded artefacts — timeline items,
+ * uploads, revision-document media and revision exports among
+ * them (Stage 6/7B, IA-04) — so a file no artefact records
+ * answers 404 there; callers must treat that as "no in-app
+ * preview" and fall back honestly, never fake one.
  */
 export async function mediaKeyForProjectPath(
   projectId: string,
@@ -1207,9 +1251,26 @@ export async function mediaKeyForProjectPath(
   if (index < 0) return null;
   const relative = filePath.slice(index + marker.length);
   if (!relative || relative.split("/").includes("..")) return null;
+  return sha256Hex20(relative);
+}
+
+/**
+ * The media key for a file that sits at the project root, where
+ * the project-relative path IS its file name (the recorded
+ * layout for revision exports — backend test
+ * test_media_serves_revision_export_and_upload derives the key
+ * exactly this way). UI-001 fallback for export records whose
+ * stored absolute path does not carry the /{projectId}/ segment
+ * mediaKeyForProjectPath looks for.
+ */
+export async function mediaKeyForFileName(fileName: string): Promise<string> {
+  return sha256Hex20(fileName);
+}
+
+async function sha256Hex20(value: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(relative),
+    new TextEncoder().encode(value),
   );
   const hex = [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))

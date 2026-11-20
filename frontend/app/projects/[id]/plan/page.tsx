@@ -46,6 +46,14 @@ type ReplacementUpload =
 
 const APPLIED_REPLACE_OUTCOMES = ["swapped", "recorded_pre_run"];
 
+// Redesign F2 (plan §3.7): presentation restructured — the
+// coverage/decision summary header stays, and the sentence
+// table becomes a scene-grouped list (script column left,
+// visual decision right). Every wiring below — decisions,
+// replacement upload, plan approval — is unchanged in
+// semantics. Visual Director Pass 1/Pass 2 data is NOT shown:
+// visual_plan is not API-exposed yet, and no chrome is faked
+// for it (§3.7 programme note).
 export default function PlanReviewPage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
@@ -199,18 +207,158 @@ export default function PlanReviewPage() {
 
   const awaiting = status?.status === "awaiting_approval";
 
+  // Scene groups from the plan's own scene index; any sentence
+  // the index does not name keeps its recorded scene number as
+  // its group, so no sentence is ever dropped by the grouping.
+  const sceneGroups: Array<{ sceneNumber: number | null; sentences: PlanSentence[] }> = [];
+  if (plan) {
+    const byNumber = new Map(plan.sentences.map((sentence) => [sentence.sentence_number, sentence]));
+    const grouped = new Set<number>();
+    for (const scene of plan.scenes || []) {
+      const sentences = (scene.sentence_numbers || [])
+        .map((number) => byNumber.get(number))
+        .filter((sentence): sentence is PlanSentence => !!sentence);
+      if (sentences.length > 0) {
+        sceneGroups.push({ sceneNumber: scene.scene_number, sentences });
+        for (const sentence of sentences) grouped.add(sentence.sentence_number);
+      }
+    }
+    const rest = plan.sentences.filter((sentence) => !grouped.has(sentence.sentence_number));
+    if (rest.length > 0) {
+      const byScene = new Map<number | null, PlanSentence[]>();
+      for (const sentence of rest) {
+        const key = sentence.scene_number ?? null;
+        byScene.set(key, [...(byScene.get(key) || []), sentence]);
+      }
+      for (const [sceneNumber, sentences] of byScene) sceneGroups.push({ sceneNumber, sentences });
+    }
+  }
+
+  function sentenceCard(sentence: PlanSentence) {
+    const lastDecision = sentence.decisions[sentence.decisions.length - 1];
+    const uploadState = uploads[sentence.sentence_number];
+    return (
+      <article className="plan-sentence" key={sentence.sentence_number}>
+        <div className="plan-sentence-script">
+          <p className="plan-sentence-index">Sentence {sentence.sentence_number}{sentence.subject ? ` · ${sentence.subject}` : ""}</p>
+          <p>{sentence.text}</p>
+          {sentence.entities.length > 0 && <p className="plan-decision-note">Entities: {sentence.entities.join(", ")}</p>}
+        </div>
+        <div className="plan-sentence-decision">
+          <p className="overview-run-line">
+            <span className={`plan-coverage plan-coverage-${sentence.coverage}`}>
+              {coverageLabel(sentence.coverage)}
+            </span>
+            <span className="plan-decision-note">
+              Evidence: {sentence.evidence_class || "—"} · Rights:{" "}
+              {sentence.rights
+                ? `${sentence.rights.license || "unknown"}${sentence.rights.rights_status ? ` · ${sentence.rights.rights_status}` : ""}`
+                : "—"}
+            </span>
+          </p>
+          <p className="plan-decision-note">
+            Proposed:{" "}
+            {sentence.proposed_visual
+              ? `${sentence.proposed_visual.kind || "visual"} — ${sentence.proposed_visual.description}`
+              : "—"}
+          </p>
+          {sentence.chosen_visual ? (
+            <span className="plan-chosen-visual">
+              {sentence.chosen_visual.media_key && (
+                <MediaThumb
+                  projectId={projectId}
+                  mediaKey={sentence.chosen_visual.media_key}
+                  alt={sentence.chosen_visual.title || `Chosen visual for sentence ${sentence.sentence_number}`}
+                />
+              )}
+              <span className="plan-decision-note">Chosen: {`${sentence.chosen_visual.type || "visual"} · ${sentence.chosen_visual.provider || "unknown source"}`}</span>
+            </span>
+          ) : (
+            <p className="plan-decision-note">Chosen: —</p>
+          )}
+          <div className="plan-row-actions">
+            <button
+              type="button"
+              disabled={acting !== ""}
+              onClick={() => void onDecision(sentence, "approve")}
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              disabled={acting !== ""}
+              onClick={() => void onDecision(sentence, "regenerate")}
+            >
+              Regenerate
+            </button>
+            <span className="plan-upload">
+              <label className="plan-upload-pick">
+                <input
+                  type="file"
+                  accept="video/*,image/*,audio/*"
+                  aria-label={`Upload a replacement file for sentence ${sentence.sentence_number}`}
+                  disabled={acting !== "" || uploadState?.status === "uploading"}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) void onUpload(sentence, file);
+                  }}
+                />
+                {uploadState?.status === "ready" ? "Choose a different file" : "Upload replacement…"}
+              </label>
+              {uploadState?.status === "uploading" && (
+                <small className="plan-upload-note" role="status">
+                  Uploading {uploadState.fileName} — {Math.round(uploadState.progress * 100)}%
+                </small>
+              )}
+              {uploadState?.status === "error" && (
+                <small className="plan-upload-note plan-upload-error" role="alert">
+                  Upload of {uploadState.fileName} failed: {uploadState.message} The current visual is unchanged.
+                </small>
+              )}
+              {uploadState?.status === "ready" && (
+                <>
+                  <small className="plan-upload-note">
+                    {uploadState.upload.file_name} · {uploadState.upload.type}
+                    {uploadState.upload.source_duration != null
+                      ? ` · ${Math.round(uploadState.upload.source_duration)}s`
+                      : ""}{" "}
+                    · user-supplied · licence unknown — verify before publish
+                  </small>
+                  <button
+                    type="button"
+                    disabled={acting !== ""}
+                    onClick={() => void onReplaceWithUpload(sentence)}
+                  >
+                    {acting === `replace-${sentence.sentence_number}` ? "Replacing…" : "Replace with this upload"}
+                  </button>
+                </>
+              )}
+            </span>
+            {lastDecision && (
+              <small className="plan-decision-note">
+                Last: {lastDecision.action} — {lastDecision.outcome || "recorded"}
+              </small>
+            )}
+          </div>
+        </div>
+      </article>
+    );
+  }
+
   return (
     <main className="app-page plan-page">
       <AppNavigation />
       <ProjectTabs projectId={projectId} />
       <section className="plan-content">
         <Link href={`/projects/${projectId}`} className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Project</Link>
-        <p className="eyebrow">PRODUCTION PLAN</p>
+        <p className="eyebrow">VISUAL PLAN REVIEW</p>
         <h1>{plan?.title || plan?.bible.title || "Production plan"}</h1>
         <p className="plan-intro">
-          One row per script sentence: the proposed visual from story analysis, the visual a run
-          actually chose, its evidence class, its rights classification, and its coverage state.
-          Decisions you record here are kept with the production — replacements are re-probed and
+          One entry per script sentence, grouped by scene: the script on the left; on the
+          right, the proposed visual from story analysis, the visual a run actually chose,
+          its evidence class, its rights classification, and its coverage state. Decisions
+          you record here are kept with the production — replacements are re-probed and
           re-verified, never inherited from the original.
         </p>
 
@@ -284,143 +432,12 @@ export default function PlanReviewPage() {
                 ? " · assembled from the story-understanding cache (this production predates the plan document)"
                 : ""}
             </p>
-            <div className="plan-table-wrap">
-              <table className="plan-table">
-                <thead>
-                  <tr>
-                    <th scope="col">#</th>
-                    <th scope="col">Scene</th>
-                    <th scope="col">Sentence</th>
-                    <th scope="col">Subject</th>
-                    <th scope="col">Proposed visual</th>
-                    <th scope="col">Chosen visual</th>
-                    <th scope="col">Evidence</th>
-                    <th scope="col">Rights</th>
-                    <th scope="col">Coverage</th>
-                    <th scope="col">Review</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {plan.sentences.map((sentence) => {
-                    const lastDecision = sentence.decisions[sentence.decisions.length - 1];
-                    return (
-                      <tr key={sentence.sentence_number}>
-                        <td>{sentence.sentence_number}</td>
-                        <td>{sentence.scene_number ?? "—"}</td>
-                        <td className="plan-sentence-text">{sentence.text}</td>
-                        <td>{sentence.subject || "—"}</td>
-                        <td>
-                          {sentence.proposed_visual
-                            ? `${sentence.proposed_visual.kind || "visual"} — ${sentence.proposed_visual.description}`
-                            : "—"}
-                        </td>
-                        <td>
-                          {sentence.chosen_visual ? (
-                            <span className="plan-chosen-visual">
-                              {sentence.chosen_visual.media_key && (
-                                <MediaThumb
-                                  projectId={projectId}
-                                  mediaKey={sentence.chosen_visual.media_key}
-                                  alt={sentence.chosen_visual.title || `Chosen visual for sentence ${sentence.sentence_number}`}
-                                />
-                              )}
-                              <span>{`${sentence.chosen_visual.type || "visual"} · ${sentence.chosen_visual.provider || "unknown source"}`}</span>
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td>{sentence.evidence_class || "—"}</td>
-                        <td>
-                          {sentence.rights
-                            ? `${sentence.rights.license || "unknown"}${sentence.rights.rights_status ? ` · ${sentence.rights.rights_status}` : ""}`
-                            : "—"}
-                        </td>
-                        <td>
-                          <span className={`plan-coverage plan-coverage-${sentence.coverage}`}>
-                            {coverageLabel(sentence.coverage)}
-                          </span>
-                        </td>
-                        <td>
-                          <div className="plan-row-actions">
-                            <button
-                              type="button"
-                              disabled={acting !== ""}
-                              onClick={() => void onDecision(sentence, "approve")}
-                            >
-                              Approve
-                            </button>
-                            <button
-                              type="button"
-                              disabled={acting !== ""}
-                              onClick={() => void onDecision(sentence, "regenerate")}
-                            >
-                              Regenerate
-                            </button>
-                            <span className="plan-upload">
-                              {(() => {
-                                const uploadState = uploads[sentence.sentence_number];
-                                return (
-                                  <>
-                                    <label className="plan-upload-pick">
-                                      <input
-                                        type="file"
-                                        accept="video/*,image/*,audio/*"
-                                        aria-label={`Upload a replacement file for sentence ${sentence.sentence_number}`}
-                                        disabled={acting !== "" || uploadState?.status === "uploading"}
-                                        onChange={(event) => {
-                                          const file = event.target.files?.[0];
-                                          event.target.value = "";
-                                          if (file) void onUpload(sentence, file);
-                                        }}
-                                      />
-                                      {uploadState?.status === "ready" ? "Choose a different file" : "Upload replacement…"}
-                                    </label>
-                                    {uploadState?.status === "uploading" && (
-                                      <small className="plan-upload-note" role="status">
-                                        Uploading {uploadState.fileName} — {Math.round(uploadState.progress * 100)}%
-                                      </small>
-                                    )}
-                                    {uploadState?.status === "error" && (
-                                      <small className="plan-upload-note plan-upload-error" role="alert">
-                                        Upload of {uploadState.fileName} failed: {uploadState.message} The current visual is unchanged.
-                                      </small>
-                                    )}
-                                    {uploadState?.status === "ready" && (
-                                      <>
-                                        <small className="plan-upload-note">
-                                          {uploadState.upload.file_name} · {uploadState.upload.type}
-                                          {uploadState.upload.source_duration != null
-                                            ? ` · ${Math.round(uploadState.upload.source_duration)}s`
-                                            : ""}{" "}
-                                          · user-supplied · licence unknown — verify before publish
-                                        </small>
-                                        <button
-                                          type="button"
-                                          disabled={acting !== ""}
-                                          onClick={() => void onReplaceWithUpload(sentence)}
-                                        >
-                                          {acting === `replace-${sentence.sentence_number}` ? "Replacing…" : "Replace with this upload"}
-                                        </button>
-                                      </>
-                                    )}
-                                  </>
-                                );
-                              })()}
-                            </span>
-                            {lastDecision && (
-                              <small className="plan-decision-note">
-                                Last: {lastDecision.action} — {lastDecision.outcome || "recorded"}
-                              </small>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            {sceneGroups.map((group) => (
+              <section key={group.sceneNumber ?? "none"} aria-label={group.sceneNumber ? `Scene ${group.sceneNumber}` : "Sentences"}>
+                <h2>{group.sceneNumber ? `Scene ${group.sceneNumber}` : "Sentences"}</h2>
+                <div className="plan-sentences">{group.sentences.map(sentenceCard)}</div>
+              </section>
+            ))}
           </>
         )}
       </section>

@@ -17,7 +17,7 @@ export default function ViralClipsUnavailable() {
     <div className="tool-page-content">
       <section className="tool-page-heading">
         <p className="eyebrow">SHORT-FORM WORKFLOW</p>
-        <h1>Short-clip extraction<br /><em>isn't available in this build.</em></h1>
+        <h1>Short-clip extraction isn’t available in this build.</h1>
         <p>The clip-extraction service this page depended on is not part of the current Cinemora backend, so the tool has been withdrawn rather than left in place to fail. The current build focuses on full documentary production: script, plan review, narration, source-aware visuals and rendering in one workspace.</p>
       </section>
       <p>

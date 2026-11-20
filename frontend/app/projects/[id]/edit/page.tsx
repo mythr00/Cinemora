@@ -399,40 +399,13 @@ export default function EditorPage() {
               </p>
             )}
 
+            {/* Redesign F2 (plan §3.9): layout re-housed only —
+                library LEFT, monitor + timeline CENTRE, inspector
+                RIGHT, revisions/exports below, revision bar (the
+                statusbar above) on top. Every component, prop and
+                handler is unchanged; op semantics, atomic batches,
+                the gaps gate and render polling are untouched. */}
             <div className="editor-workspace">
-              <PreviewMonitor
-                projectId={projectId}
-                revisionNumber={current.revision_number}
-                filmMediaKey={outputs?.film.media_key ?? null}
-                exports={current.document.exports}
-                documentDuration={current.document.duration_seconds}
-                playhead={playhead}
-                playing={playing}
-                onPlayheadChange={setPlayhead}
-                onPlayingChange={setPlaying}
-                seekRequest={seekRequest}
-              />
-              <PropertiesPanel
-                key={`${current.revision_id}:${selectionKey}`}
-                projectId={projectId}
-                doc={current.document}
-                selection={selection}
-                pendingSpec={pendingSpec}
-                sessionUploads={sessionUploads}
-                busy={busyOps}
-                onApply={(operations, intent) => void applyOps(operations, intent)}
-              />
-            </div>
-
-            <EditorTimeline
-              doc={current.document}
-              selection={selection}
-              onSelect={setSelection}
-              playhead={playhead}
-              onSeek={onSeek}
-            />
-
-            <div className="editor-lower">
               <AssetPanel
                 projectId={projectId}
                 doc={current.document}
@@ -449,6 +422,40 @@ export default function EditorPage() {
                   setSessionUploads((existing) => [upload, ...existing])
                 }
               />
+              <div className="editor-centre">
+                <PreviewMonitor
+                  projectId={projectId}
+                  revisionNumber={current.revision_number}
+                  filmMediaKey={outputs?.film.media_key ?? null}
+                  exports={current.document.exports}
+                  documentDuration={current.document.duration_seconds}
+                  playhead={playhead}
+                  playing={playing}
+                  onPlayheadChange={setPlayhead}
+                  onPlayingChange={setPlaying}
+                  seekRequest={seekRequest}
+                />
+                <EditorTimeline
+                  doc={current.document}
+                  selection={selection}
+                  onSelect={setSelection}
+                  playhead={playhead}
+                  onSeek={onSeek}
+                />
+              </div>
+              <PropertiesPanel
+                key={`${current.revision_id}:${selectionKey}`}
+                projectId={projectId}
+                doc={current.document}
+                selection={selection}
+                pendingSpec={pendingSpec}
+                sessionUploads={sessionUploads}
+                busy={busyOps}
+                onApply={(operations, intent) => void applyOps(operations, intent)}
+              />
+            </div>
+
+            <div className="editor-lower">
               <RevisionPanel
                 projectId={projectId}
                 revisions={revisions}

@@ -6,16 +6,29 @@ import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
 import { ProjectTabs } from "@/components/project-tabs";
+import { VerdictChip } from "@/components/verdict-chip";
 import { ErrorState, LoadingState } from "@/components/states";
+import { AuthenticatedDownloadLink } from "@/components/authenticated-media";
 import { ArrowLeft } from "lucide-react";
 import {
   ApiClientError,
   getCertificate,
+  getOutputs,
   getProject,
   type Certificate,
+  type ProjectOutputs,
 } from "@/lib/api";
 
 /**
+ * Delivery & Provenance (redesign F2, plan §3.10) — one delivery
+ * story: a readiness header with the three separated verdict
+ * chips (integrity / quality / reliability) and the rule stated
+ * in copy; the downloads (film, captions, asset report, rights
+ * manifest, run manifest, certificate data); the Phase 5 quality
+ * section integrated as first-class content; then the provenance
+ * detail and standing disclaimers. Per-revision certificates keep
+ * their editor home.
+ *
  * Brief Stage 5 (C-06): this page previously presented EVERY load
  * failure — 401, 503, network down — under the heading "No
  * certificate yet" (audit D-06). The states are now distinguished
@@ -48,6 +61,7 @@ export default function CertificatePage() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const [certificate, setCertificate] = useState<Certificate | null>(null);
+  const [outputs, setOutputs] = useState<ProjectOutputs | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [noCertificate, setNoCertificate] = useState(false);
@@ -57,6 +71,10 @@ export default function CertificatePage() {
     setNoCertificate(false);
     try {
       setCertificate(await getCertificate(projectId));
+      // Downloads are best-effort beside the certificate itself:
+      // a failed outputs read hides the download list, it does
+      // not take the certificate down with it.
+      getOutputs(projectId).then(setOutputs).catch(() => undefined);
     } catch (cause) {
       setCertificate(null);
       if (cause instanceof ApiClientError && cause.status === 404) {
@@ -89,14 +107,17 @@ export default function CertificatePage() {
     return () => clearTimeout(timer);
   }, [load]);
 
+  const quality = certificate?.quality;
+  const qualityRecorded = quality?.state === "recorded" && quality.verdicts;
+
   return (
     <main className="app-page certificate-page">
       <AppNavigation />
       <ProjectTabs projectId={projectId} />
       <section className="plan-content">
         <Link href={`/projects/${projectId}`} className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Project</Link>
-        <p className="eyebrow">PROVENANCE CERTIFICATE</p>
-        <h1>{certificate?.project.title || "Provenance certificate"}</h1>
+        <p className="eyebrow">DELIVERY &amp; PROVENANCE</p>
+        <h1>{certificate?.project.title || "Delivery & provenance"}</h1>
         <p className="plan-intro">
           Generated from the production run&apos;s decision ledger — the authoritative record of
           what was selected, verified, generated, rotated, replaced, or left missing. It records
@@ -120,6 +141,37 @@ export default function CertificatePage() {
 
         {certificate && (
           <>
+            <div className="readiness-header" aria-label="Delivery readiness">
+              <VerdictChip label="Integrity" verdict={qualityRecorded ? quality.verdicts?.integrity?.verdict : null} />
+              <VerdictChip label="Quality" verdict={qualityRecorded ? quality.verdicts?.quality?.verdict : null} />
+              <VerdictChip label="Reliability" verdict={qualityRecorded ? quality.verdicts?.reliability?.verdict : null} />
+              <p className="readiness-rule">
+                Render completed is not quality passed, and neither is approved for delivery —
+                the three verdicts are recorded separately and read separately.
+                {quality && !qualityRecorded
+                  ? quality.state === "unavailable"
+                    ? " A quality report exists for this run but could not be read, so the verdicts read as not recorded."
+                    : " No quality report was recorded for this run, so the verdicts read as not recorded — the absence of a report is not a pass."
+                  : ""}
+              </p>
+            </div>
+
+            {outputs && (
+              <section aria-label="Downloads">
+                <h2>Downloads</h2>
+                <ul className="download-list">
+                  {outputs.film.exists && <li>Final film — <AuthenticatedDownloadLink path={outputs.film.media_url || ""} filename={outputs.film.filename}>download MP4</AuthenticatedDownloadLink></li>}
+                  {outputs.captions.srt.exists && <li>Captions (SRT) — <AuthenticatedDownloadLink path={outputs.captions.srt.media_url || ""} filename={outputs.captions.srt.filename}>download</AuthenticatedDownloadLink></li>}
+                  {outputs.captions.vtt.exists && <li>Captions (VTT) — <AuthenticatedDownloadLink path={outputs.captions.vtt.media_url || ""} filename={outputs.captions.vtt.filename}>download</AuthenticatedDownloadLink></li>}
+                  {outputs.asset_report.exists && <li>Asset report — <AuthenticatedDownloadLink path={outputs.asset_report.media_url || ""} filename={outputs.asset_report.filename}>download JSON</AuthenticatedDownloadLink></li>}
+                  {outputs.rights_manifest.exists && <li>Rights manifest — <AuthenticatedDownloadLink path={outputs.rights_manifest.media_url || ""} filename={outputs.rights_manifest.filename}>download JSON</AuthenticatedDownloadLink></li>}
+                  {outputs.run_manifest.exists && <li>Run manifest — <AuthenticatedDownloadLink path={outputs.run_manifest.media_url || ""} filename={outputs.run_manifest.filename}>download JSON</AuthenticatedDownloadLink></li>}
+                  <li>Certificate data — <AuthenticatedDownloadLink path={outputs.certificate_url} filename="certificate.json">download JSON</AuthenticatedDownloadLink></li>
+                  {!outputs.film.exists && !outputs.asset_report.exists && <li>No output files recorded yet.</li>}
+                </ul>
+              </section>
+            )}
+
             <div className="plan-summary" aria-label="Certificate summary">
               <div><span>DECISIONS</span><strong>{certificate.summary.total}</strong></div>
               <div><span>RIGHTS RECORDED</span><strong>{certificate.summary.rights_recorded}</strong></div>
@@ -226,6 +278,7 @@ export default function CertificatePage() {
               </section>
             )}
 
+            <h2>Provenance detail</h2>
             <div className="plan-table-wrap">
               <table className="plan-table">
                 <thead>

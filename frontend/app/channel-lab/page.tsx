@@ -17,7 +17,7 @@ export default function ChannelLabUnavailable() {
     <div className="tool-page-content">
       <section className="tool-page-heading">
         <p className="eyebrow">SCRIPT STUDIO</p>
-        <h1>Script research<br /><em>isn't available in this build.</em></h1>
+        <h1>Script research isn’t available in this build.</h1>
         <p>The channel-research service this page depended on is not part of the current Cinemora backend, so the tool has been withdrawn rather than left in place to fail. Scriptwriting itself is unaffected: productions start from a script you paste into the production form, and story analysis and visual research run inside every production.</p>
       </section>
       <p>

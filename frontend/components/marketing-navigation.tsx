@@ -7,9 +7,9 @@ import { ArrowUpRight } from "lucide-react";
 
 const links = [
   ["#workflow", "How it works"],
-  ["#stories", "Story types"],
   ["#capabilities", "Tools"],
   ["/projects", "Projects"],
+  ["/studio", "Studio"],
 ] as const;
 
 export function MarketingNavigation() {
@@ -19,7 +19,7 @@ export function MarketingNavigation() {
     <header className="marketing-nav-wrap">
       <nav className="marketing-nav" aria-label="Main navigation">
         <Link className="marketing-brand" href="/" aria-label="Cinemora home" onClick={() => setOpen(false)}>
-          <BrandLockup priority />
+          <BrandLockup size="marketing" priority />
         </Link>
         <div className={`marketing-links ${open ? "is-open" : ""}`} id="marketing-menu">
           {links.map(([href, label]) => href.startsWith("#") ? <a key={href} href={href} onClick={() => setOpen(false)}>{label}</a> : <Link key={href} href={href} onClick={() => setOpen(false)}>{label}</Link>)}

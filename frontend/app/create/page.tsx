@@ -15,13 +15,12 @@ import {
   type VoiceCatalogueEntry,
 } from "@/lib/api";
 import { ApiConnectionBadge } from "@/components/connection-status";
+import { StageProgress } from "@/components/stage-progress";
 import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
 import {
   ArrowRight,
   ArrowUpRight,
-  Check,
   ChevronDown,
-  AlertCircle,
   Film,
   Info,
   Mic,
@@ -124,6 +123,15 @@ const NARRATION_VOICE_ID = "en_US-lessac-medium";
 // counter as "words" (audit D-14).
 const MAX_SCRIPT_CHARS = 60000;
 
+// Redesign F1 (plan §3.3): the form is a stepped production
+// brief — one page, sectioned, no wizard hiding state:
+// 1 Script · 2 Story (genre + voice from the real catalogues) ·
+// 3 Visual approach (the plan-approval toggle; Visual Director
+// controls appear only when their backend inputs exist) ·
+// 4 Sound (captions toggle; the truthful no-music-picker note
+// stays until the P3 catalogue exists) · 5 Review & start
+// (exactly what will be submitted + submit). Post-submit status
+// with StageProgress + 3s polling is preserved verbatim.
 export default function Home() {
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
@@ -176,12 +184,15 @@ export default function Home() {
   const canonicalVoice = voices.find((voice) => !voice.alias_of) || voices[0];
   const narrationVoiceId = canonicalVoice?.id || NARRATION_VOICE_ID;
 
-  // Brief Stage 5 (C-06): the topbar badge is the authenticated
+  // Brief Stage 5 (C-06): the connection badge is the authenticated
   // connection check (ApiConnectionBadge performs one authenticated
   // v1 call and classifies the outcome). Submitting is blocked
   // whenever the classified state is not "connected" — a production
   // cannot be created through a rejected token, an unconfigured
   // API, or an unreachable one, and the badge says which it is.
+  // Redesign F1: the badge lives in Step 5 (the shell top bar
+  // carries its own indicator for display; this instance feeds
+  // the submit gate via onStatus, exactly as before).
   const apiBlocked = connection !== null && connection.state !== "connected";
 
   useEffect(() => {
@@ -289,101 +300,105 @@ export default function Home() {
 
   // Brief Stage 4 (C-11): the page renders inside the shared
   // studio navigation like every other studio page. Its private
-  // sidebar (a third navigation system: "Create / Overview /
-  // Projects" labels, a brand link to the landing page) is
-  // retired; the connection badge it carried moves to the topbar
-  // (since Brief Stage 5 / C-06 it is the authenticated check —
-  // see ApiConnectionBadge).
+  // sidebar (a third navigation system) and private topbar are
+  // retired; the shell (redesign §2.6) provides the chrome.
   return (
     <main className="app-page create-page">
       <AppNavigation />
-
-      <section className="workspace" id="create">
-        <header className="topbar">
-          <div className="breadcrumbs"><span>Cinemora</span><span className="crumb-separator">/</span><strong>New documentary</strong></div>
-          <div className="topbar-right"><ApiConnectionBadge onStatus={setConnection} /><span className="draft-status"><span /> New project</span><span className="edition-label">STUDIO EDITION</span></div>
-        </header>
-
-        <div className="content-wrap">
-          <div className="page-heading">
-          <div><div className="eyebrow">DOCUMENTARY STUDIO <span className="eyebrow-line" /></div><h1>New documentary</h1><p>Script, visual research, narration, and final edit.</p></div>
-          </div>
-
-          <form className="create-layout" onSubmit={createProject}>
-            <div className="main-column">
-              <section className="panel script-panel" aria-labelledby="script-title">
-                <div className="panel-heading">
-                  <div className="step-marker">01</div>
-                  <div className="panel-title"><h2 id="script-title">Script</h2><p>Paste the narration you want produced.</p></div>
-                  <span className="required-tag">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span>
-                </div>
-                <label className="sr-only" htmlFor="documentary-script">Documentary script</label>
-                <textarea id="documentary-script" value={script} onChange={(event) => setScript(event.target.value)} maxLength={MAX_SCRIPT_CHARS} placeholder="Paste script…" />
-                <div className="editor-footer"><span className="editor-hint">{words.toLocaleString()} words</span><span className="count">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span></div>
-                {script.length >= MAX_SCRIPT_CHARS && <p className="voice-note" role="status">Your script is at the {MAX_SCRIPT_CHARS.toLocaleString()}-character limit — the production API accepts at most {MAX_SCRIPT_CHARS.toLocaleString()} characters, and nothing beyond the limit is kept.</p>}
-              </section>
-
-              <section className="panel details-panel">
-                <div className="panel-heading compact-heading">
-                  <div className="step-marker">02</div>
-                  <div className="panel-title"><h2>Project details</h2><p>Choose a genre pack and check the estimated runtime.</p></div>
-                </div>
-                <div className="form-fields">
-                  <label className="field-label" htmlFor="project-title">TITLE
-                    <input id="project-title" className="thumbnail-input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} placeholder="e.g. The Yangtze Incident" />
-                  </label>
-                  <label className="field-label" htmlFor="category">GENRE PACK
-                    <span className="select-wrap"><select id="category" value={selectedGenre?.id || genreId} onChange={(event) => setGenreId(event.target.value)}>{genres.map((genre) => <option key={genre.id} value={genre.id}>{genre.label || genre.name || genre.id}</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
-                    {selectedGenre?.description && <span className="genre-description">{selectedGenre.description}</span>}
-                  </label>
-                  <div className="field-label length-field"><span>ESTIMATED RUNTIME</span><div className="runtime-value">{duration ? `~${duration} min` : "Add a script"}</div><small>Based on about 145 spoken words per minute.</small></div>
-                </div>
-                <div className="workflow-includes"><span className="include-label">INCLUDED IN YOUR WORKFLOW</span><div className="include-chips"><span><Search size={18} strokeWidth={1.7} aria-hidden /> Story research</span><span><Film size={18} strokeWidth={1.7} aria-hidden /> Matched visuals</span><span><Mic size={18} strokeWidth={1.7} aria-hidden /> Narration + captions</span></div></div>
-              </section>
-
-              <section className="panel voice-panel" aria-labelledby="voice-title">
-                <div className="panel-heading compact-heading"><div className="step-marker">03</div><div className="panel-title"><h2 id="voice-title">Narration voice</h2><p>Every production in this build is narrated with the studio's one installed voice.</p></div></div>
-                <div className="voice-catalog-list">{voices.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.id}</strong><small>{voice.alias_of ? `Default alias of ${voice.alias_of} · Same installed Piper model` : "English (US) · Built-in Piper voice"} · {voice.installed ? "Model installed" : "Model not installed"}</small></div>{!voice.alias_of && <span>In use</span>}{voice.is_default && <span>Default</span>}</div>)}</div>
-                {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The genre and voice catalogues could not be reached, so this form is showing the fallback facts — the three real genre packs and the one installed voice listed above — labelled as a fallback. Nothing else has been added.</p>}
-                {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the genre and voice catalogues from the studio API…</p>}
-                <p className="voice-note">Narration language is English (US) — the language of the installed voice. There is no voice picker because the catalogue above is everything that is installed: the form sends exactly the voice marked “In use”, so the voice named here is the voice your film will use.</p>
-              </section>
-
-              <section className="panel motion-option-panel"><div className="panel-heading compact-heading"><div className="step-marker">04</div><div className="panel-title"><h2>Generation options</h2><p>Only options the production pipeline actually applies — nothing here is decorative.</p></div></div><label className="motion-toggle"><input type="checkbox" checked={includeCaptions} onChange={(event) => setIncludeCaptions(event.target.checked)} /><span><strong>Captions</strong><small>Burn timed captions into the finished video. Turn off to render without burned-in captions.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis. You review the per-sentence plan — proposed visuals, evidence and rights — and approve it before any footage is retrieved or rendered.</small></span></label><p className="music-license-note"><strong>Background music</strong> is not part of productions in this build: there is no music picker because the pipeline applies music only from an operator-supplied file, which this form does not collect. Films render with narration and captions only.</p><div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy. A downloaded asset is not automatically cleared for publication; review its source and license before publishing.</p></div></section>
-
-            </div>
-
-            <aside className="right-column">
-              <section className="summary-card">
-                <div className="summary-top"><div><span className="eyebrow">PROJECT</span><h2>Summary</h2></div></div>
-                <div className="summary-rows"><div><span>Genre pack</span><strong>{selectedGenre?.label || selectedGenre?.name || genreId}</strong></div><div><span>Narration voice</span><strong>{narrationVoiceId} · English (US)</strong></div><div><span>Captions</span><strong>{includeCaptions ? "Burned in" : "Off"}</strong></div><div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
-                <div className="summary-footnote"><Info size={18} strokeWidth={1.7} aria-hidden /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
-
-                <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiBlocked}>
-                  {loading ? <><span className="button-spinner" /> Starting…</> : <>Create and start <ArrowRight size={18} strokeWidth={1.7} aria-hidden /></>}
-                </button>
-                <p className="button-caption">You can follow each stage as your film comes together.</p>
-              </section>
-
-              <section className="status-card" aria-live="polite">
-                <div className="status-heading"><span className={`status-indicator ${status?.status === "failed" ? "status-error" : status?.status === "completed" ? "status-done" : projectId ? "status-active" : ""}`} /><div><span className="eyebrow">PRODUCTION STATUS</span><h3>{statusTitle(status?.status, !!projectId, loading)}</h3></div></div>
-                {projectId ? <>
-                  <p className="status-message">{message || "Waiting for production status…"}</p>
-                  {status?.status === "awaiting_approval" && <p className="status-message"><Link className="text-link" href={`/projects/${projectId}/plan`}>Review the production plan</Link></p>}
-                  <div className="stage-list">{stageOrder.map(([key, label]) => {
-                    const stageStatus = status?.stages?.[key]?.status || (status?.current_stage === key ? "running" : "pending");
-                    return <div className={`stage-row ${stageStatus}`} key={key}><span className="stage-check">{stageStatus === "completed" ? <Check size={9} strokeWidth={3} aria-hidden /> : stageStatus === "running" ? <span /> : stageStatus === "failed" ? <AlertCircle size={9} strokeWidth={2.5} aria-hidden /> : ""}</span><span>{label}</span>{stageStatus === "running" && <small>NOW</small>}{stageStatus === "skipped" && <small>SKIPPED</small>}{stageStatus === "failed" && <small>FAILED</small>}</div>;
-                  })}</div>
-                  <div className="project-reference"><span>PROJECT</span><code>{projectId.slice(0, 8)}…</code>{jobId && <><i /><span>JOB</span><code>{jobId.slice(0, 8)}…</code></>}</div>
-                </> : <div className="empty-status"><div className="status-skeleton"><span /><span /><span /></div><p>Your production stages will appear here after you start.</p></div>}
-              </section>
-
-              {videoPath && <section className="video-card"><div className="video-heading"><span className="eyebrow">FINAL CUT</span><span className="ready-pill">READY</span></div><AuthenticatedVideo controls preload="metadata" src={videoPath} /><AuthenticatedDownloadLink path={videoPath} filename="documentary_final_output.mp4">Download MP4 <ArrowUpRight size={18} strokeWidth={1.7} aria-hidden /></AuthenticatedDownloadLink></section>}
-            </aside>
-          </form>
-          <footer className="page-footer"><span>CINEMORA</span><span>Production workspace</span></footer>
+      <div className="content-wrap">
+        <div className="page-heading">
+          <p className="eyebrow">NEW PRODUCTION</p>
+          <h1>New documentary</h1>
+          <p>Script, visual research, narration, and final edit — five steps, all on one page.</p>
         </div>
-      </section>
+
+        <form className="create-steps" onSubmit={createProject}>
+          <section className="create-step" aria-labelledby="script-title">
+            <div className="create-step-head">
+              <div className="step-marker">1</div>
+              <div><h2 id="script-title">Script</h2><p>Paste the narration you want produced.</p></div>
+              <span className="required-tag">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span>
+            </div>
+            <div className="script-panel">
+              <label className="sr-only" htmlFor="documentary-script">Documentary script</label>
+              <textarea id="documentary-script" value={script} onChange={(event) => setScript(event.target.value)} maxLength={MAX_SCRIPT_CHARS} placeholder="Paste script…" />
+              <div className="script-meta"><span className="editor-hint">{words.toLocaleString()} words</span><span className="count">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span></div>
+              {script.length >= MAX_SCRIPT_CHARS && <p className="voice-note" role="status">Your script is at the {MAX_SCRIPT_CHARS.toLocaleString()}-character limit — the production API accepts at most {MAX_SCRIPT_CHARS.toLocaleString()} characters, and nothing beyond the limit is kept.</p>}
+            </div>
+          </section>
+
+          <section className="create-step" aria-labelledby="story-title">
+            <div className="create-step-head">
+              <div className="step-marker">2</div>
+              <div><h2 id="story-title">Story</h2><p>Title, genre pack, and the narration voice — from the studio's real catalogues.</p></div>
+            </div>
+            <div className="form-fields">
+              <label className="field-label" htmlFor="project-title">TITLE
+                <input id="project-title" className="thumbnail-input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} placeholder="e.g. The Yangtze Incident" />
+              </label>
+              <label className="field-label" htmlFor="category">GENRE PACK
+                <span className="select-wrap"><select id="category" value={selectedGenre?.id || genreId} onChange={(event) => setGenreId(event.target.value)}>{genres.map((genre) => <option key={genre.id} value={genre.id}>{genre.label || genre.name || genre.id}</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
+                {selectedGenre?.description && <span className="genre-description">{selectedGenre.description}</span>}
+              </label>
+              <div className="field-label length-field"><span>ESTIMATED RUNTIME</span><div className="runtime-value">{duration ? `~${duration} min` : "Add a script"}</div><small>Based on about 145 spoken words per minute.</small></div>
+            </div>
+            <div className="voice-catalog-list">{voices.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.id}</strong><small>{voice.alias_of ? `Default alias of ${voice.alias_of} · Same installed Piper model` : "English (US) · Built-in Piper voice"} · {voice.installed ? "Model installed" : "Model not installed"}</small></div>{!voice.alias_of && <span>In use</span>}{voice.is_default && <span>Default</span>}</div>)}</div>
+            {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The genre and voice catalogues could not be reached, so this form is showing the fallback facts — the three real genre packs and the one installed voice listed above — labelled as a fallback. Nothing else has been added.</p>}
+            {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the genre and voice catalogues from the studio API…</p>}
+            <p className="voice-note">Narration language is English (US) — the language of the installed voice. There is no voice picker because the catalogue above is everything that is installed: the form sends exactly the voice marked “In use”, so the voice named here is the voice your film will use.</p>
+            <div className="workflow-includes"><span className="include-label">INCLUDED IN YOUR WORKFLOW</span><div className="include-chips"><span><Search size={18} strokeWidth={1.7} aria-hidden /> Story research</span><span><Film size={18} strokeWidth={1.7} aria-hidden /> Matched visuals</span><span><Mic size={18} strokeWidth={1.7} aria-hidden /> Narration + captions</span></div></div>
+          </section>
+
+          <section className="create-step" aria-labelledby="visual-title">
+            <div className="create-step-head">
+              <div className="step-marker">3</div>
+              <div><h2 id="visual-title">Visual approach</h2><p>Only options the production pipeline actually applies — nothing here is decorative.</p></div>
+            </div>
+            <label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis. You review the per-sentence plan — proposed visuals, evidence and rights — and approve it before any footage is retrieved or rendered.</small></span></label>
+          </section>
+
+          <section className="create-step" aria-labelledby="sound-title">
+            <div className="create-step-head">
+              <div className="step-marker">4</div>
+              <div><h2 id="sound-title">Sound</h2><p>Captions today; music only when the pipeline can actually apply it.</p></div>
+            </div>
+            <label className="motion-toggle"><input type="checkbox" checked={includeCaptions} onChange={(event) => setIncludeCaptions(event.target.checked)} /><span><strong>Captions</strong><small>Burn timed captions into the finished video. Turn off to render without burned-in captions.</small></span></label>
+            <p className="music-license-note"><strong>Background music</strong> is not part of productions in this build: there is no music picker because the pipeline applies music only from an operator-supplied file, which this form does not collect. Films render with narration and captions only.</p>
+            <div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy. A downloaded asset is not automatically cleared for publication; review its source and license before publishing.</p></div>
+          </section>
+
+          <section className="create-step" aria-labelledby="review-title">
+            <div className="create-step-head">
+              <div className="step-marker">5</div>
+              <div><h2 id="review-title">Review &amp; start</h2><p>Exactly what will be submitted — nothing else is sent.</p></div>
+            </div>
+            <div className="summary-card">
+              <div className="summary-rows"><div><span>Genre pack</span><strong>{selectedGenre?.label || selectedGenre?.name || genreId}</strong></div><div><span>Narration voice</span><strong>{narrationVoiceId} · English (US)</strong></div><div><span>Captions</span><strong>{includeCaptions ? "Burned in" : "Off"}</strong></div><div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
+              <div className="summary-footnote"><Info size={18} strokeWidth={1.7} aria-hidden /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
+              <p className="status-message"><ApiConnectionBadge onStatus={setConnection} /></p>
+              <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiBlocked}>
+                {loading ? <><span className="button-spinner" /> Starting…</> : <>Create and start <ArrowRight size={18} strokeWidth={1.7} aria-hidden /></>}
+              </button>
+              <p className="button-caption">You can follow each stage as your film comes together.</p>
+            </div>
+          </section>
+        </form>
+
+        <section className="status-card" aria-live="polite">
+          <div className="status-heading"><span className="status-indicator" /><div><span className="eyebrow">PRODUCTION STATUS</span><h3>{statusTitle(status?.status, !!projectId, loading)}</h3></div></div>
+          {projectId ? <>
+            <p className="status-message">{message || "Waiting for production status…"}</p>
+            {status?.status === "awaiting_approval" && <p className="status-message"><Link className="text-link" href={`/projects/${projectId}/plan`}>Review the production plan</Link></p>}
+            {status && <StageProgress stages={status.stages} currentStage={status.current_stage} />}
+            {projectId && <p className="status-message"><Link className="text-link" href={`/projects/${projectId}`}>Open the project workspace <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></p>}
+            <div className="project-reference"><span>PROJECT</span><code>{projectId.slice(0, 8)}…</code>{jobId && <><i /><span>JOB</span><code>{jobId.slice(0, 8)}…</code></>}</div>
+          </> : <div className="empty-status"><p>Your production stages will appear here after you start.</p></div>}
+        </section>
+
+        {videoPath && <section className="video-card"><div className="video-heading"><span className="eyebrow">FINAL CUT</span><span className="ready-pill">READY</span></div><AuthenticatedVideo controls preload="metadata" src={videoPath} /><AuthenticatedDownloadLink path={videoPath} filename="documentary_final_output.mp4">Download MP4 <ArrowUpRight size={18} strokeWidth={1.7} aria-hidden /></AuthenticatedDownloadLink></section>}
+
+        <footer className="page-footer"><span>CINEMORA</span><span>Production workspace</span></footer>
+      </div>
     </main>
   );
 }

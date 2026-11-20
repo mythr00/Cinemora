@@ -7,10 +7,19 @@ import { PROJECT_STATUS_OPTIONS, StatusBadge } from "@/components/status-badge";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import { listProjects, type ProjectSummary } from "@/lib/api";
 import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Search } from "lucide-react";
 
 type Project = ProjectSummary;
 
+type SortMode = "newest" | "oldest" | "title";
+
+// Redesign F1 (plan §3.4): toolbar gains search and sort. Both
+// are client-side over the already-fetched list — the list
+// endpoint takes no search/sort parameters and none are
+// invented here; the toolbar copy says the list is searched
+// locally. The quality chip stays deferred: the list response
+// carries no verdicts, and decorating the list with per-project
+// certificate fetches (N+1) is rejected by the plan.
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [busy, setBusy] = useState(true);
@@ -18,7 +27,26 @@ export default function ProjectsPage() {
   // IA-12: status filter over the already-fetched list, using
   // the shared status vocabulary (status-badge.tsx).
   const [statusFilter, setStatusFilter] = useState("all");
-  const visibleProjects = statusFilter === "all" ? projects : projects.filter((project) => project.status === statusFilter);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<SortMode>("newest");
+
+  const trimmedQuery = query.trim().toLowerCase();
+  const visibleProjects = projects
+    .filter((project) => statusFilter === "all" || project.status === statusFilter)
+    .filter((project) => {
+      if (!trimmedQuery) return true;
+      const haystack = `${project.title || ""} ${project.script_preview || ""} ${project.category || ""}`.toLowerCase();
+      return haystack.includes(trimmedQuery);
+    })
+    .sort((a, b) => {
+      if (sort === "title") {
+        return (a.title || a.script_preview || "").localeCompare(b.title || b.script_preview || "");
+      }
+      const byDate = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      return sort === "oldest" ? byDate : -byDate;
+    });
+  const filtered = statusFilter !== "all" || trimmedQuery !== "";
+
   const load = useCallback(async (signal?: AbortSignal) => {
     setError(null);
     try {
@@ -34,11 +62,18 @@ export default function ProjectsPage() {
     <AppNavigation />
     <section className="projects-content">
       <div className="projects-heading"><div><p className="eyebrow">PROJECT LIBRARY</p><h1>Every cut, in its place.</h1><p className="projects-intro">Your productions, their real status, and finished exports.</p></div><Link className="button button-primary" href="/create">New production <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>
-      <div className="library-toolbar"><span>{busy ? "Loading projects…" : `${visibleProjects.length} ${visibleProjects.length === 1 ? "project" : "projects"}${statusFilter !== "all" ? ` of ${projects.length}` : ""}`}</span><label className="library-filter"><span>Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter projects by status"><option value="all">All statuses</option>{PROJECT_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label><span>Newest first</span></div>
+      <div className="library-toolbar">
+        <span>{busy ? "Loading projects…" : `${visibleProjects.length} ${visibleProjects.length === 1 ? "project" : "projects"}${filtered ? ` of ${projects.length}` : ""}`}</span>
+        <div className="library-actions">
+          <label className="library-search"><Search size={14} strokeWidth={2} aria-hidden /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search this list" aria-label="Search projects in this list" /></label>
+          <label className="library-filter"><span>Status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} aria-label="Filter projects by status"><option value="all">All statuses</option>{PROJECT_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+          <label className="library-sort"><span>Sort</span><select value={sort} onChange={(event) => setSort(event.target.value as SortMode)} aria-label="Sort projects"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="title">Title A–Z</option></select></label>
+        </div>
+      </div>
       {busy && <LoadingState className="library-state" label="Loading your project library…" />}
       {!!error && <ErrorState className="library-error" error={error} onRetry={() => { setBusy(true); void load(); }} />}
       {!busy && !error && projects.length === 0 && <EmptyState className="library-empty" eyebrow="THE FIRST PAGE IS BLANK" title="Make room for a story." titleLevel="h2" description="Start a production with your script. Once created, it will show its actual status and export here." action={<Link className="button button-primary" href="/create">Create a project <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link>} />}
-      {!busy && !error && projects.length > 0 && visibleProjects.length === 0 && <p className="library-state">No projects have this status.</p>}
+      {!busy && !error && projects.length > 0 && visibleProjects.length === 0 && <p className="library-state">No projects match the current status filter and search.</p>}
       {!busy && !error && visibleProjects.length > 0 && <div className="library-grid">{visibleProjects.map((project) => <article className="library-card" key={project.id}>
         <Link className={`library-preview ${project.video_url ? "has-video" : ""}`} href={`/projects/${project.id}`} aria-label={`Open project: ${project.script_preview || project.category}`}>
           {project.video_url ? <AuthenticatedVideo src={project.video_url} preload="metadata" muted playsInline /> : <span className="preview-placeholder"><span className="reel-glyph" /><small>NO EXPORT YET</small></span>}
