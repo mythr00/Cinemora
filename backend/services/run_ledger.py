@@ -213,6 +213,41 @@ def latest_run_for(project_id, script_hash=None):
         return None
 
 
+def latest_production_run_for(project_id, script_hash=None):
+    """The most recent PRODUCTION run dict for a project, or None.
+
+    Revision renders are ProductionRuns too (options.kind =
+    "revision_render", Stage 6), so latest_run_for returns a render
+    run once any revision has been rendered (S7-D2). Surfaces that
+    describe the production itself — the provenance certificate and
+    the asset ledger listing — must select through here so a render
+    can never displace the production they describe. Read-only;
+    fail-soft, like latest_run_for."""
+    try:
+        from models import ProductionRun
+
+        db = _session()
+        try:
+            query = db.query(ProductionRun).filter(
+                ProductionRun.project_id == str(project_id)
+            )
+            if script_hash:
+                query = query.filter(
+                    ProductionRun.script_hash == str(script_hash)
+                )
+            rows = query.order_by(ProductionRun.created_at.desc()).all()
+            for row in rows:
+                options = row.options or {}
+                if options.get("kind") == "revision_render":
+                    continue
+                return get_run(row.id)
+            return None
+        finally:
+            db.close()
+    except Exception:
+        return None
+
+
 def list_runs_for(project_id):
     """All run dicts for a project, newest first (fail-soft: [])."""
     try:

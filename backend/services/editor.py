@@ -2614,14 +2614,23 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
             mix_input = narration_file
             if abs(narration_volume - 1.0) > 0.001:
                 adjusted = work_dir / "narration_adjusted.wav"
-                renderer.run_command(
+                # renderer.run_ffmpeg is the renderer's only command
+                # helper (S7-D1: this call site named a nonexistent
+                # run_command, so ANY narration volume != 1.0 crashed
+                # the render). It reports failure by returning False
+                # rather than raising — surface that as a render
+                # failure so the run records failed honestly.
+                if not renderer.run_ffmpeg(
                     [
                         "ffmpeg", "-y", "-i", str(narration_file),
                         "-af", f"volume={narration_volume}",
                         str(adjusted),
-                    ],
-                    "narration volume adjustment",
-                )
+                    ]
+                ):
+                    raise RuntimeError(
+                        "Narration volume adjustment failed "
+                        f"(volume={narration_volume})."
+                    )
                 mix_input = adjusted
             music_service.prepare_soundtrack(
                 mix_input,

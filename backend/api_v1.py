@@ -914,7 +914,9 @@ def list_assets(
         db.close()
     limit = min(max(1, limit), 500)
     offset = max(0, offset)
-    latest = run_ledger.latest_run_for(project_id)
+    # The asset listing describes the production ledger: a revision
+    # render run must never displace it (S7-D2).
+    latest = run_ledger.latest_production_run_for(project_id)
     if latest is None:
         return {"run_id": None, "total": 0, "limit": limit, "offset": offset, "items": []}
     rows, total = run_ledger.list_decisions(latest["run_id"], limit, offset)
@@ -1009,7 +1011,10 @@ def get_certificate(project_id: str, _=Depends(require_api_token)):
         }
     finally:
         db.close()
-    latest = run_ledger.latest_run_for(project_id)
+    # Production runs only: after a revision render, the newest run
+    # of any kind is the render run, and selecting it here would
+    # describe an empty render instead of the production (S7-D2).
+    latest = run_ledger.latest_production_run_for(project_id)
     if latest is None:
         raise ApiError(
             404,

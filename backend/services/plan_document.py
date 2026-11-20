@@ -403,12 +403,31 @@ def media_key_for(project_dir, path):
     return hashlib.sha256(relative.as_posix().encode("utf-8")).hexdigest()[:20]
 
 
+def _revision_documents(project_dir):
+    """The project's editor revision documents (Stage 6), read from
+    disk: revision_<id>.json files in the project directory. The DB
+    is truth for revision records; the documents are the recorded
+    artefacts the media index is allowed to trust."""
+    documents = []
+    try:
+        paths = sorted(Path(project_dir).glob("revision_*.json"))
+    except OSError:
+        return documents
+    for path in paths:
+        document = _read_json(path)
+        if isinstance(document, dict):
+            documents.append(document)
+    return documents
+
+
 def build_media_index(project_id, project_dir):
     """Map media key -> file facts, built exclusively from recorded
     artefacts: timeline items, the rights manifest, the pipeline
-    result, recorded plan-decision replacements, and the pipeline's
-    canonical output files that exist on disk. Every indexed path
-    is verified to live under the project directory."""
+    result, recorded plan-decision replacements, the pipeline's
+    canonical output files that exist on disk, the exports recorded
+    in editor revision documents (Stage 6), and the files recorded
+    in the project's upload index. Every indexed path is verified
+    to live under the project directory."""
     project_dir = Path(project_dir).resolve()
     index = {}
 
@@ -448,6 +467,20 @@ def build_media_index(project_id, project_dir):
         _add(replacement.get("file_path"), "plan_replacement")
         refreshed = decision.get("refreshed_asset") or {}
         _add(refreshed.get("file_path"), "plan_replacement")
+    # Editor artefacts (Stage 6): only paths RECORDED in a revision
+    # document's exports list or in the upload index are servable —
+    # the same recorded-artefact rule as everything above, so the
+    # editor's preview/download keys (sha256 of the project-relative
+    # path) resolve while unrecorded files still 404.
+    for document in _revision_documents(project_dir):
+        for export in document.get("exports") or []:
+            if isinstance(export, dict):
+                _add(export.get("file"), "revision_export")
+    uploads_index = _read_json(project_dir / "uploads" / "index.json")
+    if isinstance(uploads_index, dict):
+        for upload in uploads_index.get("uploads") or []:
+            if isinstance(upload, dict):
+                _add(upload.get("file_path"), "upload")
     for kind, filename in CANONICAL_OUTPUTS.items():
         _add(project_dir / filename, f"output_{kind}")
     return index
