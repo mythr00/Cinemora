@@ -87,9 +87,13 @@ class ProductionRun(Base):
         nullable=False,
     )
 
-    # queued -> running -> completed / failed / cancelled
-    # (awaiting_approval / rendering are reserved for the plan-review
-    # studio stage; no code sets them yet).
+    # queued -> running -> completed / failed / cancelled, plus
+    # awaiting_approval: the plan-review gate parks an analysed run
+    # there (jobs.run_analysis_phase via run_ledger.set_run_status)
+    # until plan approval claims it back. "rendering" is NOT a run
+    # status — it is the ProjectRevision status a revision carries
+    # while its revision-render run (queued -> running -> terminal
+    # here) executes (services/editor.py request_render).
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="queued"
     )

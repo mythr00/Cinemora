@@ -101,7 +101,16 @@ export function apiRequest<T>(path: string, init: RequestOptions = {}): Promise<
   return request<T>(path, init, true);
 }
 
-/** Call a legacy (pre-v1) endpoint through the same client. */
+/**
+ * Call a legacy (pre-v1) endpoint through the same client.
+ *
+ * IA-10 / F-06: KEPT deliberately. It has no active caller, but
+ * the quarantined implementations under frontend/preserved/ call
+ * it and are part of the typecheck; removing it would break
+ * their compilation. (The other F-06 dead exports, getHealth and
+ * listRevisionExports, had no caller anywhere — preserved code
+ * included — and were removed.)
+ */
 export function legacyRequest<T>(path: string, init: RequestOptions = {}): Promise<T> {
   return request<T>(path, init, false);
 }
@@ -322,15 +331,48 @@ export type Certificate = {
 // v1 endpoints
 // ---------------------------------------------------------------------
 
-export function getHealth(signal?: AbortSignal) {
-  return apiRequest<{ status: string; service: string; version: string }>(
-    "/api/v1/health",
-    { signal },
-  );
-}
-
 export function listProjects(signal?: AbortSignal) {
   return apiRequest<{ projects: ProjectSummary[] }>("/api/v1/projects", { signal });
+}
+
+// ---------------------------------------------------------------------
+// Catalogues (IA-06) — read-only views over the backend's real
+// sources of truth: genre packs (services/genre_packs) and the
+// installed voice catalogue (services/narration.VOICE_CATALOGUE).
+// ---------------------------------------------------------------------
+
+export type GenreCatalogueEntry = {
+  id: string;
+  name?: string | null;
+  label?: string | null;
+  description?: string | null;
+  style_family?: string | null;
+  graphics_motifs: string[];
+  format_preferences: Record<string, number>;
+  entity_handling: string[];
+  research_query_templates: string[];
+  pacing: Record<string, unknown>;
+};
+
+export type VoiceCatalogueEntry = {
+  id: string;
+  is_default: boolean;
+  alias_of?: string | null;
+  model?: string | null;
+  model_file?: string | null;
+  config_file?: string | null;
+  installed: boolean;
+};
+
+export function getGenreCatalogue(signal?: AbortSignal) {
+  return apiRequest<{ genres: GenreCatalogueEntry[] }>("/api/v1/catalogues/genres", { signal });
+}
+
+export function getVoiceCatalogue(signal?: AbortSignal) {
+  return apiRequest<{ voices: VoiceCatalogueEntry[]; default_voice_id: string }>(
+    "/api/v1/catalogues/voices",
+    { signal },
+  );
 }
 
 export function getProject(projectId: string, signal?: AbortSignal) {
@@ -1085,13 +1127,6 @@ export function requestRevisionRender(projectId: string, revisionId: string, all
   return apiRequest<RevisionRenderResult>(
     `/api/v1/projects/${projectId}/revisions/${revisionId}/render`,
     { method: "POST", body: JSON.stringify({ allow_gaps: allowGaps }) },
-  );
-}
-
-export function listRevisionExports(projectId: string, revisionId: string, signal?: AbortSignal) {
-  return apiRequest<{ exports: RevisionExport[] }>(
-    `/api/v1/projects/${projectId}/revisions/${revisionId}/exports`,
-    { signal },
   );
 }
 

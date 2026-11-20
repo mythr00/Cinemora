@@ -13,12 +13,15 @@ import { formatTime } from "./shared";
  * the X-API-Key header, so the bytes arrive as an object URL via
  * fetchMediaObjectUrl).
  *
- * Honest limitation, surfaced in the UI when it occurs: the media
- * endpoint serves only artefacts recorded in the production's
- * media index. Revision exports are not in that index in this
- * build, so an export that cannot be fetched falls back to the
- * original production film and the monitor says so — it never
- * pretends the export is playing when it is not.
+ * Honest fallback, surfaced in the UI when it occurs: if the
+ * latest revision export cannot be loaded for preview — no
+ * export is available yet, or the preview request itself fails —
+ * the monitor falls back to the original production film and
+ * says so; it never pretends the export is playing when it is
+ * not. (IA-10 / F-05: an earlier note here claimed the media
+ * endpoint does not serve revision exports; that is no longer
+ * the reason a preview falls back, and the copy now states the
+ * true one.)
  */
 
 type SourceState =
@@ -94,7 +97,7 @@ export function PreviewMonitor({
         } catch {
           if (controller.signal.aborted) return;
           note =
-            "The latest revision export is stored on the server, but the media endpoint does not serve revision exports in this build (it serves recorded production artefacts only), so the preview shows the original production film.";
+            "The latest revision export could not be loaded for preview, so the preview shows the original production film instead.";
         }
       }
       if (filmMediaKey) {

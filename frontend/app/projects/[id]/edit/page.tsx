@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
+import { ProjectTabs } from "@/components/project-tabs";
 import { ErrorState, LoadingState } from "@/components/states";
 import { AssetPanel, type PendingSpec } from "@/components/editor/asset-panel";
 import { PreviewMonitor } from "@/components/editor/preview-monitor";
@@ -333,6 +334,7 @@ export default function EditorPage() {
   return (
     <main className="project-editor-page editor-page">
       <AppNavigation />
+      <ProjectTabs projectId={projectId} />
       <section className="projects-content editor-content">
         <Link href={`/projects/${projectId}`} className="editor-back">
           <ArrowLeft size={14} strokeWidth={2} aria-hidden /> Project overview

@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BrandLockup } from "@/components/brand-lockup";
-import { ArrowUpRight } from "lucide-react";
+import { ApiConnectionBadge } from "@/components/connection-status";
+import { listProjects } from "@/lib/api";
+import { ArrowUpRight, BellRing } from "lucide-react";
 
 // Brief Stage 3 (C-02): /channel-lab, /thumbnail and /viral-clips
 // were removed — their backends do not exist in this build and the
@@ -43,7 +45,34 @@ export function AppNavigation({
   const [open, setOpen] = useState(false);
   const active = activeFor(usePathname());
 
+  // IA-11 system strip: the awaiting-approval count comes from
+  // the real project list (the same data the dashboard queue
+  // uses). When the list cannot be loaded the count is simply
+  // not shown — never estimated, never faked.
+  const [awaitingCount, setAwaitingCount] = useState<number | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      listProjects(controller.signal)
+        .then((data) =>
+          setAwaitingCount(
+            (data.projects || []).filter(
+              (project) =>
+                project.status === "awaiting_approval" ||
+                project.latest_run?.status === "awaiting_approval",
+            ).length,
+          ),
+        )
+        .catch(() => undefined);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, []);
+
   return (
+    <>
     <header className="app-nav">
       <Link className="app-brand" href="/studio" aria-label="Cinemora studio home" onClick={() => setOpen(false)}>
         <BrandLockup priority />
@@ -60,5 +89,16 @@ export function AppNavigation({
         <span /><span />
       </button>
     </header>
+    <div className="system-strip">
+      <ApiConnectionBadge />
+      <span className="system-strip-identity">Single operator</span>
+      {awaitingCount !== null && awaitingCount > 0 && (
+        <Link className="system-strip-approvals" href="/studio">
+          <BellRing size={13} strokeWidth={2} aria-hidden />
+          {awaitingCount} awaiting approval
+        </Link>
+      )}
+    </div>
+    </>
   );
 }

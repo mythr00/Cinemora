@@ -5,10 +5,14 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import {
   createProject as apiCreateProject,
+  getGenreCatalogue,
   getProjectStatus,
+  getVoiceCatalogue,
   submitRun,
   type ApiConnectionStatus,
+  type GenreCatalogueEntry,
   type ProjectStatus,
+  type VoiceCatalogueEntry,
 } from "@/lib/api";
 import { ApiConnectionBadge } from "@/components/connection-status";
 import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
@@ -24,16 +28,76 @@ import {
   Search,
 } from "lucide-react";
 
-const categories = [
-  "Documentary",
-  "History",
-  "Science",
-  "Biography",
-  "True Crime",
-  "Naval History",
-  "War History",
-  "Finance",
-  "Custom",
+// IA-06: the genre selector and the voice panel are rendered
+// from the backend catalogues (GET /api/v1/catalogues/genres and
+// /voices — the real genre packs and the installed voice
+// catalogue). The constants below are ONLY the honest fallback
+// used when those endpoints cannot be reached: they state the
+// same previously-static truthful facts (the three real packs,
+// the one installed voice and its default alias), and the UI
+// labels them as a fallback whenever they are shown — no option
+// is ever silently invented.
+const FALLBACK_GENRES: GenreCatalogueEntry[] = [
+  {
+    id: "general",
+    name: "General documentary",
+    label: "General documentary",
+    description:
+      "Default pack when no genre is specified or detected. No genre assumptions: the historical per-template engine styles apply, with a modern chart-first motif order.",
+    style_family: null,
+    graphics_motifs: [],
+    format_preferences: {},
+    entity_handling: [],
+    research_query_templates: [],
+    pacing: {},
+  },
+  {
+    id: "history",
+    name: "History",
+    label: "History",
+    description:
+      "Documentaries about past events, people and places. Research leans on records and archives; graphics lean on maps, documents and chronology.",
+    style_family: "history",
+    graphics_motifs: [],
+    format_preferences: {},
+    entity_handling: [],
+    research_query_templates: [],
+    pacing: {},
+  },
+  {
+    id: "true_crime",
+    name: "True crime",
+    label: "True crime",
+    description:
+      "Documentaries about real criminal cases. Evidence discipline is absolute: nothing about a case is invented, and victims are treated with care.",
+    style_family: "true_crime",
+    graphics_motifs: [],
+    format_preferences: {},
+    entity_handling: [],
+    research_query_templates: [],
+    pacing: {},
+  },
+];
+
+const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
+  {
+    id: "en_US-lessac-medium",
+    is_default: false,
+    alias_of: null,
+    model: "en_US-lessac-medium.onnx",
+    model_file: "en_US-lessac-medium.onnx",
+    config_file: "en_US-lessac-medium.onnx.json",
+    installed: true,
+  },
+  {
+    id: "default",
+    is_default: true,
+    alias_of: "en_US-lessac-medium",
+    model: "en_US-lessac-medium.onnx",
+    model_file: "en_US-lessac-medium.onnx",
+    config_file: "en_US-lessac-medium.onnx.json",
+    installed: true,
+  },
 ];
 
 // The pipeline's six real stages (backend production_state
@@ -49,10 +113,10 @@ const stageOrder = [
 ] as const;
 
 // The one narration voice actually installed in the backend
-// (Stage 3J catalogue): a built-in Piper voice. Brief Stage 3
-// (C-05) removed the catalogue browser that pretended otherwise —
-// /voices does not exist in the committed backend, and any other
-// voice id would silently fall back to this one at production time.
+// (Stage 3J catalogue): a built-in Piper voice. IA-06: the voice
+// panel below is rendered from GET /api/v1/catalogues/voices;
+// this constant is only the fallback canonical id used when the
+// catalogue cannot be reached (see FALLBACK_VOICES).
 const NARRATION_VOICE_ID = "en_US-lessac-medium";
 
 // The backend's real script cap (api_v1 MAX_SCRIPT_CHARS). The form
@@ -63,7 +127,10 @@ const MAX_SCRIPT_CHARS = 60000;
 export default function Home() {
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState("Documentary");
+  const [genreId, setGenreId] = useState("general");
+  const [genres, setGenres] = useState<GenreCatalogueEntry[]>(FALLBACK_GENRES);
+  const [voices, setVoices] = useState<VoiceCatalogueEntry[]>(FALLBACK_VOICES);
+  const [catalogueState, setCatalogueState] = useState<"loading" | "api" | "fallback">("loading");
   const [requirePlanApproval, setRequirePlanApproval] = useState(false);
   const [loading, setLoading] = useState(false);
   const [projectId, setProjectId] = useState("");
@@ -77,17 +144,37 @@ export default function Home() {
   const duration = words ? Math.max(1, Math.round(words / 145)) : 0;
   const isTerminal = status?.status === "completed" || status?.status === "failed";
 
+  // IA-06: load the genre and voice catalogues from the API.
+  // (IA-10 / F-04: the sessionStorage draft read that used to sit
+  // here is removed — nothing in the active build ever writes
+  // that key; its only setter lives in preserved/ code.)
   useEffect(() => {
-    const draftTimer = setTimeout(() => {
-      const channelDraft = sessionStorage.getItem("cinemora-script-draft");
-      if (channelDraft) {
-        setScript(channelDraft.slice(0, MAX_SCRIPT_CHARS));
-        sessionStorage.removeItem("cinemora-script-draft");
-        setMessage("Script draft loaded. Review it before starting production.");
-      }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const [genreData, voiceData] = await Promise.all([
+            getGenreCatalogue(controller.signal),
+            getVoiceCatalogue(controller.signal),
+          ]);
+          if (controller.signal.aborted) return;
+          if (genreData.genres?.length) setGenres(genreData.genres);
+          if (voiceData.voices?.length) setVoices(voiceData.voices);
+          setCatalogueState("api");
+        } catch {
+          if (!controller.signal.aborted) setCatalogueState("fallback");
+        }
+      })();
     }, 0);
-    return () => { clearTimeout(draftTimer); };
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, []);
+
+  const selectedGenre = genres.find((genre) => genre.id === genreId) || genres[0];
+  const canonicalVoice = voices.find((voice) => !voice.alias_of) || voices[0];
+  const narrationVoiceId = canonicalVoice?.id || NARRATION_VOICE_ID;
 
   // Brief Stage 5 (C-06): the topbar badge is the authenticated
   // connection check (ApiConnectionBadge performs one authenticated
@@ -166,10 +253,10 @@ export default function Home() {
       const created = await apiCreateProject({
         title: title.trim() || undefined,
         script: script.trim(),
-        category,
+        category: selectedGenre?.label || selectedGenre?.name || genreId,
         options: {
-          genre: category,
-          voice_id: NARRATION_VOICE_ID,
+          genre: selectedGenre?.id || genreId,
+          voice_id: narrationVoiceId,
           captions: includeCaptions ? "burn" : "off",
           require_plan_approval: requirePlanApproval,
         },
@@ -239,14 +326,15 @@ export default function Home() {
               <section className="panel details-panel">
                 <div className="panel-heading compact-heading">
                   <div className="step-marker">02</div>
-                  <div className="panel-title"><h2>Project details</h2><p>Choose a category and check the estimated runtime.</p></div>
+                  <div className="panel-title"><h2>Project details</h2><p>Choose a genre pack and check the estimated runtime.</p></div>
                 </div>
                 <div className="form-fields">
                   <label className="field-label" htmlFor="project-title">TITLE
                     <input id="project-title" className="thumbnail-input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} placeholder="e.g. The Yangtze Incident" />
                   </label>
-                  <label className="field-label" htmlFor="category">STORY CATEGORY
-                    <span className="select-wrap"><select id="category" value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
+                  <label className="field-label" htmlFor="category">GENRE PACK
+                    <span className="select-wrap"><select id="category" value={selectedGenre?.id || genreId} onChange={(event) => setGenreId(event.target.value)}>{genres.map((genre) => <option key={genre.id} value={genre.id}>{genre.label || genre.name || genre.id}</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
+                    {selectedGenre?.description && <span className="genre-description">{selectedGenre.description}</span>}
                   </label>
                   <div className="field-label length-field"><span>ESTIMATED RUNTIME</span><div className="runtime-value">{duration ? `~${duration} min` : "Add a script"}</div><small>Based on about 145 spoken words per minute.</small></div>
                 </div>
@@ -255,8 +343,10 @@ export default function Home() {
 
               <section className="panel voice-panel" aria-labelledby="voice-title">
                 <div className="panel-heading compact-heading"><div className="step-marker">03</div><div className="panel-title"><h2 id="voice-title">Narration voice</h2><p>Every production in this build is narrated with the studio's one installed voice.</p></div></div>
-                <div className="voice-catalog-list"><div className="voice-catalog-row"><div><strong>{NARRATION_VOICE_ID}</strong><small>English (US) · Built-in Piper voice · Model installed</small></div><span>In use</span></div></div>
-                <p className="voice-note">Narration language is English (US) — the language of the installed voice. There is no voice or language picker because there is nothing else installed to pick: the form sends exactly this voice, so the voice named here is the voice your film will use.</p>
+                <div className="voice-catalog-list">{voices.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.id}</strong><small>{voice.alias_of ? `Default alias of ${voice.alias_of} · Same installed Piper model` : "English (US) · Built-in Piper voice"} · {voice.installed ? "Model installed" : "Model not installed"}</small></div>{!voice.alias_of && <span>In use</span>}{voice.is_default && <span>Default</span>}</div>)}</div>
+                {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The genre and voice catalogues could not be reached, so this form is showing the fallback facts — the three real genre packs and the one installed voice listed above — labelled as a fallback. Nothing else has been added.</p>}
+                {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the genre and voice catalogues from the studio API…</p>}
+                <p className="voice-note">Narration language is English (US) — the language of the installed voice. There is no voice picker because the catalogue above is everything that is installed: the form sends exactly the voice marked “In use”, so the voice named here is the voice your film will use.</p>
               </section>
 
               <section className="panel motion-option-panel"><div className="panel-heading compact-heading"><div className="step-marker">04</div><div className="panel-title"><h2>Generation options</h2><p>Only options the production pipeline actually applies — nothing here is decorative.</p></div></div><label className="motion-toggle"><input type="checkbox" checked={includeCaptions} onChange={(event) => setIncludeCaptions(event.target.checked)} /><span><strong>Captions</strong><small>Burn timed captions into the finished video. Turn off to render without burned-in captions.</small></span></label><label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis. You review the per-sentence plan — proposed visuals, evidence and rights — and approve it before any footage is retrieved or rendered.</small></span></label><p className="music-license-note"><strong>Background music</strong> is not part of productions in this build: there is no music picker because the pipeline applies music only from an operator-supplied file, which this form does not collect. Films render with narration and captions only.</p><div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy. A downloaded asset is not automatically cleared for publication; review its source and license before publishing.</p></div></section>
@@ -266,7 +356,7 @@ export default function Home() {
             <aside className="right-column">
               <section className="summary-card">
                 <div className="summary-top"><div><span className="eyebrow">PROJECT</span><h2>Summary</h2></div></div>
-                <div className="summary-rows"><div><span>Category</span><strong>{category}</strong></div><div><span>Narration voice</span><strong>{NARRATION_VOICE_ID} · English (US)</strong></div><div><span>Captions</span><strong>{includeCaptions ? "Burned in" : "Off"}</strong></div><div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
+                <div className="summary-rows"><div><span>Genre pack</span><strong>{selectedGenre?.label || selectedGenre?.name || genreId}</strong></div><div><span>Narration voice</span><strong>{narrationVoiceId} · English (US)</strong></div><div><span>Captions</span><strong>{includeCaptions ? "Burned in" : "Off"}</strong></div><div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
                 <div className="summary-footnote"><Info size={18} strokeWidth={1.7} aria-hidden /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
 
                 <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiBlocked}>

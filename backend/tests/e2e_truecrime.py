@@ -209,11 +209,22 @@ def run_checks():
         for item in _mg_items
         if (item.get("file_path") or item.get("path")) in _generated_files
     ]
+    # targeted_graphics_present (Phase 5 strengthening): the check is
+    # EXPLICITLY NAMED so a production that requested targeted
+    # graphics (targets > 0, falling back to the report's missing
+    # visual count when the motion-graphics manifest carries no
+    # target count) but placed ZERO of them on the timeline fails
+    # under this stable name, instead of the failure hiding inside a
+    # descriptive sentence. When no targets were requested the check
+    # is not applicable and passes, with that stated in the detail.
     check(
-        "targeted graphics reached the timeline as motion_graphic assignments",
+        "targeted_graphics_present: targeted graphics reached the timeline as motion_graphic assignments",
         len(_mg_used) >= 1 if _targets_requested else True,
         f"(targets: {_targets_requested}, motion_graphic items: "
-        f"{len(_mg_items)}, referencing generated files: {len(_mg_used)})",
+        f"{len(_mg_items)}, referencing generated files: {len(_mg_used)}, "
+        f"targeted_graphics_on_timeline: {len(_mg_used)}"
+        + ("" if _targets_requested else ", not applicable: no targets requested")
+        + ")",
     )
     check(
         "renderer produced the final video",

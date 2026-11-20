@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
+import { ProjectTabs } from "@/components/project-tabs";
 import { ErrorState, LoadingState } from "@/components/states";
 import { ArrowLeft } from "lucide-react";
 import { AuthenticatedDownloadLink } from "@/components/authenticated-media";
@@ -179,7 +180,7 @@ export default function ProjectPage() {
   const assetsOffset = assets?.offset ?? 0;
   const assetsTotal = assets?.total ?? 0;
 
-  return <main className="project-editor-page"><AppNavigation /><section className="projects-content"><Link href="/projects" className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Projects</Link>
+  return <main className="project-editor-page"><AppNavigation /><ProjectTabs projectId={projectId} /><section className="projects-content"><Link href="/projects" className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Projects</Link>
     {!overview && loadError ? <>
       <p className="eyebrow">PROJECT OVERVIEW</p>
       <h1>Project unavailable</h1>

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
+import { ProjectTabs } from "@/components/project-tabs";
 import { MediaThumb } from "@/components/media-thumb";
 import { ArrowLeft } from "lucide-react";
 import {
@@ -201,6 +202,7 @@ export default function PlanReviewPage() {
   return (
     <main className="app-page plan-page">
       <AppNavigation />
+      <ProjectTabs projectId={projectId} />
       <section className="plan-content">
         <Link href={`/projects/${projectId}`} className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Project</Link>
         <p className="eyebrow">PRODUCTION PLAN</p>

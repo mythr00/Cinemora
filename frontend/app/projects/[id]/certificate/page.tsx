@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
+import { ProjectTabs } from "@/components/project-tabs";
 import { ErrorState, LoadingState } from "@/components/states";
 import { ArrowLeft } from "lucide-react";
 import {
@@ -73,6 +74,7 @@ export default function CertificatePage() {
   return (
     <main className="app-page certificate-page">
       <AppNavigation />
+      <ProjectTabs projectId={projectId} />
       <section className="plan-content">
         <Link href={`/projects/${projectId}`} className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Project</Link>
         <p className="eyebrow">PROVENANCE CERTIFICATE</p>

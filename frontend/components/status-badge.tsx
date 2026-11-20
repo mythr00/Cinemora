@@ -63,6 +63,23 @@ const STATUS_PRESENTATION: Record<string, StatusPresentation> = {
   exported: { label: "Exported", tone: "success", Icon: Download },
 };
 
+/**
+ * The project/run status vocabulary, exported for filters and
+ * other shared UI (IA-12): exactly the project/run subset of the
+ * presentation map above — revision-only statuses (draft,
+ * exported, rendering) are not project statuses.
+ */
+export const PROJECT_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+  "created",
+  "queued",
+  "pipeline_queued",
+  "running",
+  "awaiting_approval",
+  "completed",
+  "failed",
+  "cancelled",
+].map((value) => ({ value, label: STATUS_PRESENTATION[value].label }));
+
 export function StatusBadge({
   status,
   overlay = false,

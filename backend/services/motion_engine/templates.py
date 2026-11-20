@@ -134,6 +134,78 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
         if isinstance(m, dict) and isinstance(m.get("at"), (list, tuple)) and len(m.get("at")) >= 2
     ]
     title = _clean(data.get("title"))
+
+    # IA-14 regional zoom (CF-02): when every region on the map is a
+    # dataset region and the map carries >= 2 LABELLED places
+    # (markers with a label) whose geographic positions cluster in
+    # a small fraction of the country bbox (geography.is_clustered),
+    # re-frame on the places' region: outlines are re-projected
+    # under geography.regional_projection and every marker / route
+    # point — which callers supply projected under the country fit,
+    # the benchmark contract — is carried into the new frame via
+    # Projection.inverse + the regional projection, so geography
+    # stays true. When the places are spread (or anything about the
+    # map is not dataset-geographic), NOTHING below runs and the
+    # render is exactly the historical whole-country one. Any
+    # failure mid-computation likewise leaves the country framing
+    # untouched (all new geometry is built before anything is
+    # assigned).
+    framing_inputs = {}
+    if (
+        dataset_projection is not None
+        and valid
+        and all(entry["_source"] == "dataset" for entry in valid)
+    ):
+        labelled = [m for m in markers if _clean(m.get("label"))]
+        if len(labelled) >= 2:
+            try:
+                from services.motion_engine import geography as _geo
+
+                lonlats = [
+                    dataset_projection.inverse(
+                        float(m["at"][0]), float(m["at"][1])
+                    )
+                    for m in labelled
+                ]
+                regional = _geo.regional_projection(country_names_req, lonlats)
+                if regional is not None:
+                    def _remap(point):
+                        lon, lat = dataset_projection.inverse(
+                            float(point[0]), float(point[1])
+                        )
+                        return list(regional.project(lon, lat))
+
+                    new_polygons = {}
+                    for entry in valid:
+                        cname = entry.get("country") or entry.get("name")
+                        polygons = _geo.outline_for(cname, regional)
+                        if not polygons:
+                            raise ValueError("regional outline missing")
+                        new_polygons[id(entry)] = polygons
+                    new_markers = [
+                        {**m, "at": _remap(m["at"])} for m in markers
+                    ]
+                    new_routes = [
+                        {**r, "points": [_remap(p) for p in r["points"]]}
+                        for r in routes
+                    ]
+                    country_box = _geo.union_bbox(country_names_req)
+                    places_box = _geo.places_bbox(lonlats)
+                    framing_inputs = {
+                        "framing": "regional",
+                        "framing_bbox": [round(v, 6) for v in regional.bbox],
+                        "places_bbox": [round(v, 6) for v in places_box],
+                        "country_bbox": [round(v, 6) for v in country_box],
+                        "places_area_fraction": _geo.places_area_fraction(
+                            places_box, country_box
+                        ),
+                    }
+                    for entry in valid:
+                        entry["_polygons"] = new_polygons[id(entry)]
+                    markers = new_markers
+                    routes = new_routes
+            except Exception:
+                framing_inputs = {}
     bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=11)
     fonts = {
         "title": load_font(tokens["font_bold"], 44),
@@ -162,6 +234,13 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
                 fill_rgb = tokens["accent"]
             # Glowing sweep: reveal the filled polygon left->right.
             reveal_x = min(xs) + (max(xs) - min(xs)) * sweep if max(xs) > min(xs) else max(xs)
+            # IA-14: under a regional frame the outline extends far
+            # beyond the canvas, so the sweep position can leave
+            # [0, WIDTH]; clamp it into the frame (PIL rejects an
+            # inverted mask rectangle). Country-fit outlines lie
+            # inside the canvas rect, so the clamp never binds for
+            # them and their renders are unchanged.
+            reveal_x = max(0.0, min(float(WIDTH), reveal_x))
             region_img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
             rd = ImageDraw.Draw(region_img)
             for poly in polygons_px:
@@ -226,7 +305,8 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
     return path, _meta("territory_map", style_name, duration, sentence_index, scene_number,
                        {"regions": len(valid), "routes": len(routes), "title": bool(title),
                         "outline_sources": outline_sources, "markers": len(markers),
-                        "dashed_routes": sum(1 for r in routes if r.get("dashed"))})
+                        "dashed_routes": sum(1 for r in routes if r.get("dashed")),
+                        **framing_inputs})
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,10 @@ offers:
 - a Projection that fits one or more countries' lon/lat bounding
   box into a normalised canvas rect, preserving aspect ratio with
   a cos(mean-latitude) correction so shapes are not stretched,
-- normalised outline rings for the territory_map template.
+- normalised outline rings for the territory_map template,
+- IA-14 regional framing: when a map's labelled places cluster in
+  a small fraction of the country bbox, regional_projection frames
+  on the places' (padded) bbox instead of the whole country.
 
 Nothing here invents geography: a country that is not in the
 dataset returns None, and callers fall back to caller-supplied
@@ -194,6 +197,12 @@ class Projection:
         self._off_x = rx0 + (rect_w - used_w) / 2.0
         self._off_y = ry0 + (rect_h - used_h) / 2.0
 
+    @property
+    def scale(self):
+        """Normalised-canvas units per degree of latitude (the fit
+        scale; longitude degrees are additionally cos-corrected)."""
+        return self._scale
+
     def project(self, lon, lat):
         """(lon, lat) -> normalised (x, y), y growing downward."""
         min_lon, min_lat, max_lon, max_lat = self.bbox
@@ -201,21 +210,159 @@ class Projection:
         y = self._off_y + (max_lat - lat) * self._scale
         return (x, y)
 
+    def inverse(self, x, y):
+        """Normalised (x, y) -> (lon, lat): the exact inverse of
+        project() for THIS projection's bbox/rect. IA-14 uses it to
+        recover the geographic position of a point that a caller
+        projected under one fit so it can be re-projected under
+        another (the regional fit)."""
+        min_lon, min_lat, max_lon, max_lat = self.bbox
+        lon = min_lon + (x - self._off_x) / (self._lat_correction * self._scale)
+        lat = max_lat - (y - self._off_y) / self._scale
+        return (lon, lat)
 
-def fit_projection(names, rect=DEFAULT_RECT):
-    """A Projection covering the union bbox of the named countries,
-    or None when none of them is in the dataset."""
+
+def union_bbox(names):
+    """The union (min_lon, min_lat, max_lon, max_lat) of the named
+    countries' bboxes, or None when none is in the dataset."""
     boxes = [country_bbox(n) for n in names or []]
     boxes = [b for b in boxes if b]
     if not boxes:
         return None
-    bbox = (
+    return (
         min(b[0] for b in boxes),
         min(b[1] for b in boxes),
         max(b[2] for b in boxes),
         max(b[3] for b in boxes),
     )
+
+
+def fit_projection(names, rect=DEFAULT_RECT):
+    """A Projection covering the union bbox of the named countries,
+    or None when none of them is in the dataset."""
+    bbox = union_bbox(names)
+    if bbox is None:
+        return None
     return Projection(bbox, rect=rect)
+
+
+# ---------------------------------------------------------------------------
+# IA-14 — regional zoom framing
+# ---------------------------------------------------------------------------
+# Whole-country framing is illegible when a story's labelled places
+# cluster in one small region (CF-02: the benchmark's four Yangtze
+# places span ~2.7 x ~1.0 degrees inside China's ~62 x ~35 degree
+# bbox — markers knot and labels collide at country scale).
+#
+# Clustering is DEFINED by area: the labelled places' lon/lat
+# bounding box area as a fraction of the country-union bounding box
+# area. Below CLUSTER_AREA_FRACTION the places count as clustered
+# and the map frames on the places' bbox instead of the country's.
+# The fraction uses plain degree areas for both boxes: any latitude
+# correction would apply a near-identical factor to places inside
+# the same country and cancels in the ratio.
+#
+# The regional frame is the places' bbox padded on every side by
+# REGIONAL_PAD_FRACTION of that side's span, with a floor of
+# REGIONAL_MIN_PAD_DEG degrees per side (so a tight cluster still
+# gets geographic context, and a degenerate zero-span cluster still
+# frames a finite area: the minimum padded span is therefore
+# 2 * REGIONAL_MIN_PAD_DEG = 1.0 degree). The padded bbox is NOT
+# clamped to the country bbox: places near a border keep their
+# cross-border context, and the country outline simply extends
+# beyond the frame, as on any zoomed map.
+
+CLUSTER_AREA_FRACTION = 0.10
+REGIONAL_PAD_FRACTION = 0.30
+REGIONAL_MIN_PAD_DEG = 0.5
+
+
+def places_bbox(places):
+    """(min_lon, min_lat, max_lon, max_lat) of an iterable of
+    (lon, lat) places, or None when empty / non-numeric."""
+    points = []
+    for place in places or []:
+        try:
+            lon, lat = float(place[0]), float(place[1])
+        except (TypeError, ValueError, IndexError, KeyError):
+            return None
+        points.append((lon, lat))
+    if not points:
+        return None
+    return (
+        min(p[0] for p in points),
+        min(p[1] for p in points),
+        max(p[0] for p in points),
+        max(p[1] for p in points),
+    )
+
+
+def bbox_area(bbox):
+    """Plain degree area of a (min_lon, min_lat, max_lon, max_lat)
+    bbox (0.0 for None / degenerate boxes)."""
+    if not bbox:
+        return 0.0
+    return max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
+
+
+def places_area_fraction(places_box, country_box):
+    """The places bbox area as a fraction of the country bbox area,
+    or None when either box is missing/degenerate."""
+    country_area = bbox_area(country_box)
+    if not country_area or places_box is None:
+        return None
+    return bbox_area(places_box) / country_area
+
+
+def is_clustered(places_box, country_box):
+    """True when the places' bbox covers less than
+    CLUSTER_AREA_FRACTION of the country bbox's area."""
+    fraction = places_area_fraction(places_box, country_box)
+    return fraction is not None and fraction < CLUSTER_AREA_FRACTION
+
+
+def padded_places_bbox(places_box):
+    """The regional framing bbox: `places_box` padded per the
+    IA-14 rule documented above."""
+    min_lon, min_lat, max_lon, max_lat = places_box
+    pad_lon = max(
+        REGIONAL_PAD_FRACTION * (max_lon - min_lon), REGIONAL_MIN_PAD_DEG
+    )
+    pad_lat = max(
+        REGIONAL_PAD_FRACTION * (max_lat - min_lat), REGIONAL_MIN_PAD_DEG
+    )
+    return (
+        min_lon - pad_lon,
+        min_lat - pad_lat,
+        max_lon + pad_lon,
+        max_lat + pad_lat,
+    )
+
+
+def regional_projection(names, places, rect=DEFAULT_RECT):
+    """A Projection framed on the labelled places' region, or None.
+
+    Returns a Projection over padded_places_bbox(places) when the
+    named countries exist in the dataset, at least two DISTINCT
+    places are given, and those places are clustered (see
+    is_clustered). Returns None in every other case — the caller
+    then keeps the whole-country fit_projection exactly as before.
+    """
+    country_box = union_bbox(names)
+    if country_box is None:
+        return None
+    points = []
+    for place in places or []:
+        try:
+            points.append((float(place[0]), float(place[1])))
+        except (TypeError, ValueError, IndexError, KeyError):
+            return None
+    if len(set(points)) < 2:
+        return None
+    places_box = places_bbox(points)
+    if not is_clustered(places_box, country_box):
+        return None
+    return Projection(padded_places_bbox(places_box), rect=rect)
 
 
 def _ring_area(ring):

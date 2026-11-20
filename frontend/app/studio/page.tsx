@@ -5,7 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
-import { listProjects, type ProjectSummary } from "@/lib/api";
+import { getProjectStatus, listProjects, type ProjectStatus, type ProjectSummary } from "@/lib/api";
+import { StageProgress } from "@/components/stage-progress";
 import { AuthenticatedVideo } from "@/components/authenticated-media";
 import { ArrowUpRight } from "lucide-react";
 
@@ -17,12 +18,39 @@ export default function StudioPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  // IA-12: real per-project stage records, fetched via the
+  // existing /status helper for the recent projects the page
+  // displays (the project list itself carries no stage detail).
+  const [stageByProject, setStageByProject] = useState<Record<string, ProjectStatus>>({});
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setError(null);
     try {
       const data = await listProjects(signal);
-      setProjects(data.projects || []);
+      const loaded = data.projects || [];
+      setProjects(loaded);
+      const recentLoaded = loaded.slice(0, 4);
+      const active = recentLoaded.filter((project) =>
+        ["created", "queued", "pipeline_queued", "running", "awaiting_approval"].includes(project.status),
+      );
+      if (active.length > 0) {
+        const entries = await Promise.all(
+          active.map(async (project) => {
+            try {
+              return [project.id, await getProjectStatus(project.id, signal)] as const;
+            } catch {
+              return null;
+            }
+          }),
+        );
+        if (!signal?.aborted) {
+          setStageByProject((current) => {
+            const next = { ...current };
+            for (const entry of entries) if (entry) next[entry[0]] = entry[1];
+            return next;
+          });
+        }
+      }
     } catch (cause) {
       if (!signal?.aborted) setError(cause);
     } finally { if (!signal?.aborted) setBusy(false); }
@@ -86,7 +114,7 @@ export default function StudioPage() {
             {project.video_url ? <AuthenticatedVideo src={project.video_url} preload="metadata" muted playsInline /> : <span className="project-art-mark"><span className="reel-glyph" /></span>}
             <StatusBadge status={project.status} overlay />
           </Link>
-          <div className="dashboard-project-info"><div><p>{project.category}</p><time dateTime={project.created_at}>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(project.created_at))}</time></div><h3>{project.title || project.script_preview || "Untitled production"}</h3><p className="project-stage">{project.current_stage ? `Stage · ${label(project.current_stage)}` : project.video_url ? "Export available" : "Production status available"}</p><Link href={`/projects/${project.id}`}>Open project <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>
+          <div className="dashboard-project-info"><div><p>{project.category}</p><time dateTime={project.created_at}>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(project.created_at))}</time></div><h3>{project.title || project.script_preview || "Untitled production"}</h3><p className="project-stage">{project.current_stage ? `Stage · ${label(project.current_stage)}` : project.video_url ? "Export available" : "Production status available"}</p>{stageByProject[project.id] && <StageProgress stages={stageByProject[project.id].stages} currentStage={stageByProject[project.id].current_stage} />}<Link href={`/projects/${project.id}`}>Open project <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>
         </article>)}</div>}
       </section>
 
