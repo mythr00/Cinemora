@@ -57,6 +57,7 @@ from services import (
     plan_document,
     run_ledger,
 )
+from services.atomic_write import write_json_atomic
 
 MAX_SCRIPT_CHARS = 60_000
 
@@ -287,7 +288,9 @@ def _options_dict(options) -> dict:
 def _production_state(project_dir: Path) -> dict | None:
     try:
         return json.loads(
-            (project_dir / "production_state.json").read_text(encoding="utf-8")
+            media_paths.resolve_artefact(
+                project_dir, "production_state.json"
+            ).read_text(encoding="utf-8")
         )
     except (OSError, ValueError):
         return None
@@ -673,31 +676,13 @@ def generate_plan(project_id: str, _=Depends(post_guard)):
 
 
 def _append_plan_decision(project_dir: Path, record: dict) -> dict:
-    """Append one decision to plan_decisions.json (atomic rewrite)."""
-    import tempfile
-
+    """Append one decision to plan_decisions.json (atomic rewrite
+    via services.atomic_write — the single write path since
+    Stage 4 / DATA-101)."""
     path = project_dir / plan_document.DECISIONS_FILENAME
     decisions = plan_document.load_plan_decisions(project_dir)
     decisions.append(record)
-    payload = json.dumps(
-        {"version": 1, "decisions": decisions}, indent=2, ensure_ascii=False
-    )
-    project_dir.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(project_dir), prefix=".plan_decisions.", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    write_json_atomic(path, {"version": 1, "decisions": decisions})
     return record
 
 
@@ -861,7 +846,13 @@ def _sentence_swap(project, project_dir: Path, body: PlanDecisionIn, record: dic
             "title": replacement.title if replacement else None,
         }
     )
-    decisions_path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+    # Stage 4 (DATA-101): this was the decisions writer that still
+    # used a bare write_text while _append_plan_decision wrote
+    # atomically — a crash mid-write truncated the scene decisions
+    # the swap machinery consumes. Both now share the single
+    # atomic write path (serialisation preserved: indent=2,
+    # ensure_ascii default).
+    write_json_atomic(decisions_path, rows, ensure_ascii=True)
 
     try:
         media_pipeline.apply_review_decisions(result, project_dir, bible=bible)
@@ -1107,20 +1098,30 @@ def serve_media(project_id: str, asset_key: str, _=Depends(require_api_token)):
     )
 
 
-def _read_project_json(project_dir: Path, filename: str):
+def _read_project_json(project_dir: Path, filename: str, run_id=None):
+    # Stage 4 (DATA-004): derived artefacts are run-scoped for new
+    # runs — resolve to the serving run's copy when a run is known,
+    # else the latest-run view, with the legacy project-level path
+    # as fallback. Absence handling is unchanged.
     try:
-        return json.loads((project_dir / filename).read_text(encoding="utf-8"))
+        return json.loads(
+            media_paths.resolve_artefact(
+                project_dir, filename, run_id
+            ).read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
         return None
 
 
-def _quality_section(project_id: str) -> dict:
+def _quality_section(project_id: str, run_id=None) -> dict:
     """Quality Recovery Phase 5: the production's recorded quality
     report, surfaced on the certificate exactly as the production
     flow recorded it. jobs.py writes production_report.json (the
     three verdicts + cross-artefact reconciliation) and
-    visual_quality.json (the measurement) into the project
-    directory and embeds both in the asset report. This endpoint
+    visual_quality.json (the measurement) into the production's
+    artefact directory — the run's runs/<run_id>/ since Stage 4
+    (DATA-004), the project directory for earlier productions —
+    and embeds both in the asset report. This endpoint
     recomputes nothing and invents nothing:
 
     - no production_report.json — a production that predates the
@@ -1140,15 +1141,25 @@ def _quality_section(project_id: str) -> dict:
         "reconciliation": None,
     }
     project_dir = media_paths.project_dir(project_id)
-    if not (project_dir / "production_report.json").is_file():
+    # Stage 4 (DATA-004): the quality artefacts belong to the run
+    # the certificate describes — resolve them in that run's
+    # artefact directory (legacy project-level files as fallback),
+    # so a later re-run cannot change this run's recorded verdicts.
+    if not media_paths.resolve_artefact(
+        project_dir, "production_report.json", run_id
+    ).is_file():
         return {"state": "not_recorded", **empty}
-    report = _read_project_json(project_dir, "production_report.json")
+    report = _read_project_json(
+        project_dir, "production_report.json", run_id
+    )
     if not isinstance(report, dict):
         return {"state": "unavailable", **empty}
     reconciliation = report.get("reconciliation") or {}
     checks = reconciliation.get("checks") or []
     metrics = None
-    measurement = _read_project_json(project_dir, "visual_quality.json")
+    measurement = _read_project_json(
+        project_dir, "visual_quality.json", run_id
+    )
     if isinstance(measurement, dict):
         outcomes = measurement.get("sentence_outcomes") or {}
         timeline_block = measurement.get("timeline") or {}
@@ -1228,7 +1239,9 @@ def get_certificate(project_id: str, _=Depends(require_api_token)):
     # quality artefacts are production records the editor never
     # writes, so the original-certificate guarantees (Stage 6 D3)
     # are unaffected.
-    certificate["quality"] = _quality_section(project_id)
+    certificate["quality"] = _quality_section(
+        project_id, run_id=latest["run_id"]
+    )
     return certificate
 
 

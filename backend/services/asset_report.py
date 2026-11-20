@@ -37,6 +37,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from services import rejection_diagnostics
+from services.atomic_write import write_json_atomic
 
 # The verifier's representative-specificity acceptance threshold
 # (story_understanding.verify_candidate). Accepted assets below it are
@@ -568,9 +569,13 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
 
 
 def write_asset_report(project_dir, report) -> Path:
+    # Atomic (Stage 4 / DATA-101 class): the asset report is read
+    # back as truth by the plan, certificate and report builders.
+    # The directory argument is the artefact home chosen by the
+    # caller — a run's artefact directory for pipeline runs
+    # (DATA-004), the project directory for legacy callers.
     path = Path(project_dir) / "asset_report.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_json_atomic(path, report)
     return path
 
 
@@ -661,7 +666,9 @@ def build_rights_manifest(processed_scenes, soundtrack=None) -> list:
 
 
 def write_rights_manifest(project_dir, manifest) -> Path:
+    # Atomic (Stage 4 / DATA-101 class): the rights manifest is the
+    # provenance record readers reconcile against — never partially
+    # written. Directory semantics as in write_asset_report.
     path = Path(project_dir) / "rights_manifest.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_json_atomic(path, manifest)
     return path

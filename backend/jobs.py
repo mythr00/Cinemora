@@ -30,6 +30,7 @@ from services import visual_quality as visual_quality_service
 
 from services import genre_packs
 from services import media_paths
+from services.atomic_write import write_json_atomic, write_text_atomic
 from services import music as music_service
 from services import run_context
 from services import run_ledger
@@ -91,34 +92,31 @@ def _persistable_state(state: dict) -> dict:
 def save_production_state(project_dir: Path, state: dict):
     """Persist the production state atomically (MA-11).
 
-    The JSON is written to a temp file in the SAME directory, flushed
-    and fsynced, then os.replace()d over production_state.json — so a
-    reader (or a crash mid-write) can never observe a half-written
-    state file: the file on disk is always either the previous
-    complete state or the new complete state.
+    The write goes through services.atomic_write (the single MA-11
+    pattern: temp file in the SAME directory, flushed and fsynced,
+    then os.replace()d) — so a reader (or a crash mid-write) can
+    never observe a half-written state file: the file on disk is
+    always either the previous complete state or the new complete
+    state.
+
+    Stage 4 (DATA-004): when the state belongs to a ledger run (the
+    in-memory state carries ``_run_id``), the state file is written
+    into that run's artefact directory (``runs/<run_id>/``), so a
+    later run of the same project can never overwrite this run's
+    progress record. States without a run (legacy entry points)
+    keep the project-level path. Readers resolve through
+    media_paths.resolve_artefact.
     """
     project_dir = Path(project_dir)
-    state_file = project_dir / "production_state.json"
+    run_id = state.get("_run_id") if isinstance(state, dict) else None
+    target_dir = (
+        media_paths.run_subdir(project_dir, run_id) if run_id else project_dir
+    )
+    state_file = target_dir / "production_state.json"
     payload = json.dumps(
         _persistable_state(state), indent=2, ensure_ascii=False
     )
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(project_dir),
-        prefix=".production_state.",
-        suffix=".tmp",
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(payload)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_name, state_file)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    write_text_atomic(state_file, payload)
     return state_file
 
 
@@ -197,6 +195,14 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
     # from whatever partial state the pipeline had accumulated, so a
     # failure is diagnosable from the report alone. A problem writing
     # the report never masks the original error.
+    # Stage 4 (DATA-004): a run's failure artefacts belong to the
+    # run — they are written into its artefact directory so a later
+    # re-run cannot overwrite the record of this failure. Without a
+    # run (legacy callers) the project-level path is kept.
+    run_id = state.get("_run_id") if isinstance(state, dict) else None
+    artefact_dir = (
+        media_paths.run_subdir(project_dir, run_id) if run_id else project_dir
+    )
     failure_report = None
     try:
         partial = state.get("_partial") or {}
@@ -218,7 +224,7 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
             # failure report must show it.
             soundtrack=state.get("soundtrack"),
         )
-        write_asset_report(project_dir, failure_report)
+        write_asset_report(artefact_dir, failure_report)
         print("Asset report (failure): written from partial state.")
     except Exception as report_error:
         print(f"Asset report (failure) could not be written: {report_error}")
@@ -227,7 +233,6 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
     # the partial state supports, finish the run manifest, and restore
     # the previous run context. All fail-soft (run_ledger never
     # raises for database problems).
-    run_id = state.get("_run_id") if isinstance(state, dict) else None
     if run_id:
         cancelled = isinstance(error, run_ledger.RunCancelled)
         if failure_report is not None:
@@ -257,7 +262,7 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
                 execution=run_metrics.snapshot(),
                 asset_report=failure_report,
             )
-            written = run_ledger.write_manifest(project_dir, enriched)
+            written = run_ledger.write_manifest(artefact_dir, enriched)
             manifest_path = str(written) if written else None
         run_ledger.finish_run(
             run_id,
@@ -908,11 +913,24 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         "source": _genre_info["source"],
         "requested": _genre_info["requested"],
     }
+    # Stage 4 (DATA-004): the run's derived artefacts live in its
+    # own directory (media/<project>/runs/<run_id>/) from the very
+    # first write, so no later run of this project can overwrite
+    # them. The state carries _run_id from the start so every
+    # save_production_state in this run resolves there too. When
+    # there is no ledger run (fail-soft begin), the project-level
+    # directory remains the artefact home, exactly as before.
+    state["_run_id"] = _run_id
+    artefact_dir = (
+        media_paths.run_subdir(project_dir, _run_id)
+        if _run_id
+        else project_dir
+    )
+    artefact_dir.mkdir(parents=True, exist_ok=True)
     save_production_state(project_dir, state)
     _set_project_status(project_id, "running")
 
     # Stage 2 (continued): per-run context (2C) + run manifest (2E).
-    state["_run_id"] = _run_id
     _run_context = run_context.RunContext(
         run_id=_run_id, project_id=str(project_id)
     )
@@ -925,7 +943,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         sentence_count=_script_sentence_count(script),
     )
     state["_manifest"] = _manifest
-    run_ledger.write_manifest(project_dir, _manifest)
+    run_ledger.write_manifest(artefact_dir, _manifest)
 
     processed_scenes = []
     scenes = []
@@ -941,7 +959,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     captions_json = project_dir / "captions.json"
     captions_ass = project_dir / "captions.ass"
     captioned_video = project_dir / "documentary_captioned.mp4"
-    final_video = project_dir / "documentary_final_output.mp4"
+    # Stage 4 (DATA-004, D3.9 Phase 2): the production final is a
+    # run-scoped artefact. The project-level film path survives only
+    # as the media index's latest-run view (resolved at read time),
+    # never as a physical file a later run overwrites.
+    final_video = artefact_dir / "documentary_final_output.mp4"
 
     timeline_file = None
     expected_duration = None
@@ -1087,8 +1109,10 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             "scenes": _am_scenes,
             "registry": _get_registry(project_id).summary(),
         }
-        (project_dir / "asset_manager_metrics.json").write_text(
-            _json.dumps(_am_report, indent=2), encoding="utf-8"
+        write_json_atomic(
+            project_dir / "asset_manager_metrics.json",
+            _am_report,
+            ensure_ascii=True,
         )
         print("=" * 60)
         print(f"ASSET MANAGER METRICS: {_am_report['asset_manager_minutes']} min")
@@ -1232,9 +1256,8 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 error=prep_error,
             )
             state["soundtrack"] = failed_record
-            (project_dir / "soundtrack.json").write_text(
-                json.dumps(failed_record, indent=2, ensure_ascii=False),
-                encoding="utf-8",
+            write_json_atomic(
+                project_dir / "soundtrack.json", failed_record
             )
             raise
 
@@ -1245,9 +1268,8 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
 
         if isinstance(soundtrack_record, dict):
             state["soundtrack"] = soundtrack_record
-            (project_dir / "soundtrack.json").write_text(
-                json.dumps(soundtrack_record, indent=2, ensure_ascii=False),
-                encoding="utf-8",
+            write_json_atomic(
+                project_dir / "soundtrack.json", soundtrack_record
             )
             print(f"Soundtrack record: {soundtrack_record}")
 
@@ -1284,6 +1306,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             project_id,
             processed_scenes,
             output_dir=str(media_paths.media_root()),
+            artefact_dir=artefact_dir,
         )
 
         if not isinstance(timeline_result, dict):
@@ -1577,7 +1600,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 else None
             ),
         )
-        write_rights_manifest(project_dir, rights_manifest)
+        write_rights_manifest(artefact_dir, rights_manifest)
         licensed_count = sum(
             1
             for entry in rights_manifest
@@ -1623,7 +1646,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 asset_report=asset_report,
                 rights_manifest=rights_manifest,
                 motion_graphics=_mg_record,
-                run_manifest_present=(project_dir / "run_manifest.json").exists(),
+                run_manifest_present=(artefact_dir / "run_manifest.json").exists(),
                 project_id=project_id,
                 project_dir=str(project_dir),
             )
@@ -1644,13 +1667,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             )
             asset_report["visual_quality"] = _measurement
             asset_report["quality_verdicts"] = _production_report["verdicts"]
-            (project_dir / "visual_quality.json").write_text(
-                json.dumps(_measurement, indent=2, ensure_ascii=False),
-                encoding="utf-8",
+            write_json_atomic(
+                artefact_dir / "visual_quality.json", _measurement
             )
-            (project_dir / "production_report.json").write_text(
-                json.dumps(_production_report, indent=2, ensure_ascii=False),
-                encoding="utf-8",
+            write_json_atomic(
+                artefact_dir / "production_report.json", _production_report
             )
             print(
                 "Production report: quality verdict "
@@ -1664,7 +1685,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 "WARNING: visual-quality measurement failed and was "
                 f"recorded in the asset report: {_measure_error}"
             )
-        write_asset_report(project_dir, asset_report)
+        write_asset_report(artefact_dir, asset_report)
 
         # ----------------------------------------------
         # Final audit
@@ -1730,7 +1751,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         "timeline": str(timeline_file) if timeline_file else None,
         "narration": str(narration_file),
         "captions": str(captions_json),
-        "production_state": str(project_dir / "production_state.json"),
+        "production_state": str(artefact_dir / "production_state.json"),
         "case_bible": str(project_dir / "case_bible.json"),
         "scene_count": len(scenes),
         "sentence_count": len(sentences),
@@ -1739,9 +1760,8 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         "script_hash": script_hash,
     }
 
-    result_file = project_dir / "pipeline_result.json"
-    with open(result_file, "w", encoding="utf-8") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
+    result_file = artefact_dir / "pipeline_result.json"
+    write_json_atomic(result_file, result)
 
     # Stage 2: record the run's decisions in the ledger, finish the
     # run manifest, close the ledger run as completed, and restore
@@ -1763,6 +1783,12 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 )
         manifest_path = None
         if isinstance(_manifest, dict):
+            # Stage 4 (DATA-004): run-scoped outputs are checked in
+            # the run's artefact directory; shared/project-level
+            # outputs in the project directory. The manifest records
+            # bare filenames, as before — the manifest itself now
+            # lives in the run directory, so run-scoped names resolve
+            # against it and shared names against the project dir.
             stage_outputs = [
                 name
                 for name in (
@@ -1780,7 +1806,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                     "production_state.json",
                     "pipeline_result.json",
                 )
-                if (project_dir / name).exists()
+                if (
+                    artefact_dir / name
+                    if name in media_paths.RUN_SCOPED_ARTEFACTS
+                    else project_dir / name
+                ).exists()
             ]
             enriched = run_ledger.enrich_manifest(
                 _manifest,
@@ -1789,7 +1819,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 asset_report=asset_report,
                 stage_outputs=stage_outputs,
             )
-            written = run_ledger.write_manifest(project_dir, enriched)
+            written = run_ledger.write_manifest(artefact_dir, enriched)
             manifest_path = str(written) if written else None
         run_ledger.finish_run(
             _run_id,

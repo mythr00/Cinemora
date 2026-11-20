@@ -23,7 +23,7 @@ from services.quality_verdict import (
     integrity_verdict,
     reliability_verdict,
 )
-from services import visual_quality
+from services import media_paths, visual_quality
 
 
 def _load_json(path: Path, default):
@@ -359,12 +359,22 @@ def build_production_report_for_project(project_dir):
     """Build the report from a project's stored artefacts on disk."""
     project_dir = Path(project_dir)
     measurement = visual_quality.measure_project(project_dir)
-    timeline = _load_json(project_dir / "timeline.json", {})
-    asset_report = _load_json(project_dir / "asset_report.json", {})
-    rights_manifest = _load_json(project_dir / "rights_manifest.json", [])
+    # Stage 4 (DATA-004): derived artefacts resolve run-scoped
+    # first (freshest run copy), legacy project-level as fallback.
+    timeline = _load_json(
+        media_paths.resolve_artefact(project_dir, "timeline.json"), {}
+    )
+    asset_report = _load_json(
+        media_paths.resolve_artefact(project_dir, "asset_report.json"), {}
+    )
+    rights_manifest = _load_json(
+        media_paths.resolve_artefact(project_dir, "rights_manifest.json"), []
+    )
     renderer_audit = _load_json(project_dir / "renderer_timing_audit.json", None)
 
-    run_manifest_path = project_dir / "run_manifest.json"
+    run_manifest_path = media_paths.resolve_artefact(
+        project_dir, "run_manifest.json"
+    )
     if run_manifest_path.exists():
         run_ledger_summary = {"state": "recorded", "present": True,
                               "file": "run_manifest.json"}

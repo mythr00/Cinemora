@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+from services.atomic_write import write_json_atomic, write_text_atomic
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -102,22 +104,9 @@ def transcribe_audio(
 
     output_path = Path(output_json)
 
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    with open(
-        output_path,
-        "w",
-        encoding="utf-8",
-    ) as file:
-        json.dump(
-            result,
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
+    # Atomic (Stage 4): captions.json is the timeline builder's
+    # timing source — never observable half-written.
+    write_json_atomic(output_path, result)
 
     word_count = sum(
         len(segment["words"])
@@ -182,17 +171,14 @@ def _write_sidecars(segments, json_path):
         vtt_lines.append(text)
         vtt_lines.append("")
 
-    srt_path.write_text("\n".join(srt_lines), encoding="utf-8")
-    vtt_path.write_text("\n".join(vtt_lines), encoding="utf-8")
+    write_text_atomic(srt_path, "\n".join(srt_lines))
+    write_text_atomic(vtt_path, "\n".join(vtt_lines))
     return srt_path, vtt_path
 
 
 def _write_captions_json(data, json_path):
-    json_path = Path(json_path)
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(json_path, "w", encoding="utf-8") as file:
-        json.dump(data, file, indent=2, ensure_ascii=False)
-    return json_path
+    write_json_atomic(json_path, data)
+    return Path(json_path)
 
 
 def build_captions(narration_file, script_text, captions_json_path):

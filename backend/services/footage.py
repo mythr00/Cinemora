@@ -3,6 +3,8 @@ import json
 import requests
 from urllib.parse import urlparse
 
+from services.atomic_write import write_json_atomic
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MEDIA_DIR = os.path.join(BASE_DIR, "media")
@@ -174,18 +176,7 @@ def save_video_sources(
             "status": "source_only",
         })
 
-    with open(
-        output_file,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            cleaned_videos,
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
+    write_json_atomic(output_file, cleaned_videos)
 
     return output_file
 
@@ -223,18 +214,7 @@ def create_footage_manifest(
         "status": "ready_for_editing",
     }
 
-    with open(
-        manifest_path,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            manifest,
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
+    write_json_atomic(manifest_path, manifest)
 
     return manifest_path
 

@@ -2056,27 +2056,16 @@ def enrich_manifest(manifest, *, status, execution=None, asset_report=None,
 
 def write_manifest(project_dir, manifest):
     """Write run_manifest.json atomically (temp file + os.replace,
-    the MA-11 pattern). Fail-soft: returns the path or None."""
+    the MA-11 pattern, via services.atomic_write since Stage 4).
+    The directory argument is the artefact home chosen by the
+    caller — the run's artefact directory for pipeline runs
+    (DATA-004). Fail-soft: returns the path or None."""
+    from services.atomic_write import write_json_atomic
+
     try:
         project_dir = Path(project_dir)
-        project_dir.mkdir(parents=True, exist_ok=True)
         target = project_dir / MANIFEST_FILENAME
-        payload = json.dumps(manifest, indent=2, ensure_ascii=False)
-        fd, tmp_name = tempfile.mkstemp(
-            dir=str(project_dir), prefix=".run_manifest.", suffix=".tmp"
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(payload)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_name, target)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        write_json_atomic(target, manifest)
         return target
     except Exception as error:
         print(f"WARNING: run manifest write failed: {error}")

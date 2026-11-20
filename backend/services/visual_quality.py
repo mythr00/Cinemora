@@ -155,6 +155,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from services import media_paths
+from services.atomic_write import write_text_atomic
+
 GRAPHICS_SOURCE = "cinemora_motion_graphics"
 UNKNOWN = "unknown"
 
@@ -893,16 +896,27 @@ def measure_visual_quality(
 def measure_project(project_dir) -> dict:
     """Load a project's stored artefacts from disk and measure them."""
     project_dir = Path(project_dir)
-    timeline = _load_json(project_dir / "timeline.json", {})
-    report = _load_json(project_dir / "asset_report.json", {})
-    manifest = _load_json(project_dir / "rights_manifest.json", [])
+    # Stage 4 (DATA-004): derived artefacts are run-scoped for new
+    # runs — resolve the freshest run copy, legacy project-level
+    # files (e.g. the stored Berlin/Kohberger projects) as fallback.
+    timeline = _load_json(
+        media_paths.resolve_artefact(project_dir, "timeline.json"), {}
+    )
+    report = _load_json(
+        media_paths.resolve_artefact(project_dir, "asset_report.json"), {}
+    )
+    manifest = _load_json(
+        media_paths.resolve_artefact(project_dir, "rights_manifest.json"), []
+    )
     mg = _load_json(project_dir / "motion_graphics" / "motion_graphics.json", {})
     return measure_visual_quality(
         timeline=timeline if isinstance(timeline, dict) else {},
         asset_report=report if isinstance(report, dict) else {},
         rights_manifest=manifest if isinstance(manifest, list) else [],
         motion_graphics=mg if isinstance(mg, dict) else {},
-        run_manifest_present=(project_dir / "run_manifest.json").exists(),
+        run_manifest_present=media_paths.resolve_artefact(
+            project_dir, "run_manifest.json"
+        ).exists(),
         project_id=(timeline.get("project_id") if isinstance(timeline, dict) else None),
         project_dir=str(project_dir),
     )
@@ -918,7 +932,7 @@ def main(argv=None) -> int:
     result = measure_project(args.project_dir)
     text = json.dumps(result, indent=2, sort_keys=False)
     if args.output:
-        Path(args.output).write_text(text + "\n", encoding="utf-8")
+        write_text_atomic(Path(args.output), text + "\n")
     print(text)
     return 0
 

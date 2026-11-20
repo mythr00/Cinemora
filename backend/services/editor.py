@@ -65,6 +65,7 @@ from sqlalchemy.exc import IntegrityError
 
 from models import Project, ProjectRevision
 from services import media_paths, media_probe, plan_document, run_ledger
+from services.atomic_write import write_json_atomic, write_text_atomic
 
 DOC_VERSION = 1
 MIN_ITEM_DURATION = 0.2
@@ -117,25 +118,10 @@ def _read_json(path):
 
 def _atomic_write_json(path, payload) -> str:
     """Write JSON atomically (temp + fsync + os.replace, the MA-11
-    pattern). Returns the sha256 of the written payload."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    pattern, via services.atomic_write since Stage 4). Returns the
+    sha256 of the written payload."""
     text = json.dumps(payload, indent=2, ensure_ascii=False)
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    write_text_atomic(path, text)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
@@ -427,7 +413,14 @@ def import_production(project_id, run) -> dict:
     ever read."""
     project_dir = _project_dir(project_id)
     run_id = run["run_id"]
-    timeline = _read_json(project_dir / "timeline.json")
+    # Stage 4 (DATA-004): the import serves THIS run — its derived
+    # artefacts resolve to the run's artefact directory, falling
+    # back to the legacy project-level files for runs that predate
+    # run-scoping. A later re-run can no longer change what an
+    # earlier run's import sees.
+    timeline = _read_json(
+        media_paths.resolve_artefact(project_dir, "timeline.json", run_id)
+    )
     if not isinstance(timeline, dict):
         raise EditorError(
             409, "no_timeline",
@@ -436,7 +429,14 @@ def import_production(project_id, run) -> dict:
 
     # Rights by file path (rights_manifest.json).
     rights_by_path = {}
-    for entry in _read_json(project_dir / "rights_manifest.json") or []:
+    for entry in (
+        _read_json(
+            media_paths.resolve_artefact(
+                project_dir, "rights_manifest.json", run_id
+            )
+        )
+        or []
+    ):
         if isinstance(entry, dict) and entry.get("file_path"):
             rights_by_path[str(entry["file_path"])] = {
                 "license": entry.get("license") or "unknown",
@@ -576,7 +576,14 @@ def import_production(project_id, run) -> dict:
                 )
 
     # Narration + voice.
-    state = _read_json(project_dir / "production_state.json") or {}
+    state = (
+        _read_json(
+            media_paths.resolve_artefact(
+                project_dir, "production_state.json", run_id
+            )
+        )
+        or {}
+    )
     voice = state.get("voice") if isinstance(state.get("voice"), dict) else {}
     narration = {
         "file": "narration.wav",
@@ -2984,10 +2991,7 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
                     requested=bool(music_track.get("file")),
                     error=prep_error,
                 )
-                (work_dir / "soundtrack.json").write_text(
-                    json.dumps(failed_record, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
+                write_json_atomic(work_dir / "soundtrack.json", failed_record)
                 raise
         else:
             shutil.copy2(project_dir / "soundtrack.wav", soundtrack_file)
@@ -2995,10 +2999,7 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
                 production_record, music_track, music_source_type,
                 music_service,
             )
-        (work_dir / "soundtrack.json").write_text(
-            json.dumps(soundtrack_record, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        write_json_atomic(work_dir / "soundtrack.json", soundtrack_record)
         music_track["soundtrack_record"] = soundtrack_record
         if soundtrack_record.get("state"):
             music_track["state"] = soundtrack_record["state"]

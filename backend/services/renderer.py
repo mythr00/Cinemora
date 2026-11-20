@@ -2,6 +2,8 @@
 import subprocess
 from pathlib import Path
 
+from services.atomic_write import write_json_atomic, write_text_atomic
+
 
 FPS = 30
 WIDTH = 1920
@@ -790,11 +792,12 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
 
 def write_concat_file(clips, output_path):
     concat_file = Path(output_path).parent / "concat.txt"
-    with open(concat_file, "w", encoding="utf-8") as file:
-        for clip in clips:
-            clip_path = Path(clip).resolve()
-            safe_path = str(clip_path).replace("\\", "/").replace("'", "'\\''")
-            file.write(f"file '{safe_path}'\n")
+    lines = []
+    for clip in clips:
+        clip_path = Path(clip).resolve()
+        safe_path = str(clip_path).replace("\\", "/").replace("'", "'\\''")
+        lines.append(f"file '{safe_path}'\n")
+    write_text_atomic(concat_file, "".join(lines))
     return concat_file
 
 
@@ -974,8 +977,10 @@ def render_timeline(scenes, project_dir, expected_duration=None):
             int(audit.get("holdover_count") or 0) for audit in scene_audits
         ),
     }
-    with open(audit_file, "w", encoding="utf-8") as file:
-        json.dump(audit_payload, file, indent=2)
+    # Atomic (Stage 4): the timing audit is read back by the
+    # production report — never observable half-written. Original
+    # serialisation preserved (indent=2, ensure_ascii default).
+    write_json_atomic(audit_file, audit_payload, ensure_ascii=True)
 
     print()
     print(f"Renderer timing audit: {audit_file}")
@@ -1047,8 +1052,7 @@ def render_timeline(scenes, project_dir, expected_duration=None):
         "final_height": final_info.get("height"),
         "status": "pass",
     })
-    with open(audit_file, "w", encoding="utf-8") as file:
-        json.dump(audit_payload, file, indent=2)
+    write_json_atomic(audit_file, audit_payload, ensure_ascii=True)
 
     print()
     print("=" * 70)

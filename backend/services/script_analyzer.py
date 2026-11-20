@@ -13,6 +13,7 @@ from pathlib import Path
 
 from services.llm_client import get_llm
 from services import story_understanding as story
+from services.atomic_write import write_json_atomic
 from services.scene_structure import derive_scenes
 
 
@@ -326,7 +327,7 @@ def write_case_bible(analysis, project_dir):
     project_dir.mkdir(parents=True, exist_ok=True)
     bible = analysis.get("bible") if isinstance(analysis, dict) else {}
     path = project_dir / "case_bible.json"
-    path.write_text(json.dumps(bible or {}, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_json_atomic(path, bible or {})
     return path
 
 
@@ -368,7 +369,7 @@ def dry_run_case_bible(script, project_dir, project_id="dry_run", llm="auto"):
         ],
     }
     summary_path = project_dir / "case_bible_dry_run.json"
-    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_json_atomic(summary_path, summary)
     return {
         "bible_path": str(bible_path),
         "summary_path": str(summary_path),

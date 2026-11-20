@@ -8,6 +8,11 @@ except ImportError:  # flat-layout fallback
     import media_paths
 
 try:
+    from services.atomic_write import write_json_atomic
+except ImportError:  # flat-layout fallback
+    from atomic_write import write_json_atomic
+
+try:
     from services import run_context
 except ImportError:  # flat-layout fallback
     import run_context
@@ -1848,6 +1853,7 @@ def build_project_timeline(
     project_id,
     processed_scenes,
     output_dir=None,
+    artefact_dir=None,
 ):
 
     if output_dir is None:
@@ -1863,10 +1869,15 @@ def build_project_timeline(
         exist_ok=True,
     )
 
+    # Stage 4 (DATA-004): when the caller runs on behalf of a
+    # ledger run, timeline.json — a derived artefact read back as
+    # truth — is written into the run's artefact directory instead
+    # of the shared project directory. Media and captions are still
+    # loaded from the project directory (Phase 3 sharing). Callers
+    # without a run keep the legacy project-level location.
     timeline_file = (
-        project_dir
-        / "timeline.json"
-    )
+        Path(artefact_dir) if artefact_dir is not None else project_dir
+    ) / "timeline.json"
 
     # --------------------------------------------------------
     # LOAD NARRATION TIMINGS
@@ -2233,18 +2244,10 @@ def build_project_timeline(
             },
     }
 
-    with open(
-        timeline_file,
-        "w",
-        encoding="utf-8",
-    ) as file:
-
-        json.dump(
-            result,
-            file,
-            indent=2,
-            ensure_ascii=False,
-        )
+    # Atomic write (Stage 4 / DATA-101 class): timeline.json is
+    # read back as truth by the plan, the editor import and the
+    # report builders — it must never be observable half-written.
+    write_json_atomic(timeline_file, result)
 
     # --------------------------------------------------------
     # REPORT

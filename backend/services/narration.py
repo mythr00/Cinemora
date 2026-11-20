@@ -6,6 +6,8 @@ import sys
 import wave
 from pathlib import Path
 
+from services.atomic_write import write_json_atomic
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -122,17 +124,7 @@ def _write_captions(text, audio_file):
         "segments": segments,
     }
 
-    with open(
-        caption_file,
-        "w",
-        encoding="utf-8",
-    ) as file:
-        json.dump(
-            data,
-            file,
-            ensure_ascii=False,
-            indent=2,
-        )
+    write_json_atomic(caption_file, data)
 
     print(f"Captions: {caption_file}")
     print(f"Caption segments: {len(segments)}")
@@ -249,8 +241,9 @@ def _write_parts_manifest(manifest_file, parts, model_name=None):
         "parts": parts,
     }
 
-    with open(manifest_file, "w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
+    # Atomic (Stage 4): the parts manifest is the narration resume
+    # record — a truncated copy would corrupt resume decisions.
+    write_json_atomic(manifest_file, data)
 
 
 def _concatenate_parts(part_files, output_file):

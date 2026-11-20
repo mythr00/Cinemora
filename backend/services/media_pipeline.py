@@ -7,6 +7,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from services.atomic_write import write_json_atomic
+
 import requests
 from PIL import Image, UnidentifiedImageError
 
@@ -1002,7 +1004,7 @@ def write_review_log(project_dir, scene_number, beat, records):
         "shot_needs": beat.get("shot_needs") or [],
         "records": records,
     })
-    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_json_atomic(path, existing)
     print(f"REVIEW SAVED: {path}")
     return path
 def write_beats_debug(beats, project_dir, scene_number=1):
@@ -1019,7 +1021,7 @@ def write_beats_debug(beats, project_dir, scene_number=1):
             "text": beat.get("text"),
             "shot_needs": beat.get("shot_needs") or [],
         })
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_json_atomic(path, payload)
     print(f"BEATS SAVED: {path} count={len(payload)}")
     return path
 
@@ -6428,7 +6430,7 @@ def write_decision_template(project_dir, scene_number, beats):
                 "approve": True,
                 "swap_path": "",
             })
-    path.write_text(json.dumps(rows, indent=2, ensure_ascii=False), encoding="utf-8")
+    write_json_atomic(path, rows)
     print(f"DECISIONS TEMPLATE: {path}")
     return path
 

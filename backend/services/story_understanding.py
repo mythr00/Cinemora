@@ -25,6 +25,8 @@ from urllib.parse import urlparse
 from datetime import datetime, timezone
 from pathlib import Path
 
+from services.atomic_write import write_json_atomic
+
 # Stage 3A: the research pass resolves services.search_provider's
 # search_web LAZILY at call time (see _resolve_search_web), so this
 # module never imports the provider at module load and tests can patch
@@ -1649,11 +1651,12 @@ def plan_script(script_text, sentences, llm, cache_path=None, genre_pack=None):
         print("STORY: no LLM configured -> DEGRADED MODE (set LLM_API_KEY for full understanding).")
 
     if cache_path and mode == "llm":
-        Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(cache_path).write_text(
-            json.dumps({"key": key, "mode": mode, "bible": serialize_bible(bible), "plans": plans},
-                       indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        # Atomic (Stage 4): the story cache doubles as the plan
+        # fallback and the analysis resume record — a truncated
+        # copy would silently degrade both.
+        write_json_atomic(
+            Path(cache_path),
+            {"key": key, "mode": mode, "bible": serialize_bible(bible), "plans": plans},
         )
     return bible, plans, mode
 

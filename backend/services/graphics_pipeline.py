@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from services.atomic_write import write_json_atomic, write_text_atomic
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -750,8 +752,7 @@ def build_graphics(video_file, timeline_file, output_file):
         )
 
     plan_file = output_file.parent / "graphics_plan.json"
-    with open(plan_file, "w", encoding="utf-8") as file:
-        json.dump(plan, file, indent=2, ensure_ascii=False)
+    write_json_atomic(plan_file, plan)
     print(f"Graphics plan: {plan_file}")
 
     filters = []
@@ -774,7 +775,7 @@ def build_graphics(video_file, timeline_file, output_file):
     filter_complex = "[0:v]" + ",".join(filters) + "[vout]"
     output_file.parent.mkdir(parents=True, exist_ok=True)
     filter_script = output_file.parent / "graphics_filter.ffscript"
-    filter_script.write_text(filter_complex, encoding="utf-8")
+    write_text_atomic(filter_script, filter_complex)
 
     temp_output = output_file.with_name(
         f"{output_file.stem}.tmp{os.getpid()}{output_file.suffix}"
@@ -3084,31 +3085,27 @@ def build_motion_graphics_assets(
 
     manifest = output_dir / "motion_graphics.json"
 
-    manifest.write_text(
-        json.dumps(
-            {
-                "mode": mode,
-                "max_stats": max_stats,
-                "genre_pack": _pack_id,
-                "count": len(assets),
-                "assets": assets,
-                "targets": {
-                    "requested": len(target_list),
-                    "generated": targeted_generated,
-                    "skipped": target_skips,
-                    "outcomes": target_outcomes,
-                },
-                "undelivered": undelivered,
-                # MG-05: graphics that were rendered but refused
-                # registration (validation) or failed to render —
-                # recorded with their original failure information,
-                # never silently dropped.
-                "graphic_failures": graphic_failures,
+    write_json_atomic(
+        manifest,
+        {
+            "mode": mode,
+            "max_stats": max_stats,
+            "genre_pack": _pack_id,
+            "count": len(assets),
+            "assets": assets,
+            "targets": {
+                "requested": len(target_list),
+                "generated": targeted_generated,
+                "skipped": target_skips,
+                "outcomes": target_outcomes,
             },
-            indent=2,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+            "undelivered": undelivered,
+            # MG-05: graphics that were rendered but refused
+            # registration (validation) or failed to render —
+            # recorded with their original failure information,
+            # never silently dropped.
+            "graphic_failures": graphic_failures,
+        },
     )
 
     print(

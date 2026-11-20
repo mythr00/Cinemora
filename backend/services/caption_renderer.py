@@ -2,6 +2,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from services.atomic_write import write_text_atomic
+
 
 def run_ffmpeg(command):
     print("\nRunning FFmpeg:")
@@ -165,14 +167,9 @@ def create_ass_file(
         exist_ok=True,
     )
 
-    with open(
-        output_file,
-        "w",
-        encoding="utf-8-sig",
-    ) as file:
-        file.write(
-            "\n".join(lines)
-        )
+    write_text_atomic(
+        output_file, "\n".join(lines), encoding="utf-8-sig"
+    )
 
     print()
     print("ASS CAPTIONS CREATED")

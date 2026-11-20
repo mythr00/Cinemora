@@ -35,6 +35,9 @@ import json
 import mimetypes
 from pathlib import Path
 
+from services import media_paths
+from services.atomic_write import write_text_atomic
+
 PLAN_FILENAME = "plan.json"
 DECISIONS_FILENAME = "plan_decisions.json"
 
@@ -149,36 +152,18 @@ def plan_from_analysis(analysis, project_id):
 
 
 def write_plan_document(project_dir, analysis, project_id):
-    """Persist plan.json from a fresh analysis (atomic write via the
-    jobs helper is not importable here without a cycle, so this uses
-    the same temp-file + os.replace pattern inline). Fail-soft:
-    returns the path or None."""
-    import os
-    import tempfile
+    """Persist plan.json from a fresh analysis (atomic write via
+    services.atomic_write, the single MA-11 pattern since Stage 4).
+    Fail-soft: returns the path or None."""
     from datetime import datetime, timezone
 
     try:
         document = plan_from_analysis(analysis, project_id)
         document["generated_at"] = datetime.now(timezone.utc).isoformat()
         project_dir = Path(project_dir)
-        project_dir.mkdir(parents=True, exist_ok=True)
         target = project_dir / PLAN_FILENAME
         payload = json.dumps(document, indent=2, ensure_ascii=False)
-        fd, tmp_name = tempfile.mkstemp(
-            dir=str(project_dir), prefix=".plan.", suffix=".tmp"
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(payload)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_name, target)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        write_text_atomic(target, payload)
         return target
     except Exception as error:
         print(f"WARNING: plan document write failed: {error}")
@@ -236,7 +221,11 @@ def _plan_from_cache(project_dir):
 
 
 def _timeline_items(project_dir):
-    timeline = _read_json(Path(project_dir) / "timeline.json")
+    # Stage 4 (DATA-004): timeline.json is run-scoped for new runs;
+    # resolve to the freshest run copy, legacy path as fallback.
+    timeline = _read_json(
+        media_paths.resolve_artefact(project_dir, "timeline.json")
+    )
     if not isinstance(timeline, dict):
         return []
     items = timeline.get("items")
@@ -317,14 +306,22 @@ def build_plan(project_id, project_dir):
     document["plan_source"] = source
 
     items = _timeline_items(project_dir)
-    report = _read_json(project_dir / "asset_report.json") or {}
+    report = (
+        _read_json(media_paths.resolve_artefact(project_dir, "asset_report.json"))
+        or {}
+    )
     missing = {
         entry.get("sentence_number")
         for entry in (report.get("missing_visuals") or [])
         if isinstance(entry, dict)
     }
     rights_by_path = {}
-    for entry in _read_json(project_dir / "rights_manifest.json") or []:
+    for entry in (
+        _read_json(
+            media_paths.resolve_artefact(project_dir, "rights_manifest.json")
+        )
+        or []
+    ):
         if isinstance(entry, dict) and entry.get("file_path"):
             rights_by_path[str(entry["file_path"])] = {
                 "license": entry.get("license") or "unknown",
@@ -459,10 +456,17 @@ def build_media_index(project_id, project_dir):
 
     for item in _timeline_items(project_dir):
         _add(item.get("file_path") or item.get("path"), "timeline_visual")
-    for entry in _read_json(project_dir / "rights_manifest.json") or []:
+    for entry in (
+        _read_json(
+            media_paths.resolve_artefact(project_dir, "rights_manifest.json")
+        )
+        or []
+    ):
         if isinstance(entry, dict):
             _add(entry.get("file_path"), "rights_manifest")
-    result = _read_json(project_dir / "pipeline_result.json")
+    result = _read_json(
+        media_paths.resolve_artefact(project_dir, "pipeline_result.json")
+    )
     if isinstance(result, dict):
         for field in ("video", "captions", "narration", "timeline"):
             _add(result.get(field), "pipeline_output")
@@ -541,7 +545,14 @@ def build_media_index(project_id, project_dir):
             if isinstance(upload, dict):
                 _add(upload.get("file_path"), "upload")
     for kind, filename in CANONICAL_OUTPUTS.items():
-        _add(project_dir / filename, f"output_{kind}")
+        # Stage 4 (DATA-004): canonical outputs that are run-scoped
+        # (film, reports, run manifest) resolve to the latest run's
+        # copy — the index's "latest run" view; shared outputs
+        # (captions, narration) resolve to the project path itself.
+        _add(
+            media_paths.resolve_artefact(project_dir, filename),
+            f"output_{kind}",
+        )
     return index
 
 

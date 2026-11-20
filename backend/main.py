@@ -232,7 +232,11 @@ def get_project_status(
     # progress. The state file is written atomically (MA-11) and no
     # longer contains run internals (MA-09), so it is safe to serve.
     progress = None
-    state_file = media_paths.project_dir(project_id) / "production_state.json"
+    # Stage 4 (DATA-004): the state file is run-scoped for new
+    # runs — resolve the latest run's copy, legacy path as fallback.
+    state_file = media_paths.resolve_artefact(
+        media_paths.project_dir(project_id), "production_state.json"
+    )
     if state_file.exists():
         try:
             progress = json.loads(
