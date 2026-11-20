@@ -1017,6 +1017,23 @@ def _probe_any(path) -> tuple[str, dict] | None:
     return None
 
 
+def _latest_completed_run(project_id):
+    """The project's most recent completed run dict, or None."""
+    for run in run_ledger.list_runs_for(project_id):
+        if run.get("status") == "completed":
+            return run
+    return None
+
+
+def _awaiting_approval_run(project_id):
+    """The project's run parked at the Stage 4 plan-approval gate
+    (an analysis phase ran; a plan exists), or None."""
+    for run in run_ledger.list_runs_for(project_id):
+        if run.get("status") == "awaiting_approval":
+            return run
+    return None
+
+
 def store_upload(project_id, filename, fileobj) -> dict:
     """Store one uploaded file under the project's uploads/ dir.
 
@@ -1024,14 +1041,50 @@ def store_upload(project_id, filename, fileobj) -> dict:
     (CINEMORA_UPLOAD_MAX_BYTES, default 512 MiB), probed with
     ffprobe (unprobeable -> 422 and the file is removed), classified
     user_supplied with licence "unknown" — never invented — and
-    recorded as a ledger decision tagged with the project's current
-    editor revision (revision 0 is created first when none exists).
+    recorded in the project's upload index (uploads/index.json),
+    the same index editor operations resolve {upload_id} against.
+
+    Two storage contexts:
+
+    - Editor context (a revision exists, or a completed run can
+      seed revision 0): the upload is also recorded as a ledger
+      decision tagged with the project's current editor revision
+      (revision 0 is created first when none exists).
+    - Pre-run plan-review context (Brief Stage 5b): the project's
+      run is parked in "awaiting_approval" — a plan exists but no
+      production has completed, so there is no timeline to import
+      and revision 0 must NOT be created. The upload is stored and
+      indexed exactly as above (marked "pre_run": true) so the
+      plan-review replace flow can reference its file_path and,
+      once the production completes and revision 0 exists, editor
+      operations can consume it by upload_id from the same index.
+      No ledger decision is recorded: record_editor_decision tags
+      a revision, and an untagged row on the awaiting run would
+      surface in the original run's certificate — the D3 isolation
+      forbids exactly that. The plan decision that consumes the
+      upload is itself recorded in plan_decisions.json.
+
+    A project with neither context has nothing to attach an upload
+    to and is refused with 404 no_production_context.
     """
     project_dir = _project_dir(project_id)
+    baseline_view = None
     baseline = latest_revision(project_id)
-    if baseline is None:
-        baseline = create_revision_zero(project_id)
-    baseline_view, _baseline_doc = baseline
+    if baseline is not None:
+        baseline_view = baseline[0]
+    elif _latest_completed_run(project_id) is not None:
+        baseline_view = create_revision_zero(project_id)[0]
+    elif _awaiting_approval_run(project_id) is None:
+        raise EditorError(
+            404, "no_production_context",
+            "This project has no plan awaiting approval and no "
+            "completed production run, so there is nothing to "
+            "attach an upload to.",
+        )
+    # Remaining case: pre-run plan-review context (baseline_view
+    # stays None) — store without creating revision 0 and without
+    # a revision-tagged ledger decision.
+    pre_run = baseline_view is None
 
     safe_name = Path(str(filename or "upload")).name.replace(" ", "_")
     upload_id = _new_id()
@@ -1100,16 +1153,19 @@ def store_upload(project_id, filename, fileobj) -> dict:
         "generated": False,
         "size_bytes": size,
     }
+    if pre_run:
+        asset["pre_run"] = True
     uploads = _uploads_index(project_dir)
     uploads.append(asset)
     _write_uploads_index(project_dir, uploads)
-    asset["decision_id"] = run_ledger.record_editor_decision(
-        baseline_view["run_id"],
-        project_id,
-        revision_id=baseline_view["revision_id"],
-        decision_type="user_supplied",
-        asset=asset,
-    )
+    if not pre_run:
+        asset["decision_id"] = run_ledger.record_editor_decision(
+            baseline_view["run_id"],
+            project_id,
+            revision_id=baseline_view["revision_id"],
+            decision_type="user_supplied",
+            asset=asset,
+        )
     return asset
 
 
