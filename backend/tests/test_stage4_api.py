@@ -858,6 +858,52 @@ def test_media_serving_by_recorded_key_only(client, tmp_path):
         assert response.content != still.read_bytes()
 
 
+def test_media_route_rejects_wrong_token(client):
+    # IA-01 (audit F-02): the media endpoint is token-required like
+    # every v1 route — the frontend now always sends the token as
+    # the X-API-Key header, so pin all three outcomes on the media
+    # route itself: no token 401, wrong token 401, correct 200.
+    project = _create_project(client)
+    project_dir = _project_dir(project["id"])
+    still = project_dir / "still.png"
+    Image.new("RGB", (16, 16), (30, 30, 200)).save(still)
+    timeline = {
+        "project_id": project["id"],
+        "items": [
+            {
+                "type": "image",
+                "scene_number": 1,
+                "sentence_index": 0,
+                "sentence": "A still.",
+                "file_path": str(still),
+                "path": str(still),
+                "source": "wikimedia",
+                "assignment": "sentence",
+                "relevance_status": "verified_for_sentence",
+                "segment_evidence": "whole_asset",
+            }
+        ],
+    }
+    (project_dir / "timeline.json").write_text(
+        json.dumps(timeline), encoding="utf-8"
+    )
+    key = plan_document.media_key_for(project_dir, still)
+    url = f"/api/v1/projects/{project['id']}/media/{key}"
+
+    missing = client.get(url)
+    assert missing.status_code == 401
+    assert missing.json()["error"]["code"] == "unauthorized"
+
+    wrong = client.get(url, headers={"X-API-Key": "nope"})
+    assert wrong.status_code == 401
+    assert wrong.json()["error"]["code"] == "unauthorized"
+    assert wrong.content != still.read_bytes()
+
+    served = client.get(url, headers=HEADERS)
+    assert served.status_code == 200
+    assert served.content == still.read_bytes()
+
+
 def test_outputs_shape(client):
     project = _create_project(client)
     project_dir = _project_dir(project["id"])

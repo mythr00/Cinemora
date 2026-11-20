@@ -7,8 +7,8 @@ import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
 import { ErrorState, LoadingState } from "@/components/states";
 import { ArrowLeft } from "lucide-react";
+import { AuthenticatedDownloadLink } from "@/components/authenticated-media";
 import {
-  apiUrl,
   cancelRun,
   getOutputs,
   getProjectStatus,
@@ -191,12 +191,12 @@ export default function ProjectPage() {
       {overview.status.error && <p className="projects-error">{overview.status.error}</p>}
       <p><Link className="button button-primary" href={`/projects/${projectId}/plan`}>Production plan</Link>{" "}<Link className="button button-secondary" href={`/projects/${projectId}/edit`}>Edit video</Link>{" "}<Link className="button button-secondary" href={`/projects/${projectId}/certificate`}>Provenance certificate</Link>{" "}<a className="button button-secondary" href="#asset-evidence">Asset evidence</a></p>
       {overview.outputs && <section aria-label="Outputs"><h2>Outputs</h2><ul className="overview-outputs">
-        {overview.outputs.film.exists && <li>Final film — <a href={apiUrl(overview.outputs.film.media_url || "")}>download MP4</a></li>}
-        {overview.outputs.captions.srt.exists && <li>Captions (SRT) — <a href={apiUrl(overview.outputs.captions.srt.media_url || "")}>download</a></li>}
-        {overview.outputs.captions.vtt.exists && <li>Captions (VTT) — <a href={apiUrl(overview.outputs.captions.vtt.media_url || "")}>download</a></li>}
-        {overview.outputs.asset_report.exists && <li>Asset report — <a href={apiUrl(overview.outputs.asset_report.media_url || "")}>download JSON</a></li>}
-        {overview.outputs.rights_manifest.exists && <li>Rights manifest — <a href={apiUrl(overview.outputs.rights_manifest.media_url || "")}>download JSON</a></li>}
-        {overview.outputs.run_manifest.exists && <li>Run manifest — <a href={apiUrl(overview.outputs.run_manifest.media_url || "")}>download JSON</a></li>}
+        {overview.outputs.film.exists && <li>Final film — <AuthenticatedDownloadLink path={overview.outputs.film.media_url || ""} filename={overview.outputs.film.filename}>download MP4</AuthenticatedDownloadLink></li>}
+        {overview.outputs.captions.srt.exists && <li>Captions (SRT) — <AuthenticatedDownloadLink path={overview.outputs.captions.srt.media_url || ""} filename={overview.outputs.captions.srt.filename}>download</AuthenticatedDownloadLink></li>}
+        {overview.outputs.captions.vtt.exists && <li>Captions (VTT) — <AuthenticatedDownloadLink path={overview.outputs.captions.vtt.media_url || ""} filename={overview.outputs.captions.vtt.filename}>download</AuthenticatedDownloadLink></li>}
+        {overview.outputs.asset_report.exists && <li>Asset report — <AuthenticatedDownloadLink path={overview.outputs.asset_report.media_url || ""} filename={overview.outputs.asset_report.filename}>download JSON</AuthenticatedDownloadLink></li>}
+        {overview.outputs.rights_manifest.exists && <li>Rights manifest — <AuthenticatedDownloadLink path={overview.outputs.rights_manifest.media_url || ""} filename={overview.outputs.rights_manifest.filename}>download JSON</AuthenticatedDownloadLink></li>}
+        {overview.outputs.run_manifest.exists && <li>Run manifest — <AuthenticatedDownloadLink path={overview.outputs.run_manifest.media_url || ""} filename={overview.outputs.run_manifest.filename}>download JSON</AuthenticatedDownloadLink></li>}
         {!overview.outputs.film.exists && !overview.outputs.asset_report.exists && <li>No outputs recorded yet.</li>}
       </ul></section>}
       {overview.runs.length > 0 && <section aria-label="Production history"><h2>Production history</h2>

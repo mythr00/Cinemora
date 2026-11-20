@@ -27,6 +27,8 @@ import subprocess
 
 import pytest
 
+import jobs
+
 from services import graphics_pipeline
 from services.media_probe import probe_video
 from services.timeline import build_scene_timeline
@@ -434,3 +436,213 @@ def test_process_frames_change(rendered):
     assert _frame_hash(rendered["process"], 0.2) != _frame_hash(
         rendered["process"], 4.6
     )
+
+
+# ---------------------------------------------------------------------------
+# IA-03 — jobs.py target builder: scenario propagation
+#
+# Regression: the production builder read _sentence.get("scenario")
+# (singular), a key sentence records never carry — they carry
+# "scenarios" (a list, per story_understanding._normalize_scenario)
+# — so every production target arrived with scenario={}. The tests
+# below call the ACTUAL builder jobs._build_graphic_targets (no
+# mirror), mirroring plan_document._proposed_visual's normalisation:
+# scenarios[0] when the list is non-empty and its first entry is a
+# dict, else {}.
+# ---------------------------------------------------------------------------
+
+def _scenario(event, place, era):
+    """One scenario in the shape story_understanding produces."""
+    return {
+        "visual": f"archival material about {event}",
+        "kind": "event",
+        "subject_id": None,
+        "subject": None,
+        "required_type": None,
+        "specificity": "representative",
+        "search_terms": [event],
+        "event": event,
+        "place": place,
+        "era": era,
+        "format_intent": "archival",
+        "format_intent_confidence": 0.8,
+    }
+
+
+def _processed_scenes(sentences, missing_numbers, scene_number=1):
+    return [
+        {
+            "scene": {
+                "scene_number": scene_number,
+                "sentences": sentences,
+            },
+            "videos": [],
+            "images": [],
+            "asset_stats": {
+                "missing_visuals": [
+                    {"sentence_number": n} for n in missing_numbers
+                ]
+            },
+        }
+    ]
+
+
+def test_jobs_target_carries_sentence_scenario():
+    scenario = _scenario("opening of the Berlin Wall", "Berlin", "1989")
+    other = _scenario("construction of the Berlin Wall", "Berlin", "1961")
+    sentences = [
+        {
+            "text": "Crowds poured through the opened checkpoint.",
+            "sentence_number": 1,
+            "scenarios": [scenario, other],
+        }
+    ]
+    targets = jobs._build_graphic_targets(
+        _processed_scenes(sentences, [1])
+    )
+    assert len(targets) == 1
+    target = targets[0]
+    assert target["scene_number"] == 1
+    assert target["sentence_index"] == 0
+    assert target["sentence_number"] == 1
+    # The FIRST scenario, with its own real fields preserved.
+    assert target["scenario"] == scenario
+    assert target["scenario"]["event"] == "opening of the Berlin Wall"
+    assert target["scenario"]["place"] == "Berlin"
+    assert target["scenario"]["era"] == "1989"
+
+
+def test_jobs_targets_keep_each_sentences_own_scenario():
+    scenario_a = _scenario("opening of the Berlin Wall", "Berlin", "1989")
+    scenario_b = _scenario("signing of the peace treaty", "Paris", "1919")
+    sentences = [
+        {"text": "Crowds poured through the checkpoint.",
+         "sentence_number": 1, "scenarios": [scenario_a]},
+        {"text": "Delegates gathered for the signing.",
+         "sentence_number": 2, "scenarios": [scenario_b]},
+    ]
+    targets = jobs._build_graphic_targets(
+        _processed_scenes(sentences, [1, 2])
+    )
+    assert len(targets) == 2
+    # No cross-contamination: each target carries its own sentence's
+    # scenario, in sentence order.
+    assert targets[0]["sentence_number"] == 1
+    assert targets[0]["scenario"] == scenario_a
+    assert targets[1]["sentence_number"] == 2
+    assert targets[1]["scenario"] == scenario_b
+    assert targets[0]["scenario"] != targets[1]["scenario"]
+
+
+def test_jobs_target_scenario_empty_when_scenarios_missing_or_empty():
+    sentences = [
+        {"text": "No scenarios key at all.", "sentence_number": 1},
+        {"text": "Empty scenarios list.", "sentence_number": 2,
+         "scenarios": []},
+        {"text": "Non-dict first scenario.", "sentence_number": 3,
+         "scenarios": ["not-a-scenario"]},
+    ]
+    targets = jobs._build_graphic_targets(
+        _processed_scenes(sentences, [1, 2, 3])
+    )
+    assert len(targets) == 3
+    for target in targets:
+        assert target["scenario"] == {}
+
+
+def test_jobs_target_scenario_reaches_graphics_builder_and_timeline(
+    tmp_path, monkeypatch
+):
+    """Integration: the scenario the jobs builder puts on a target is
+    the ONLY source of schematic labels here — the scene sentence
+    record handed to build_motion_graphics_assets is bare (no
+    scenarios, no event/locations/dates), so the fallback in
+    _schematic_labels cannot supply them. The schematic must be
+    labelled from the target's scenario, and it must land on the
+    timeline as a motion graphic for its sentence."""
+    scenario = _scenario("opening of the Berlin Wall", "Berlin", "1989")
+    text = "Crowds poured through the opened checkpoint at dawn."
+    analysed_sentence = {
+        "text": text,
+        "sentence_number": 3,
+        "scenarios": [scenario],
+    }
+    targets = jobs._build_graphic_targets(
+        _processed_scenes([analysed_sentence], [3], scene_number=2)
+    )
+    assert len(targets) == 1
+    assert targets[0]["scenario"] == scenario
+
+    calls = []
+
+    def fake_render(path, **kwargs):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\x00" * 2048)
+        calls.append(kwargs)
+        return str(path)
+
+    monkeypatch.setattr(
+        "services.vector_graphics.render_event_schematic", fake_render
+    )
+
+    def fake_write(path, *args, **kwargs):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\x00" * 2048)
+
+    monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_write)
+
+    bare_sentence = {"text": text, "sentence_number": 3}
+    data = {
+        "case_bible": {"timeline": []},
+        "scenes": [{"scene_number": 2, "sentences": [bare_sentence]}],
+        "processed_scenes": [
+            {
+                "scene": {"scene_number": 2, "sentences": [bare_sentence]},
+                "videos": [],
+                "images": [],
+                "asset_stats": {"missing_visuals": []},
+            }
+        ],
+    }
+    assets = graphics_pipeline.build_motion_graphics_assets(
+        data, tmp_path, mode="balanced", targets=targets
+    )
+    schematics = [
+        a for a in assets if a["graphic_type"] == "event_schematic"
+    ]
+    assert len(schematics) == 1
+    # Labels came from the target's scenario payload.
+    assert len(calls) == 1
+    assert calls[0]["event_label"] == "opening of the Berlin Wall"
+    assert calls[0]["place_label"] == "Berlin"
+    assert calls[0]["era_label"] == "1989"
+
+    # Attach (the jobs.py step) + timeline assignment.
+    schematic = schematics[0]
+    visual = dict(schematic)
+    visual["type"] = "video"
+    visual["source"] = "cinemora_motion_graphics"
+    visual["motion_graphic"] = True
+    visual["sentence_index"] = schematic.get("sentence_index")
+    visual["file_path"] = schematic.get("file_path") or schematic.get("path")
+    visual["path"] = visual["file_path"]
+    scene_media = {
+        "scene_number": 2,
+        "duration_seconds": 9,
+        "videos": [visual],
+        "images": [],
+        "sentences": [
+            {"sentence_number": 3, "videos": [], "images": []},
+            {"sentence_number": 4, "videos": [], "images": []},
+        ],
+    }
+    timings = [
+        {"sentence_index": 0, "text": text, "start": 0.0, "end": 4.0},
+        {"sentence_index": 1, "text": "Neighbours embraced strangers.",
+         "start": 4.5, "end": 9.0},
+    ]
+    result = build_scene_timeline(scene_media, timings)
+    item = result["items"][0]
+    assert item["assignment"] == "motion_graphic"
+    assert item["relevance_status"] == "generated_graphic"
+    assert item["file_path"] == schematic["file_path"]

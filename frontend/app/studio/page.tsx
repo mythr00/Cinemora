@@ -5,7 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
-import { apiUrl, listProjects, type ProjectSummary } from "@/lib/api";
+import { listProjects, type ProjectSummary } from "@/lib/api";
+import { AuthenticatedVideo } from "@/components/authenticated-media";
 import { ArrowUpRight } from "lucide-react";
 
 type Project = ProjectSummary;
@@ -82,7 +83,7 @@ export default function StudioPage() {
         {!busy && !error && recent.length === 0 && <EmptyState className="dashboard-empty" eyebrow="A CLEAR FIRST FRAME" title="Your next film starts here." description="Create a project from a script. Its real production state and export will appear in this space." action={<Link className="button button-primary" href="/create">Create your first film <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link>} />}
         {!busy && !error && recent.length > 0 && <div className="dashboard-project-grid">{recent.map((project) => <article className="dashboard-project-card" key={project.id}>
           <Link className={`project-art ${project.video_url ? "has-video" : ""}`} href={`/projects/${project.id}`} aria-label={`Open ${project.category} project`}>
-            {project.video_url ? <video src={apiUrl(project.video_url)} preload="metadata" muted playsInline /> : <span className="project-art-mark"><span className="reel-glyph" /></span>}
+            {project.video_url ? <AuthenticatedVideo src={project.video_url} preload="metadata" muted playsInline /> : <span className="project-art-mark"><span className="reel-glyph" /></span>}
             <StatusBadge status={project.status} overlay />
           </Link>
           <div className="dashboard-project-info"><div><p>{project.category}</p><time dateTime={project.created_at}>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(project.created_at))}</time></div><h3>{project.title || project.script_preview || "Untitled production"}</h3><p className="project-stage">{project.current_stage ? `Stage · ${label(project.current_stage)}` : project.video_url ? "Export available" : "Production status available"}</p><Link href={`/projects/${project.id}`}>Open project <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>

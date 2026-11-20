@@ -1,32 +1,49 @@
 import json
 import os
-from pathlib import Path
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from database import Base, engine, get_db
+from database import Base, check_schema, engine, get_db
 from models import Project
 
-from jobs import (
-    enqueue_test_job,
-    enqueue_script_analysis,
-    enqueue_full_pipeline,
-)
+from jobs import enqueue_full_pipeline
 
 from services import media_paths
 
-from api_v1 import register_error_handlers
+# IA-08: the legacy routes below reuse API v1's auth verbatim —
+# require_api_token is imported (api_v1 does not import main, so
+# there is no cycle) so legacy and v1 share the ONE token, the ONE
+# env var (CINEMORA_API_TOKEN) and the ONE fail-closed semantics
+# (503 unconfigured / 401 missing-or-wrong). No second token or
+# config exists. ApiError is imported so the deprecated test-job
+# route can answer in the v1 error shape.
+from api_v1 import ApiError, register_error_handlers, require_api_token
 from api_v1 import router as api_v1_router
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    # IA-09: serving startup verifies the database is at the
+    # Alembic migration head (database.check_schema — read-only;
+    # missing tables or a behind-head stamp raise and the server
+    # refuses to start). Importing this module does NOT run the
+    # check, so tests that import main / build TestClient without
+    # entering it are unaffected; their explicit fixture
+    # create_all calls remain their own test setup.
+    check_schema()
+    yield
 
 
 app = FastAPI(
     title="Documentary Studio API",
     version="0.3.0",
+    lifespan=_lifespan,
 )
 
 
@@ -52,14 +69,23 @@ app.add_middleware(
 )
 
 
-# Stage 4: the /api/v1 studio contract (api_v1.py). The legacy
-# routes below are unchanged; the v1 error handlers only reshape
-# errors for /api/v1 paths.
+# Stage 4: the /api/v1 studio contract (api_v1.py). The v1 error
+# handlers only reshape HTTP/validation errors for /api/v1 paths.
+# IA-08: the legacy routes below keep their paths and response
+# shapes, but every route that reads or writes project data now
+# requires the same X-API-Key auth as v1 (require_api_token);
+# GET / and GET /health stay open (no project data, like v1 health).
 app.include_router(api_v1_router, prefix="/api/v1")
 register_error_handlers(app)
 
 
-Base.metadata.create_all(bind=engine)
+# IA-09: there is deliberately NO Base.metadata.create_all here
+# any more. Alembic (migrations/versions) is the sole schema
+# authority; the import-time create_all competed with the
+# migration chain and silently papered over unmigrated databases.
+# Serving startup verifies the schema instead — see _lifespan
+# above and database.check_schema. (Base/engine stay imported for
+# compatibility with anything that reaches them via this module.)
 
 
 # =========================================================
@@ -122,6 +148,7 @@ def health():
 def create_project(
     project_data: ProjectCreate,
     db: Session = Depends(get_db),
+    _auth: str = Depends(require_api_token),
 ):
     project_id = str(uuid4())
 
@@ -151,6 +178,7 @@ def create_project(
 def get_project(
     project_id: str,
     db: Session = Depends(get_db),
+    _auth: str = Depends(require_api_token),
 ):
     statement = select(Project).where(
         Project.id == project_id
@@ -181,6 +209,10 @@ def get_project(
 def get_project_status(
     project_id: str,
     db: Session = Depends(get_db),
+    # IA-08: auth is a dependency only — direct in-process callers
+    # (tests calling this handler with an explicit db session) are
+    # unaffected, since the dependency is not evaluated off-HTTP.
+    _auth: str = Depends(require_api_token),
 ):
     statement = select(Project).where(
         Project.id == project_id
@@ -219,29 +251,58 @@ def get_project_status(
 
 
 # =========================================================
-# TEST JOB
+# TEST JOB — DEPRECATED (IA-08)
 # =========================================================
+# jobs.test_job is a no-op: it prints five steps and returns
+# "completed" without touching the project. This route used to
+# dress that up as a successfully queued job. It now answers
+# 410 Gone in the v1 error shape instead of fake success. The
+# route is NOT deleted (no silent breakage for any caller that
+# still probes it), and it requires the same auth as every other
+# legacy project route for consistency — a 410 leaks nothing,
+# but the legacy surface now has one uniform auth pattern.
+# jobs.enqueue_test_job itself is untouched in jobs.py.
 
 @app.post("/projects/{project_id}/test-job")
-def start_test_job(project_id: str):
-    job_id = enqueue_test_job(project_id)
-
-    return {
-        "project_id": project_id,
-        "job_id": job_id,
-        "status": "queued",
-    }
+def start_test_job(
+    project_id: str,
+    _auth: str = Depends(require_api_token),
+):
+    raise ApiError(
+        410,
+        "gone",
+        "POST /projects/{project_id}/test-job is deprecated and "
+        "removed: it only ever queued a no-op test job. Submit a "
+        "real production run via POST /api/v1/projects/{project_id}/runs.",
+    )
 
 
 # =========================================================
 # START FULL DOCUMENTARY PIPELINE
 # =========================================================
+# IA-08: this route was named "analyze" but never merely analysed
+# — it enqueues the FULL production pipeline. The path is kept
+# (renaming it would break callers); the handler name, summary
+# and docstring now say what it does, and responses carry
+# Deprecation headers pointing at the v1 runs endpoint.
 
-@app.post("/projects/{project_id}/analyze")
-def analyze_project(
+@app.post(
+    "/projects/{project_id}/analyze",
+    summary="Deprecated: enqueue a full production run (not analysis-only)",
+    deprecated=True,
+)
+def enqueue_full_pipeline_legacy(
     project_id: str,
+    response: Response,
     db: Session = Depends(get_db),
+    _auth: str = Depends(require_api_token),
 ):
+    """Enqueue the FULL documentary production pipeline for a project.
+
+    Deprecated legacy alias: despite the /analyze path, this starts
+    a complete production run (voice, assets, motion, sound, edit),
+    exactly like POST /api/v1/projects/{project_id}/runs.
+    """
     statement = select(Project).where(
         Project.id == project_id
     )
@@ -267,6 +328,11 @@ def analyze_project(
     job_id = enqueue_full_pipeline(
         project.id,
         project.script,
+    )
+
+    response.headers["Deprecation"] = "true"
+    response.headers["X-Deprecated"] = (
+        "Use POST /api/v1/projects/{project_id}/runs instead."
     )
 
     return {

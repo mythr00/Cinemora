@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import re
 import hashlib
 from pathlib import Path
@@ -26,16 +25,19 @@ def _session() -> requests.Session:
 
 
 def search_licensed(req: VisualRequest, limit: int = 6) -> list[dict]:
+    """Licensed stills search — Wikimedia Commons ONLY.
+
+    IA-05 (founder's PERMANENT ban, 2026-11-19): the Pexels/Pixabay
+    provider implementations that used to be wired in here were removed.
+    They must not be reintroduced. Commons video is available separately
+    via search_wikimedia_videos; this entry point returns no video hits.
+    """
     hits: list[dict] = []
     if req.kind == "graphic":
         return hits
     if req.kind == "video":
-        hits += _pexels_videos(req.query, limit)
-        hits += _pixabay_videos(req.query, limit)
-    else:
-        hits += _pexels_photos(req.query, limit)
-        hits += _pixabay_photos(req.query, limit)
-        hits += _wikimedia(req.query, limit)
+        return hits
+    hits += _wikimedia(req.query, limit)
 
     clean = []
     for h in hits:
@@ -65,148 +67,6 @@ def download_asset(hit: dict, dest_dir: Path) -> Path:
             f.write(chunk)
     tmp.replace(path)
     return path
-
-
-def _pexels_photos(q: str, limit: int) -> list[dict]:
-    key = os.getenv("PEXELS_API_KEY", "")
-    if not key:
-        return []
-    r = _session().get(
-        "https://api.pexels.com/v1/search",
-        headers={"Authorization": key},
-        params={"query": q, "per_page": limit, "orientation": "landscape", "size": "large"},
-        timeout=30,
-    )
-    r.raise_for_status()
-    out = []
-    for p in r.json().get("photos", []):
-        src = p.get("src") or {}
-        out.append(
-            {
-                "kind": "image",
-                "source": "pexels",
-                "source_url": p.get("url"),
-                "creator": (p.get("photographer") or ""),
-                "license": "Pexels License",
-                "license_url": "https://www.pexels.com/license/",
-                "title": p.get("alt") or q,
-                "alt": p.get("alt") or "",
-                "tags": "",
-                "download_url": src.get("large2x") or src.get("large") or src.get("original"),
-            }
-        )
-    return [x for x in out if x.get("download_url")]
-
-
-def _pexels_videos(q: str, limit: int) -> list[dict]:
-    key = os.getenv("PEXELS_API_KEY", "")
-    if not key:
-        return []
-    r = _session().get(
-        "https://api.pexels.com/videos/search",
-        headers={"Authorization": key},
-        params={"query": q, "per_page": limit, "orientation": "landscape", "size": "medium"},
-        timeout=30,
-    )
-    r.raise_for_status()
-    out = []
-    for v in r.json().get("videos", []):
-        files = v.get("video_files") or []
-        files = [f for f in files if (f.get("file_type") or "").startswith("video/mp4")]
-        files.sort(key=lambda f: abs((f.get("width") or 0) - 1920))
-        if not files:
-            continue
-        out.append(
-            {
-                "kind": "video",
-                "source": "pexels",
-                "source_url": v.get("url"),
-                "creator": (v.get("user") or {}).get("name", ""),
-                "license": "Pexels License",
-                "license_url": "https://www.pexels.com/license/",
-                "title": q,
-                "alt": "",
-                "tags": " ".join(v.get("tags") or []) if isinstance(v.get("tags"), list) else "",
-                "download_url": files[0]["link"],
-            }
-        )
-    return out
-
-
-def _pixabay_photos(q: str, limit: int) -> list[dict]:
-    key = os.getenv("PIXABAY_API_KEY", "")
-    if not key:
-        return []
-    r = _session().get(
-        "https://pixabay.com/api/",
-        params={
-            "key": key,
-            "q": q,
-            "image_type": "photo",
-            "orientation": "horizontal",
-            "safesearch": "true",
-            "per_page": max(3, min(limit, 20)),
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-    out = []
-    for p in r.json().get("hits", []):
-        out.append(
-            {
-                "kind": "image",
-                "source": "pixabay",
-                "source_url": p.get("pageURL"),
-                "creator": p.get("user") or "",
-                "license": "Pixabay Content License",
-                "license_url": "https://pixabay.com/service/license-summary/",
-                "title": p.get("tags") or q,
-                "alt": p.get("tags") or "",
-                "tags": p.get("tags") or "",
-                "download_url": p.get("largeImageURL") or p.get("webformatURL"),
-            }
-        )
-    return [x for x in out if x.get("download_url")]
-
-
-def _pixabay_videos(q: str, limit: int) -> list[dict]:
-    key = os.getenv("PIXABAY_API_KEY", "")
-    if not key:
-        return []
-    r = _session().get(
-        "https://pixabay.com/api/videos/",
-        params={
-            "key": key,
-            "q": q,
-            "video_type": "film",
-            "safesearch": "true",
-            "per_page": max(3, min(limit, 20)),
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-    out = []
-    for v in r.json().get("hits", []):
-        vids = v.get("videos") or {}
-        pick = vids.get("medium") or vids.get("large") or vids.get("small") or {}
-        url = pick.get("url")
-        if not url:
-            continue
-        out.append(
-            {
-                "kind": "video",
-                "source": "pixabay",
-                "source_url": v.get("pageURL"),
-                "creator": v.get("user") or "",
-                "license": "Pixabay Content License",
-                "license_url": "https://pixabay.com/service/license-summary/",
-                "title": v.get("tags") or q,
-                "alt": v.get("tags") or "",
-                "tags": v.get("tags") or "",
-                "download_url": url,
-            }
-        )
-    return out
 
 
 def search_wikimedia(query: str, limit: int = 6) -> list[dict]:

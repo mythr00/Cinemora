@@ -454,6 +454,122 @@ export async function fetchMediaObjectUrl(
 }
 
 // ---------------------------------------------------------------------
+// Authenticated media by path + downloads (IA-01, audit F-02)
+// ---------------------------------------------------------------------
+
+/**
+ * Parse a backend media path of the form the API returns in
+ * `video_url` / `media_url` fields
+ * ("/api/v1/projects/{projectId}/media/{mediaKey}", relative or
+ * absolute) into its project id and media key. Returns null for
+ * any other path.
+ */
+export function parseProjectMediaPath(
+  path: string,
+): { projectId: string; mediaKey: string } | null {
+  const match = path.match(/\/api\/v1\/projects\/([^/]+)\/media\/([^/?#]+)/);
+  if (!match) return null;
+  try {
+    return {
+      projectId: decodeURIComponent(match[1]),
+      mediaKey: decodeURIComponent(match[2]),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch a backend media path (a `video_url` / `media_url` value)
+ * as an object URL, through the same authenticated path as
+ * fetchMediaObjectUrl: recorded-media paths are delegated to
+ * fetchMediaObjectUrl; any other backend path is fetched from
+ * apiUrl with the token as the X-API-Key header only. The token
+ * never appears in a URL or a log. Callers own revoking the URL.
+ *
+ * Recorded limitation: this downloads the whole file as a blob
+ * before playback, because a bare <video src> cannot send the
+ * header and the token must not travel in a URL — so the media
+ * endpoint's Range support cannot be used for these previews and
+ * very large films cost their full size in memory.
+ */
+export async function fetchAuthenticatedMediaObjectUrl(
+  path: string,
+  signal?: AbortSignal,
+): Promise<{ url: string; contentType: string }> {
+  const ref = parseProjectMediaPath(path);
+  if (ref) return fetchMediaObjectUrl(ref.projectId, ref.mediaKey, signal);
+  const headers = new Headers();
+  if (API_TOKEN) headers.set("X-API-Key", API_TOKEN);
+  const response = await fetch(apiUrl(path), {
+    cache: "no-store",
+    headers,
+    signal,
+  });
+  if (!response.ok) throw await parseError(response);
+  const blob = await response.blob();
+  return { url: URL.createObjectURL(blob), contentType: blob.type };
+}
+
+/**
+ * A meaningful download filename derived from a media path: the
+ * last path segment when it carries a file extension. Recorded
+ * media keys are bare hashes with no name to derive, so those
+ * fall back to `fallback` (callers that know the real filename —
+ * e.g. an outputs entry — pass it as the fallback).
+ */
+export function filenameFromMediaPath(
+  path: string,
+  fallback = "cinemora-download",
+): string {
+  const clean = path.split(/[?#]/)[0];
+  const last = clean.split("/").filter(Boolean).pop() || "";
+  if (!last || !last.includes(".")) return fallback;
+  try {
+    return decodeURIComponent(last) || fallback;
+  } catch {
+    return last || fallback;
+  }
+}
+
+/**
+ * Download a recorded media file (IA-01): fetch it as a blob
+ * through the authenticated media path (token as header only),
+ * point a temporary anchor at the object URL with a meaningful
+ * filename, click it, and revoke the URL once the browser has
+ * taken the download over — the same pattern the editor's
+ * revision-export download already uses. Throws the ApiClientError
+ * from the fetch on failure so callers can say so honestly.
+ */
+export async function downloadAuthenticatedMedia(options: {
+  projectId?: string;
+  mediaKey?: string;
+  path?: string;
+  filename?: string;
+}): Promise<void> {
+  let url: string;
+  if (options.projectId && options.mediaKey) {
+    url = (await fetchMediaObjectUrl(options.projectId, options.mediaKey)).url;
+  } else if (options.path) {
+    url = (await fetchAuthenticatedMediaObjectUrl(options.path)).url;
+  } else {
+    throw new Error("A media key or media path is required to download.");
+  }
+  const filename =
+    options.filename ||
+    (options.path
+      ? filenameFromMediaPath(options.path)
+      : "cinemora-download");
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ---------------------------------------------------------------------
 // Authenticated connection status (Brief Stage 5, C-06)
 // ---------------------------------------------------------------------
 

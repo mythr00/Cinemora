@@ -425,7 +425,9 @@ def build_media_index(project_id, project_dir):
     artefacts: timeline items, the rights manifest, the pipeline
     result, recorded plan-decision replacements, the pipeline's
     canonical output files that exist on disk, the exports recorded
-    in editor revision documents (Stage 6), the music files
+    in editor revision documents (Stage 6), the editor_media files
+    recorded as visual-item assets in revision documents (IA-04:
+    regenerated graphics live only there), the music files
     recorded in revision documents and in the production's
     soundtrack record (Stage J), and the files recorded in the
     project's upload index. Every indexed path is verified to live
@@ -478,6 +480,41 @@ def build_media_index(project_id, project_dir):
         for export in document.get("exports") or []:
             if isinstance(export, dict):
                 _add(export.get("file"), "revision_export")
+        # IA-04: regenerated graphics (editor regenerate_graphic)
+        # are written under editor_media/<revision_id>/ and are
+        # recorded ONLY as visual-item assets in the revision
+        # document — they appear in no timeline, manifest, export
+        # list or upload index, so without this source they could
+        # never be served. Only visual-item paths under
+        # editor_media/ are trusted from this source: production
+        # visuals in the same list are already indexed from their
+        # own recorded artefacts, and trusting every visual path
+        # would widen the index beyond the editor-created files
+        # this source exists for. _add still applies the
+        # under-project-dir guard, so traversal records and
+        # cross-project records stay unserved, and a file merely
+        # present under editor_media/ without a revision-document
+        # record stays unindexed.
+        tracks = document.get("tracks") or {}
+        if isinstance(tracks, dict):
+            for item in tracks.get("visual") or []:
+                if not isinstance(item, dict):
+                    continue
+                asset = item.get("asset") or {}
+                if not isinstance(asset, dict):
+                    continue
+                recorded = asset.get("file_path") or asset.get("path")
+                if not recorded:
+                    continue
+                try:
+                    relative = Path(str(recorded)).resolve().relative_to(
+                        project_dir
+                    )
+                except (ValueError, OSError):
+                    continue
+                if not relative.parts or relative.parts[0] != "editor_media":
+                    continue
+                _add(recorded, "editor_media")
         # Stage J (P5): a revision's RECORDED music selection is
         # servable for editor preview, under the same
         # recorded-paths-only rule — the document's music track

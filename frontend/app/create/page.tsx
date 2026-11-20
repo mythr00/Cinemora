@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import {
-  apiUrl,
   createProject as apiCreateProject,
   getProjectStatus,
   submitRun,
@@ -12,6 +11,7 @@ import {
   type ProjectStatus,
 } from "@/lib/api";
 import { ApiConnectionBadge } from "@/components/connection-status";
+import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -194,7 +194,11 @@ export default function Home() {
     }
   }
 
-  const videoUrl = status?.video_url ? apiUrl(status.video_url) : "";
+  // IA-01 (audit F-02): keep the raw media path — playback and
+  // download go through the authenticated media components, which
+  // send the API token as a header; a bare apiUrl() src/href here
+  // received the media endpoint's 401 instead of the film.
+  const videoPath = status?.video_url || "";
 
   // Brief Stage 4 (C-11): the page renders inside the shared
   // studio navigation like every other studio page. Its private
@@ -284,7 +288,7 @@ export default function Home() {
                 </> : <div className="empty-status"><div className="status-skeleton"><span /><span /><span /></div><p>Your production stages will appear here after you start.</p></div>}
               </section>
 
-              {videoUrl && <section className="video-card"><div className="video-heading"><span className="eyebrow">FINAL CUT</span><span className="ready-pill">READY</span></div><video controls preload="metadata" src={videoUrl} /><a href={videoUrl} target="_blank" rel="noreferrer">Open or download MP4 <ArrowUpRight size={18} strokeWidth={1.7} aria-hidden /></a></section>}
+              {videoPath && <section className="video-card"><div className="video-heading"><span className="eyebrow">FINAL CUT</span><span className="ready-pill">READY</span></div><AuthenticatedVideo controls preload="metadata" src={videoPath} /><AuthenticatedDownloadLink path={videoPath} filename="documentary_final_output.mp4">Download MP4 <ArrowUpRight size={18} strokeWidth={1.7} aria-hidden /></AuthenticatedDownloadLink></section>}
             </aside>
           </form>
           <footer className="page-footer"><span>CINEMORA</span><span>Production workspace</span></footer>

@@ -638,6 +638,62 @@ def run_analysis_phase(project_id: str, script: str, run_id: str = None, options
     }
 
 
+def _build_graphic_targets(processed_scenes):
+    """Translate the Asset Manager's missing-visual records into
+    graphics targets (Stage A targeting, used by run_full_pipeline's
+    Motion Designer stage).
+
+    IA-03: a sentence's scenario comes from its "scenarios" LIST —
+    sentence records carry no singular "scenario" key (the builder
+    previously read exactly that key, so every production target
+    arrived with scenario={}). The first scenario is taken with the
+    same normalisation services.plan_document._proposed_visual
+    applies: ``scenarios = sentence.get("scenarios") or []``, then
+    the first entry only when it is a dict. A sentence with
+    missing/empty scenarios honestly gets {} — nothing is invented.
+    """
+    graphic_targets = []
+    for processed_scene in processed_scenes:
+        _scene = processed_scene.get("scene") or {}
+        _scene_number = _scene.get("scene_number")
+        _sentences = _scene.get("sentences") or []
+        _missing = (
+            (processed_scene.get("asset_stats") or {})
+            .get("missing_visuals")
+            or []
+        )
+        for _record in _missing:
+            _sentence_number = _record.get("sentence_number")
+            if _sentence_number is None:
+                continue
+            for _index, _sentence in enumerate(_sentences):
+                if not isinstance(_sentence, dict):
+                    continue
+                if _sentence.get("sentence_number") != _sentence_number:
+                    continue
+                _scenarios = _sentence.get("scenarios") or []
+                _scenario = (
+                    _scenarios[0]
+                    if _scenarios and isinstance(_scenarios[0], dict)
+                    else {}
+                )
+                graphic_targets.append(
+                    {
+                        "scene_number": _scene_number,
+                        "sentence_index": _index,
+                        "sentence_number": _sentence_number,
+                        "text": (
+                            _sentence.get("text")
+                            or _sentence.get("sentence_text")
+                            or ""
+                        ),
+                        "scenario": _scenario,
+                    }
+                )
+                break
+    return graphic_targets
+
+
 def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=None):
     print()
     print("=" * 70)
@@ -939,39 +995,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         # own text — so the graphics stage can answer exactly the
         # sentences that have no verified visual. Data propagation
         # only: no retrieval or verification behaviour changes here.
-        graphic_targets = []
-        for processed_scene in processed_scenes:
-            _scene = processed_scene.get("scene") or {}
-            _scene_number = _scene.get("scene_number")
-            _sentences = _scene.get("sentences") or []
-            _missing = (
-                (processed_scene.get("asset_stats") or {})
-                .get("missing_visuals")
-                or []
-            )
-            for _record in _missing:
-                _sentence_number = _record.get("sentence_number")
-                if _sentence_number is None:
-                    continue
-                for _index, _sentence in enumerate(_sentences):
-                    if not isinstance(_sentence, dict):
-                        continue
-                    if _sentence.get("sentence_number") != _sentence_number:
-                        continue
-                    graphic_targets.append(
-                        {
-                            "scene_number": _scene_number,
-                            "sentence_index": _index,
-                            "sentence_number": _sentence_number,
-                            "text": (
-                                _sentence.get("text")
-                                or _sentence.get("sentence_text")
-                                or ""
-                            ),
-                            "scenario": _sentence.get("scenario") or {},
-                        }
-                    )
-                    break
+        graphic_targets = _build_graphic_targets(processed_scenes)
 
         if graphic_targets:
             print(

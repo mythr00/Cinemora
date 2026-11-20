@@ -123,8 +123,11 @@ def _data(processed_videos=None, sentence=None):
 
 
 def _target():
-    # Mirrors production reality: jobs.py's target builder finds no
-    # singular "scenario" on sentence records, so none is passed.
+    # Deliberately carries NO scenario: this exercises the graphics
+    # builder's fallback to the sentence record's own scenarios.
+    # (IA-03: production targets built by jobs._build_graphic_targets
+    # DO carry scenarios[0] as "scenario"; that path is covered in
+    # test_targeted_graphics.py.)
     return {
         "scene_number": 2,
         "sentence_index": 0,
