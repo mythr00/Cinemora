@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { ProjectTabs } from "@/components/project-tabs";
 import { ErrorState, LoadingState } from "@/components/states";
 import { AssetPanel, type PendingSpec } from "@/components/editor/asset-panel";
+import { ExportControl } from "@/components/editor/export-control";
 import { PreviewMonitor } from "@/components/editor/preview-monitor";
 import { PropertiesPanel } from "@/components/editor/properties-panel";
 import { RevisionPanel } from "@/components/editor/revision-panel";
@@ -23,11 +24,13 @@ import {
   getProjectStatus,
   getRevision,
   listAssets,
+  listRevisionExports,
   listRevisions,
   requestRevisionRender,
   type AssetsPage,
   type EditorOperation,
   type ProjectOutputs,
+  type RevisionExport,
   type RevisionView,
   type RevisionWithDocument,
   type UploadRecord,
@@ -99,6 +102,15 @@ export default function EditorPage() {
   const [renderBusy, setRenderBusy] = useState(false);
   const [renderBlockedByGaps, setRenderBlockedByGaps] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
+  // Founder export flow (2026-11-20): the export a render
+  // completed during this session produced, tagged with its
+  // revision. The top-bar Export control offers its Download
+  // button for exactly this export — never for an older one,
+  // and never after a failed render (which records no export).
+  const [producedExport, setProducedExport] = useState<{
+    revisionId: string;
+    entry: RevisionExport;
+  } | null>(null);
   const previousStatusRef = useRef<string | null>(null);
 
   const loadAssetsPage = useCallback(
@@ -163,6 +175,22 @@ export default function EditorPage() {
             if (list) setRevisions(list.revisions);
             if (rev.status === "exported") {
               setNotice("Render complete — the export is recorded below.");
+              // Founder export flow: record the export this
+              // render just produced so the top-bar control can
+              // present its Download button. Read from the
+              // exports route like the revision panel does
+              // (UI-001); the document's embedded records are
+              // the fallback if the route cannot be read.
+              const data = await listRevisionExports(projectId, currentRevisionId).catch(
+                () => null,
+              );
+              const items = data?.exports?.length ? data.exports : rev.document.exports;
+              if (items.length) {
+                setProducedExport({
+                  revisionId: currentRevisionId,
+                  entry: items[items.length - 1],
+                });
+              }
             }
           }
         } catch {
@@ -228,6 +256,7 @@ export default function EditorPage() {
     setNotice("");
     setRenderBlockedByGaps(false);
     setRenderError(null);
+    setProducedExport(null);
     try {
       const rev = await refreshRevision(revisionId);
       setSelection(null);
@@ -288,6 +317,10 @@ export default function EditorPage() {
     if (!current || renderBusy) return;
     setRenderBusy(true);
     setRenderError(null);
+    // A new render supersedes the previously produced export:
+    // its Download button leaves the top bar until this render
+    // completes and records a new one.
+    setProducedExport(null);
     try {
       await requestRevisionRender(projectId, current.revision_id, allowGaps);
       setRenderBlockedByGaps(false);
@@ -387,6 +420,28 @@ export default function EditorPage() {
               >
                 {saveState.text}
               </span>
+              {/* Founder export flow (2026-11-20): Export →
+                  render → Download, in the revision bar at the
+                  top of the editor. The control calls this page's
+                  onRender — the identical handler the revision
+                  panel below uses — and downloads through the
+                  panel's shared helper; nothing is duplicated. */}
+              <ExportControl
+                projectId={projectId}
+                status={current.status}
+                renderBusy={renderBusy}
+                renderBlockedByGaps={renderBlockedByGaps}
+                renderError={renderError}
+                lastRenderError={
+                  current.status === "failed" ? current.document.last_render_error : null
+                }
+                producedExport={
+                  producedExport && producedExport.revisionId === current.revision_id
+                    ? producedExport.entry
+                    : null
+                }
+                onRender={(allowGaps) => void onRender(allowGaps)}
+              />
             </div>
             {opError && (
               <p className="editor-error-text editor-op-error" role="alert">

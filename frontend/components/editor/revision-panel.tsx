@@ -318,6 +318,28 @@ export function RevisionPanel({
   );
 }
 
+/**
+ * The ONE authenticated download path for a revision export
+ * (UI-001), shared by the export cards below and the editor's
+ * top-bar Export control (founder export flow, 2026-11-20):
+ * the media key is the sha256 of the export's project-relative
+ * path. The recorded absolute path does not always carry the
+ * /{projectId}/ segment the path derivation looks for, so fall
+ * back to the file-name derivation — exports sit at the project
+ * root, where the relative path is the file name (the backend's
+ * own test derives the key exactly this way). The download
+ * itself goes through the shared authenticated helper.
+ */
+export async function downloadRevisionExport(
+  projectId: string,
+  entry: RevisionExport,
+): Promise<void> {
+  const key =
+    (await mediaKeyForProjectPath(projectId, entry.file)) ??
+    (await mediaKeyForFileName(entry.file_name));
+  await downloadAuthenticatedMedia({ projectId, mediaKey: key, filename: entry.file_name });
+}
+
 function ExportCard({ projectId, entry }: { projectId: string; entry: RevisionExport }) {
   const [downloadState, setDownloadState] = useState<
     { status: "idle" } | { status: "busy" } | { status: "failed" }
@@ -326,18 +348,7 @@ function ExportCard({ projectId, entry }: { projectId: string; entry: RevisionEx
   async function download() {
     setDownloadState({ status: "busy" });
     try {
-      // UI-001: the media key is the sha256 of the export's
-      // project-relative path. The recorded absolute path does
-      // not always carry the /{projectId}/ segment the path
-      // derivation looks for, so fall back to the file-name
-      // derivation — exports sit at the project root, where the
-      // relative path is the file name (the backend's own test
-      // derives the key exactly this way). The download itself
-      // goes through the shared authenticated helper.
-      const key =
-        (await mediaKeyForProjectPath(projectId, entry.file)) ??
-        (await mediaKeyForFileName(entry.file_name));
-      await downloadAuthenticatedMedia({ projectId, mediaKey: key, filename: entry.file_name });
+      await downloadRevisionExport(projectId, entry);
       setDownloadState({ status: "idle" });
     } catch {
       setDownloadState({ status: "failed" });

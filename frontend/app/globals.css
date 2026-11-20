@@ -898,6 +898,11 @@ span.authenticated-media-state {
 .editor-save-state--saving { color: var(--accent-deep); font-weight: 600; }
 .editor-save-state--saved { color: var(--positive); }
 .editor-save-state--error { color: var(--danger); font-weight: 600; }
+.editor-export-control { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.editor-export-button { min-height: 38px; }
+.editor-export-download { min-height: 38px; }
+.editor-export-note { font-size: var(--type-small); color: var(--ink-muted); line-height: 1.55; }
+.editor-export-error { flex-basis: 100%; text-align: right; }
 .editor-notice {
   margin: 8px 0; padding: 10px 14px; border: 1px solid var(--line-deep);
   border-radius: var(--radius-panel); background: var(--surface-low);
