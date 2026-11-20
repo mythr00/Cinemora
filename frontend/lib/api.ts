@@ -24,14 +24,25 @@
  *
  * Configuration (build-time, NEXT_PUBLIC_*):
  * - NEXT_PUBLIC_API_BASE_URL: backend origin (default
- *   http://localhost:8000).
+ *   http://localhost:8000). The special value "same-origin" selects
+ *   the deployed mode: the browser calls this origin's /api/*
+ *   routes and the server-side proxy (app/api/[...path]/route.ts)
+ *   forwards them to the real backend, injecting the real API
+ *   token from server-only environment variables — so no real
+ *   token is ever shipped in the public bundle (F5).
  * - NEXT_PUBLIC_CINEMORA_API_TOKEN: the operator token matching the
- *   backend's CINEMORA_API_TOKEN, for local use.
+ *   backend's CINEMORA_API_TOKEN, for local use. In same-origin
+ *   mode this is only a non-empty placeholder: it satisfies the
+ *   connection check locally while the proxy replaces the header
+ *   with the real token server-side.
  */
 
-const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000"
-).replace(/\/$/, "");
+const RAW_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
+
+const API_BASE_URL =
+  RAW_API_BASE_URL === "same-origin"
+    ? ""
+    : (RAW_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
 const API_TOKEN = process.env.NEXT_PUBLIC_CINEMORA_API_TOKEN || "";
 
@@ -50,6 +61,11 @@ export class ApiClientError extends Error {
 /** Absolute URL for a backend path (media files, downloads, previews). */
 export function apiUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path;
+  if (!API_BASE_URL) {
+    // Same-origin mode: a relative URL resolves against the page's
+    // own origin in the browser, which is where the proxy lives.
+    return `/${path.replace(/^\/+/, "")}`;
+  }
   return new URL(path.replace(/^\/+/, ""), `${API_BASE_URL}/`).toString();
 }
 
