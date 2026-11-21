@@ -1604,6 +1604,13 @@ def normalize_plan(raw, sentence, bible, carry_subject):
     )
     for scenario in plan["scenarios"]:
         scenario["queries"] = compose_queries(scenario, plan, bible)
+        # Phase 3 / AM-021: these queries were COMPOSED here from the
+        # scenario's own facets (not authored on it), so stamp their
+        # provenance. build_shot_needs copies this onto the need's
+        # query_sources; a scenario whose queries carry no stamp
+        # (authored by hand or by another producer) is labelled
+        # "scenario" there instead.
+        scenario["queries_source"] = "composed"
     return plan
 
 

@@ -395,10 +395,22 @@ def _yt_dlp_base_command() -> list:
 # instead of burning discovery budget again and again.
 _FAILED_DOWNLOAD_URLS: set = set()
 
+# Phase 3 / AM-016: the failed-download guard's segment keys live in
+# the same set, prefixed "seg:" (see _uve_download_video_candidate /
+# _uve_fetch_first).
+
 # Discovery failures recorded by _uve_scenario_search (provider, query,
 # error) so the asset report can distinguish DISCOVERY failures from
 # download and verification failures instead of losing them in prints.
 _DISCOVERY_FAILURES: list = []
+
+# Phase 3 / AM-021: the active per-query diagnostic logs (a stack —
+# _uve_search_and_pick pushes its log for the duration of its search
+# call and pops it after; _uve_scenario_search appends to the top).
+# A context stack rather than a parameter: the search's signature
+# (and every test double of it) stays untouched, and a stubbed
+# search simply records nothing.
+_QUERY_LOG_STACK: list = []
 
 
 def _record_discovery_failure(provider, query, error, *, attempt=1, retry_count=0):
@@ -809,6 +821,32 @@ def _entity(bible, entity_id):
     return (bible.get("by_id") or {}).get(entity_id) or {}
 
 
+#: Phase 3: which of the plan contract's intent_queries fields feeds
+#: T1 query construction for each primary visual intent — the field
+#: whose queries describe that intent's own shot (an actual-event
+#: beat searches its literal queries; an activity beat its activity
+#: B-roll queries; an archival beat its archival queries...).
+_INTENT_QUERY_FIELD_BY_PRIMARY = {
+    "exact": "literal",
+    "actual_event": "literal",
+    "archival": "archival",
+    "establishing": "establishing",
+    "geographic_context": "establishing",
+    "activity_broll": "activity_broll",
+    "human_activity": "activity_broll",
+    "environmental_broll": "contextual",
+    "object_detail": "contextual",
+    "documentary_context": "contextual",
+    "atmospheric": "contextual",
+    "graphic_explanation": "contextual",
+}
+
+#: Phase 3 / AM-021: a need's T1 query list (composed + intent
+#: queries) is capped here so the search's own <=8-queries-per-
+#: sentence budget is never crowded out by plan-side merging.
+_MAX_NEED_QUERIES = 6
+
+
 def build_shot_needs(beat, bible=None):
     bible = bible or {}
 
@@ -946,6 +984,50 @@ def build_shot_needs(beat, bible=None):
             if isinstance(_recorded_intents, dict):
                 _intents = _recorded_intents
 
+        # Phase 3 / AM-021 + Part 6 Stage B: query provenance, and
+        # the intent queries consumed at T1. The scenario's queries
+        # keep the source normalize_plan stamped on them
+        # ("composed"); unstamped queries were authored on the
+        # scenario itself ("scenario"). The primary intent's
+        # intent_queries then JOIN the need's list — deduplicated by
+        # normalised text, scenario queries first — instead of the
+        # search re-deriving facets the plan already carries. Each
+        # query's source is recorded on the need (query_sources) and
+        # flows into the per-query diagnostics.
+        _base_source = (
+            "composed"
+            if scenario.get("queries_source") == "composed"
+            else "scenario"
+        )
+        query_sources = [
+            {"query": q, "source": _base_source} for q in queries
+        ]
+        if _intents:
+            _field = _INTENT_QUERY_FIELD_BY_PRIMARY.get(
+                str(_intents.get("primary_visual_intent") or "")
+                .strip().lower(),
+                "literal",
+            )
+            _intent_query_list = (
+                (_intents.get("intent_queries") or {}).get(_field) or []
+            )
+            _seen_queries = {
+                " ".join(str(q).lower().split()) for q in queries
+            }
+            for _iq in _intent_query_list:
+                _iq_text = str(_iq or "").strip()
+                _iq_key = " ".join(_iq_text.lower().split())
+                if (
+                    _iq_text
+                    and _iq_key not in _seen_queries
+                    and len(queries) < _MAX_NEED_QUERIES
+                ):
+                    queries.append(_iq_text)
+                    query_sources.append(
+                        {"query": _iq_text, "source": "intent_queries"}
+                    )
+                    _seen_queries.add(_iq_key)
+
         needs.append({
             "beat_id": beat.get("beat_id"),
             "shot_index": index,
@@ -988,6 +1070,10 @@ def build_shot_needs(beat, bible=None):
             # Master Directive Phase 2 (§4.2): see above.
             "visual_intents": _intents,
             "queries": queries,
+            # Phase 3 / AM-021: per-query provenance, parallel to
+            # "queries" (same order): scenario / composed /
+            # intent_queries.
+            "query_sources": query_sources,
         })
 
     return needs
@@ -1220,7 +1306,9 @@ def _uve_scenarios_for(sentence):
         # already-known semantic fields.
         # -----------------------------------------------------
 
+        _queries_constructed = False
         if not clean_queries:
+            _queries_constructed = True
             candidates = []
 
             if subject and event:
@@ -1347,6 +1435,18 @@ def _uve_scenarios_for(sentence):
             ),
 
             "queries": clean_queries[:6],
+
+            # Phase 3 / AM-021: query provenance survives this
+            # rebuild — the stamp normalize_plan left on the
+            # authored scenario ("composed"), or "composed" when
+            # THIS builder constructed the queries from the
+            # scenario's semantic fields just above. None when the
+            # queries were authored on the scenario itself;
+            # build_shot_needs labels those "scenario".
+            "queries_source": (
+                scenario.get("queries_source")
+                or ("composed" if _queries_constructed else None)
+            ),
         })
 
     return output
@@ -4431,6 +4531,20 @@ def _uve_download_video_candidate(
         candidate["segment_id"] = reused.get("segment_id")
         return reused
 
+    # Phase 3 / AM-016: the failed-download guard at SEGMENT
+    # granularity. The attempt is stamped with the segment it is
+    # about to download; _uve_fetch_first records a failure under
+    # "seg:<segment_id>" rather than the whole source, so one dead
+    # window no longer poisons the source's other segments — a
+    # genuinely dead source is still bounded, because every segment
+    # attempt counts in the existing download-attempt accounting.
+    # A segment that already failed this run is not re-downloaded.
+    candidate["_attempted_segment_id"] = _selection_segment_id
+    if f"seg:{_selection_segment_id}" in _FAILED_DOWNLOAD_URLS:
+        candidate["_download_error"] = "previously_failed_this_run"
+        candidate["_segment_previously_failed"] = True
+        return None
+
     safe_query = str(
         candidate.get("matched_query")
         or candidate.get("query")
@@ -4754,6 +4868,36 @@ def _uve_scenario_search(
         or []
     )
 
+    # Phase 3 / AM-021: per-query diagnostics. While a query log is
+    # active (pushed by _uve_search_and_pick — a context stack, not
+    # a parameter, so this function's signature and every test
+    # double of it stay untouched), every query ACTUALLY issued is
+    # appended as {"query", "source", "hits"} in issue order —
+    # source from the need's query_sources (stamped by
+    # build_shot_needs: scenario / composed / intent_queries;
+    # search-internal queries carry their own labels), hits = raw
+    # results returned for it, before cross-query dedupe.
+    # Supplementary-provider hits fold into the primary query's
+    # entry — they were issued FOR that query.
+    query_log = _QUERY_LOG_STACK[-1] if _QUERY_LOG_STACK else None
+    _query_sources = {}
+    for _qs in (need.get("query_sources") or []):
+        if isinstance(_qs, dict) and _qs.get("query"):
+            _query_sources[" ".join(str(_qs["query"]).split())] = str(
+                _qs.get("source") or "scenario"
+            )
+    _log_by_query = {}
+
+    def _log_query(_q, _source, _hits):
+        if query_log is None:
+            return
+        _entry = _log_by_query.get(_q)
+        if _entry is None:
+            _entry = {"query": _q, "source": _source, "hits": 0}
+            _log_by_query[_q] = _entry
+            query_log.append(_entry)
+        _entry["hits"] += int(_hits or 0)
+
     # If a scenario somehow has no generated query,
     # use its visual text as the final generic fallback.
     if not queries:
@@ -4846,6 +4990,14 @@ def _uve_scenario_search(
                 cache_key
             ]
 
+            _log_query(
+                query,
+                _query_sources.get(query, "scenario"),
+                len(cached.get("videos") or [])
+                + len(cached.get("web_sources") or [])
+                + len(cached.get("images") or []),
+            )
+
             videos.extend(
                 cached.get("videos") or []
             )
@@ -4918,6 +5070,12 @@ def _uve_scenario_search(
             "web_sources": found_web,
             "images": found_images,
         }
+
+        _log_query(
+            query,
+            _query_sources.get(query, "scenario"),
+            len(found_videos) + len(found_web) + len(found_images),
+        )
 
         for video in found_videos:
             url = str(
@@ -4993,6 +5151,7 @@ def _uve_scenario_search(
         except Exception as error:
             _record_discovery_failure("wikimedia", shaped_query, error)
             print(f"Shaped Wikimedia search failed for '{shaped_query}': {error}")
+        _log_query(shaped_query, "format_shaped", len(shaped_images))
         for image in shaped_images:
             image_url = str(image.get("image_url") or "").strip()
             if not image_url or image_url in seen_image_urls:
@@ -5018,13 +5177,25 @@ def _uve_scenario_search(
                 videos.append(video)
 
         try:
-            _merge_videos(search_archive_org_videos(primary_query, limit=3))
+            _archive_hits = search_archive_org_videos(primary_query, limit=3)
+            _log_query(
+                primary_query,
+                _query_sources.get(primary_query, "scenario"),
+                len(_archive_hits or []),
+            )
+            _merge_videos(_archive_hits)
         except Exception as error:
             _record_discovery_failure("archive.org", primary_query, error)
             print(f"Archive.org search failed for '{primary_query}': {error}")
 
         try:
-            _merge_videos(search_wikimedia_videos(primary_query, limit=5))
+            _wikimedia_hits = search_wikimedia_videos(primary_query, limit=5)
+            _log_query(
+                primary_query,
+                _query_sources.get(primary_query, "scenario"),
+                len(_wikimedia_hits or []),
+            )
+            _merge_videos(_wikimedia_hits)
         except Exception as error:
             _record_discovery_failure("wikimedia", primary_query, error)
             print(f"Wikimedia video search failed for '{primary_query}': {error}")
@@ -5037,7 +5208,12 @@ def _uve_scenario_search(
                     f"{primary_query} site:archive.org OR site:loc.gov "
                     f"OR site:si.edu OR site:nps.gov"
                 )
-                _merge_videos(search_videos_multi(targeted_query, limit=5))
+                _targeted_hits = search_videos_multi(targeted_query, limit=5)
+                _log_query(
+                    targeted_query, "targeted_institutional",
+                    len(_targeted_hits or []),
+                )
+                _merge_videos(_targeted_hits)
             except Exception as error:
                 _record_discovery_failure("serper-videos-targeted", primary_query, error)
                 print(f"Targeted search failed for '{primary_query}': {error}")
@@ -5519,6 +5695,143 @@ def gate_shot_need(candidate, shot_need):
 # cap stays absolute and is enforced separately below.
 REUSE_PENALTY_PER_USE = 0.05
 
+# Master Directive Phase 3 — intent-aware ranking (Part 6 Stage B)
+# and the AM-004 video preference. ARCHITECTURE RULE (Phase 1): these
+# signals order the ALREADY-VERIFIED pool only. Eligibility (gate,
+# verifier thresholds 0.55/0.34/0.22, contradiction vetoes) is decided
+# before ranking and is never touched here: no signal below can admit,
+# rescue or re-judge a candidate. Every signal is bounded, named, and
+# recorded on the candidate it moved (selection reasons), following
+# the format-intent bonus pattern (capped at 0.10 x confidence).
+#
+#: Medium-fit bonus when the beat's primary visual intent expects a
+#: medium the scenario's format intent did NOT already reward (the
+#: format bonus is checked first; a signal is never counted twice).
+INTENT_FIT_MAX = 0.05
+#: Demotion for an exact, high-misrepresentation-risk beat when the
+#: verifier's own dimension record shows NO subject evidence for the
+#: candidate — on such a beat a subject-less visual is the one most
+#: likely to misrepresent. Bounded, so it can only reorder near-equal
+#: verified candidates, never bury a materially stronger one.
+MISREPRESENTATION_DEMOTION = 0.05
+#: AM-004 (revised): within the accepted pool, a verified video is
+#: preferred over a verified still only when their effective scores
+#: are COMPARABLE — inside this epsilon. Small by design (register:
+#: the epsilon must stay small); recorded on every candidate it moves.
+VIDEO_PREFERENCE_EPSILON = 0.05
+
+#: Primary intents whose expected medium is moving footage / stills.
+#: Every other intent (establishing, archival, graphic_explanation,
+#: ...) carries no medium expectation beyond the format intent.
+_INTENT_VIDEO_INTENTS = frozenset({
+    "actual_event", "activity_broll", "human_activity",
+})
+_INTENT_IMAGE_INTENTS = frozenset({"object_detail"})
+
+
+def _intent_rank_adjustment(item, kind, shot_need, scenario, format_bonus):
+    """The bounded Phase 3 ranking adjustment for one pool candidate.
+
+    Returns (adjustment, reasons). Inputs are the need's Phase 2
+    visual_intents and the verifier's RECORDED dimension
+    contributions — no signal re-derives what the verifier already
+    scored: the medium fit fires only when this kind's format-intent
+    bonus was zero, and the misrepresentation demotion reads the
+    verdict's subject contribution rather than re-judging relevance.
+    """
+    intents = (shot_need or {}).get("visual_intents")
+    if not isinstance(intents, dict):
+        return 0.0, []
+    adjustment = 0.0
+    reasons = []
+    primary = str(intents.get("primary_visual_intent") or "").strip().lower()
+    if format_bonus == 0:
+        if primary in _INTENT_VIDEO_INTENTS and kind == "video":
+            adjustment += INTENT_FIT_MAX
+            reasons.append(f"intent_fit:video:{primary}")
+        elif primary in _INTENT_IMAGE_INTENTS and kind == "image":
+            adjustment += INTENT_FIT_MAX
+            reasons.append(f"intent_fit:image:{primary}")
+    specificity = str(
+        intents.get("specificity_requirement") or ""
+    ).strip().lower()
+    risk = str(
+        intents.get("visual_misrepresentation_risk") or ""
+    ).strip().lower()
+    if specificity == "exact" and risk == "high":
+        verdict = item.get("verification") or {}
+        contributions = verdict.get("contributions") or {}
+        if verdict.get("accepted") and not contributions.get("subject"):
+            adjustment -= MISREPRESENTATION_DEMOTION
+            reasons.append("misrepresentation_demotion:no_subject_evidence")
+    return round(adjustment, 3), reasons
+
+
+def _beat_wants_video(scenario, shot_need):
+    """AM-004 trigger: the beat asks for moving footage — via the
+    scenario's format intent, the intents' preferred media type, or
+    a footage-shaped primary intent."""
+    if str((scenario or {}).get("format_intent") or "").strip().lower() == "footage":
+        return True
+    intents = (shot_need or {}).get("visual_intents")
+    if not isinstance(intents, dict):
+        return False
+    if str(intents.get("preferred_media_type") or "").strip().lower() == "video":
+        return True
+    return str(
+        intents.get("primary_visual_intent") or ""
+    ).strip().lower() in _INTENT_VIDEO_INTENTS
+
+
+def _apply_video_preference(pool, scenario, shot_need):
+    """AM-004 (revised): stable epsilon-group reorder of the accepted
+    pool — within a run of candidates whose effective scores are
+    comparable (within VIDEO_PREFERENCE_EPSILON of the group's best),
+    verified videos come before verified stills. Candidates outside
+    the window never move; the reorder is stable, so relative order
+    inside each kind is preserved. Every candidate whose position
+    changed is stamped video_preference_applied."""
+    if len(pool) < 2 or not _beat_wants_video(scenario, shot_need):
+        return pool
+
+    def _score(item):
+        for key in ("_effective_score", "_selection_score"):
+            value = item.get(key)
+            if value is not None:
+                return value
+        return item.get("universal_score") or 0
+
+    def _is_video(item):
+        if item.get("_pool_kind"):
+            return item.get("_pool_kind") == "video"
+        return (item.get("type") or item.get("visual_type")) == "video"
+
+    ordered = []
+    group = []
+
+    def _flush():
+        if not group:
+            return
+        videos = [i for i in group if _is_video(i)]
+        stills = [i for i in group if not _is_video(i)]
+        if videos and stills:
+            reordered = videos + stills
+            before = {id(i): n for n, i in enumerate(group)}
+            for n, item in enumerate(reordered):
+                if before[id(item)] != n:
+                    item["video_preference_applied"] = True
+            ordered.extend(reordered)
+        else:
+            ordered.extend(group)
+        group.clear()
+
+    for item in pool:
+        if group and abs(_score(group[0]) - _score(item)) > VIDEO_PREFERENCE_EPSILON:
+            _flush()
+        group.append(item)
+    _flush()
+    return ordered
+
 
 def _uve_pick(
     scored,
@@ -5588,6 +5901,11 @@ def _uve_pick(
             return (raw or 0) - penalty
 
         pool = sorted(pool, key=_effective, reverse=True)
+
+    # Phase 3 / AM-004: within comparable effective scores, a beat
+    # that wants video prefers a verified video over a verified
+    # still. Ranking only — the pool is unchanged in membership.
+    pool = _apply_video_preference(pool, scenario, shot_need)
 
     picked = []
     source_counts = {}
@@ -5778,8 +6096,24 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
         # Phase 2: the failed-download guard keys on the CANONICAL
         # source identity — a failed candidate is never re-downloaded
         # within a run, however its URL is respelled.
+        # Phase 3 / AM-016: when the candidate already carries a
+        # segment identity (stamped by an earlier attempt), the guard
+        # ALSO honours the segment key — that segment's failure skips
+        # this candidate, while the source key alone no longer blocks
+        # a candidate whose segment was never attempted.
         candidate_key = canonical_source_key(candidate_url)
-        if candidate_url and candidate_key in _FAILED_DOWNLOAD_URLS:
+        _segment_guard_key = (
+            f"seg:{candidate['segment_id']}"
+            if candidate.get("segment_id")
+            else None
+        )
+        if candidate_url and (
+            candidate_key in _FAILED_DOWNLOAD_URLS
+            or (
+                _segment_guard_key is not None
+                and _segment_guard_key in _FAILED_DOWNLOAD_URLS
+            )
+        ):
             # Already failed once this run (throttled, dead, invalid):
             # never re-request it; record the skip as a failure too.
             if failures is not None:
@@ -5806,8 +6140,18 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
         )
 
         if not asset:
+            # Phase 3 / AM-016: a failure from a segment-stamped
+            # attempt is recorded under the SEGMENT key only — the
+            # source's other segments stay retrievable. Attempts
+            # without a segment identity (images, source-level
+            # failures) keep the canonical source key, exactly as
+            # before.
+            _attempted_segment_id = candidate.get("_attempted_segment_id")
             if candidate_url:
-                _FAILED_DOWNLOAD_URLS.add(candidate_key)
+                if _attempted_segment_id:
+                    _FAILED_DOWNLOAD_URLS.add(f"seg:{_attempted_segment_id}")
+                else:
+                    _FAILED_DOWNLOAD_URLS.add(candidate_key)
             # MS-2: a failed download is recorded with its actual reason
             # (stashed on the candidate by the downloader) — never silent,
             # never substituted with unrelated footage.
@@ -5825,6 +6169,8 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                     "reason": candidate.get("_download_error")
                     or "download_failed",
                 }
+                if _attempted_segment_id:
+                    failure["segment_id"] = _attempted_segment_id
                 failure["candidate_id"] = candidate.get("candidate_id")
                 failure.setdefault(
                     "stage", candidate.get("rejection_stage") or "download"
@@ -6085,6 +6431,7 @@ def _uve_search_and_pick(
     search_cache, project_id, bible, registry, used_keys,
     scene_dir, scene_stats, beat, beat_videos, beat_images,
     scenario_index, queries, review_records,
+    query_pass="primary",
 ):
     """One full discovery pass for a scenario.
 
@@ -6106,7 +6453,14 @@ def _uve_search_and_pick(
     the first coverage asset is returned when the primary fetch
     produced none.
     """
-    raw_videos, raw_web_sources, raw_images = _uve_scenario_search(scenario, search_cache, project_id, shot_need)
+    _query_log = []
+    _QUERY_LOG_STACK.append(_query_log)
+    try:
+        raw_videos, raw_web_sources, raw_images = _uve_scenario_search(
+            scenario, search_cache, project_id, shot_need,
+        )
+    finally:
+        _QUERY_LOG_STACK.pop()
     scored_videos = _uve_verify_all(
         raw_videos,
         scenario,
@@ -6135,7 +6489,8 @@ def _uve_search_and_pick(
 
     def _funnel_add(pool, scored, kind):
         kind_counts = _kind_funnel.setdefault(
-            kind, {"discovered": 0, "verified": 0, "rejected": 0}
+            kind,
+            {"discovered": 0, "verified": 0, "rejected": 0, "accepted": 0},
         )
         kind_counts["discovered"] += len(pool)
         for cand in pool:
@@ -6185,6 +6540,39 @@ def _uve_search_and_pick(
         if item.get("reject_reason")
     )
 
+    # Phase 3 / AM-021: per-query diagnostics for THIS pass — every
+    # query actually issued (from the search's own log), with its
+    # source, its raw hits, and how its candidates fared: scored
+    # candidates carrying its matched_query, and how many of those
+    # the verifier accepted. Recorded per pass so "are our queries
+    # bad?" is answerable per beat from the asset report. (Tier
+    # ladder searches are accounted separately, in tier_attempts.)
+    _scored_all = scored_videos + scored_web_sources + scored_images
+    _query_diagnostics = []
+    for _entry in _query_log:
+        _q = _entry["query"]
+        _q_candidates = [
+            c for c in _scored_all
+            if str(c.get("matched_query") or "") == _q
+        ]
+        _query_diagnostics.append({
+            "query": _q,
+            "source": _entry["source"],
+            "hits": _entry["hits"],
+            "candidates": len(_q_candidates),
+            "verified": sum(
+                1 for c in _q_candidates
+                if (c.get("verification") or {}).get("accepted")
+            ),
+        })
+    scene_stats.setdefault("query_diagnostics", []).append({
+        "beat_id": (beat or {}).get("beat_id"),
+        "shot_index": scenario_index,
+        "pass": query_pass,
+        "tier": str((shot_need or {}).get("tier") or "direct"),
+        "queries": _query_diagnostics,
+    })
+
     # Failure classification is NO LONGER counted here. The old
     # parallel increment (with its divergent score-below alias
     # fallback string) could and did drift from the candidate
@@ -6223,12 +6611,31 @@ def _uve_search_and_pick(
             return 0.05 * intent_conf
         return 0.0
 
+    def _rank_stamp(_item, _kind):
+        """Phase 3 ranking stamp: selection score = universal score
+        + format-intent bonus + the bounded intent adjustment from
+        _intent_rank_adjustment (medium fit / misrepresentation
+        demotion), with the adjustment and its reasons recorded on
+        the item. Ranking only — the verifier already decided
+        eligibility; this never changes a verdict."""
+        _bonus = _intent_bonus(_kind)
+        _adjustment, _reasons = _intent_rank_adjustment(
+            _item, _kind, shot_need, scenario, _bonus
+        )
+        _item["_intent_adjustment"] = _adjustment
+        if _reasons:
+            _item["_intent_reasons"] = _reasons
+        _item["_selection_score"] = (
+            (_item.get("universal_score") or 0) + _bonus + _adjustment
+        )
+        return _item
+
     combined_pool = []
     pool_keys = set()
     for item in scored_videos:
         item = dict(item)
         item["_pool_kind"] = "video"
-        item["_selection_score"] = (item.get("universal_score") or 0) + _intent_bonus("video")
+        _rank_stamp(item, "video")
         combined_pool.append(item)
         pool_keys.add(_uve_candidate_key(item))
     for web_item in scored_web_sources:
@@ -6240,12 +6647,12 @@ def _uve_search_and_pick(
         pool_keys.add(web_key)
         web_item = dict(web_item)
         web_item["_pool_kind"] = "video"
-        web_item["_selection_score"] = (web_item.get("universal_score") or 0) + _intent_bonus("video")
+        _rank_stamp(web_item, "video")
         combined_pool.append(web_item)
     for item in scored_images:
         item = dict(item)
         item["_pool_kind"] = "image"
-        item["_selection_score"] = (item.get("universal_score") or 0) + _intent_bonus("image")
+        _rank_stamp(item, "image")
         combined_pool.append(item)
 
     combined_pool.sort(key=lambda c: c.get("_selection_score") or 0, reverse=True)
@@ -6279,6 +6686,20 @@ def _uve_search_and_pick(
         # tier ("direct" for every search run today).
         annotated["tier"] = str((shot_need or {}).get("tier") or "direct")
         accepted_asset = annotated
+        # Phase 3 / AM-004: the per-kind funnel gains its final stage
+        # — accepted — counted by the winning candidate's pool kind
+        # (a footage-capable web candidate counts as video, the kind
+        # it competed as), so the video preference's effect is
+        # measurable: discovered -> verified -> accepted by kind.
+        _accepted_kind = asset.get("_pool_kind") or (
+            "video"
+            if (asset.get("type") == "video" or asset.get("visual_type") == "video")
+            else "image"
+        )
+        _kind_funnel.setdefault(
+            _accepted_kind,
+            {"discovered": 0, "verified": 0, "rejected": 0, "accepted": 0},
+        )["accepted"] = _kind_funnel[_accepted_kind].get("accepted", 0) + 1
         if asset.get("type") == "video" or asset.get("visual_type") == "video":
             beat_videos.append(annotated)
             print(f"      + video ({asset.get('verification_status')}, score {asset.get('universal_score')})")
@@ -6321,9 +6742,7 @@ def _uve_search_and_pick(
                 continue
             _copy = dict(_item)
             _copy["_pool_kind"] = "video" if _kind == "web" else _kind
-            _copy["_selection_score"] = (
-                _copy.get("universal_score") or 0
-            ) + _intent_bonus("image" if _kind == "image" else "video")
+            _rank_stamp(_copy, "image" if _kind == "image" else "video")
             _out.append(_copy)
         return _out
 
@@ -6617,6 +7036,19 @@ def _uve_search_and_pick(
                         (shot_need or {}).get("tier") or "direct"
                     )
                 coverage_accepted_assets.append(_cov_annotated)
+                # Phase 3 / AM-004: coverage/escalation accepts count
+                # in the per-kind funnel's accepted stage too.
+                _cov_kind = _cov_asset.get("_pool_kind") or (
+                    "video"
+                    if (_cov_asset.get("type") == "video"
+                        or _cov_asset.get("visual_type") == "video")
+                    else "image"
+                )
+                _kind_funnel.setdefault(
+                    _cov_kind,
+                    {"discovered": 0, "verified": 0, "rejected": 0,
+                     "accepted": 0},
+                )["accepted"] = _kind_funnel[_cov_kind].get("accepted", 0) + 1
                 if _cov_asset.get("type") == "video" or _cov_asset.get("visual_type") == "video":
                     beat_videos.append(_cov_annotated)
                     print(f"      + video (coverage pass, score {_cov_asset.get('universal_score')})")
@@ -6846,6 +7278,16 @@ def _uve_search_and_pick(
                     _record[_field] = _item.get(_field)
             if _item.get("_effective_score") is not None:
                 _record["effective_score"] = _item.get("_effective_score")
+            # Phase 3: the ranking signals that ordered this pool —
+            # the bounded intent adjustment (+ its reasons) and the
+            # AM-004 video preference — recorded on the event so a
+            # selection decision is explainable from the report.
+            if _item.get("_intent_adjustment"):
+                _record["intent_adjustment"] = _item["_intent_adjustment"]
+            if _item.get("_intent_reasons"):
+                _record["intent_reasons"] = list(_item["_intent_reasons"])
+            if _item.get("video_preference_applied"):
+                _record["video_preference_applied"] = True
             _records.append(_record)
     for _failure in fetch_failures:
         _pool_item = _pool_by_candidate_id.get(_failure.get("candidate_id"))
@@ -6858,6 +7300,12 @@ def _uve_search_and_pick(
                 _stage,
                 _failure.get("reason", ""),
             )
+            if _pool_item.get("_intent_adjustment"):
+                _record["intent_adjustment"] = _pool_item["_intent_adjustment"]
+            if _pool_item.get("_intent_reasons"):
+                _record["intent_reasons"] = list(_pool_item["_intent_reasons"])
+            if _pool_item.get("video_preference_applied"):
+                _record["video_preference_applied"] = True
             if _failure.get("segment_failure_cause"):
                 _record["segment_failure_cause"] = _failure[
                     "segment_failure_cause"
@@ -6897,6 +7345,14 @@ def _uve_search_and_pick(
         )
         if _accepted.get("segment_evidence"):
             _record["segment_evidence"] = _accepted["segment_evidence"]
+        # Phase 3: the accepted pick carries the ranking signals that
+        # ordered it (intent adjustment + reasons, video preference).
+        if _source_item.get("_intent_adjustment"):
+            _record["intent_adjustment"] = _source_item["_intent_adjustment"]
+        if _source_item.get("_intent_reasons"):
+            _record["intent_reasons"] = list(_source_item["_intent_reasons"])
+        if _source_item.get("video_preference_applied"):
+            _record["video_preference_applied"] = True
         if _source_item.get("coverage_pick"):
             # Coverage fix: the record shows HOW this candidate came
             # to be used — drawn from the verified pool by the
@@ -7328,6 +7784,7 @@ def _uve_unsearched_ladder_entry(
             beat_videos=beat_videos, beat_images=beat_images,
             scenario_index=1, queries=queries,
             review_records=review_records,
+            query_pass="unsearched_entry",
         )
     finally:
         ledger.end_escalation()
@@ -7519,6 +7976,7 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     scenario_index=int(base_need.get("shot_index") or 1),
                     queries=recovery_queries,
                     review_records=review_records,
+                    query_pass="recovery",
                 )
                 scene_stats.setdefault("recovery_attempts", []).append(
                     {
@@ -7592,6 +8050,32 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                 "  MISSING VISUAL: no verified asset for this beat "
                 "— recorded in the asset report, no placeholder created"
             )
+
+        # Phase 3 / FP-4 (measure only): the beat's sufficiency —
+        # distinct fetched assets against its sentence count, with
+        # the FP-4 half-coverage reference point (a beat is
+        # "sufficient" when at least half its sentences could be
+        # served by a distinct asset). The coverage pass and the
+        # tier ladder already did the drawing; this only records
+        # the outcome, per beat, for the asset report.
+        _sentence_total = len(beat.get("sentences") or [])
+        _distinct_assets = len(
+            _uve_beat_distinct_asset_keys(beat_videos, beat_images)
+        )
+        scene_stats.setdefault("beat_sufficiency", []).append({
+            "beat_id": beat.get("beat_id"),
+            "sentence_count": _sentence_total,
+            "distinct_assets": _distinct_assets,
+            "sufficiency_ratio": (
+                round(_distinct_assets / _sentence_total, 4)
+                if _sentence_total else None
+            ),
+            "meets_half": (
+                _distinct_assets * 2 >= _sentence_total
+                if _sentence_total else True
+            ),
+            "searchable": bool(beat.get("searchable", True)),
+        })
 
         write_review_log(project_dir, scene_number, beat, review_records)
 

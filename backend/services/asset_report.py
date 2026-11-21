@@ -32,6 +32,7 @@ Honesty rules baked in:
 from __future__ import annotations
 
 import json
+import os
 from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
@@ -161,6 +162,8 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 )
 
     candidate_records: list = []
+    query_diagnostics: list = []
+    beat_sufficiency: list = []
 
     for scene in processed_scenes or []:
         if not isinstance(scene, dict):
@@ -215,6 +218,21 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             if isinstance(attempt, dict):
                 recovery_attempts.append(
                     {"scene": scene.get("scene_number"), **attempt}
+                )
+        # Phase 3 / AM-021: per-beat query diagnostics, as recorded
+        # by the retrieval passes (queries issued, their sources,
+        # hits / candidates / verified per query).
+        for diag in scene_stats.get("query_diagnostics") or []:
+            if isinstance(diag, dict):
+                query_diagnostics.append(
+                    {"scene": scene.get("scene_number"), **diag}
+                )
+        # Phase 3 / FP-4: per-beat sufficiency records (distinct
+        # fetched assets vs the beat's sentence count).
+        for suff in scene_stats.get("beat_sufficiency") or []:
+            if isinstance(suff, dict):
+                beat_sufficiency.append(
+                    {"scene": scene.get("scene_number"), **suff}
                 )
         # Coverage fix: the coverage pass's per-shot record (draws
         # from the verified pool, blocks, exhaustion) rides beside
@@ -341,6 +359,8 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     # spaced guess rather than segment evidence. Kept distinct from
     # the per-asset class counts in verification_dimensions below:
     # one positional asset can serve several assignments.
+    # (Phase 3 note: the tier_breakdown built below now also carries
+    # the D-B1 band comparison — see its own block comment.)
     positional_assignments = sum(
         1
         for item in items
@@ -353,9 +373,12 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     # tier stamps. A timeline whose items carry no stamps (stored
     # pre-B0 productions) reports state "not_recorded" with a null
     # B-roll share — unknown, never zero. The B-roll share is
-    # (activity_broll + atmospheric runtime) / total item runtime;
-    # the founder-set band comparison lands in B3 — B0 reports the
-    # share only, beside the unknown-licence count (§6.6).
+    # (activity_broll + atmospheric runtime) / total item runtime.
+    # Phase 3 / D-B1 (the B3 remainder): the measured share is also
+    # compared against the active pack's founder-set band
+    # (expectations.broll_share) in the "band" sub-block below —
+    # REPORT ONLY, never a gate: an over-band run reports
+    # "over_band" and proceeds exactly as before.
     _tier_item_counts: Counter = Counter()
     _tier_runtime: Counter = Counter()
     _tier_per_sentence: list = []
@@ -410,6 +433,46 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "unstamped_items": _unstamped_items,
         "per_sentence": _tier_per_sentence,
     }
+    # Phase 3 / D-B1: the band comparison (report only).
+    _band_pack_id = (
+        genre_pack.get("id")
+        if isinstance(genre_pack, dict) else None
+    )
+    _band = None
+    if _band_pack_id:
+        from services import genre_packs as _genre_packs
+
+        _band = _genre_packs.broll_share_band(
+            _genre_packs.load_pack(str(_band_pack_id))
+        )
+    if _band is None:
+        tier_breakdown["band"] = {
+            "state": "unknown",
+            "genre_pack": _band_pack_id,
+            "max": None,
+            "basis": None,
+            "evaluation": "unknown",
+        }
+    elif tier_breakdown["broll_share"] is None:
+        tier_breakdown["band"] = {
+            "state": "not_recorded",
+            "genre_pack": _band_pack_id,
+            "max": _band["max"],
+            "basis": _band["basis"],
+            "evaluation": "unknown",
+        }
+    else:
+        tier_breakdown["band"] = {
+            "state": "recorded",
+            "genre_pack": _band_pack_id,
+            "max": _band["max"],
+            "basis": _band["basis"],
+            "evaluation": (
+                "within_band"
+                if tier_breakdown["broll_share"] <= _band["max"]
+                else "over_band"
+            ),
+        }
 
     # ---- renderer placeholders / holdovers ---------------------------
     if isinstance(renderer_audit, dict) and renderer_audit.get("placeholder_count") is not None:
@@ -484,7 +547,72 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     if total_footage:
         reliance_provider, reliance_count = accepted_footage_by_provider.most_common(1)[0]
         reliance_share = reliance_count / total_footage
-    reliance_warning = bool(total_footage and reliance_share > 0.8)
+    # Phase 3 / AM-022b: reliance is computed for STILLS as well as
+    # footage, and every figure states its base n beside it. The
+    # >80% warning semantics are unchanged — now evaluated per kind
+    # on its stated base. The legacy keys (warning / provider /
+    # footage_share) keep their meaning for existing consumers:
+    # warning fires when EITHER kind is over the line, and provider
+    # names the kind that fired (footage first, as before).
+    accepted_stills_by_provider = Counter()
+    for asset in images:
+        provider = str(asset.get("provider") or asset.get("source") or "unknown")
+        accepted_stills_by_provider[provider] += 1
+    total_stills = sum(accepted_stills_by_provider.values())
+    stills_provider, stills_share = None, 0.0
+    if total_stills:
+        stills_provider, stills_count = accepted_stills_by_provider.most_common(1)[0]
+        stills_share = stills_count / total_stills
+    footage_reliance_warning = bool(total_footage and reliance_share > 0.8)
+    stills_reliance_warning = bool(total_stills and stills_share > 0.8)
+    reliance_warning = footage_reliance_warning or stills_reliance_warning
+    reliance_warning_provider = (
+        reliance_provider if footage_reliance_warning
+        else (stills_provider if stills_reliance_warning else None)
+    )
+
+    # ---- discovery state (Phase 3 / AM-022, reporting only) ----------
+    # "Discovery degraded: no search key" is a first-class run-level
+    # fact, recorded ONLY when the run made zero Serper calls BECAUSE
+    # no search key was configured. Zero calls for any other reason
+    # (key configured but the run never needed Serper, cache hits,
+    # ...) is a different fact and never wears this label; a run with
+    # no execution record at all reports state "unknown". Key supply
+    # itself is NOT an engineering change (DM-4 is the founder's) —
+    # this block only reports.
+    _serper_calls = None
+    if isinstance(execution, dict):
+        _serper_block = execution.get("serper_calls")
+        if isinstance(_serper_block, dict):
+            _serper_calls = _serper_block.get("total")
+    _search_key_configured = bool(os.getenv("SERPER_API_KEY"))
+    if _serper_calls is None:
+        discovery = {
+            "state": "unknown",
+            "degraded": None,
+            "reason": None,
+            "serper_calls": None,
+            "search_key_configured": _search_key_configured,
+            "fact": None,
+        }
+    elif _serper_calls == 0 and not _search_key_configured:
+        discovery = {
+            "state": "degraded_no_search_key",
+            "degraded": True,
+            "reason": "no_search_key",
+            "serper_calls": 0,
+            "search_key_configured": False,
+            "fact": "discovery degraded: no search key",
+        }
+    else:
+        discovery = {
+            "state": "recorded",
+            "degraded": False,
+            "reason": None if _serper_calls else "no_serper_calls",
+            "serper_calls": _serper_calls,
+            "search_key_configured": _search_key_configured,
+            "fact": None,
+        }
 
     # ---- rights (kept separate from authenticity) ----------------------
     rights = {
@@ -650,6 +778,10 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         # services/run_metrics). Present on success AND failure
         # reports; None only when the caller collected no metrics.
         "execution": execution,
+        # Phase 3 / AM-022: the run-level discovery fact — degraded
+        # (no search key) is recorded distinctly from zero calls for
+        # other reasons, and from no record at all (unknown).
+        "discovery": discovery,
         # Stage 3H: soundtrack honesty record (see docstring).
         "soundtrack": soundtrack,
         # Stage H (M9/M10): final-file audio measurement and the
@@ -786,9 +918,10 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "missing_visuals": missing_visuals,
         "missing_visual_count": len(missing_visuals),
         # B-roll B0 (§6.1): items/runtime per tier from the timeline
-        # items' stamps, the B-roll share (T3+T4 runtime share —
-        # reported only in B0; the pack band comparison is B3), and
-        # the per-sentence tier list.
+        # items' stamps, the B-roll share (T3+T4 runtime share) and
+        # the per-sentence tier list. Phase 3 / D-B1: the block's
+        # "band" sub-key carries the founder-band comparison
+        # (report only).
         "tier_breakdown": tier_breakdown,
         # B-roll B0 (§3.3): sentences in unsearched-role beats,
         # named here at scene level. Phase 2 / D-B3: since B2 the
@@ -862,10 +995,41 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             "tier_breakdown.broll_share": (
                 "Share of total timeline-item runtime whose items "
                 "are stamped activity_broll or atmospheric (the "
-                "B-roll tiers T3+T4). Reported only — no band is "
-                "applied in B0 (the founder-set pack band comparison "
-                "lands in B3). Null when the timeline carries no "
-                "tier stamps (pre-B0 productions): unknown, not zero."
+                "B-roll tiers T3+T4). Null when the timeline carries "
+                "no tier stamps (pre-B0 productions): unknown, not "
+                "zero. Phase 3 / D-B1: tier_breakdown.band compares "
+                "this share against the active genre pack's "
+                "founder-set expectations.broll_share band "
+                "(within_band / over_band) — REPORT ONLY, never a "
+                "gate; an over-band run is reported, not blocked."
+            ),
+            "discovery": (
+                "Phase 3 / AM-022 — the run-level discovery fact. "
+                "state degraded_no_search_key (with fact 'discovery "
+                "degraded: no search key') ONLY when the run's "
+                "Serper calls were zero AND no SERPER_API_KEY was "
+                "configured; zero calls with a key configured is "
+                "state recorded with reason no_serper_calls and is "
+                "NOT degraded; no execution record is state unknown "
+                "with degraded null."
+            ),
+            "query_diagnostics": (
+                "Phase 3 / AM-021 — one entry per (scene, beat, "
+                "pass) retrieval pass: the queries ACTUALLY issued, "
+                "each with the source that supplied it (scenario / "
+                "composed / intent_queries, plus the search's own "
+                "format_shaped and targeted_institutional queries), "
+                "its raw hit count, and how many of its candidates "
+                "were scored and verifier-accepted. Tier-ladder "
+                "searches are accounted in tier_attempts instead."
+            ),
+            "beat_sufficiency": (
+                "Phase 3 / FP-4 (measure only) — per beat: its "
+                "sentence count, the distinct assets fetched for "
+                "it, their ratio, and meets_half (distinct assets "
+                "at least half the sentence count). beat_sufficiency"
+                "_summary counts searchable beats below that line. "
+                "Nothing draws differently because of this measure."
             ),
             "missing_visuals": (
                 "Phase 1 / AM-018 — the ONE coverage rule: an entry "
@@ -925,10 +1089,19 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "providers": {
             "funnel": {name: dict(counts) for name, counts in sorted(provider_funnel.items())},
             "accepted_footage_by_provider": dict(accepted_footage_by_provider),
+            # Phase 3 / AM-022b: stills counted beside footage.
+            "accepted_stills_by_provider": dict(accepted_stills_by_provider),
             "single_provider_reliance": {
                 "warning": reliance_warning,
-                "provider": reliance_provider if reliance_warning else None,
+                "provider": reliance_warning_provider,
                 "footage_share": round(reliance_share, 4) if total_footage else None,
+                # Phase 3 / AM-022b: every reliance figure states
+                # its base n; stills carry their own share/base.
+                "footage_base": total_footage,
+                "footage_provider": reliance_provider,
+                "stills_share": round(stills_share, 4) if total_stills else None,
+                "stills_base": total_stills,
+                "stills_provider": stills_provider,
             },
         },
         "download_failures": download_failures,
@@ -948,6 +1121,24 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         # never silent.
         "tier_attempts": tier_attempts,
         "tier_escalation": tier_escalation_totals,
+        # Phase 3 / AM-021: per-beat, per-pass query diagnostics —
+        # the queries actually issued at T1 (with the source that
+        # supplied each) and their hits / candidates / verified
+        # counts, aggregated from the scenes' stats.
+        "query_diagnostics": query_diagnostics,
+        # Phase 3 / FP-4: per-beat sufficiency (distinct fetched
+        # assets vs the beat's sentences) with the below-half count.
+        "beat_sufficiency": beat_sufficiency,
+        "beat_sufficiency_summary": {
+            "beats": len(beat_sufficiency),
+            "searchable_beats": sum(
+                1 for s in beat_sufficiency if s.get("searchable", True)
+            ),
+            "below_half": sum(
+                1 for s in beat_sufficiency
+                if s.get("searchable", True) and not s.get("meets_half")
+            ),
+        },
         "coverage": coverage,
         "rights": rights,
     }

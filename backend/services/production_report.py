@@ -232,6 +232,9 @@ def _tier_answer(tier_breakdown):
         )
     }
     answer["broll_share"] = tier_breakdown.get("broll_share")
+    # Phase 3 / D-B1: the founder-band comparison rides on the same
+    # answer (report only — within_band / over_band / unknown).
+    answer["band"] = tier_breakdown.get("band")
     return answer
 
 
@@ -322,7 +325,13 @@ def _questions(measurement, asset_report, verdicts):
                  "does it warn?",
                  {"footage_share": reliance.get("footage_share"),
                   "warning": reliance.get("warning"),
-                  "provider": reliance.get("provider")}
+                  "provider": reliance.get("provider"),
+                  # Phase 3 / AM-022b: the reliance figures state
+                  # their bases, and stills reliance rides along.
+                  "footage_base": reliance.get("footage_base"),
+                  "stills_share": reliance.get("stills_share"),
+                  "stills_base": reliance.get("stills_base"),
+                  "stills_provider": reliance.get("stills_provider")}
                  if reliance else None),
         "q21": q("How many assets have a recorded licence vs unknown licensing?",
                  {"recorded_licences": rights.get("recorded_licences"),
@@ -366,6 +375,17 @@ def _questions(measurement, asset_report, verdicts):
                  "ladder try, what did it cost, and what did it cover?",
                  asset_report.get("tier_escalation")
                  if isinstance(asset_report.get("tier_escalation"), dict)
+                 else None),
+        # Master Directive Phase 3 / AM-022: the discovery question —
+        # answered from the asset report's discovery block. The
+        # degraded state (zero Serper calls BECAUSE no search key
+        # was configured) is a first-class run fact, distinct from
+        # zero calls for other reasons and from no record at all
+        # (pre-Phase-3 productions report unknown).
+        "q28": q("Was discovery degraded because no search key was "
+                 "configured?",
+                 asset_report.get("discovery")
+                 if isinstance(asset_report.get("discovery"), dict)
                  else None),
     }
 

@@ -417,6 +417,59 @@ def _genre_expectations_block(
     }
 
 
+def _broll_band_block(report: dict, tier_accounting: dict) -> dict:
+    """Phase 3 / D-B1 (the B3 remainder): the measured B-roll share
+    against the active pack's founder-set band
+    (expectations.broll_share — true_crime/history max 0.40,
+    general max 0.50, founder-approved 2026-11-21).
+
+    REPORT ONLY, like every block in this module: an over-band run
+    evaluates to "over_band" and nothing gates on it. Unknowns stay
+    unknown — no pack named, no band in the pack, or no measured
+    share (unstamped timeline) each report their own state."""
+    pack_ref = report.get("genre_pack") if isinstance(report, dict) else None
+    pack_id = pack_ref.get("id") if isinstance(pack_ref, dict) else None
+    measured = tier_accounting.get("broll_share")
+    if not pack_id:
+        return {
+            "state": "unknown",
+            "genre_pack": None,
+            "max": None,
+            "basis": None,
+            "measured": measured,
+            "evaluation": "unknown",
+        }
+    from services import genre_packs
+
+    band = genre_packs.broll_share_band(genre_packs.load_pack(str(pack_id)))
+    if band is None:
+        return {
+            "state": "unknown",
+            "genre_pack": str(pack_id),
+            "max": None,
+            "basis": None,
+            "measured": measured,
+            "evaluation": "unknown",
+        }
+    if measured is None:
+        return {
+            "state": "not_recorded",
+            "genre_pack": str(pack_id),
+            "max": band["max"],
+            "basis": band["basis"],
+            "measured": None,
+            "evaluation": "unknown",
+        }
+    return {
+        "state": "recorded",
+        "genre_pack": str(pack_id),
+        "max": band["max"],
+        "basis": band["basis"],
+        "measured": measured,
+        "evaluation": "within_band" if measured <= band["max"] else "over_band",
+    }
+
+
 def _uncovered_beats(report: dict, timeline: dict) -> dict:
     missing = report.get("missing_visuals")
     missing_field = report.get("missing_visual_count")
@@ -975,8 +1028,9 @@ def measure_visual_quality(
     # per tier from the timeline items' own tier stamps, and the
     # B-roll share — (activity_broll + atmospheric runtime) / total
     # runtime. A stored timeline whose items carry no stamps yields
-    # state "not_recorded" and a null share: unknown, not zero. The
-    # founder-set band comparison is B3; this block only measures.
+    # state "not_recorded" and a null share: unknown, not zero.
+    # Phase 3 / D-B1: the "band" sub-block compares the share with
+    # the pack's founder-set band — report only, never a gate.
     _tier_counts: Counter = Counter()
     _tier_runtime: Counter = Counter()
     _unstamped_items = 0
@@ -1008,6 +1062,7 @@ def measure_visual_quality(
         ),
         "unstamped_items": _unstamped_items,
     }
+    tier_accounting["band"] = _broll_band_block(report, tier_accounting)
 
     return {
         "schema": "cinemora.visual_quality/1",

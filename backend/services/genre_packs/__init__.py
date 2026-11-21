@@ -105,6 +105,30 @@ def available_packs():
     return [load_pack(p) for p in PACK_IDS if load_pack(p) is not None]
 
 
+def broll_share_band(pack):
+    """The founder-set B-roll share band (D-B1, approved 2026-11-21)
+    carried in a pack's expectations data: {"max": float, "basis":
+    str}, or None when the pack carries no usable band.
+
+    Deliberately NOT part of calibration.EXPECTATION_FIELDS (the
+    C.G.2 five calibrated shares stay as they are): the band is a
+    founder-set reporting reference, not a calibrated expectation.
+    Consumers compare the measured tier B-roll share against it and
+    REPORT the result — nothing gates on it."""
+    entry = ((pack or {}).get("expectations") or {}).get("broll_share")
+    if not isinstance(entry, dict):
+        return None
+    rng = entry.get("range")
+    if (
+        isinstance(rng, (list, tuple))
+        and len(rng) == 2
+        and isinstance(rng[1], (int, float))
+        and not isinstance(rng[1], bool)
+    ):
+        return {"max": float(rng[1]), "basis": entry.get("basis") or "founder_band"}
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Visual profile (Stage 7 / R7 — Architecture Review B.2.2)
 # ---------------------------------------------------------------------------
