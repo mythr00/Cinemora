@@ -577,6 +577,33 @@ def enrich_bible_with_research(bible, script_text, sentences=None, genre_pack=No
         )
         subjects = ranked[:_RESEARCH_MAX_SUBJECTS]
 
+        # Stage 7 / R7 (review section B.2.4): the genre pack's
+        # visual_profile research_requirements shape the research
+        # pass — the primary subject is researched FIRST so its
+        # minimum-source requirement is the first claim on the pass's
+        # failure budget. The requirements are data from the pack,
+        # resolved through the same validated profile machinery the
+        # pipeline uses; support labelling is untouched.
+        research_requirements = None
+        if isinstance(genre_pack, dict):
+            try:
+                from services import genre_packs as _genre_packs
+
+                _resolved = _genre_packs.resolve_visual_profile(genre_pack)
+                research_requirements = (
+                    (_resolved.get("profile") or {}).get(
+                        "research_requirements"
+                    )
+                )
+            except Exception:
+                research_requirements = None
+        primary_subject_id = bible.get("primary_subject_id")
+        if research_requirements and primary_subject_id:
+            for _i, _entity in enumerate(subjects):
+                if _entity.get("id") == primary_subject_id and _i:
+                    subjects.insert(0, subjects.pop(_i))
+                    break
+
         search_fn = _resolve_search_web()
         subjects_researched = 0
         sources_attached = 0
@@ -617,12 +644,28 @@ def enrich_bible_with_research(bible, script_text, sentences=None, genre_pack=No
 
         conflicts = _label_bible_facts(bible, by_id)
         bible["conflicts"] = conflicts
+        # Stage 7 / R7: record the pack's research requirements and
+        # whether the primary subject's minimum was met — a record,
+        # never a gate on support labelling.
+        _primary_sources = None
+        _min_sources_met = None
+        if research_requirements:
+            _primary = by_id.get(primary_subject_id) or {}
+            _primary_sources = len(_primary.get("sources") or [])
+            _minimum = research_requirements.get(
+                "min_sources_per_primary_subject"
+            )
+            if isinstance(_minimum, int) and search_fn is not None:
+                _min_sources_met = _primary_sources >= _minimum
         bible["research_meta"] = {
             "researched_at": researched_at,
             "subjects_researched": subjects_researched,
             "sources_attached": sources_attached,
             "conflicts_found": len(conflicts),
             "genre_pack": (genre_pack or {}).get("id"),
+            "research_requirements": research_requirements,
+            "primary_subject_sources": _primary_sources,
+            "primary_subject_min_sources_met": _min_sources_met,
         }
     except Exception as error:  # research must never crash a production
         print(f"STORY RESEARCH: pass failed ({error}) — facts stay script_asserted.")
@@ -1088,12 +1131,15 @@ ACCEPT_THRESHOLD = {"exact": 0.55, "representative": 0.34, "generic": 0.22}
 # - evidence (specificity "exact"): the sentence claims a specific
 #   person/place/event; subject AND place stay REQUIRED at the gate,
 #   exactly as before.
-# - contextual (specificity "representative"): the subject stays
-#   REQUIRED at the gate (pinned by the strict-gate tests — a named
-#   subject is the contract of a representative need), and place stays
-#   required, BUT a compound place ("King Road house, Moscow, Idaho")
-#   is a set of alternative components, not one indivisible string:
-#   any one fully-named component satisfies it (see gate_shot_need).
+# - contextual (specificity "representative"): at Stage 1 the subject
+#   and place stayed REQUIRED at the gate. Stage 7 (Master
+#   Architecture Review C.B.2, R7) supersedes that contract: the
+#   named-entity absence requirements are replaced by an
+#   activity/place-TYPE presence floor (see CATEGORY_PROFILES below).
+#   The Stage 1 compound-place rule ("King Road house, Moscow,
+#   Idaho" is a set of alternative components, not one indivisible
+#   string — see gate_shot_need) still governs the evidence contract,
+#   where named places remain required.
 # - atmosphere (specificity "generic"): generic b-roll/atmosphere has
 #   no specific subject or place contract, so neither is required at
 #   the gate. Acceptance is still governed by verify_candidate's
@@ -1106,12 +1152,12 @@ ACCEPT_THRESHOLD = {"exact": 0.55, "representative": 0.34, "generic": 0.22}
 # apply identically in all categories, and the topical-evidence gates
 # in verify_candidate are unchanged. Thresholds are unchanged.
 # A scenario/need may carry an explicit "visual_category" (the Visual
-# Director seam, Stage 8); until then the category derives from
-# specificity, which is the only per-need verification modulator the
-# pipeline has ever had.
+# Director seam, Stage 8); otherwise the category derives from the
+# shot's own signals — shot_type, sentence role and specificity
+# (Stage 7 derivation in resolve_visual_category below).
 # ---------------------------------------------------------------------------
 
-VISUAL_CATEGORIES = ("evidence", "contextual", "atmosphere")
+VISUAL_CATEGORIES = ("evidence", "contextual", "environmental", "atmosphere")
 
 _CATEGORY_BY_SPECIFICITY = {
     "exact": "evidence",
@@ -1119,24 +1165,88 @@ _CATEGORY_BY_SPECIFICITY = {
     "generic": "atmosphere",
 }
 
+# Shot types that always carry the evidence contract (Stage 7, review
+# section C.B.2): a document or a specific object on screen is a
+# factual claim, whatever the specificity label says.
+_EVIDENCE_SHOT_TYPES = frozenset({"document", "object"})
+
 CATEGORY_PROFILES = {
-    "evidence": {"subject_required": True, "place_required": True},
-    "contextual": {"subject_required": True, "place_required": True},
-    "atmosphere": {"subject_required": False, "place_required": False},
+    # Evidence: the full contract, unchanged — named subject AND named
+    # place required at the gate, full scorer dimensions required.
+    "evidence": {
+        "subject_required": True,
+        "place_required": True,
+        "type_presence_required": False,
+    },
+    # Contextual (Stage 7, C.B.2): the named-entity ABSENCE
+    # requirements no longer apply — requiring a generic candidate's
+    # metadata to name the specific person/place was the category
+    # error behind the funnel collapse. Instead the gate requires the
+    # activity/place-TYPE token set (bedroom, student house, night —
+    # never the proper noun) to show non-zero presence. The scorer is
+    # unchanged and the specificity threshold is unchanged: the
+    # profile changes which dimensions are REQUIRED, never the bar.
+    "contextual": {
+        "subject_required": False,
+        "place_required": False,
+        "type_presence_required": True,
+    },
+    # Environmental (Stage 7, C.B.2): as contextual, with location
+    # judged as place-type plus era/region compatibility; the era
+    # dimension must be present OR explicitly waived by the profile
+    # for era-neutral settings, and the waiver is recorded on the
+    # verdict (``era_waived``; temporal dimension ``not_required``).
+    "environmental": {
+        "subject_required": False,
+        "place_required": False,
+        "type_presence_required": True,
+    },
+    # Atmosphere: topical dimension only; contradiction vetoes still
+    # apply (vetoes are universal and fire before any profile logic).
+    "atmosphere": {
+        "subject_required": False,
+        "place_required": False,
+        "type_presence_required": False,
+    },
 }
 
 
 def resolve_visual_category(source):
     """The visual category for a scenario or shot need dict.
 
-    An explicit ``visual_category`` wins; otherwise the category
-    derives from ``specificity`` (unknown specificity defaults to
-    contextual, mirroring verify_candidate's 0.34 default)."""
+    Derivation order (Stage 7, C.B.2) — every signal comes from the
+    SHOT, never from a candidate: an explicit ``visual_category``
+    wins; a document/object shot type or an evidence sentence role
+    carries the evidence contract; exact specificity is evidence; an
+    abstract-broll shot is atmosphere; a place shot at
+    representative/generic specificity whose need names NO specific
+    place is environmental (it establishes setting, not a site);
+    anything else falls back to the Stage 1 specificity mapping
+    (unknown specificity defaults to contextual, mirroring
+    verify_candidate's 0.34 default)."""
     source = source or {}
     explicit = str(source.get("visual_category") or "").strip().lower()
     if explicit in VISUAL_CATEGORIES:
         return explicit
     specificity = str(source.get("specificity") or "").strip().lower()
+    shot_type = str(
+        source.get("shot_type") or source.get("kind") or ""
+    ).strip().lower()
+    if shot_type in _EVIDENCE_SHOT_TYPES:
+        return "evidence"
+    if str(source.get("role") or "").strip().lower() == "evidence":
+        return "evidence"
+    if specificity == "exact":
+        return "evidence"
+    if shot_type == "abstract_broll":
+        return "atmosphere"
+    if (
+        shot_type == "place"
+        and specificity in ("representative", "generic")
+        and "place" in source
+        and not str(source.get("place") or "").strip()
+    ):
+        return "environmental"
     return _CATEGORY_BY_SPECIFICITY.get(specificity, "contextual")
 
 
@@ -1404,6 +1514,70 @@ def detect_contradiction(candidate, scenario, bible, text, subject, subject_hit)
     return "", ""
 
 
+# Stage 7 / R7 (review section C.B.3): the verdict's per-dimension
+# outcomes, in the review's dimension vocabulary. A dimension a profile
+# does not require is recorded ``not_required``; a dimension nobody can
+# evaluate at metadata-verification time (visual — VA-01 excluded;
+# transcript and media quality are post-download stages; source
+# credibility is a bounded post-acceptance tie-break and never enters
+# the composite) is recorded ``not_evaluated``. The dimension outcomes
+# are RECORDS: they change no decision — the composite and the
+# specificity thresholds above are exactly as before.
+VERDICT_DIMENSIONS = (
+    "entity", "event", "activity", "location", "temporal", "topical",
+    "transcript", "visual", "factual_consistency",
+    "source_credibility", "media_quality",
+)
+
+
+def _unevaluated_dimensions():
+    return {name: "not_evaluated" for name in VERDICT_DIMENSIONS}
+
+
+def _dimension_results_for_verdict(
+    category, subject, subject_hit, wanted, overlap, era,
+    era_contribution, contradiction_reason,
+):
+    profile = category_profile(category)
+    if subject:
+        entity = "pass" if subject_hit else (
+            "fail" if profile["subject_required"] else "not_required"
+        )
+    else:
+        entity = "not_evaluated"
+    if era:
+        temporal = "pass" if era_contribution > 0 else "fail"
+    elif category == "environmental":
+        # C.B.2: the environmental profile waives the era dimension
+        # for era-neutral settings; the waiver is recorded, here and
+        # as ``era_waived`` on the verdict.
+        temporal = "not_required"
+    else:
+        temporal = "not_evaluated"
+    if wanted:
+        topical = "pass" if overlap else "fail"
+    else:
+        topical = "not_evaluated"
+    return {
+        "entity": entity,
+        "event": (
+            "fail" if contradiction_reason == CONTRADICTORY_EVENT
+            else "not_evaluated"
+        ),
+        # Activity is not separated from topical at metadata time
+        # (C.B.3 table); location is judged at the gate, not scored.
+        "activity": "not_evaluated",
+        "location": "not_evaluated",
+        "temporal": temporal,
+        "topical": topical,
+        "transcript": "not_evaluated",
+        "visual": "not_evaluated",
+        "factual_consistency": "fail" if contradiction_reason else "pass",
+        "source_credibility": "not_evaluated",
+        "media_quality": "not_evaluated",
+    }
+
+
 def verify_candidate(candidate, scenario, bible):
     """
     candidate: dict with any of title, snippet, description, url, source.
@@ -1453,6 +1627,7 @@ def verify_candidate(candidate, scenario, bible):
             "rejection_reason": BANNED_PROVIDER_REASON,
             "failed_checks": [BANNED_PROVIDER_REASON],
             "category": resolve_visual_category(scenario),
+            "dimension_results": _unevaluated_dimensions(),
         }
 
     # Plan §3.3 item 1 (tests 17-18): a candidate whose recorded
@@ -1469,6 +1644,7 @@ def verify_candidate(candidate, scenario, bible):
             "rejection_reason": FOREIGN_PROVENANCE_REASON,
             "failed_checks": [FOREIGN_PROVENANCE_REASON],
             "category": resolve_visual_category(scenario),
+            "dimension_results": _unevaluated_dimensions(),
         }
 
     text = _norm(" ".join(str(candidate.get(k) or "") for k in ("title", "snippet", "description", "url", "source")))
@@ -1592,6 +1768,21 @@ def verify_candidate(candidate, scenario, bible):
         # required/optional contract; the scorer's rules above are
         # category-independent.
         "category": resolve_visual_category(scenario),
+        # Stage 7 / R7 (C.B.2/C.B.3): every verdict is stamped with
+        # its profile's per-dimension outcomes, so an acceptance
+        # under a non-evidence profile is distinguishable from an
+        # evidence acceptance in the asset record and the ledger.
+        "dimension_results": _dimension_results_for_verdict(
+            resolve_visual_category(scenario), subject, subject_hit,
+            wanted, overlap, era, contributions.get("era", 0.0),
+            contradiction_reason,
+        ),
+        # C.B.2: the environmental profile's era waiver, recorded
+        # whenever it applies (era-neutral setting, no era to judge).
+        "era_waived": bool(
+            resolve_visual_category(scenario) == "environmental"
+            and not era
+        ),
     }
 
 

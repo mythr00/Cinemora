@@ -857,6 +857,17 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     _genre_pack = _genre_info["pack"]
     options["genre_pack"] = _genre_info["pack_id"]
     options["genre_source"] = _genre_info["source"]
+    # Stage 7 / R7: the resolved visual profile is data, recorded in
+    # the same options snapshot — which profile supplied the values,
+    # any validation failures that forced the fail-closed fallback
+    # to the general profile, and the pack's visual theme.
+    options["visual_profile_source"] = _genre_info.get(
+        "visual_profile_source"
+    )
+    options["visual_profile_failures"] = list(
+        _genre_info.get("visual_profile_failures") or []
+    )
+    options["visual_theme"] = _genre_info.get("visual_theme")
     print(
         f"Genre pack: {_genre_info['pack_id']} "
         f"(source: {_genre_info['source']})"

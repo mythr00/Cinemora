@@ -47,6 +47,7 @@ class RunContext:
         youtube_transcript_cache=None,
         yt_info_failed=None,
         yt_transcript_failed=None,
+        segment_file_cache=None,
         search_failure_state=None,
         missing_visual_count=0,
         rights_policy=None,
@@ -84,6 +85,13 @@ class RunContext:
         self.yt_info_failed = yt_info_failed if yt_info_failed is not None else set()
         self.yt_transcript_failed = (
             yt_transcript_failed if yt_transcript_failed is not None else set()
+        )
+        # Stage 7 / R8: extracted-clip cache keyed by segment identity
+        # (selection segment_id -> asset template). Per-run by
+        # construction: cross-project file reuse is not permitted —
+        # the cache dies with the run context.
+        self.segment_file_cache = (
+            segment_file_cache if segment_file_cache is not None else {}
         )
         self.search_failure_state = (
             search_failure_state

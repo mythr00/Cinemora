@@ -240,6 +240,7 @@ def build_event(
     shot_index=None,
     beat_id=None,
     sentence_numbers=None,
+    segment_id=None,
 ):
     """One evaluation-event record (the candidate_records schema).
 
@@ -279,6 +280,12 @@ def build_event(
         ),
         "dimension_results": dimension_results,
         "segment_evidence": segment_evidence,
+        # Stage 7 / R8 (C.D.3): evaluation events reference the
+        # segment they concern, so segment-level provenance and
+        # reuse counts can be derived across runs. None when the
+        # event predates segment selection (gate/scoring events are
+        # truthfully segment-less — identity is minted at download).
+        "segment_id": segment_id,
         "segment_failure_cause": segment_failure_cause,
         "transcript_check": transcript_check,
         "specificity": specificity,

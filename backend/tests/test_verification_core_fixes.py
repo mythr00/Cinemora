@@ -90,9 +90,16 @@ def test_exact_still_requires_subject():
 # ---------------------------------------------------------------- VA-05
 
 def test_gate_ignores_matched_query_words():
+    # Stage 7 supersession (Review C.B.2): a plain representative
+    # need is CONTEXTUAL and no longer carries named-entity absence
+    # requirements at the gate. VA-05 (the query is not evidence) is
+    # category-independent, so the need declares the EVIDENCE
+    # category explicitly — the contract under which the gate-level
+    # pin applies verbatim.
     need = {
         "required_type": "event",
         "specificity": "representative",
+        "visual_category": "evidence",
         "required_subject": "East Berlin",
         "place": "berlin",
     }
@@ -138,7 +145,11 @@ def test_gate_executes_once_per_candidate(monkeypatch):
         {"title": "Champagne wall rental", "snippet": "weddings", "url": "https://x.example/1"},
         {"title": "Berlin Wall crowds 1989", "snippet": "crowds crossing", "url": "https://x.example/2"},
     ]
+    # Evidence category declared explicitly (Stage 7 / C.B.2 — see
+    # test_gate_ignores_matched_query_words): both candidates are
+    # gate-rejected under the evidence contract, as before.
     need = {"required_type": "event", "specificity": "representative",
+            "visual_category": "evidence",
             "required_subject": "East Berlin", "place": "berlin"}
     scored = mp._uve_verify_all(candidates, _scenario(), _bible(), shot_need=need)
     assert len(calls) == 2  # exactly one gate call per candidate
@@ -153,7 +164,10 @@ def test_pick_rejection_counts_single_execution(capsys):
     candidates = [
         {"title": "Champagne wall rental", "snippet": "weddings", "url": "https://x.example/1"},
     ]
+    # Evidence category declared explicitly (Stage 7 / C.B.2 — see
+    # test_gate_ignores_matched_query_words).
     need = {"required_type": "event", "specificity": "representative",
+            "visual_category": "evidence",
             "required_subject": "East Berlin", "place": "berlin"}
     scored = mp._uve_verify_all(candidates, _scenario(), _bible(), shot_need=need)
     from services.visual_registry import VisualRegistry

@@ -244,9 +244,16 @@ def test_outcome_accounting_one_sentence_per_bucket():
     result = measure_visual_quality(timeline=timeline, asset_report=report, rights_manifest=[])
     outcomes = result["sentence_outcomes"]
     assert outcomes["sentence_count"] == 5
+    # Stage 7 / R7 (C.B.3): the buckets gained three profile keys
+    # (direct_contextual_profile / direct_environmental_profile /
+    # direct_atmosphere_profile) for profile-stamped direct items;
+    # this unstamped fixture counts zero in all three.
     assert outcomes["buckets"] == {
         "direct": 1, "approved_graphic": 1, "contextual": 1,
         "editorial_holdover": 1, "uncovered": 1,
+        "direct_contextual_profile": 0,
+        "direct_environmental_profile": 0,
+        "direct_atmosphere_profile": 0,
     }
     assert outcomes["reconciles"] is True
     assert len(outcomes["per_sentence"]) == 5

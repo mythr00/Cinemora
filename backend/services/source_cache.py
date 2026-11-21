@@ -101,6 +101,30 @@ CREATE TABLE IF NOT EXISTS moment (
     confidence TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_moment_url ON moment(url);
+
+-- Stage 7 / R8 (Architecture Review C.D.3): the transcript-anchored
+-- segment index, keyed by CANONICAL source key (never a raw URL —
+-- the legacy moment table above is keyed by raw URL, has no callers
+-- outside this module, and is superseded by this table; it is kept
+-- only because existing cache databases already carry it). A row is
+-- one candidate segment of one source: its window, its basis
+-- (chapter / transcript / description) and the evidence text it was
+-- derived from. Rows carry NO verdict — segment evidence is
+-- organisation, not pre-verification; verdicts stay contract-relative
+-- and are re-evaluated per beat. This is the source-intelligence
+-- cache database (created with CREATE TABLE IF NOT EXISTS like every
+-- table here), not an application-database migration.
+CREATE TABLE IF NOT EXISTS segment_index (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_key TEXT,
+    start REAL,
+    end REAL,
+    basis TEXT,
+    text TEXT,
+    text_hash TEXT,
+    indexed_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_segment_index_key ON segment_index(source_key);
 """
 
 _PROFILE_FIELDS = {
@@ -318,6 +342,51 @@ def moments_for(url: str) -> list:
         d["entities"] = json.loads(d.pop("entities_json"))
         out.append(d)
     return out
+
+
+# ------------------------------------------------------- segment index
+
+def segment_index_replace(source_key: str, segments: list) -> None:
+    """Replace the indexed candidate segments for one canonical
+    source key (Stage 7 / R8). Segments are dicts with start, end,
+    basis and text; the text hash is derived here so every stored
+    row's evidence text is content-addressed."""
+    import hashlib
+
+    with _db() as c:
+        c.execute(
+            "DELETE FROM segment_index WHERE source_key=?", (source_key,)
+        )
+        c.executemany(
+            "INSERT INTO segment_index "
+            "(source_key,start,end,basis,text,text_hash,indexed_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            [
+                (
+                    source_key,
+                    float(s["start"]),
+                    float(s["end"]),
+                    str(s.get("basis") or ""),
+                    str(s.get("text") or ""),
+                    hashlib.sha256(
+                        str(s.get("text") or "").encode("utf-8")
+                    ).hexdigest(),
+                    time.time(),
+                )
+                for s in segments
+            ],
+        )
+
+
+def segment_index_for(source_key: str) -> list:
+    """The indexed candidate segments for one canonical source key,
+    ordered by start. Empty list when the source was never indexed."""
+    with _db() as c:
+        rows = c.execute(
+            "SELECT * FROM segment_index WHERE source_key=? ORDER BY start",
+            (source_key,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------- YouTube 429 breaker

@@ -267,9 +267,17 @@ def test_duplicate_candidates_suppressed_across_queries(monkeypatch):
 
 
 def test_gate_rejects_irrelevant_spam_and_accepts_on_subject_candidate():
+    # Stage 7 supersession (Review C.B.2): the named-entity absence
+    # contract pinned here is the EVIDENCE profile's — a plain
+    # representative (contextual) need is now governed by the
+    # type-presence floor + scorer instead. The need declares the
+    # evidence category explicitly; the strict gate itself is not
+    # weakened in any category (vetoes universal, evidence contract
+    # byte-identical).
     need = {
         "required_type": "event",
         "specificity": "representative",
+        "visual_category": "evidence",
         "required_subject": "East Berlin",
         "place": "berlin",
         "era": "1989",

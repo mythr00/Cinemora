@@ -51,6 +51,11 @@ try:
 except ImportError:  # flat-layout fallback
     import process_utils
 
+try:
+    from services import segment_index
+except ImportError:  # flat-layout fallback
+    import segment_index
+
 
 # ==========================================================================
 # EVIDENCE CLASSIFICATION
@@ -356,6 +361,9 @@ _SOURCE_DURATION_CACHE: dict = {}
 _SEGMENT_BASIS: dict = {}
 _SEGMENT_ATTEMPTS: dict = {}
 _SEGMENT_FAILURE_CAUSE: dict = {}
+# Stage 7 / R8: extracted-clip cache keyed by selection segment_id
+# (see _uve_download_video_candidate). Per-run via RunContext.
+_SEGMENT_FILE_CACHE: dict = {}
 
 # yt-dlp TLS trust (founder investigation, 2026-11-19): yt-dlp verifies
 # TLS against certifi's bundled Mozilla roots by default and ignores
@@ -2315,6 +2323,7 @@ def reset_media_caches():
     _SEGMENT_BASIS.clear()
     _SEGMENT_ATTEMPTS.clear()
     _SEGMENT_FAILURE_CAUSE.clear()
+    _SEGMENT_FILE_CACHE.clear()
 
 
 # =====================================================================
@@ -2351,6 +2360,7 @@ _RUN_CONTEXT_BINDINGS = {
     "_youtube_transcript_cache": "youtube_transcript_cache",
     "_yt_info_failed": "yt_info_failed",
     "_yt_transcript_failed": "yt_transcript_failed",
+    "_SEGMENT_FILE_CACHE": "segment_file_cache",
     "_search_failure_state": "search_failure_state",
 }
 
@@ -2375,6 +2385,7 @@ _DEFAULT_RUN_CONTEXT = run_context.RunContext(
     youtube_transcript_cache=_youtube_transcript_cache,
     yt_info_failed=_yt_info_failed,
     yt_transcript_failed=_yt_transcript_failed,
+    segment_file_cache=_SEGMENT_FILE_CACHE,
     search_failure_state=_search_failure_state,
 )
 run_context.set_default(_DEFAULT_RUN_CONTEXT)
@@ -2638,6 +2649,74 @@ def _get_youtube_transcript(url):
     return transcript
 
 
+def _transcript_passages(key):
+    """The transcript passages of one video source: [{start, text}].
+
+    Stage 7 / R8 (review C.D.3): when the segment index already
+    holds this source's transcript passages, they are read from the
+    index — segment EVIDENCE is reused across beats and runs without
+    re-calling yt-dlp or re-downloading the transcript. Otherwise
+    the passages derive from the single transcript path
+    (_get_youtube_transcript: memory cache -> persistent profile ->
+    one download; failures are cached, never retried per shot),
+    exactly as before. Returns None when no transcript is available
+    at all, [] when one exists but yields no passages.
+    """
+    try:
+        indexed = segment_index.indexed_segments(
+            canonical_source_key(key)
+        )
+    except Exception:
+        indexed = []
+    passages = [
+        {"start": float(row["start"]), "text": row.get("text") or ""}
+        for row in indexed
+        if row.get("basis") == "transcript" and row.get("text")
+    ]
+    if passages:
+        return passages
+
+    transcript = _get_youtube_transcript(key)
+    if transcript is None:
+        return None
+    return _passages_from_transcript(transcript)
+
+
+def _passages_from_transcript(transcript):
+    """[{start, text}] from a json3 transcript payload — the one
+    passage construction, shared by live segment selection and by
+    the segment-index builder."""
+    passages = []
+    for event_item in (transcript or {}).get("events") or []:
+        segs = event_item.get("segs") or []
+        if not segs:
+            continue
+        text_parts = [
+            str(seg.get("utf8") or "")
+            for seg in segs
+        ]
+        passage_text = " ".join(
+            part.strip()
+            for part in text_parts
+            if part.strip()
+        ).strip()
+        if not passage_text:
+            continue
+        try:
+            start_time = (
+                float(event_item.get("tStartMs") or 0) / 1000.0
+            )
+        except (TypeError, ValueError):
+            continue
+        passages.append(
+            {
+                "start": start_time,
+                "text": passage_text,
+            }
+        )
+    return passages
+
+
 def _youtube_transcript_segment(
     url,
     subject="",
@@ -2695,59 +2774,13 @@ def _youtube_transcript_segment(
         return None
 
     # ---------------------------------------------------------
-    # Transcript: memory cache -> persistent cache -> one download.
-    # Failures (no captions, HTTP 429) are cached, never retried
-    # per shot.
+    # Transcript passages: the segment index when this source was
+    # already indexed (Stage 7 / R8), else the single transcript
+    # path (memory cache -> persistent cache -> one download;
+    # failures are cached, never retried per shot).
     # ---------------------------------------------------------
 
-    transcript = _get_youtube_transcript(key)
-
-    if transcript is None:
-        return None
-
-    info = _youtube_metadata_cache.get(key) or {}
-
-    events = transcript.get("events") or []
-
-    passages = []
-
-    for event_item in events:
-        segs = event_item.get("segs") or []
-
-        if not segs:
-            continue
-
-        text_parts = [
-            str(seg.get("utf8") or "")
-            for seg in segs
-        ]
-
-        passage_text = " ".join(
-            part.strip()
-            for part in text_parts
-            if part.strip()
-        ).strip()
-
-        if not passage_text:
-            continue
-
-        try:
-            start_time = (
-                float(
-                    event_item.get("tStartMs")
-                    or 0
-                )
-                / 1000.0
-            )
-        except (TypeError, ValueError):
-            continue
-
-        passages.append(
-            {
-                "start": start_time,
-                "text": passage_text,
-            }
-        )
+    passages = _transcript_passages(key)
 
     if not passages:
         return None
@@ -4012,6 +4045,101 @@ def _provider_duration_seconds(candidate):
     return None, ""
 
 
+def _build_segment_index(url, slim):
+    """Normalise one source's chapters, transcript passages and
+    description moments into candidate segments (Stage 7 / R8,
+    review C.D.3). Each segment records its basis and its evidence
+    text — and NO verdict. Chapters come first, then transcript
+    passages, then description moments (the store applies the
+    per-source cap in that priority order)."""
+    key = str(url or "").split("&", 1)[0].strip()
+    duration = None
+    if slim and slim.get("duration"):
+        try:
+            duration = float(slim["duration"])
+        except (TypeError, ValueError):
+            duration = None
+    segments = []
+
+    chapters = []
+    for chapter in (slim or {}).get("chapters") or []:
+        if not isinstance(chapter, dict):
+            continue
+        try:
+            start = float(chapter.get("start_time"))
+        except (TypeError, ValueError):
+            continue
+        chapters.append(
+            {"start": start, "title": str(chapter.get("title") or "")}
+        )
+    chapters.sort(key=lambda c: c["start"])
+    for i, chapter in enumerate(chapters):
+        end = (
+            chapters[i + 1]["start"]
+            if i + 1 < len(chapters)
+            else (duration or chapter["start"] + DEFAULT_CLIP_DURATION)
+        )
+        segments.append({
+            "start": chapter["start"], "end": end,
+            "basis": "chapter", "text": chapter["title"],
+        })
+
+    transcript = _get_youtube_transcript(key)
+    raw_passages = _passages_from_transcript(transcript)
+    for i, passage in enumerate(raw_passages):
+        if i + 1 < len(raw_passages):
+            end = raw_passages[i + 1]["start"]
+        elif duration:
+            end = min(passage["start"] + 30.0, duration)
+        else:
+            end = passage["start"] + 30.0
+        segments.append({
+            "start": passage["start"], "end": max(end, passage["start"]),
+            "basis": "transcript", "text": passage["text"],
+        })
+
+    if slim and slim.get("description"):
+        for seconds, text in _youtube_description_moments(
+            slim["description"]
+        ):
+            segments.append({
+                "start": float(seconds),
+                "end": float(seconds) + DEFAULT_CLIP_DURATION,
+                "basis": "description", "text": text,
+            })
+    return segments
+
+
+def _ensure_segment_index(url, slim):
+    """Build the source's segment index if it has none (C.D.3: built
+    once per source, when the source first reaches segment
+    selection). Fail-soft by design: an index failure is recorded in
+    the source's segment attempts and never blocks selection."""
+    key = str(url or "").split("&", 1)[0].strip()
+    if not key:
+        return
+    try:
+        segments, built = segment_index.ensure_segment_index(
+            canonical_source_key(key),
+            lambda: _build_segment_index(url, slim),
+        )
+    except Exception as error:
+        attempts = _SEGMENT_ATTEMPTS.get(url)
+        if attempts is not None:
+            attempts.append({
+                "source": "segment_index", "outcome": "failed",
+                "error": str(error)[:120],
+            })
+        return
+    if built:
+        attempts = _SEGMENT_ATTEMPTS.get(url)
+        if attempts is not None:
+            attempts.append({
+                "source": "segment_index", "outcome": "built",
+                "segments": len(segments),
+            })
+
+
 def _segment_start_detailed(url, subject="", place="", event="", era="",
                             duration=DEFAULT_CLIP_DURATION,
                             provider_duration=None,
@@ -4107,6 +4235,12 @@ def _segment_start_detailed(url, subject="", place="", event="", era="",
             })
     if source_duration and source_duration <= clip * 2:
         return 0, "whole_asset"
+
+    # Stage 7 / R8 (C.D.3 cost control): the segment index is built
+    # only for sources that reached segment selection — they passed
+    # the metadata gate and verification for at least one shot — and
+    # only when the whole-asset shortcut did not already answer.
+    _ensure_segment_index(url, slim)
 
     start = _youtube_start(
         url, subject=subject, place=place, event=event, era=era
@@ -4209,6 +4343,37 @@ def _uve_download_video_candidate(
         )
         candidate["rejection_stage"] = "segment_evidence"
         return None
+
+    # Stage 7 / R8 (C.D.3): extraction is cached BY SEGMENT within a
+    # run. The extracted clip file is a function of (segment_id, clip
+    # duration); the selection-time identity uses the nominal clip
+    # duration (the probed identity is stamped after download). A
+    # second beat needing the same segment reuses the extracted file
+    # instead of re-downloading — the beat-relative fields (this
+    # beat's verdict, candidate id, shot need) are re-stamped from
+    # THIS candidate, because verdicts are contract-relative and
+    # never inherited from another beat's decision.
+    _selection_segment_id = segment_index.segment_id_for(
+        canonical_source_key(url),
+        float(start),
+        float(start) + DEFAULT_CLIP_DURATION,
+    )
+    _cached_asset = _SEGMENT_FILE_CACHE.get(_selection_segment_id)
+    if _cached_asset is not None and Path(
+        _cached_asset.get("file_path") or ""
+    ).exists():
+        reused = dict(_cached_asset)
+        for _field in (
+            "verification", "candidate_id", "shot_need",
+            "matched_query", "query", "universal_score",
+            "relevance_score",
+        ):
+            if _field in candidate:
+                reused[_field] = candidate[_field]
+        reused["sentence_number"] = sentence_number
+        reused["segment_reused"] = True
+        candidate["segment_id"] = reused.get("segment_id")
+        return reused
 
     safe_query = str(
         candidate.get("matched_query")
@@ -4346,6 +4511,16 @@ def _uve_download_video_candidate(
         }
     )
 
+    # Stage 7 / R8: mint the segment identity from the PROBED window
+    # (the authoritative extracted segment) and stamp it on the asset
+    # and the candidate; cache the extraction under the selection
+    # identity so a later beat needing the same segment reuses this
+    # file (the reuse branch above).
+    asset["segment_id"] = segment_index.segment_id_for_asset(asset)
+    candidate["segment_id"] = asset["segment_id"]
+    if asset["segment_id"]:
+        _SEGMENT_FILE_CACHE[_selection_segment_id] = dict(asset)
+
     print(
         f"YOUTUBE ASSET READY: "
         f"start={start}s "
@@ -4481,6 +4656,11 @@ def _uve_download_image_candidate(
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
         }
     )
+
+    # Stage 7 / R8: a still's segment identity is the whole-asset id
+    # of its canonical source (C.D.3).
+    asset["segment_id"] = segment_index.segment_id_for_asset(asset)
+    candidate["segment_id"] = asset["segment_id"]
 
     print(
         f"IMAGE ASSET READY: "
@@ -4847,6 +5027,19 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
             and str(e.get("canonical")).strip().lower() != _place_norm
         ])
 
+    # Stage 7 / R7: ONE category per shot across gate, scorer and
+    # events. The shot NEED is the authoritative shot record (it
+    # carries shot_type and the sentence's named place, which the
+    # bare scenario may lack), so when a need exists the scorer
+    # judges under the need's resolved category — stamped onto a
+    # COPY of the scenario; the caller's dict is never mutated.
+    verify_scenario = scenario
+    if gate_need is not None:
+        verify_scenario = dict(scenario or {})
+        verify_scenario["visual_category"] = (
+            story.resolve_visual_category(gate_need)
+        )
+
     for candidate in candidates:
         candidate["candidate_id"] = _candidate_id_for(candidate)
         key = _uve_candidate_key(candidate)
@@ -4895,7 +5088,7 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
         source_cache.bump("llm_verify_calls")
         verdict = story.verify_candidate(
             candidate,
-            scenario,
+            verify_scenario,
             bible,
         )
 
@@ -4964,6 +5157,48 @@ def _place_satisfied(place, blob):
         if parts and all(p in blob for p in parts):
             return True
     return False
+
+
+_TYPE_TOKEN_STOPWORDS = frozenset({
+    "the", "a", "an", "of", "in", "on", "at", "to", "and", "or",
+    "with", "inside", "near", "over", "under", "during", "into",
+    "from", "by", "for", "as", "is", "are", "was", "were", "its",
+    "it", "this", "that", "shot", "scene", "view", "image", "photo",
+    "photograph", "footage", "video", "showing", "shows", "depicting",
+    "depicts", "close", "wide", "front", "back",
+})
+
+
+def _gate_type_tokens(need):
+    """The activity/place-TYPE tokens of a shot need (Stage 7 / R7,
+    review C.B.2): the content words of the shot's own description
+    (visual_requirement / description / search_terms) MINUS every
+    token belonging to the required subject or the named place —
+    the type set is "bedroom, student house, night", never the
+    proper noun. Order-preserving, de-duplicated."""
+    named = set()
+    for value in (need.get("required_subject"), need.get("place")):
+        named.update(re.findall(r"[a-z0-9]+", str(value or "").lower()))
+    tokens = []
+    seen = set()
+
+    def _collect(text):
+        for token in re.findall(r"[a-z0-9]+", str(text or "").lower()):
+            if (
+                len(token) <= 2
+                or token in named
+                or token in _TYPE_TOKEN_STOPWORDS
+                or token in seen
+            ):
+                continue
+            seen.add(token)
+            tokens.append(token)
+
+    _collect(need.get("visual_requirement"))
+    _collect(need.get("description"))
+    for term in need.get("search_terms") or []:
+        _collect(term)
+    return tokens
 
 
 def gate_all_failures(candidate, shot_need):
@@ -5038,9 +5273,12 @@ def gate_all_failures(candidate, shot_need):
     # Stage 1 / R7: category-aware profile. The absence checks below
     # are REQUIRED-field checks, and which fields are required is a
     # property of the visual category the need belongs to (see
-    # story_understanding.CATEGORY_PROFILES): evidence and contextual
-    # needs keep the named-subject contract; atmosphere (generic)
-    # needs have no subject/place contract to enforce at the gate —
+    # story_understanding.CATEGORY_PROFILES): evidence needs keep the
+    # full named-subject/named-place contract; contextual and
+    # environmental needs (Stage 7 completion of R7, review C.B.2)
+    # drop the named-entity absence checks for the type-presence
+    # floor further down; atmosphere (generic) needs have no
+    # subject/place contract to enforce at the gate —
     # verify_candidate's topical-evidence rules and threshold remain
     # their acceptance bar. Contradictions, forbidden terms, banned
     # providers and foreign provenance above/below are NOT profiled:
@@ -5089,9 +5327,26 @@ def gate_all_failures(candidate, shot_need):
                 _fail(story.CONTRADICTORY_PLACE)
                 break
 
+    # Stage 7 / R7 (C.B.2): the contextual/environmental
+    # TYPE-presence floor. Profiles with type_presence_required do
+    # not require the named subject/place — the absence checks below
+    # stay off for them — but the candidate must show SOME presence
+    # of the shot's activity/place-type tokens. The failure is the
+    # registered no_topical_evidence reason, recorded against the
+    # TYPE requirement, never as a missing named entity. When the
+    # need carries no type tokens the floor is not evaluable and
+    # does not fire: absence of a contract is not a failure, and the
+    # scorer still judges the candidate on its own rules.
+    if _profile.get("type_presence_required"):
+        _type_tokens = _gate_type_tokens(need)
+        if _type_tokens and not any(
+            token in blob for token in _type_tokens
+        ):
+            _fail("no_topical_evidence")
+
     # Named-subject contracts require the requested subject to
     # appear in the searchable metadata — in the categories whose
-    # profile requires a subject (evidence, contextual).
+    # profile requires a subject (evidence).
     if (
         _profile["subject_required"]
         and kind == "person"
@@ -5535,7 +5790,8 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
 
         # Stage 0 metrics: the download produced a file — count it
         # and its size as downloaded bytes (measured now, while the
-        # file the downloader wrote is on disk).
+        # file the downloader wrote is on disk). A segment-reused
+        # asset (Stage 7 / R8) downloaded nothing: no metric.
         _dl_path = asset.get("file_path") or asset.get("path")
         _dl_bytes = 0
         try:
@@ -5543,11 +5799,18 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                 _dl_bytes = os.path.getsize(_dl_path)
         except OSError:
             _dl_bytes = 0
-        run_metrics.download_succeeded(_dl_bytes)
+        if not asset.get("segment_reused"):
+            run_metrics.download_succeeded(_dl_bytes)
 
         key = _uve_candidate_key(asset)
 
-        if key and key in used_keys:
+        # Stage 7 / R8: a segment-reused asset's key is EXPECTED in
+        # used_keys (the first beat registered the same segment) —
+        # that is the reuse working, not a duplicate: the asset
+        # proceeds (its own beat's transcript check and registry
+        # accounting still apply) and the shared file is never
+        # deleted here.
+        if key and key in used_keys and not asset.get("segment_reused"):
             try:
                 path = asset.get("file_path")
                 if path and os.path.exists(path):
@@ -5582,12 +5845,16 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                         "candidate_id": candidate.get("candidate_id"),
                         "stage": "transcript_verification",
                     })
-                try:
-                    path = asset.get("file_path")
-                    if path and os.path.exists(path):
-                        os.remove(path)
-                except OSError:
-                    pass
+                # A segment-reused asset's file is SHARED with the
+                # beat that extracted it — demotion removes this
+                # beat's use, never the shared file.
+                if not asset.get("segment_reused"):
+                    try:
+                        path = asset.get("file_path")
+                        if path and os.path.exists(path):
+                            os.remove(path)
+                    except OSError:
+                        pass
                 continue
 
         if key:
@@ -5939,6 +6206,10 @@ def _uve_search_and_pick(
             shot_index=scenario_index,
             beat_id=(beat or {}).get("beat_id"),
             sentence_numbers=_sentence_numbers,
+            # Stage 7 / R8: the segment this event concerns, when
+            # the item carries one (accepted/downloaded items do;
+            # gate/scoring rejections predate selection -> None).
+            segment_id=_item.get("segment_id"),
         )
 
     for _pool, _kind in (

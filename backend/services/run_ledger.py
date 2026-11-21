@@ -932,6 +932,20 @@ def _asset_verification(asset):
     return None
 
 
+def _verification_with_segment(asset):
+    """The asset's verification record for the ledger, with the
+    Stage 7 / R8 segment identity stamped into it (review C.D.3:
+    segment_id is stamped on the candidate, the asset, the timeline
+    item AND the ledger row). The verdict dict is COPIED before
+    stamping — the asset's verdict object is shared with the
+    pipeline and is never mutated by recording."""
+    verification = _asset_verification(asset)
+    segment_id = asset.get("segment_id") if isinstance(asset, dict) else None
+    if isinstance(verification, dict) and segment_id:
+        verification = {**verification, "segment_id": segment_id}
+    return verification
+
+
 def _timeline_items(timeline):
     if not isinstance(timeline, dict):
         return []
@@ -1125,7 +1139,18 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                         "video_url": item.get("video_url"),
                         "image_url": item.get("image_url"),
                         "segment_evidence": item.get("segment_evidence"),
-                        "clip_start": item.get("start"),
+                        # Stage 7 / R8 reconstruction consistency:
+                        # the item's SOURCE clip offset is its
+                        # clip_start; the old reconstruction used
+                        # the item's TIMELINE position (start),
+                        # which misrecords the interval whenever the
+                        # item carries a real clip offset.
+                        "clip_start": (
+                            item.get("clip_start")
+                            if item.get("clip_start") is not None
+                            else item.get("start")
+                        ),
+                        "segment_id": item.get("segment_id"),
                         "duration_seconds": item.get("duration"),
                         "motion_graphic": item.get("assignment")
                         == "motion_graphic",
@@ -1164,7 +1189,7 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                     "interval_start": asset.get("clip_start"),
                     "interval_duration": asset.get("duration_seconds"),
                     "evidence_class": asset.get("segment_evidence"),
-                    "verification": _asset_verification(asset),
+                    "verification": _verification_with_segment(asset),
                     "rights": (
                         _asset_rights(asset)
                         if processed_scenes is not None
@@ -1594,7 +1619,7 @@ def record_swap_decisions(run_id, project_id, *, scene_number,
                 interval_start=(refreshed or {}).get("clip_start"),
                 interval_duration=(refreshed or {}).get("duration_seconds"),
                 evidence_class=(refreshed or {}).get("segment_evidence"),
-                verification=_asset_verification(refreshed or {}),
+                verification=_verification_with_segment(refreshed or {}),
                 rights=_asset_rights(refreshed or {}),
                 decision_type="swapped_in",
                 previous_decision_id=out_row.id,
@@ -1664,7 +1689,7 @@ def record_editor_decision(run_id, project_id, *, revision_id,
                 interval_start=asset.get("clip_start"),
                 interval_duration=asset.get("duration_seconds"),
                 evidence_class=asset.get("segment_evidence"),
-                verification=_asset_verification(asset),
+                verification=_verification_with_segment(asset),
                 rights=(
                     asset["rights"]
                     if isinstance(asset.get("rights"), dict)

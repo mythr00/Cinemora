@@ -74,9 +74,18 @@ def test_gate_atmosphere_need_has_no_subject_or_place_contract():
     assert ok, f"atmosphere gate must pass to the scorer, got {reason}"
 
 
-def test_gate_contextual_need_keeps_subject_contract():
-    # The strict-gate behaviour pinned by earlier programmes: a
-    # representative need's named subject is required at the gate.
+def test_gate_contextual_need_drops_named_subject_contract():
+    # SUPERSEDED at Stage 7 (Master Architecture Review C.B.2): the
+    # Stage 1 foundation kept the named-subject contract for
+    # contextual needs; the completed R7 profile replaces the
+    # named-entity ABSENCE requirements with an activity/place-TYPE
+    # presence floor. This need carries no type tokens (no
+    # visual_requirement / description / search_terms), so the floor
+    # is not evaluable and the gate passes the candidate to the
+    # scorer — which still rejects it. The protection's outcome is
+    # unchanged; the deciding stage moved, exactly as C.B.2
+    # specifies. The type floor itself is pinned in
+    # tests/test_stage7_category_profiles.py.
     need = {
         "required_type": "event",
         "specificity": "representative",
@@ -88,7 +97,14 @@ def test_gate_contextual_need_keeps_subject_contract():
         "snippet": "Stylish event decor hire in Berlin",
     }
     ok, reason = mp.gate_shot_need(spam, need)
-    assert (ok, reason) == (False, "missing_subject")
+    assert ok, f"contextual gate must pass to the scorer, got {reason}"
+    verdict = story.verify_candidate(
+        spam,
+        {"specificity": "representative"},
+        {"by_id": {}, "entities": []},
+    )
+    assert verdict["accepted"] is False
+    assert verdict["category"] == "contextual"
 
 
 def test_gate_evidence_need_keeps_place_contract():

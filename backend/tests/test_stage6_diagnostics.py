@@ -143,11 +143,17 @@ def test_gate_collect_all_records_every_failure_in_order():
         "title": "Cooking show highlights",
         "snippet": "recipes and kitchen fun",
     }
-    failures = mp.gate_all_failures(candidate, _PERSON_NEED)
+    # Stage 7 supersession (Review C.B.2): a representative need is
+    # CONTEXTUAL, and contextual needs no longer carry named-entity
+    # absence requirements — the absence-order mechanics pinned here
+    # belong to the EVIDENCE contract, so the need declares its
+    # category explicitly (the Stage 7 category seam).
+    need = {**_PERSON_NEED, "visual_category": "evidence"}
+    failures = mp.gate_all_failures(candidate, need)
     # Person contract is evaluated before the place contract.
     assert failures == ["missing_person", "missing_place"]
     # The decision is the first failure — identical to first-fail.
-    assert mp.gate_shot_need(candidate, _PERSON_NEED) == (
+    assert mp.gate_shot_need(candidate, need) == (
         False,
         "missing_person",
     )
@@ -158,7 +164,13 @@ def test_gate_collect_all_forbidden_and_date_precede_absence():
         "title": "Cooking show 2020 special",
         "snippet": "recipes",
     }
-    need = {**_PERSON_NEED, "forbidden": ["cooking"], "era": "1961"}
+    # Evidence category declared explicitly (see the Stage 7 note in
+    # the test above): the absence checks pinned here are the
+    # evidence contract's.
+    need = {
+        **_PERSON_NEED, "visual_category": "evidence",
+        "forbidden": ["cooking"], "era": "1961",
+    }
     failures = mp.gate_all_failures(candidate, need)
     assert failures[0] == "contradictory_date"
     assert "forbidden_term" in failures
@@ -471,7 +483,11 @@ def test_gate_rejection_event_carries_contributing_failures(
     # A shot need whose person + place are both absent from the
     # candidate: the gate's primary is missing_person and the
     # contributing list must carry missing_place (C.A.3.2's
-    # headline causal question).
+    # headline causal question). Stage 7 supersession (C.B.2): the
+    # absence contract is the EVIDENCE profile's, so the need
+    # declares visual_category "evidence" explicitly — a plain
+    # representative (contextual) need no longer rejects at the gate
+    # for absent names.
     monkeypatch.setattr(
         mp, "_uve_scenario_search",
         lambda scenario, cache, pid, need: (
@@ -494,7 +510,7 @@ def test_gate_rejection_event_carries_contributing_failures(
         "search_terms": ["kohberger"], "visual": "court hearing",
     }
     mp._uve_search_and_pick(
-        scenario, dict(_PERSON_NEED),
+        scenario, {**_PERSON_NEED, "visual_category": "evidence"},
         search_cache={}, project_id="t", bible={},
         registry=VisualRegistry(), used_keys=set(),
         scene_dir=tmp_path, scene_stats=scene_stats,

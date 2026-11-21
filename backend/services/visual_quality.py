@@ -123,6 +123,39 @@ Genre expectations (Stage 6 / C.G.2):
     evaluates to ``UNKNOWN`` — never a pass/fail — and the block
     is report-only. No named pack -> ``state: "not_recorded"``.
 
+Segment reuse (Stage 7 / R9, Architecture Review C.F.3):
+    ``segment_reuse`` measures reuse at SEGMENT identity alongside
+    the per-file numbers above (which are unchanged). A video
+    item's segment is its stamped ``segment_id`` when present, else
+    the identity reconstructed from its recorded source window
+    (canonical source key + ``clip_start`` + duration — the
+    reconstruction C.F.3 specifies for stored timelines, which
+    predate the stamp); a still's segment is the whole-asset
+    identity of its canonical source. Items with no derivable
+    segment identity (graphics, identity-less records) are counted
+    in ``items_without_segment_identity`` and excluded from the
+    per-segment counts. ``segments_reused`` counts segments with
+    more than one item; ``exact_segment_reuse_items`` counts the
+    items beyond the first for those segments — exact-segment reuse,
+    reported separately from source reuse
+    (``distinct_segments_per_source`` shows how many distinct
+    segments of one source the timeline used). This block is the
+    measurement the timeline screen-time cap was rebound against at
+    Stage 7: per-segment uses here are directly comparable to the
+    cap value, per-file uses above are not.
+
+Sentence outcomes — profile buckets (Stage 7 / R7, C.B.3):
+    A sentence whose direct ("sentence" assignment) item carries a
+    stamped ``verification_category`` of contextual, environmental
+    or atmosphere counts into ``direct_contextual_profile`` /
+    ``direct_environmental_profile`` / ``direct_atmosphere_profile``
+    instead of ``direct`` — an acceptance under a non-evidence
+    profile is never merged into the evidence-grade ``direct``
+    bucket, nor into ``contextual`` (which means rotation /
+    not-verified-for-this-sentence). Items without the stamp
+    (stored timelines) count as ``direct`` exactly as before.
+    ``direct_assignment_share`` counts all four direct buckets.
+
 Source / provider distribution:
     - ``timeline_source_distribution``: per timeline item ``source``
       (missing/empty -> ``"unknown"``): item count, runtime seconds,
@@ -165,6 +198,7 @@ from collections import Counter
 from pathlib import Path
 
 from services import media_paths
+from services import segment_index
 from services.atomic_write import write_text_atomic
 
 GRAPHICS_SOURCE = "cinemora_motion_graphics"
@@ -466,6 +500,61 @@ def measure_visual_quality(
     ]
     reuse_distribution = Counter(e["count"] for e in per_asset.values())
 
+    # Stage 7 / R9 (C.F.3): the same timeline measured at SEGMENT
+    # identity — the measurement the timeline cap was rebound
+    # against. Stamped segment_ids win; stored items are
+    # reconstructed from their recorded source windows.
+    per_segment: dict[str, dict] = {}
+    segments_per_source: dict[str, set] = {}
+    items_without_segment_identity = 0
+    for item, duration in zip(items, durations):
+        seg_id = segment_index.segment_id_for_item(item)
+        if not seg_id:
+            items_without_segment_identity += 1
+            continue
+        entry = per_segment.setdefault(
+            seg_id, {"count": 0, "runtime_seconds": 0.0}
+        )
+        entry["count"] += 1
+        entry["runtime_seconds"] += duration
+        source_key = segment_index.source_key_for(item)
+        if source_key:
+            segments_per_source.setdefault(source_key, set()).add(seg_id)
+    segment_reuse = {
+        "state": "recorded",
+        "items_with_segment_identity": sum(
+            e["count"] for e in per_segment.values()
+        ),
+        "items_without_segment_identity": items_without_segment_identity,
+        "unique_segments": len(per_segment),
+        "max_segment_uses": max(
+            (e["count"] for e in per_segment.values()), default=0
+        ),
+        "segments_reused": sum(
+            1 for e in per_segment.values() if e["count"] > 1
+        ),
+        "exact_segment_reuse_items": sum(
+            e["count"] - 1 for e in per_segment.values() if e["count"] > 1
+        ),
+        "reuse_per_segment": [
+            {
+                "segment_id": seg_id,
+                "count": entry["count"],
+                "runtime_seconds": round(entry["runtime_seconds"], 6),
+                "runtime_share": _share(
+                    entry["runtime_seconds"], total_runtime
+                ),
+            }
+            for seg_id, entry in sorted(
+                per_segment.items(), key=lambda kv: (-kv[1]["count"], kv[0])
+            )
+        ],
+        "distinct_segments_per_source": {
+            key: len(value)
+            for key, value in sorted(segments_per_source.items())
+        },
+    }
+
     consecutive_repeats = 0
     max_run = 0
     current_run = 0
@@ -714,6 +803,9 @@ def measure_visual_quality(
             items_by_sentence.setdefault(number, []).append(item)
     buckets = {
         "direct": 0,
+        "direct_contextual_profile": 0,
+        "direct_environmental_profile": 0,
+        "direct_atmosphere_profile": 0,
         "approved_graphic": 0,
         "contextual": 0,
         "editorial_holdover": 0,
@@ -725,6 +817,20 @@ def measure_visual_quality(
         assignments = {i.get("assignment") for i in group}
         if "sentence" in assignments:
             outcome = "direct"
+            # Stage 7 / R7 (C.B.3): a direct item stamped with a
+            # non-evidence verification category counts into its own
+            # profile bucket — never merged into "direct", never
+            # into "contextual" (rotation). Unstamped items (stored
+            # timelines) stay "direct", exactly as before.
+            for _item in group:
+                if _item.get("assignment") != "sentence":
+                    continue
+                _category = _item.get("verification_category")
+                if _category in (
+                    "contextual", "environmental", "atmosphere",
+                ):
+                    outcome = f"direct_{_category}_profile"
+                    break
         elif "motion_graphic" in assignments:
             outcome = "approved_graphic"
         elif "holdover" in assignments or any(i.get("holdover") for i in group):
@@ -749,7 +855,14 @@ def measure_visual_quality(
 
     relevance = {
         "direct_assignment_share": (
-            buckets["direct"] / sentence_count_n if sentence_count_n else None
+            (
+                buckets["direct"]
+                + buckets["direct_contextual_profile"]
+                + buckets["direct_environmental_profile"]
+                + buckets["direct_atmosphere_profile"]
+            ) / sentence_count_n
+            if sentence_count_n
+            else None
         ),
         "pipeline_sentence_assignment_accuracy": report.get(
             "sentence_assignment_accuracy"
@@ -897,6 +1010,7 @@ def measure_visual_quality(
             "consecutive_repeat_boundaries": consecutive_repeats,
             "max_consecutive_run": max_run,
             "reuse_per_asset": reuse,
+            "segment_reuse": segment_reuse,
         },
         "runtime_share": _runtime_block(dict(kind_totals), total_runtime),
         "runtime_share_by_format": runtime_share_by_format,

@@ -35,6 +35,23 @@ in pipeline code. Each pack declares:
   calibration protocol (panel-accepted corpus films), with the
   calibration report as evidence — no number enters a pack
   without it.
+- visual_profile + visual_theme (Stage 7 / R7, Architecture
+  Review B.2.2): genre independence as DATA. The profile carries
+  category_priors (Pass-1 expectations over the five visual
+  categories), template_affinities (only templates with a
+  production assembler may be named — the Phase 5 motif lint,
+  applied from day one), composition_affinities (inert until
+  Phase 6), specificity_defaults (may raise, never lower the
+  evidence floor below "exact"), research_requirements (shapes
+  the research pass; cannot change support labelling) and
+  care_rules_ref. visual_theme names the pack's default motion
+  style. Validation is load-time (validate_visual_profile /
+  validate_visual_theme); a profile that fails validation is not
+  loaded — resolution falls back to the general profile and
+  records the failure (fail-closed to neutral). Consumers read
+  the RESOLVED profile via resolve_visual_profile /
+  resolve_genre_pack; pipeline code never branches on genre
+  names.
 
 Resolution order in resolve_genre_pack: an explicit known genre in
 the run options wins; otherwise a conservative script detector;
@@ -43,6 +60,7 @@ an ambiguous script stays general rather than being forced into a
 genre.
 """
 
+import copy
 import json
 import re
 from functools import lru_cache
@@ -73,6 +91,225 @@ def load_pack(pack_id):
 
 def available_packs():
     return [load_pack(p) for p in PACK_IDS if load_pack(p) is not None]
+
+
+# ---------------------------------------------------------------------------
+# Visual profile (Stage 7 / R7 — Architecture Review B.2.2)
+# ---------------------------------------------------------------------------
+
+#: The five visual categories a pack's category_priors range over.
+#: Four are verification categories (services.story_understanding);
+#: explanatory_graphic is a planning expectation only — it never
+#: classifies a beat against the beat's own signals.
+PROFILE_CATEGORIES = (
+    "evidence", "contextual", "environmental", "explanatory_graphic",
+    "atmosphere",
+)
+
+#: Templates a pack's template_affinities may name TODAY: exactly
+#: the templates with a production assembler in graphics_pipeline's
+#: targeted-graphics chain. Naming a registered-but-unassembled
+#: template (territory_map, evidence_board, ...) is a validation
+#: failure, not dead configuration — the MG-104 failure mode, linted
+#: from day one. This set grows when Stage 10 lands assemblers.
+ASSEMBLED_TEMPLATES = frozenset({
+    "bar_chart", "data_gauge", "ring_badges", "stat_comparison",
+})
+
+_PROFILE_FIELDS = frozenset({
+    "profile_version", "category_priors", "template_affinities",
+    "composition_affinities", "specificity_defaults",
+    "research_requirements", "care_rules_ref",
+})
+
+#: Composition pattern vocabulary (Phase 6). Inert data until
+#: Stage 11 — recorded from the start, per B.2.2.
+_COMPOSITION_PATTERNS = frozenset({
+    "lower_third_card", "side_panel", "picture_in_picture",
+    "split_screen", "full_frame",
+})
+
+_SPECIFICITY_LEVELS = frozenset({"exact", "representative", "generic"})
+
+
+def _engine_template_registry():
+    """The motion-engine template registry, imported lazily so this
+    package's import never depends on the engine's import graph."""
+    from services.motion_engine.templates import TEMPLATES
+
+    return TEMPLATES
+
+
+def _engine_styles():
+    from services.motion_engine.styles import STYLES
+
+    return STYLES
+
+
+def validate_visual_profile(profile):
+    """Validate one pack's visual_profile object (B.2.2).
+
+    Returns a list of failure strings; empty means valid. An absent
+    profile (None) is legal — the general profile's values apply.
+    Rules: known keys only; category_priors range over the five
+    profile categories and sum to 1.0; every template named in
+    template_affinities exists in the engine registry AND has a
+    production assembler; specificity_defaults may raise but never
+    lower the evidence floor below "exact"; research_requirements
+    carries only its two known fields with a sane minimum.
+    """
+    failures = []
+    if profile is None:
+        return failures
+    if not isinstance(profile, dict):
+        return ["visual_profile_not_an_object"]
+    unknown = sorted(set(profile) - _PROFILE_FIELDS)
+    if unknown:
+        failures.append(f"visual_profile_unknown_fields:{','.join(unknown)}")
+    priors = profile.get("category_priors")
+    if priors is not None:
+        if not isinstance(priors, dict):
+            failures.append("category_priors_not_an_object")
+        else:
+            bad = sorted(set(priors) - set(PROFILE_CATEGORIES))
+            if bad:
+                failures.append(f"category_priors_unknown:{','.join(bad)}")
+            values = [
+                v for v in priors.values()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            ]
+            if len(values) != len(priors) or any(v < 0 for v in values):
+                failures.append("category_priors_values_invalid")
+            elif abs(sum(values) - 1.0) > 0.01:
+                failures.append(f"category_priors_sum:{sum(values):.3f}")
+    affinities = profile.get("template_affinities")
+    if affinities is not None:
+        if not isinstance(affinities, dict):
+            failures.append("template_affinities_not_an_object")
+        else:
+            try:
+                registry = _engine_template_registry()
+            except Exception:
+                registry = None
+                failures.append("template_registry_unavailable")
+            for name in affinities:
+                if registry is not None and name not in registry:
+                    failures.append(f"template_affinity_unknown:{name}")
+                elif name not in ASSEMBLED_TEMPLATES:
+                    failures.append(f"template_affinity_unassembled:{name}")
+    composition = profile.get("composition_affinities")
+    if composition is not None:
+        if not isinstance(composition, dict):
+            failures.append("composition_affinities_not_an_object")
+        else:
+            bad = sorted(set(composition) - _COMPOSITION_PATTERNS)
+            if bad:
+                failures.append(
+                    f"composition_affinities_unknown:{','.join(bad)}"
+                )
+    defaults = profile.get("specificity_defaults")
+    if defaults is not None:
+        if not isinstance(defaults, dict):
+            failures.append("specificity_defaults_not_an_object")
+        else:
+            for category, level in defaults.items():
+                if category not in PROFILE_CATEGORIES:
+                    failures.append(
+                        f"specificity_default_unknown_category:{category}"
+                    )
+                elif level not in _SPECIFICITY_LEVELS:
+                    failures.append(
+                        f"specificity_default_unknown_level:{category}={level}"
+                    )
+            if "evidence" in defaults and defaults["evidence"] != "exact":
+                # B.2.2: a profile may raise a floor, never lower the
+                # evidence floor below exact.
+                failures.append("specificity_default_evidence_below_exact")
+    research = profile.get("research_requirements")
+    if research is not None:
+        if not isinstance(research, dict):
+            failures.append("research_requirements_not_an_object")
+        else:
+            bad = sorted(
+                set(research)
+                - {"min_sources_per_primary_subject", "prefer_primary_sources"}
+            )
+            if bad:
+                failures.append(
+                    f"research_requirements_unknown:{','.join(bad)}"
+                )
+            minimum = research.get("min_sources_per_primary_subject")
+            if minimum is not None and (
+                not isinstance(minimum, int)
+                or isinstance(minimum, bool)
+                or minimum < 0
+            ):
+                failures.append("research_requirements_min_sources_invalid")
+    return failures
+
+
+def validate_visual_theme(theme):
+    """A pack's visual_theme must name a real motion-engine style
+    (the six Phase 4 theme names join STYLES at Stage 9)."""
+    if theme is None:
+        return []
+    try:
+        styles = _engine_styles()
+    except Exception:
+        return ["style_registry_unavailable"]
+    if theme not in styles:
+        return [f"visual_theme_unknown:{theme}"]
+    return []
+
+
+def resolve_visual_profile(pack):
+    """The effective visual profile for a pack (B.2.2).
+
+    Field-by-field fallback: a field absent from the pack's profile
+    takes the general profile's value for that field. A profile that
+    FAILS validation is not loaded at all — resolution falls back to
+    the general profile wholesale and records the failures
+    (fail-closed to neutral). An invalid visual_theme likewise falls
+    back to the general pack's theme, with the failure recorded.
+    Returns {"profile", "profile_source", "profile_failures",
+    "visual_theme", "theme_failures"}; the returned profile is a
+    fresh dict — the cached pack dicts are never mutated.
+    """
+    general = load_pack("general") or {}
+    general_profile = general.get("visual_profile") or {}
+    result = {
+        "profile": copy.deepcopy(general_profile),
+        "profile_source": "general",
+        "profile_failures": [],
+        "visual_theme": general.get("visual_theme"),
+        "theme_failures": validate_visual_theme(general.get("visual_theme")),
+    }
+    if not isinstance(pack, dict) or pack.get("id") == "general":
+        return result
+    failures = validate_visual_profile(pack.get("visual_profile"))
+    if failures:
+        result["profile_failures"] = failures
+        return result
+    profile = copy.deepcopy(general_profile)
+    for field, value in (pack.get("visual_profile") or {}).items():
+        profile[field] = copy.deepcopy(value)
+    result["profile"] = profile
+    result["profile_source"] = pack.get("id")
+    theme_failures = validate_visual_theme(pack.get("visual_theme"))
+    result["theme_failures"] = theme_failures
+    if not theme_failures and pack.get("visual_theme"):
+        result["visual_theme"] = pack["visual_theme"]
+    return result
+
+
+def _with_visual_profile(result):
+    resolved = resolve_visual_profile(result.get("pack"))
+    result["visual_profile"] = resolved["profile"]
+    result["visual_profile_source"] = resolved["profile_source"]
+    result["visual_profile_failures"] = resolved["profile_failures"]
+    result["visual_theme"] = resolved["visual_theme"]
+    result["visual_theme_failures"] = resolved["theme_failures"]
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -144,28 +381,28 @@ def resolve_genre_pack(options=None, script_text=""):
     if requested:
         pack = load_pack(str(requested))
         if pack is not None:
-            return {
+            return _with_visual_profile({
                 "pack": pack,
                 "pack_id": pack["id"],
                 "source": "option",
                 "requested": str(requested),
                 "detection": None,
-            }
+            })
     detection = detect_genre(script_text)
     if detection["pack_id"] != "general":
         pack = load_pack(detection["pack_id"])
-        return {
+        return _with_visual_profile({
             "pack": pack,
             "pack_id": pack["id"],
             "source": "detected",
             "requested": str(requested) if requested else None,
             "detection": detection,
-        }
+        })
     pack = load_pack("general")
-    return {
+    return _with_visual_profile({
         "pack": pack,
         "pack_id": "general",
         "source": "default",
         "requested": str(requested) if requested else None,
         "detection": detection,
-    }
+    })

@@ -1099,9 +1099,16 @@ def test_20_sentence_outcomes_reconcile_with_report_classes(tmp_path):
     )
     outcomes = measured["sentence_outcomes"]
     assert outcomes["sentence_count"] == 8
+    # Stage 7 / R7 (C.B.3): three additive profile buckets
+    # (direct_*_profile) exist since Stage 7; this production's
+    # items carry no verification_category stamps, so all three
+    # count zero and every pre-Stage-7 count is unchanged.
     assert outcomes["buckets"] == {
         "direct": 5, "approved_graphic": 1, "contextual": 1,
         "editorial_holdover": 0, "uncovered": 1,
+        "direct_contextual_profile": 0,
+        "direct_environmental_profile": 0,
+        "direct_atmosphere_profile": 0,
     }
     assert sum(outcomes["buckets"].values()) == \
         outcomes["sentence_count"]

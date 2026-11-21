@@ -24,6 +24,11 @@ except ImportError:  # flat-layout fallback
     import narration as narration_service
     import timing as timing_service
 
+try:
+    from services import segment_index
+except ImportError:  # flat-layout fallback
+    import segment_index
+
 
 # ============================================================
 # CONFIGURATION
@@ -47,6 +52,19 @@ MIN_SENTENCE_DURATION = 2.0
 TIMELINE_MAX_FILE_USES = 3
 TIMELINE_MAX_FILE_RUNTIME_SHARE = 0.5
 
+# Stage 7 / R9 (Architecture Review C.F.3): the screen-time cap is
+# rebound from FILE identity to SEGMENT identity — the same window
+# of the same source counts once toward the cap however many files
+# carry it (re-downloads, respelled URLs), and distinct windows of
+# one source each hold their own allowance. The cap VALUE is
+# unchanged (3): the identity level changed, not the number — the
+# value is a separate founder-visible decision (C.F.3), and the
+# Stage 6 measurement of stored timelines under segment identity is
+# reported by services.visual_quality's segment_reuse block. The
+# per-source SELECTION cap (visual_registry.max_source_uses) is a
+# different cap at a different stage and is untouched.
+TIMELINE_MAX_SEGMENT_USES = TIMELINE_MAX_FILE_USES
+
 
 def _pick_rotation_visual(visuals, usage_counts, usage_durations,
                           previous_path, item_duration, scene_duration):
@@ -61,16 +79,16 @@ def _pick_rotation_visual(visuals, usage_counts, usage_durations,
         return None
 
     def count_of(visual):
-        return usage_counts.get(get_visual_path(visual), 0)
+        return usage_counts.get(_visual_use_key(visual), 0)
 
     def duration_of(visual):
-        return usage_durations.get(get_visual_path(visual), 0.0)
+        return usage_durations.get(_visual_use_key(visual), 0.0)
 
     def under_cap(visual):
-        return count_of(visual) < TIMELINE_MAX_FILE_USES
+        return count_of(visual) < TIMELINE_MAX_SEGMENT_USES
 
     def not_consecutive(visual):
-        return get_visual_path(visual) != previous_path
+        return _visual_use_key(visual) != previous_path
 
     def under_share(visual):
         if not scene_duration or scene_duration <= 0:
@@ -107,6 +125,34 @@ def get_visual_path(visual):
         or visual.get("path")
         or ""
     )
+
+
+def _visual_use_key(visual):
+    """The identity the screen-time cap counts (Stage 7 / R9).
+
+    - a video counts by SEGMENT: its stamped segment_id, else the
+      identity reconstructed from its recorded source window
+      (canonical source + clip_start + duration) — never by file, so
+      the same window re-downloaded under another name still counts
+      once, and a different window of the same source counts apart;
+    - a still counts by CANONICAL ASSET (its source), as the reuse
+      accounting has always identified stills;
+    - a generated graphic counts by file, as before (it is not a
+      segment of any source);
+    - anything without source identity falls back to its file path,
+      the pre-Stage-7 behaviour for identity-less records.
+    """
+    if not isinstance(visual, dict):
+        return ""
+    path = get_visual_path(visual)
+    if visual.get("motion_graphic") or visual.get("generated"):
+        return f"file:{path}"
+    segment_id = segment_index.segment_id_for_asset(visual)
+    if segment_id:
+        if get_visual_type(visual) == "video":
+            return f"segment:{segment_id}"
+        return f"asset:{segment_id}"
+    return f"file:{path}"
 
 
 def visual_exists(visual):
@@ -574,10 +620,12 @@ def build_scene_timeline(
 
         items = []
 
-        # Phase 1 rotation accounting: total on-screen uses per file
-        # (every assignment kind), accumulated durations, the previous
-        # item's file (consecutive rule) and the sentences left
-        # uncovered because the eligible pool hit the cap.
+        # Phase 1 rotation accounting: total on-screen uses per
+        # identity (every assignment kind), accumulated durations,
+        # the previous item's identity (consecutive rule) and the
+        # sentences left uncovered because the eligible pool hit the
+        # cap. Since Stage 7 / R9 the identity is the SEGMENT
+        # (_visual_use_key), not the file.
         usage_counts = {}
         usage_durations = {}
         previous_path = ""
@@ -671,11 +719,16 @@ def build_scene_timeline(
                 visual
             )
 
-            usage_counts[path] = usage_counts.get(path, 0) + 1
-            usage_durations[path] = (
-                usage_durations.get(path, 0.0) + sentence_duration
+            # Stage 7 / R9: usage accounting is keyed by SEGMENT
+            # identity (_visual_use_key), not by file — every
+            # assignment kind (direct, graphic, rotation) consumes
+            # the same identity's allowance.
+            use_key = _visual_use_key(visual)
+            usage_counts[use_key] = usage_counts.get(use_key, 0) + 1
+            usage_durations[use_key] = (
+                usage_durations.get(use_key, 0.0) + sentence_duration
             )
-            previous_path = path
+            previous_path = use_key
 
             item = {
                 "type":
@@ -795,6 +848,24 @@ def build_scene_timeline(
                 "transition":
                     "cut",
             }
+
+            # Stage 7 / R7+R8: the item carries the segment identity
+            # of the visual actually used and the verification
+            # category its verdict was judged under, so downstream
+            # accounting (visual_quality's profile buckets and
+            # segment-reuse measurement) reads stamps rather than
+            # reconstructions. Stamped only when the visual carries
+            # them — legacy visuals without them stay unstamped and
+            # the accounting falls back exactly as before.
+            if visual.get("segment_id"):
+                item["segment_id"] = visual["segment_id"]
+            _item_verdict = visual.get("verification")
+            if isinstance(_item_verdict, dict) and _item_verdict.get(
+                "category"
+            ):
+                item["verification_category"] = _item_verdict["category"]
+            elif visual.get("visual_category"):
+                item["verification_category"] = visual["visual_category"]
 
             # Phase 2 (MG-03): a generated graphic's identity and
             # regeneration recipe ride onto the timeline item. The
