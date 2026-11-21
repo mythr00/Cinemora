@@ -1335,6 +1335,20 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                         "score_basis": record.get("score_basis"),
                         "category": record.get("category"),
                         "kind": record.get("kind"),
+                        # Stage 6 / C.A.5: the full event's
+                        # diagnostics — contributions, contributing
+                        # reasons and specificity — ride in the same
+                        # JSON column (no migration). Records built
+                        # before Stage 6 yield None for these keys.
+                        "contributions": record.get("contributions"),
+                        "contributing_reasons": (
+                            record.get("contributing_reasons")
+                            if record.get("contributing_reasons")
+                            is not None
+                            else record.get("verdict_reasons")
+                        ),
+                        "specificity": record.get("specificity"),
+                        "matched_query": record.get("matched_query"),
                     },
                     "rights": None,
                     "decision_type": "rejected",

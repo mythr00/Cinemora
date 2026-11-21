@@ -4871,6 +4871,13 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
             source_cache.bump("gate_rejects")
             item["reject_reason"] = reason
             item["rejection_stage"] = "metadata_gate"
+            # Stage 6 / R5: the gate's collect-all failure list,
+            # stamped on the candidate by gate_shot_need itself —
+            # the rejection record's contributing reasons, from the
+            # SAME single gate execution (VA-11).
+            item["gate_failures"] = list(
+                candidate.get("_gate_failures") or [reason]
+            )
             item["verification"] = {
                 "accepted": False,
                 "score": 0,
@@ -4901,8 +4908,13 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
             # the verdict (score, contributions, reason) was computed
             # and then dropped. Stamp the reason and stage so the
             # review log and asset report can explain the decision.
+            # Stage 6 / C.A.4: the retired score-below alias is
+            # gone — verify_candidate's precedence chain is
+            # total over rejections, so its rejection_reason is
+            # always present; the fallback names the verifier's own
+            # vocabulary string, never the alias.
             item["reject_reason"] = (
-                verdict.get("rejection_reason") or "score_below_threshold"
+                verdict.get("rejection_reason") or "below_threshold"
             )
             item["rejection_stage"] = "scoring"
         scored.append(item)
@@ -4954,14 +4966,22 @@ def _place_satisfied(place, blob):
     return False
 
 
-def gate_shot_need(candidate, shot_need):
-    """
-    Strict metadata gate for a visual contract.
+def gate_all_failures(candidate, shot_need):
+    """Every gate check that fails for this candidate, in the
+    gate's execution order (Stage 6 / R5 collect-all diagnostics).
 
-    This gate is intentionally generic. It rejects candidates
-    that clearly contradict the requested subject, location,
-    event, or other forbidden terms before download.
+    ``gate_shot_need`` is implemented on top of this list — its
+    primary reason is the first entry — so the recorded primary can
+    never disagree with the decision, and the remaining entries are
+    the contributing failures the first-fail gate used to destroy
+    (Architecture Review C.A.3.2). Diagnostics only: nothing here
+    changes which candidates pass.
     """
+    failures = []
+
+    def _fail(reason):
+        if reason not in failures:
+            failures.append(reason)
 
     need = shot_need or {}
 
@@ -4972,7 +4992,7 @@ def gate_shot_need(candidate, shot_need):
     # the candidate (verify_candidate enforces the same rejection for
     # direct callers).
     if story.is_banned_provider(candidate):
-        return False, story.BANNED_PROVIDER_REASON
+        _fail(story.BANNED_PROVIDER_REASON)
 
     # Plan §3.3 item 1 (tests 17-18): wrong-project provenance is
     # rejected at the gate too — a candidate record stamped with
@@ -4981,7 +5001,7 @@ def gate_shot_need(candidate, shot_need):
     # callers). A missing stamp is not a mismatch: unstamped
     # discovery candidates pass through to the checks below.
     if story.is_foreign_provenance(candidate):
-        return False, story.FOREIGN_PROVENANCE_REASON
+        _fail(story.FOREIGN_PROVENANCE_REASON)
 
     # Quality Recovery Phase 1 (workstream A): POSITIVE contradictions
     # the shot need carries enough data to judge. An explicit date
@@ -4993,7 +5013,7 @@ def gate_shot_need(candidate, shot_need):
     if story.era_compatibility(
         need.get("era"), story.extract_years(blob)
     ) is False:
-        return False, story.CONTRADICTORY_DATE
+        _fail(story.CONTRADICTORY_DATE)
 
     subject = str(
         need.get("required_subject")
@@ -5040,7 +5060,8 @@ def gate_shot_need(candidate, shot_need):
             banned_text
             and banned_text in blob
         ):
-            return False, "forbidden_term"
+            _fail("forbidden_term")
+            break
 
     # Positive person/place contradictions (only when the caller
     # supplied the alternatives — _uve_verify_all enriches the need
@@ -5059,12 +5080,14 @@ def gate_shot_need(candidate, shot_need):
     if subject and not _named(subject):
         for other in need.get("other_people") or []:
             if _named(other):
-                return False, story.CONTRADICTORY_PERSON
+                _fail(story.CONTRADICTORY_PERSON)
+                break
     _need_place = str(need.get("place") or "").strip().lower()
     if _need_place and not _named(_need_place):
         for other in need.get("other_places") or []:
             if _named(other):
-                return False, story.CONTRADICTORY_PLACE
+                _fail(story.CONTRADICTORY_PLACE)
+                break
 
     # Named-subject contracts require the requested subject to
     # appear in the searchable metadata — in the categories whose
@@ -5088,7 +5111,7 @@ def gate_shot_need(candidate, shot_need):
                     for part in subject_parts
                 )
             ):
-                return False, "missing_person"
+                _fail("missing_person")
 
     # Entity/location contracts require the subject (same profile
     # condition as the person contract above).
@@ -5116,13 +5139,13 @@ def gate_shot_need(candidate, shot_need):
                     for part in subject_parts
                 )
             ):
-                return False, "missing_subject"
+                _fail("missing_subject")
 
     # If the category profile requires a place, it must appear in
     # the candidate metadata (compound places: any one component).
     if _profile["place_required"] and place:
         if not _place_satisfied(place, blob):
-            return False, "missing_place"
+            _fail("missing_place")
 
     # Exact contracts require all explicit identity
     # information to survive the metadata gate.
@@ -5142,12 +5165,37 @@ def gate_shot_need(candidate, shot_need):
                         for part in subject_parts
                     )
                 ):
-                    return False, "missing_subject"
+                    _fail("missing_subject")
 
         if place:
             if not _place_satisfied(place, blob):
-                return False, "missing_place"
+                _fail("missing_place")
 
+    return failures
+
+
+def gate_shot_need(candidate, shot_need):
+    """
+    Strict metadata gate for a visual contract.
+
+    This gate is intentionally generic. It rejects candidates
+    that clearly contradict the requested subject, location,
+    event, or other forbidden terms before download.
+
+    The decision is the first failure in gate_all_failures'
+    execution order — identical to the historical first-fail
+    behaviour; the collect-all list exists for diagnostics.
+    """
+    failures = gate_all_failures(candidate, shot_need)
+    if isinstance(candidate, dict):
+        # Stage 6 / R5 diagnostic side channel: the full failure
+        # list rides on the candidate so _uve_verify_all can record
+        # contributing reasons WITHOUT evaluating the gate a second
+        # time (VA-11: the gate executes exactly once per candidate,
+        # here, and never again in the pick).
+        candidate["_gate_failures"] = failures
+    if failures:
+        return False, failures[0]
     return True, ""
 
 # Quality Recovery Phase 2 (workstream C): selection-time REUSE
@@ -5232,8 +5280,15 @@ def _uve_pick(
 
     picked = []
     source_counts = {}
+    picked_pool_ids = set()
 
-    for candidate in pool:
+    for _rank, candidate in enumerate(pool):
+        # Stage 6 / ASSET-016: every pool candidate leaves this loop
+        # with a recorded selection outcome — picked, blocked with
+        # its reason, or (below, after the loop) marked as never
+        # reached. The rank is the candidate's position in the
+        # effective-score order it was considered in.
+        candidate["selection_rank"] = _rank
         # MS-1: the per-source usage cap applies to EVERY provider
         # equally. Previously it applied only to YouTube URLs.
         # Phase 2: counted on the CANONICAL source key, so respelled
@@ -5260,6 +5315,12 @@ def _uve_pick(
         key = _uve_candidate_key(candidate)
 
         if not key:
+            # Was a silent skip: a verified candidate vanished with
+            # no recorded reason (ASSET-016).
+            candidate["reject_reason"] = (
+                rejection_diagnostics.MISSING_KEY_REASON
+            )
+            candidate["rejection_stage"] = "selection"
             continue
 
         # MS-1: source reuse is provider-neutral. Previously only YouTube
@@ -5296,11 +5357,26 @@ def _uve_pick(
         )
 
         picked.append(item)
+        picked_pool_ids.add(id(candidate))
 
         source_counts[source_key] = source_counts.get(source_key, 0) + 1
 
         if len(picked) >= limit:
             break
+
+    # Stage 6 / ASSET-016: the pick-loop remainder. Candidates the
+    # loop never reached (the pick limit filled first) were verified
+    # and eligible but carry no outcome; stamp the truthful reason
+    # so the asset report can explain why they were not picked.
+    # Candidates examined and blocked already carry their reason.
+    for _rank, candidate in enumerate(pool):
+        if id(candidate) in picked_pool_ids:
+            continue
+        if candidate.get("reject_reason"):
+            continue
+        candidate.setdefault("selection_rank", _rank)
+        candidate["reject_reason"] = rejection_diagnostics.PICK_LIMIT_REASON
+        candidate["rejection_stage"] = "selection"
 
     return _apply_source_quality_tiebreak(picked)
 
@@ -5702,16 +5778,12 @@ def _uve_search_and_pick(
         if item.get("reject_reason")
     )
 
-    # Failure classification: every rejected candidate contributes its
-    # reason (gate reason, or score_below_threshold when the verifier
-    # scored it under the acceptance bar) to the scene's totals, which
-    # the asset report aggregates. Nothing is rejected silently.
-    _reasons = scene_stats.setdefault("rejection_reasons", {})
-    for _item in (scored_videos + scored_web_sources + scored_images):
-        if (_item.get("verification") or {}).get("accepted"):
-            continue
-        _reason = _item.get("reject_reason") or "score_below_threshold"
-        _reasons[_reason] = _reasons.get(_reason, 0) + 1
+    # Failure classification is NO LONGER counted here. The old
+    # parallel increment (with its divergent score-below alias
+    # fallback string) could and did drift from the candidate
+    # records; Stage 6 / C.A.3.4 rebuilds scene_stats
+    # ["rejection_reasons"] FROM the records at the end of this pass
+    # (see below), so the records are the single counting source.
 
     # F-2: UNIFIED SELECTION. Verified video candidates,
     # footage-capable web candidates (MS-2) and verified image
@@ -5825,6 +5897,21 @@ def _uve_search_and_pick(
 
     def _event_for(_item, _kind, _outcome, _stage, _reason):
         _verdict = _item.get("verification") or {}
+        # Stage 6 / R5: contributing reasons from the collect-all
+        # diagnostics — the gate's full failure list for gate events,
+        # the verifier's failed_checks for scoring events; the
+        # primary reason is excluded (it is the record's reason).
+        # An empty list means "evaluated, nothing else failed";
+        # None means the producing path carried no collect-all data.
+        _contributing = None
+        if _item.get("gate_failures"):
+            _contributing = [
+                f for f in _item["gate_failures"] if f != _reason
+            ]
+        elif _verdict.get("failed_checks") is not None:
+            _contributing = [
+                c for c in _verdict["failed_checks"] if c != _reason
+            ]
         return rejection_diagnostics.build_event(
             candidate_id=_item.get("candidate_id"),
             url=(
@@ -5841,6 +5928,11 @@ def _uve_search_and_pick(
             score=_verdict.get("score"),
             contributions=_verdict.get("contributions"),
             verdict_reasons=_verdict.get("reasons"),
+            contributing_reasons=_contributing,
+            era_applicable=bool(
+                (scenario or {}).get("era") or (shot_need or {}).get("era")
+            ),
+            transcript_check=_verdict.get("transcript_check"),
             specificity=_need_specificity,
             category=_need_category,
             matched_query=str(_item.get("matched_query") or ""),
@@ -5865,46 +5957,86 @@ def _uve_search_and_pick(
                 _records.append(_event_for(
                     _item, _kind, "verified", "verification", "",
                 ))
+    # Stage 6 / R5 + ASSET-016: selection, fetch and accepted
+    # records are FULL events (score, contributions, specificity,
+    # category, shot/sentence linkage), built through the same
+    # _event_for as the verification-stage records — the minimal
+    # hand-built dicts used here before could not explain a
+    # selection decision. Pool items are indexed by candidate_id so
+    # fetch failures (which carry only id/url/reason) rejoin the
+    # candidate they belong to.
+    _pool_by_candidate_id = {}
+    for _item in combined_pool:
+        if _item.get("candidate_id"):
+            _pool_by_candidate_id.setdefault(_item["candidate_id"], _item)
     for _item in combined_pool:
         # Selection-stage rejections are stamped by _uve_pick on the
-        # pool copies; verification-stage ones are already recorded
-        # from the scored lists above.
+        # pool copies — including, since Stage 6, the pick-loop
+        # remainder (pick_limit_reached); verification-stage ones
+        # are already recorded from the scored lists above.
         if _item.get("rejection_stage") == "selection":
-            _records.append({
-                "candidate_id": _item.get("candidate_id"),
-                "url": (
-                    _item.get("url") or _item.get("video_url")
-                    or _item.get("image_url") or ""
-                ),
-                "provider": str(
-                    _item.get("provider") or _item.get("source") or "unknown"
-                ),
-                "outcome": "rejected",
-                "stage": "selection",
-                "reason": _item.get("reject_reason") or "",
-            })
+            _record = _event_for(
+                _item,
+                str(_item.get("_pool_kind") or ""),
+                "rejected",
+                "selection",
+                _item.get("reject_reason") or "registry_block",
+            )
+            for _field in ("selection_rank", "reuse_penalty"):
+                if _item.get(_field) is not None:
+                    _record[_field] = _item.get(_field)
+            if _item.get("_effective_score") is not None:
+                _record["effective_score"] = _item.get("_effective_score")
+            _records.append(_record)
     for _failure in fetch_failures:
-        _records.append({
-            "candidate_id": _failure.get("candidate_id"),
-            "url": _failure.get("url", ""),
-            "provider": str(_failure.get("provider") or "unknown"),
-            "outcome": "download_failed",
-            "stage": _failure.get("stage") or "download",
-            "reason": _failure.get("reason", ""),
-        })
+        _pool_item = _pool_by_candidate_id.get(_failure.get("candidate_id"))
+        _stage = _failure.get("stage") or "download"
+        if _pool_item is not None:
+            _record = _event_for(
+                _pool_item,
+                str(_pool_item.get("_pool_kind") or ""),
+                "download_failed",
+                _stage,
+                _failure.get("reason", ""),
+            )
+            if _failure.get("segment_failure_cause"):
+                _record["segment_failure_cause"] = _failure[
+                    "segment_failure_cause"
+                ]
+            if _failure.get("technical_rejection"):
+                _record["technical_rejection"] = _failure[
+                    "technical_rejection"
+                ]
+            _records.append(_record)
+        else:
+            _records.append({
+                "candidate_id": _failure.get("candidate_id"),
+                "url": _failure.get("url", ""),
+                "provider": str(_failure.get("provider") or "unknown"),
+                "outcome": "download_failed",
+                "stage": _stage,
+                "reason": _failure.get("reason", ""),
+            })
     if accepted_asset is not None:
-        _records.append({
-            "candidate_id": accepted_asset.get("candidate_id"),
-            "url": (
-                accepted_asset.get("url") or accepted_asset.get("video_url")
-                or ""
-            ),
-            "provider": str(
-                accepted_asset.get("provider")
-                or accepted_asset.get("source") or "unknown"
-            ),
-            "outcome": "accepted", "stage": "accepted", "reason": "",
-        })
+        _source_item = (
+            _pool_by_candidate_id.get(accepted_asset.get("candidate_id"))
+            or accepted_asset
+        )
+        _record = _event_for(
+            _source_item,
+            "video"
+            if (
+                accepted_asset.get("type") == "video"
+                or accepted_asset.get("visual_type") == "video"
+            )
+            else "image",
+            "accepted",
+            "accepted",
+            "",
+        )
+        if accepted_asset.get("segment_evidence"):
+            _record["segment_evidence"] = accepted_asset["segment_evidence"]
+        _records.append(_record)
 
     review_records.append({
         "shot_index": scenario_index,
@@ -5948,6 +6080,13 @@ def _uve_search_and_pick(
             "beat_id": (beat or {}).get("beat_id"),
             "sentence_numbers": _sentence_numbers,
         })
+    # Stage 6 / C.A.3.4: the scene's rejection_reasons counter is a
+    # DERIVED VIEW of the candidate records accumulated so far —
+    # rebuilt from them, never incremented in parallel — so the
+    # counter and the records cannot disagree.
+    scene_stats["rejection_reasons"] = (
+        rejection_diagnostics.primary_reason_counts(_records)
+    )
     return accepted_asset
 
 

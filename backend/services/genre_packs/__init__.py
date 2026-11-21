@@ -25,6 +25,16 @@ in pipeline code. Each pack declares:
   mix resolver (services.music.resolve_mix_config) treats them as
   defaults an explicit option or an env override beats, and the
   applied preset is recorded in the soundtrack record.
+- expectations (Stage 6 / R6, Architecture Review C.G.2): the
+  genre's measured-share expectations — moving_share, still_share,
+  document_share, graphic_share, uncovered_share — each
+  {"range": [lo, hi] | None, "basis": str}. Every pack ships
+  range None with basis "uncalibrated": an uncalibrated
+  expectation evaluates to UNKNOWN (services.calibration), never
+  to a default number. Ranges are written ONLY from the R6
+  calibration protocol (panel-accepted corpus films), with the
+  calibration report as evidence — no number enters a pack
+  without it.
 
 Resolution order in resolve_genre_pack: an explicit known genre in
 the run options wins; otherwise a conservative script detector;

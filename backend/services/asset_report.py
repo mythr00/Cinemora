@@ -212,6 +212,29 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             if path and path not in accepted_by_path:
                 accepted_by_path[path] = asset
 
+    # Stage 6 / C.A.3.4 + ASSET-017: the headline rejection_reasons
+    # counter is derived FROM the candidate records (primary reasons
+    # only) whenever records exist — the per-scene counters summed
+    # above are a legacy fallback for record-less inputs only (old
+    # stored shapes), never a parallel source that can drift.
+    if candidate_records:
+        rejection_reasons = Counter(
+            rejection_diagnostics.primary_reason_counts(candidate_records)
+        )
+    # Attempt-level download failures, counted from the records
+    # (one event per failed pick attempt). Distinct from the
+    # shot-level "failed_downloads" scalar below; None — unknown,
+    # not zero — when the run produced no candidate records.
+    download_attempt_failures = (
+        sum(
+            1
+            for r in candidate_records
+            if r.get("outcome") == "download_failed"
+        )
+        if candidate_records
+        else None
+    )
+
     accepted = list(accepted_by_path.values())
     cards = [a for a in accepted if _is_card(a)]
     graphics = [a for a in accepted if _is_graphic(a) and not _is_card(a)]
@@ -477,6 +500,10 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         # rotated visual was verified for a DIFFERENT sentence.
         "rotation_assignments": assignment_counts.get("rotation", 0),
         "total_retrieved_assets": stats["candidates_considered"],
+        # Stage 6 / ASSET-017: truthful alias for the scalar above
+        # (see scalar_definitions) — the legacy key keeps its value
+        # for existing consumers.
+        "candidates_evaluated": stats["candidates_considered"],
         "total_accepted_assets": len(accepted),
         "total_rejected_assets": stats["candidates_rejected"],
         "verified_moving_footage": len(verified_videos),
@@ -525,12 +552,76 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "missing_visual_count": len(missing_visuals),
         "repeated_footage": repeated,
         "failed_downloads": stats["downloads_failed"],
+        # Stage 6 / ASSET-017: attempt-level counterpart of the
+        # shot-level scalar above (definitions in scalar_definitions).
+        "download_attempt_failures": download_attempt_failures,
+        # Stage 6 / ASSET-017: the stored-report scalars, defined in
+        # one place. The C.A.6 recompute showed the historical
+        # counters (provider-funnel discovered / candidate records /
+        # total_retrieved_assets) disagreeing because their scopes
+        # were never defined together; these definitions are the
+        # reconciliation — values are unchanged, scopes are explicit.
+        "scalar_definitions": {
+            "total_retrieved_assets": (
+                "Legacy name for candidates_evaluated: the sum over "
+                "scenes of candidates_considered — candidate rows "
+                "that entered verification (the scored pools, after "
+                "within-pass dedupe), counted once per (scene, pass) "
+                "evaluation. NOT a count of distinct retrieved "
+                "assets, and NOT the candidate_records event count "
+                "(a candidate re-enters per shot it is retrieved "
+                "for, and records also cover selection/download "
+                "stages the scored pools do not)."
+            ),
+            "candidates_evaluated": (
+                "Same value as total_retrieved_assets, under the "
+                "name that matches its definition."
+            ),
+            "total_rejected_assets": (
+                "Candidate rows in the scored pools carrying a "
+                "gate/scoring rejection (per scene, per pass). "
+                "Selection-stage and dedupe rejections are recorded "
+                "as candidate_records events and counted in "
+                "rejection_funnel, not here."
+            ),
+            "failed_downloads": (
+                "SHOT-level count: (scene, pass) evaluations in "
+                "which at least one pick existed but every download "
+                "attempt failed, leaving the shot without an asset. "
+                "NOT a count of failed download attempts — see "
+                "download_attempt_failures."
+            ),
+            "download_attempt_failures": (
+                "ATTEMPT-level count: candidate_records events with "
+                "outcome 'download_failed' (one per failed pick "
+                "attempt, including transcript-verification "
+                "demotions recorded at that stage). Null when the "
+                "run produced no candidate records."
+            ),
+            "source_reuse.distinct_sources": (
+                "Distinct source/provider LABELS among accepted "
+                "real assets (the asset's recorded source name, or "
+                "its URL host when unnamed) — a provider-diversity "
+                "count, NOT a count of distinct source URLs. See "
+                "distinct_source_urls for the URL-level count."
+            ),
+            "source_reuse.distinct_source_urls": (
+                "Distinct source URLs among accepted real assets."
+            ),
+            "source_reuse.max_uses_of_single_source_url": (
+                "Largest number of accepted real assets drawn from "
+                "one source URL."
+            ),
+        },
         "low_confidence_selections": len(low_confidence),
         "sentence_assignment_accuracy": assignment_accuracy,
         "timeline_items": total_items,
         "assignment_breakdown": dict(assignment_counts),
         "source_reuse": {
             "distinct_sources": len(source_counter),
+            # Stage 6 / ASSET-017: the URL-level count the legacy
+            # key's name implied (see scalar_definitions).
+            "distinct_source_urls": len(url_counter),
             "max_uses_of_single_source_url": max(url_counter.values()) if url_counter else 0,
             "top_sources": [
                 {"source": name, "assets": count}

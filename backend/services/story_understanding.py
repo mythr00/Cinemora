@@ -1408,7 +1408,17 @@ def verify_candidate(candidate, scenario, bible):
     """
     candidate: dict with any of title, snippet, description, url, source.
     Returns {"accepted": bool, "score": float, "reasons": [..],
-             "contributions": {..}, "rejection_reason": str}
+             "contributions": {..}, "rejection_reason": str,
+             "failed_checks": [..]}
+
+    Stage 6 / R5: ``failed_checks`` lists EVERY decision check that
+    independently failed, in the precedence order the primary
+    ``rejection_reason`` is resolved by (contradiction ->
+    missing_required_subject -> no_topical_evidence ->
+    below_threshold). It is diagnostics only — the decision is
+    unchanged (the first failed check still decides, exactly as
+    before); the list exists so rejection records can carry the
+    contributing reasons the first-fail resolution used to destroy.
 
     Scoring is deterministic and explainable:
       subject alias hit ............ +0.45
@@ -1441,6 +1451,7 @@ def verify_candidate(candidate, scenario, bible):
             "reasons": [f"banned provider {candidate_provider(candidate)}"],
             "contributions": {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0},
             "rejection_reason": BANNED_PROVIDER_REASON,
+            "failed_checks": [BANNED_PROVIDER_REASON],
             "category": resolve_visual_category(scenario),
         }
 
@@ -1456,6 +1467,7 @@ def verify_candidate(candidate, scenario, bible):
             "reasons": [f"foreign provenance {candidate_project_id(candidate)}"],
             "contributions": {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0},
             "rejection_reason": FOREIGN_PROVENANCE_REASON,
+            "failed_checks": [FOREIGN_PROVENANCE_REASON],
             "category": resolve_visual_category(scenario),
         }
 
@@ -1552,12 +1564,28 @@ def verify_candidate(candidate, scenario, bible):
         rejection_reason = "below_threshold"
     if accepted:
         rejection_reason = ""
+    # Stage 6 / R5: collect-all diagnostics. Each decision check is
+    # evaluated INDEPENDENTLY (not as an elif chain) from the same
+    # in-scope values the primary resolution above used, so the
+    # contributing failures survive recording. By construction the
+    # first entry equals rejection_reason whenever the candidate is
+    # rejected, and the list is empty whenever it is accepted.
+    failed_checks = []
+    if contradiction_reason:
+        failed_checks.append(contradiction_reason)
+    if specificity == "exact" and subject and not subject_hit:
+        failed_checks.append("missing_required_subject")
+    if (wanted and overlap == 0) or (not wanted and subject_hit):
+        failed_checks.append("no_topical_evidence")
+    if score < ACCEPT_THRESHOLD.get(specificity, 0.34):
+        failed_checks.append("below_threshold")
     return {
         "accepted": accepted,
         "score": round(score, 3),
         "reasons": reasons,
         "contributions": contributions,
         "rejection_reason": rejection_reason,
+        "failed_checks": failed_checks,
         # Stage 1 / R7: the category profile this verdict was judged
         # under, recorded so diagnostics can slice by category. The
         # gate (media_pipeline.gate_shot_need) applies the profile's

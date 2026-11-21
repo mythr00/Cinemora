@@ -114,6 +114,15 @@ Rejection-reason distribution:
     ``total`` is ``null`` and ``unknown`` is ``true``. Reasons are
     NEVER invented, merged or renamed.
 
+Genre expectations (Stage 6 / C.G.2):
+    ``genre_expectations`` evaluates the asset report's genre
+    pack ``expectations`` data against this measurement's share
+    vector (moving / still / document / graphic runtime shares and
+    the uncovered sentence share). Every field carries its basis
+    label; an uncalibrated expectation (range null in the pack)
+    evaluates to ``UNKNOWN`` — never a pass/fail — and the block
+    is report-only. No named pack -> ``state: "not_recorded"``.
+
 Source / provider distribution:
     - ``timeline_source_distribution``: per timeline item ``source``
       (missing/empty -> ``"unknown"``): item count, runtime seconds,
@@ -294,6 +303,70 @@ def _rejection_reasons(report: dict) -> dict:
         "distribution": None,
         "total": None,
         "unknown": True,
+    }
+
+
+def _genre_expectations_block(
+    report: dict,
+    kind_totals: dict,
+    total_runtime: float,
+    runtime_share_by_format: dict,
+    sentence_outcomes: dict,
+) -> dict:
+    """Stage 6 / R6 (Architecture Review C.G.2): the run's genre
+    expectations, evaluated against this measurement.
+
+    The genre pack is data; its expectations carry ranges only
+    after R6 calibration, and every field evaluation carries its
+    basis label. An uncalibrated expectation evaluates to UNKNOWN —
+    never to a default number — and the block is report-only (it
+    feeds no verdict). When the asset report names no pack, the
+    block is an explicit not_recorded state."""
+    pack_ref = report.get("genre_pack") if isinstance(report, dict) else None
+    pack_id = pack_ref.get("id") if isinstance(pack_ref, dict) else None
+    if not pack_id:
+        return {
+            "state": "not_recorded",
+            "note": (
+                "The asset report names no genre pack; genre "
+                "expectations are not evaluated for this production."
+            ),
+        }
+    from services import calibration, genre_packs
+
+    pack = genre_packs.load_pack(str(pack_id))
+    if pack is None:
+        return {
+            "state": "not_recorded",
+            "genre_pack": str(pack_id),
+            "note": "The named genre pack does not exist; expectations are not evaluated.",
+        }
+
+    def _kind_share(kind):
+        if not total_runtime:
+            return None
+        return _share(kind_totals.get(kind, 0.0), total_runtime)
+
+    document_share = None
+    if runtime_share_by_format.get("state") == "recorded":
+        document_share = (
+            (runtime_share_by_format.get("by_format") or {})
+            .get("document", {})
+            .get("runtime_share")
+        )
+    measurements = {
+        "moving_share": _kind_share("moving"),
+        "still_share": _kind_share("still"),
+        "document_share": document_share,
+        "graphic_share": _kind_share("graphics"),
+        "uncovered_share": (sentence_outcomes.get("shares") or {}).get(
+            "uncovered"
+        ),
+    }
+    return {
+        "state": "recorded",
+        "genre_pack": str(pack_id),
+        "fields": calibration.evaluate_expectations(pack, measurements),
     }
 
 
@@ -890,6 +963,15 @@ def measure_visual_quality(
             ),
             "rotation_assignments": report.get("rotation_assignments"),
         },
+        # Stage 6 / C.G.2: genre expectations vs this measurement
+        # (report-only; uncalibrated expectations read UNKNOWN).
+        "genre_expectations": _genre_expectations_block(
+            report,
+            dict(kind_totals),
+            total_runtime,
+            runtime_share_by_format,
+            sentence_outcomes,
+        ),
     }
 
 
