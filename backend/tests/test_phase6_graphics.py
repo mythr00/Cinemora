@@ -339,6 +339,52 @@ def test_evidence_board_assembler_renders(tmp_path):
     assert Path(asset["file_path"]).exists()
 
 
+def test_evidence_board_with_path_objects_in_scene_records(tmp_path):
+    """Regression (live failure, Petito production 2026-11-21):
+    production scene records carry Path objects for file_path
+    (process_scene_media), where the fixtures above use strings.
+    The assembler copied the raw Path into the engine data, the
+    asset record carried it into motion_graphics.json, and the
+    manifest write died with 'Object of type PosixPath is not JSON
+    serializable', failing the whole motion_designer stage. The
+    assembled photo paths must be text, and the manifest must be
+    written."""
+    import json
+
+    from PIL import Image
+
+    photo = tmp_path / "verified_photo.jpg"
+    Image.new("RGB", (640, 480), (120, 60, 30)).save(photo)
+    data = _data()
+    data["processed_scenes"] = [
+        {
+            "scene": {"scene_number": 2},
+            "images": [
+                {
+                    "verification": {"accepted": True},
+                    "file_path": photo,  # a Path, as production hands over
+                    "title": "The tunnel entrance",
+                },
+            ],
+            "videos": [],
+        },
+    ]
+    entry = _entry(
+        "gm_0001", 2, 1, 4,
+        "Crowds gathered at the crossing in silence.",
+        templates=["evidence_board"], families=[],
+    )
+    out = tmp_path / "graphics"
+    assets = graphics_pipeline.build_motion_graphics_assets(
+        data, out, mode="balanced", manifest=_manifest([entry]),
+    )
+    assert len(assets) == 1
+    photos = assets[0]["engine_inputs"]["photos"]
+    assert photos and all(isinstance(p["path"], str) for p in photos)
+    manifest = json.loads((out / "motion_graphics.json").read_text())
+    assert manifest["count"] == 1
+
+
 def test_evidence_board_without_verified_photos_assembles_nothing(tmp_path):
     entry = _entry(
         "gm_0001", 2, 1, 4,

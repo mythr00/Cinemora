@@ -2761,7 +2761,14 @@ def build_motion_graphics_assets(
                 if _p and Path(_p).exists():
                     photos.append(
                         {
-                            "path": _p,
+                            # Scene records carry Path objects in
+                            # production (process_scene_media); the
+                            # assembled data rides into the JSON
+                            # manifest, so it must be text here —
+                            # a raw Path crashed the manifest write
+                            # on the first live evidence-board run
+                            # (Petito production, 2026-11-21).
+                            "path": str(_p),
                             "caption": clean_text(_v.get("title") or ""),
                         }
                     )
