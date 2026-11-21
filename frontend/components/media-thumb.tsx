@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { Film } from "lucide-react";
-import { fetchMediaObjectUrl } from "@/lib/api";
+import {
+  fetchMediaObjectUrl,
+  probeMediaContentType,
+  streamMediaUrl,
+} from "@/lib/api";
 
 /**
  * A real media thumbnail for a recorded media key (Brief Stage 5,
@@ -29,14 +33,30 @@ export function MediaThumb({
   useEffect(() => {
     const controller = new AbortController();
     let objectUrl: string | null = null;
-    fetchMediaObjectUrl(projectId, mediaKey, controller.signal)
-      .then((result) => {
-        objectUrl = result.url;
-        setMedia(result);
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setFailed(true);
-      });
+    const streamUrl = streamMediaUrl(projectId, mediaKey);
+    if (streamUrl) {
+      // Same-origin deployments stream: a HEAD probe picks
+      // <video> vs <img>, then the element itself range-fetches
+      // only what a thumbnail needs — never the whole file.
+      probeMediaContentType(projectId, mediaKey, controller.signal)
+        .then((contentType) => {
+          if (!controller.signal.aborted) {
+            setMedia({ url: streamUrl, contentType });
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setFailed(true);
+        });
+    } else {
+      fetchMediaObjectUrl(projectId, mediaKey, controller.signal)
+        .then((result) => {
+          objectUrl = result.url;
+          setMedia(result);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setFailed(true);
+        });
+    }
     return () => {
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);

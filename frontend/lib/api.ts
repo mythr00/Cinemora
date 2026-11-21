@@ -46,6 +46,19 @@ const API_BASE_URL =
 
 const API_TOKEN = process.env.NEXT_PUBLIC_CINEMORA_API_TOKEN || "";
 
+/**
+ * True when the client runs in the deployed same-origin mode
+ * (F5): API calls go to this origin's /api/* routes and the
+ * server-side proxy injects the real token. In this mode a bare
+ * media URL is authenticated by the proxy, so <video>, <img> and
+ * download anchors may use it directly and the media endpoint's
+ * Range support streams playback — no whole-file blob fetch.
+ * In direct mode (local development against a backend origin)
+ * the token exists only as a request header, so media still
+ * goes through the blob helpers below.
+ */
+export const SAME_ORIGIN_API = RAW_API_BASE_URL === "same-origin";
+
 export class ApiClientError extends Error {
   status: number;
   code?: string;
@@ -546,6 +559,49 @@ export function mediaUrl(projectId: string, mediaKey: string): string {
 }
 
 /**
+ * Direct URL for streaming a recorded media file, or null when
+ * streaming is unavailable (direct mode — see SAME_ORIGIN_API).
+ * The URL carries no token: in same-origin mode the server-side
+ * proxy injects it. The token never appears in a URL.
+ */
+export function streamMediaUrl(
+  projectId: string,
+  mediaKey: string,
+): string | null {
+  return SAME_ORIGIN_API ? mediaUrl(projectId, mediaKey) : null;
+}
+
+/** streamMediaUrl for a backend media path (video_url / media_url). */
+export function streamMediaPathUrl(path: string): string | null {
+  if (!SAME_ORIGIN_API) return null;
+  const ref = parseProjectMediaPath(path);
+  if (ref) return mediaUrl(ref.projectId, ref.mediaKey);
+  return path.startsWith("/api/") ? apiUrl(path) : null;
+}
+
+/**
+ * The content type of a recorded media file, via a HEAD request —
+ * lets thumbnail components choose <video> vs <img> for a streamed
+ * URL without downloading the file itself.
+ */
+export async function probeMediaContentType(
+  projectId: string,
+  mediaKey: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const headers = new Headers();
+  if (API_TOKEN) headers.set("X-API-Key", API_TOKEN);
+  const response = await fetch(mediaUrl(projectId, mediaKey), {
+    method: "HEAD",
+    cache: "no-store",
+    headers,
+    signal,
+  });
+  if (!response.ok) throw await parseError(response);
+  return response.headers.get("content-type") || "";
+}
+
+/**
  * Fetch a recorded media file as an object URL (Brief Stage 5,
  * C-07). The media endpoint is authenticated like every v1 route,
  * and a bare <img src> cannot send the X-API-Key header — it would
@@ -664,6 +720,30 @@ export async function downloadAuthenticatedMedia(options: {
   path?: string;
   filename?: string;
 }): Promise<void> {
+  // Same-origin mode: hand the browser the streamed URL and let
+  // it download natively (progress, resume, no whole-file blob
+  // held in memory first). The proxy injects the token and the
+  // media endpoint's Range support does the rest.
+  const streamUrl =
+    options.projectId && options.mediaKey
+      ? streamMediaUrl(options.projectId, options.mediaKey)
+      : options.path
+        ? streamMediaPathUrl(options.path)
+        : null;
+  const filename =
+    options.filename ||
+    (options.path
+      ? filenameFromMediaPath(options.path)
+      : "cinemora-download");
+  if (streamUrl) {
+    const anchor = document.createElement("a");
+    anchor.href = streamUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return;
+  }
   let url: string;
   if (options.projectId && options.mediaKey) {
     url = (await fetchMediaObjectUrl(options.projectId, options.mediaKey)).url;
@@ -672,11 +752,6 @@ export async function downloadAuthenticatedMedia(options: {
   } else {
     throw new Error("A media key or media path is required to download.");
   }
-  const filename =
-    options.filename ||
-    (options.path
-      ? filenameFromMediaPath(options.path)
-      : "cinemora-download");
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;

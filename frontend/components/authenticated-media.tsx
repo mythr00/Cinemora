@@ -12,6 +12,8 @@ import {
   downloadAuthenticatedMedia,
   fetchAuthenticatedMediaObjectUrl,
   fetchMediaObjectUrl,
+  streamMediaPathUrl,
+  streamMediaUrl,
 } from "@/lib/api";
 
 /**
@@ -26,10 +28,13 @@ import {
  * a URL, never logged), rendered or downloaded from an object
  * URL, and the object URL is revoked on unmount / src change.
  *
- * Recorded limitation: playback fetches the whole file as a blob
- * first (see fetchAuthenticatedMediaObjectUrl), so the media
- * endpoint's Range support cannot be used here and very large
- * films cost their full size in memory.
+ * Playback modes: in same-origin deployments (SAME_ORIGIN_API)
+ * the server proxy authenticates bare media URLs, so the player
+ * streams the URL directly and the media endpoint's Range
+ * support applies. In direct mode the token exists only as a
+ * header, so playback fetches the whole file as a blob first
+ * (see fetchAuthenticatedMediaObjectUrl) and very large films
+ * cost their full size in memory — the recorded limitation.
  *
  * Failures are honest: a 401 / 404 / network failure shows the
  * neutral "Preview unavailable" tile (or an inline download
@@ -83,7 +88,17 @@ export function AuthenticatedVideo({
       : null;
   const failed = !!resolved && resolved.key === sourceKey && resolved.failed;
 
+  // Same-origin deployments stream the media URL directly (the
+  // server proxy authenticates it); the blob resolution below
+  // runs in direct mode only.
+  const streamUrl =
+    (projectId && mediaKey ? streamMediaUrl(projectId, mediaKey) : null) ??
+    (src ? streamMediaPathUrl(src) : null);
+  const [streamFailedKey, setStreamFailedKey] = useState<string | null>(null);
+  const streamFailed = streamFailedKey === sourceKey;
+
   useEffect(() => {
+    if (streamUrl) return;
     const controller = new AbortController();
     let objectUrl: string | null = null;
     resolveMedia({ projectId, mediaKey, src }, controller.signal)
@@ -105,6 +120,32 @@ export function AuthenticatedVideo({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sourceKey captures the source inputs
   }, [sourceKey]);
 
+  if (streamUrl) {
+    if (streamFailed) {
+      return (
+        <span
+          className="authenticated-media-state"
+          role="img"
+          aria-label={ariaLabel ? `${ariaLabel} — preview unavailable` : "Preview unavailable"}
+        >
+          <Film size={16} strokeWidth={1.8} aria-hidden />
+          <small>Preview unavailable</small>
+        </span>
+      );
+    }
+    return (
+      <video
+        className={className}
+        src={streamUrl}
+        controls={controls}
+        muted={muted}
+        playsInline={playsInline}
+        preload={preload}
+        aria-label={ariaLabel}
+        onError={() => setStreamFailedKey(sourceKey)}
+      />
+    );
+  }
   if (failed) {
     return (
       <span
