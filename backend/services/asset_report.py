@@ -137,6 +137,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     kind_funnel: dict[str, Counter] = {}
     download_failures: list = []
     missing_visuals: list = []
+    uncovered_unsearched: list = []
     rejection_reasons: Counter = Counter()
     discovery_failures: list = []
     discovery_failures_collected = False
@@ -214,6 +215,15 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             if isinstance(missing, dict):
                 missing_visuals.append(
                     {"scene": scene.get("scene_number"), **missing}
+                )
+        # B-roll B0: sentences in unsearched-role beats, named by
+        # the pipeline in scene_stats (they are deliberately NOT in
+        # missing_visuals until B2 — graphics targeting is
+        # unchanged in B0).
+        for unsearched in scene_stats.get("uncovered_unsearched") or []:
+            if isinstance(unsearched, dict):
+                uncovered_unsearched.append(
+                    {"scene": scene.get("scene_number"), **unsearched}
                 )
         for asset in list(scene.get("videos") or []) + list(scene.get("images") or []):
             if not isinstance(asset, dict):
@@ -310,6 +320,69 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         if isinstance(item, dict)
         and item.get("segment_evidence") == "positional_no_contract"
     )
+
+    # ---- B-roll tier breakdown (B0, plan §6.1/§6.2) ------------------
+    # Items and runtime per tier, read from the timeline items' own
+    # tier stamps. A timeline whose items carry no stamps (stored
+    # pre-B0 productions) reports state "not_recorded" with a null
+    # B-roll share — unknown, never zero. The B-roll share is
+    # (activity_broll + atmospheric runtime) / total item runtime;
+    # the founder-set band comparison lands in B3 — B0 reports the
+    # share only, beside the unknown-licence count (§6.6).
+    _tier_item_counts: Counter = Counter()
+    _tier_runtime: Counter = Counter()
+    _tier_per_sentence: list = []
+    _tier_total_runtime = 0.0
+    _unstamped_items = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        _duration = item.get("duration")
+        _duration = float(_duration) if isinstance(_duration, (int, float)) else 0.0
+        _tier_total_runtime += _duration
+        _tier = item.get("tier")
+        if _tier not in rejection_diagnostics.TIERS:
+            _unstamped_items += 1
+            continue
+        _tier_item_counts[_tier] += 1
+        _tier_runtime[_tier] += _duration
+        _tier_per_sentence.append(
+            {
+                "scene_number": item.get("scene_number"),
+                "sentence_index": item.get("sentence_index"),
+                "tier": _tier,
+            }
+        )
+    _broll_runtime = sum(
+        _tier_runtime.get(tier, 0.0)
+        for tier in rejection_diagnostics.BROLL_TIERS
+    )
+    tier_breakdown = {
+        "state": (
+            "recorded" if _tier_item_counts else "not_recorded"
+        ),
+        "by_tier": {
+            tier: {
+                "items": _tier_item_counts[tier],
+                "runtime_seconds": round(_tier_runtime[tier], 6),
+                "runtime_share": (
+                    round(_tier_runtime[tier] / _tier_total_runtime, 6)
+                    if _tier_total_runtime
+                    else None
+                ),
+            }
+            for tier in rejection_diagnostics.TIERS
+            if _tier_item_counts.get(tier)
+        },
+        "broll_runtime_seconds": round(_broll_runtime, 6),
+        "broll_share": (
+            round(_broll_runtime / _tier_total_runtime, 6)
+            if _tier_item_counts and _tier_total_runtime
+            else None
+        ),
+        "unstamped_items": _unstamped_items,
+        "per_sentence": _tier_per_sentence,
+    }
 
     # ---- renderer placeholders / holdovers ---------------------------
     if isinstance(renderer_audit, dict) and renderer_audit.get("placeholder_count") is not None:
@@ -560,6 +633,16 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         ],
         "missing_visuals": missing_visuals,
         "missing_visual_count": len(missing_visuals),
+        # B-roll B0 (§6.1): items/runtime per tier from the timeline
+        # items' stamps, the B-roll share (T3+T4 runtime share —
+        # reported only in B0; the pack band comparison is B3), and
+        # the per-sentence tier list.
+        "tier_breakdown": tier_breakdown,
+        # B-roll B0 (§3.3): sentences in unsearched-role beats,
+        # named here because they appear in no other record
+        # upstream of the coverage gate.
+        "uncovered_unsearched": uncovered_unsearched,
+        "uncovered_unsearched_count": len(uncovered_unsearched),
         "repeated_footage": repeated,
         "failed_downloads": stats["downloads_failed"],
         # Stage 6 / ASSET-017: attempt-level counterpart of the
@@ -621,6 +704,14 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             "source_reuse.max_uses_of_single_source_url": (
                 "Largest number of accepted real assets drawn from "
                 "one source URL."
+            ),
+            "tier_breakdown.broll_share": (
+                "Share of total timeline-item runtime whose items "
+                "are stamped activity_broll or atmospheric (the "
+                "B-roll tiers T3+T4). Reported only — no band is "
+                "applied in B0 (the founder-set pack band comparison "
+                "lands in B3). Null when the timeline carries no "
+                "tier stamps (pre-B0 productions): unknown, not zero."
             ),
         },
         "low_confidence_selections": len(low_confidence),

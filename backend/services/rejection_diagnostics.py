@@ -215,6 +215,32 @@ def _dimension_results(contributions, stage, era_applicable):
     return None
 
 
+# ---------------------------------------------------------------------------
+# B-roll tier vocabulary (Intelligent B-Roll System, B0 — plan §3.1/§6.1)
+# ---------------------------------------------------------------------------
+#: The closed tier vocabulary. A tier names HOW a visual relates to
+#: the sentence it illustrates: ``direct`` (the actual subject /
+#: place / event), ``related`` (the story's real places/objects in a
+#: related context), ``activity_broll`` (the sentence's activity,
+#: performed by anyone plausible), ``atmospheric`` (place-type +
+#: era + mood) and ``graphic`` (a generated motion graphic, never
+#: footage). B0 stamps tiers on today's pipeline only — every search
+#: the pipeline runs today is a direct (T1) search, so today's
+#: events, assets and items are stamped ``direct`` (graphics
+#: ``graphic``); the escalation tiers arrive with B2/B3.
+TIERS = ("direct", "related", "activity_broll", "atmospheric", "graphic")
+
+#: The tiers that count as B-roll for the §6.2 share (T3 + T4).
+BROLL_TIERS = ("activity_broll", "atmospheric")
+
+
+def normalise_tier(value, default="direct"):
+    """A recorded tier, or ``default`` when the value is absent or
+    outside the closed vocabulary. Never invents a tier: legacy
+    records without a stamp resolve to the caller's default."""
+    return value if value in TIERS else default
+
+
 def build_event(
     *,
     candidate_id,
@@ -241,6 +267,7 @@ def build_event(
     beat_id=None,
     sentence_numbers=None,
     segment_id=None,
+    tier="direct",
 ):
     """One evaluation-event record (the candidate_records schema).
 
@@ -294,6 +321,11 @@ def build_event(
         "shot_index": shot_index,
         "beat_id": beat_id,
         "sentence_numbers": list(sentence_numbers or []),
+        # B-roll B0 (§6.1): the tier of the need this candidate was
+        # evaluated for, so the funnel can be read per tier. Every
+        # search the pipeline runs today is a direct search; the
+        # escalation tiers (B2/B3) stamp their own.
+        "tier": normalise_tier(tier),
     }
 
 

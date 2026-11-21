@@ -296,6 +296,12 @@ def _sentence_record(index, text, plan, bible):
         "entity_ids": plan.get("entity_ids", []),
         "story_events": events,
         "scenarios": plan.get("scenarios", []),
+        # B-roll B1: the plan's fallback concept set rides on the
+        # sentence record, so shot needs and the plan document read
+        # the same concepts the planner produced (None for records
+        # built from pre-B1 plans — build_shot_needs then derives).
+        "fallback_concepts": plan.get("fallback_concepts"),
+        "concepts_source": plan.get("concepts_source"),
         "degraded": bool(plan.get("degraded")),
         "entities": people_and_orgs,
         "locations": places,

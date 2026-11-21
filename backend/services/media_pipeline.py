@@ -903,6 +903,39 @@ def build_shot_needs(beat, bible=None):
             or []
         )
 
+        # B-roll B1 (§4.2): the owning sentence's fallback concepts
+        # ride on the need, stamped with their source. The scenario's
+        # _sentence_offset (stamped by _beat_scenarios) names the
+        # owning sentence. A sentence record with no recorded
+        # concepts (cached/legacy plan) gets the deterministic
+        # need-time derivation from its own text and this need's
+        # place/era anchors. Recorded and displayed in B1; the
+        # escalation loop that searches them is B2.
+        _sentence_offset = scenario.get("_sentence_offset")
+        _beat_sentences = beat.get("sentences") or []
+        _owner_sentence = (
+            _beat_sentences[_sentence_offset]
+            if isinstance(_sentence_offset, int)
+            and 0 <= _sentence_offset < len(_beat_sentences)
+            else None
+        )
+        _concepts = None
+        _concepts_source = None
+        if isinstance(_owner_sentence, dict):
+            _recorded = _owner_sentence.get("fallback_concepts")
+            if isinstance(_recorded, dict):
+                _concepts = _recorded
+                _concepts_source = _owner_sentence.get("concepts_source")
+        if _concepts is None:
+            _concepts = story.derive_fallback_concepts(
+                get_sentence_text(_owner_sentence)
+                if _owner_sentence is not None else "",
+                place=place,
+                era=shot_era,
+                entities=[entity] if entity else [],
+            )
+            _concepts_source = "need_time_derivation"
+
         needs.append({
             "beat_id": beat.get("beat_id"),
             "shot_index": index,
@@ -931,11 +964,17 @@ def build_shot_needs(beat, bible=None):
                     else 3
                 )
             ),
-            "fallback": (
-                "related_entity"
-                if specificity == "exact"
-                else "same_era_place"
-            ),
+            # B-roll B0 (§3.4): the fossil write-only "fallback"
+            # field ("related_entity" / "same_era_place") is
+            # superseded by the need's tier record — its ENTRY tier.
+            # Every need the pipeline builds today enters at T1, so
+            # the stamp is "direct"; derived needs (B2/B3) will
+            # carry their own tier. Nothing ever read "fallback".
+            "tier": "direct",
+            # B-roll B1: the sentence's fallback concepts + source
+            # (see above). Recorded, not yet searched.
+            "fallback_concepts": _concepts,
+            "concepts_source": _concepts_source,
             "queries": queries,
         })
 
@@ -6223,6 +6262,10 @@ def _uve_search_and_pick(
             {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
         )["downloaded"] += 1
         annotated = _uve_annotate(asset, scenario, scenario_index, beat.get("text", ""))
+        # B-roll B0 (§6.1): the accepted asset record carries its
+        # tier through the scene's sentence results — the need's
+        # tier ("direct" for every search run today).
+        annotated["tier"] = str((shot_need or {}).get("tier") or "direct")
         accepted_asset = annotated
         if asset.get("type") == "video" or asset.get("visual_type") == "video":
             beat_videos.append(annotated)
@@ -6310,6 +6353,13 @@ def _uve_search_and_pick(
                 _cov_annotated = _uve_annotate(
                     _cov_asset, scenario, scenario_index,
                     beat.get("text", ""),
+                )
+                # B-roll B0: coverage-drawn assets carry the need's
+                # tier exactly like primary picks (their
+                # selection_via record, not their tier, is what
+                # distinguishes how they were drawn).
+                _cov_annotated["tier"] = str(
+                    (shot_need or {}).get("tier") or "direct"
                 )
                 coverage_accepted_assets.append(_cov_annotated)
                 if _cov_asset.get("type") == "video" or _cov_asset.get("visual_type") == "video":
@@ -6416,6 +6466,10 @@ def _uve_search_and_pick(
             # the item carries one (accepted/downloaded items do;
             # gate/scoring rejections predate selection -> None).
             segment_id=_item.get("segment_id"),
+            # B-roll B0 (§6.1): the tier of the need this candidate
+            # was evaluated for — "direct" for every search the
+            # pipeline runs today.
+            tier=str((shot_need or {}).get("tier") or "direct"),
         )
 
     for _pool, _kind in (
@@ -6824,6 +6878,23 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
 
         if not beat.get("searchable", True):
             print(f"  NO SEARCH (role={beat.get('role')})")
+            # B-roll B0 (§3.3/§11): an unsearched-role beat's
+            # sentences are NAMED in the scene stats — today they
+            # vanish from every record upstream of the coverage
+            # gate (the Gilgo sentence-1 shape). Deliberately a
+            # separate field, NOT missing_visuals: B0 must not
+            # change graphics targeting (T5 reachability for these
+            # sentences is B2's unsearched_role work).
+            for _offset, _number in enumerate(
+                beat.get("sentence_numbers") or []
+            ):
+                scene_stats.setdefault("uncovered_unsearched", []).append(
+                    {
+                        "sentence_number": _number,
+                        "beat_id": beat.get("beat_id"),
+                        "role": beat.get("role"),
+                    }
+                )
         else:
             for scenario_index, scenario in enumerate(scenarios, start=1):
                 print(f"  SHOT {scenario_index}: [{scenario.get('specificity')}/{scenario.get('kind')}] {scenario.get('visual')}")

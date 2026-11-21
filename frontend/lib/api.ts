@@ -211,6 +211,19 @@ export type ProposedVisual = {
   search_terms: string[];
 } | null;
 
+/** B-roll B1: the sentence's fallback concept set — what a camera
+ * could show if the exact subject could not be filmed (activities,
+ * objects, settings, place types, mood, era terms), recorded by the
+ * planner and displayed, not yet searched. */
+export type FallbackConcepts = {
+  activities: string[];
+  objects: string[];
+  settings: string[];
+  place_types: string[];
+  mood: string[];
+  era_terms: string[];
+} | null;
+
 export type ChosenVisual = {
   type?: string | null;
   provider?: string | null;
@@ -232,6 +245,8 @@ export type PlanSentence = {
   subject?: string | null;
   entities: string[];
   proposed_visual: ProposedVisual;
+  fallback_concepts?: FallbackConcepts;
+  concepts_source?: string | null;
   chosen_visual: ChosenVisual;
   evidence_class?: string | null;
   rights?: {

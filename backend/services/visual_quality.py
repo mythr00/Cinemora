@@ -144,6 +144,18 @@ Segment reuse (Stage 7 / R9, Architecture Review C.F.3):
     Stage 7: per-segment uses here are directly comparable to the
     cap value, per-file uses above are not.
 
+B-roll tier accounting (Intelligent B-Roll B0, plan §6.1/§6.2):
+    ``tier_accounting`` groups timeline items by their stamped
+    ``tier`` (direct / related / activity_broll / atmospheric /
+    graphic): count, runtime seconds and runtime share per tier,
+    plus ``broll_share`` — the (activity_broll + atmospheric)
+    runtime share of the whole timeline. Items without a stamp are
+    counted in ``unstamped_items`` and excluded from the shares; a
+    timeline with no stamped items at all reports
+    ``state: "not_recorded"`` and a null ``broll_share`` (unknown,
+    never zero). Measurement only — the founder-set band comparison
+    is B3.
+
 Sentence outcomes — profile buckets (Stage 7 / R7, C.B.3):
     A sentence whose direct ("sentence" assignment) item carries a
     stamped ``verification_category`` of contextual, environmental
@@ -198,6 +210,7 @@ from collections import Counter
 from pathlib import Path
 
 from services import media_paths
+from services import rejection_diagnostics
 from services import segment_index
 from services.atomic_write import write_text_atomic
 
@@ -958,6 +971,44 @@ def measure_visual_quality(
             ),
         }
 
+    # B-roll tier accounting (B0, plan §6.1/§6.2): items and runtime
+    # per tier from the timeline items' own tier stamps, and the
+    # B-roll share — (activity_broll + atmospheric runtime) / total
+    # runtime. A stored timeline whose items carry no stamps yields
+    # state "not_recorded" and a null share: unknown, not zero. The
+    # founder-set band comparison is B3; this block only measures.
+    _tier_counts: Counter = Counter()
+    _tier_runtime: Counter = Counter()
+    _unstamped_items = 0
+    for _item, _duration in zip(items, durations):
+        _tier = _item.get("tier")
+        if _tier not in rejection_diagnostics.TIERS:
+            _unstamped_items += 1
+            continue
+        _tier_counts[_tier] += 1
+        _tier_runtime[_tier] += _duration
+    _broll_runtime = sum(
+        _tier_runtime.get(tier, 0.0)
+        for tier in rejection_diagnostics.BROLL_TIERS
+    )
+    tier_accounting = {
+        "state": "recorded" if _tier_counts else "not_recorded",
+        "by_tier": {
+            tier: {
+                "count": _tier_counts[tier],
+                "runtime_seconds": round(_tier_runtime[tier], 6),
+                "runtime_share": _share(_tier_runtime[tier], total_runtime),
+            }
+            for tier in rejection_diagnostics.TIERS
+            if _tier_counts.get(tier)
+        },
+        "broll_runtime_seconds": round(_broll_runtime, 6),
+        "broll_share": (
+            _share(_broll_runtime, total_runtime) if _tier_counts else None
+        ),
+        "unstamped_items": _unstamped_items,
+    }
+
     return {
         "schema": "cinemora.visual_quality/1",
         "project_id": project_id
@@ -1014,6 +1065,7 @@ def measure_visual_quality(
         },
         "runtime_share": _runtime_block(dict(kind_totals), total_runtime),
         "runtime_share_by_format": runtime_share_by_format,
+        "tier_accounting": tier_accounting,
         "runtime_share_assignment_method": _runtime_block(
             dict(assignment_method_totals), total_runtime
         ),

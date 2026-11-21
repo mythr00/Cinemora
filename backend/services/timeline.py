@@ -29,6 +29,11 @@ try:
 except ImportError:  # flat-layout fallback
     import segment_index
 
+try:
+    from services import rejection_diagnostics
+except ImportError:  # flat-layout fallback
+    import rejection_diagnostics
+
 
 # ============================================================
 # CONFIGURATION
@@ -166,6 +171,25 @@ def _visual_use_key(visual):
             return f"segment:{segment_id}"
         return f"asset:{segment_id}"
     return f"file:{path}"
+
+
+def _visual_tier(visual, assignment=None):
+    """The B-roll tier of a timeline item (Intelligent B-Roll B0,
+    plan §6.1): a generated graphic is ``graphic``; every other item
+    inherits the tier stamped on the visual it uses (rotation items
+    inherit their asset's tier, exactly as they inherit its
+    identity); a visual without a stamp (legacy/stored shapes) is
+    ``direct`` — the only tier today's searches can produce."""
+    if isinstance(visual, dict) and (
+        assignment == "motion_graphic"
+        or visual.get("motion_graphic")
+        or visual.get("type") == "motion_graphic"
+        or visual.get("source") == "cinemora_motion_graphics"
+    ):
+        return "graphic"
+    if isinstance(visual, dict):
+        return rejection_diagnostics.normalise_tier(visual.get("tier"))
+    return "direct"
 
 
 def visual_exists(visual):
@@ -919,6 +943,13 @@ def build_scene_timeline(
                     "cut",
             }
 
+            # B-roll B0 (§6.1): the item's tier — "graphic" for a
+            # generated graphic, otherwise the tier of the visual
+            # actually used (a rotation item inherits its asset's
+            # tier). Always stamped: the tier vocabulary is closed
+            # and today's visuals resolve to "direct".
+            item["tier"] = _visual_tier(visual, assignment)
+
             # Stage 7 / R7+R8: the item carries the segment identity
             # of the visual actually used and the verification
             # category its verdict was judged under, so downstream
@@ -1189,6 +1220,8 @@ def build_scene_timeline(
             "segment_evidence": video.get(
                 "segment_evidence"
             ),
+            # B-roll B0: tier stamp (see the sentence-window path).
+            "tier": _visual_tier(video),
             # Stage 3F: segment offset for the renderer (MA-15).
             "clip_start": get_clip_start(video),
         })
@@ -1267,6 +1300,8 @@ def build_scene_timeline(
             "segment_evidence": image.get(
                 "segment_evidence"
             ),
+            # B-roll B0: tier stamp (see the sentence-window path).
+            "tier": _visual_tier(image),
         })
 
         current_time += item_duration

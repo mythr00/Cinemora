@@ -133,6 +133,11 @@ def plan_from_analysis(analysis, project_id):
                 "subject": names.get(sentence.get("subject_id")),
                 "entities": sentence.get("entities") or [],
                 "proposed_visual": _proposed_visual(sentence),
+                # B-roll B1 (§4.1): the sentence's fallback concept
+                # set + its source, so the Visual Plan page can show
+                # the B-roll the system intends before production.
+                "fallback_concepts": sentence.get("fallback_concepts"),
+                "concepts_source": sentence.get("concepts_source"),
             }
         )
     return {
@@ -200,6 +205,10 @@ def _plan_from_cache(project_dir):
                 "subject": names.get(plan.get("subject_id")),
                 "entities": plan.get("entities") or [],
                 "proposed_visual": _proposed_visual(sentence),
+                # B-roll B1: cached plans written before B1 carry no
+                # concepts — None, honestly unstated.
+                "fallback_concepts": plan.get("fallback_concepts"),
+                "concepts_source": plan.get("concepts_source"),
             }
         )
     if not rows:
@@ -644,6 +653,14 @@ def build_certificate(project, run, decisions, counts):
                     "duration": decision.get("interval_duration"),
                 },
                 "evidence_class": decision.get("evidence_class"),
+                # B-roll B0 (§6.1): the tier recorded in the
+                # decision's verification JSON (None on pre-B0
+                # ledger rows — unstated, never backfilled).
+                "tier": (
+                    decision.get("verification", {}).get("tier")
+                    if isinstance(decision.get("verification"), dict)
+                    else None
+                ),
                 "verification": _verification_outcome(
                     decision.get("verification")
                 ),

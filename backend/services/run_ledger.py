@@ -938,11 +938,19 @@ def _verification_with_segment(asset):
     segment_id is stamped on the candidate, the asset, the timeline
     item AND the ledger row). The verdict dict is COPIED before
     stamping — the asset's verdict object is shared with the
-    pipeline and is never mutated by recording."""
+    pipeline and is never mutated by recording.
+
+    B-roll B0 (§6.1): the asset's tier rides in the same JSON copy,
+    so the certificate assembled from the ledger can state it."""
     verification = _asset_verification(asset)
+    if not isinstance(verification, dict):
+        return verification
     segment_id = asset.get("segment_id") if isinstance(asset, dict) else None
-    if isinstance(verification, dict) and segment_id:
+    tier = asset.get("tier") if isinstance(asset, dict) else None
+    if segment_id:
         verification = {**verification, "segment_id": segment_id}
+    if tier:
+        verification = {**verification, "tier": tier}
     return verification
 
 
@@ -1374,6 +1382,10 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                         ),
                         "specificity": record.get("specificity"),
                         "matched_query": record.get("matched_query"),
+                        # B-roll B0 (§6.1): the tier of the need the
+                        # candidate was evaluated for rides in the
+                        # same JSON column (None on pre-B0 records).
+                        "tier": record.get("tier"),
                     },
                     "rights": None,
                     "decision_type": "rejected",

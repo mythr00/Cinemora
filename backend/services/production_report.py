@@ -215,6 +215,26 @@ def _reconciliation(measurement, asset_report, timeline, rights_manifest, render
     }
 
 
+def _tier_answer(tier_breakdown):
+    """The q26 answer payload from an asset report's tier_breakdown:
+    runtime share per tier plus the B-roll share. None when the
+    breakdown is absent or not recorded (pre-B0 productions) — the
+    question then reports unknown, never a fabricated zero."""
+    if not isinstance(tier_breakdown, dict):
+        return None
+    if tier_breakdown.get("state") != "recorded":
+        return None
+    by_tier = tier_breakdown.get("by_tier") or {}
+    answer = {
+        tier: (by_tier.get(tier) or {}).get("runtime_share")
+        for tier in (
+            "direct", "related", "activity_broll", "atmospheric", "graphic",
+        )
+    }
+    answer["broll_share"] = tier_breakdown.get("broll_share")
+    return answer
+
+
 def _questions(measurement, asset_report, verdicts):
     outcomes = measurement.get("sentence_outcomes") or {}
     buckets = outcomes.get("buckets") or {}
@@ -325,6 +345,17 @@ def _questions(measurement, asset_report, verdicts):
                  {"integrity": (verdicts.get("integrity") or {}).get("verdict"),
                   "quality": (verdicts.get("quality") or {}).get("verdict"),
                   "reliability": (verdicts.get("reliability") or {}).get("verdict")}),
+        # B-roll B0 (§6.1): the tier question — answered from the
+        # asset report's tier_breakdown (runtime shares per tier +
+        # the B-roll share), unknown when the production's timeline
+        # carried no tier stamps.
+        "q26": q("How much of this film is direct footage of its actual "
+                 "subject, and how much is related or activity B-roll?",
+                 _tier_answer(asset_report.get("tier_breakdown")),
+                 "answered"
+                 if isinstance(asset_report.get("tier_breakdown"), dict)
+                 and asset_report["tier_breakdown"].get("state") == "recorded"
+                 else "unknown"),
     }
 
 

@@ -52,6 +52,18 @@ in pipeline code. Each pack declares:
   the RESOLVED profile via resolve_visual_profile /
   resolve_genre_pack; pipeline code never branches on genre
   names.
+- broll_vocabulary (Intelligent B-Roll B1, plan §4.3): a block
+  under visual_profile — activities / settings / place_types /
+  mood phrase lists a genre's B-roll searches may top up from.
+  Genre DATA only: the ladder machinery that consumes it (B2) is
+  genre-agnostic, pack phrases never enter direct-evidence
+  searches, and a pack without the block resolves to the general
+  pack's core by the same field-by-field fallback. Validation
+  (validate_broll_vocabulary) is load-time like the rest of the
+  profile; for true_crime it additionally enforces the §6.5 care
+  rule — no re-enactment-shaped activity phrases (the genre's
+  B-roll shows the investigation and the world around the story,
+  never a simulated crime).
 
 Resolution order in resolve_genre_pack: an explicit known genre in
 the run options wins; otherwise a conservative script detector;
@@ -119,8 +131,25 @@ ASSEMBLED_TEMPLATES = frozenset({
 _PROFILE_FIELDS = frozenset({
     "profile_version", "category_priors", "template_affinities",
     "composition_affinities", "specificity_defaults",
-    "research_requirements", "care_rules_ref",
+    "research_requirements", "care_rules_ref", "broll_vocabulary",
 })
+
+#: B-roll vocabulary fields (B1, plan §4.3) and their size caps —
+#: phrases, not keywords: at most 12 phrases per list, at most 6
+#: words per phrase.
+_BROLL_VOCABULARY_FIELDS = frozenset({
+    "activities", "settings", "place_types", "mood",
+})
+_BROLL_MAX_PHRASES = 12
+_BROLL_MAX_WORDS = 6
+
+#: Re-enactment fragments barred from the true_crime vocabulary by
+#: the §6.5 care rule (substring match on the lowercased phrase).
+_REENACTMENT_FRAGMENTS = (
+    "attack", "strangl", "stab", "shoot", "kill", "murder",
+    "assault", "disposal", "reenact", "re-enact", "bludgeon",
+    "suffocat", "drown", "poison",
+)
 
 #: Composition pattern vocabulary (Phase 6). Inert data until
 #: Stage 11 — recorded from the start, per B.2.2.
@@ -146,7 +175,61 @@ def _engine_styles():
     return STYLES
 
 
-def validate_visual_profile(profile):
+def _is_reenactment_phrase(phrase):
+    """True when a vocabulary phrase is re-enactment-shaped (§6.5):
+    any word in the phrase STARTS with a barred fragment — so
+    "strangling" matches "strangl" while "skilled" never matches
+    "kill"."""
+    words = re.findall(r"[a-z-]+", str(phrase or "").lower())
+    return any(
+        word.startswith(fragment)
+        for word in words
+        for fragment in _REENACTMENT_FRAGMENTS
+    )
+
+
+def validate_broll_vocabulary(vocabulary, pack_id=None):
+    """Validate one pack's broll_vocabulary block (B1, plan §4.3).
+
+    Returns a list of failure strings; empty means valid. An absent
+    block (None) is legal — resolution falls back to the general
+    pack's core. Rules: known keys only; each list holds at most
+    12 non-empty string phrases of at most 6 words. For the
+    true_crime pack the §6.5 care rule also applies: no
+    re-enactment-shaped phrases in any list.
+    """
+    failures = []
+    if vocabulary is None:
+        return failures
+    if not isinstance(vocabulary, dict):
+        return ["broll_vocabulary_not_an_object"]
+    unknown = sorted(set(vocabulary) - _BROLL_VOCABULARY_FIELDS)
+    if unknown:
+        failures.append(f"broll_vocabulary_unknown_fields:{','.join(unknown)}")
+    for field in sorted(set(vocabulary) & _BROLL_VOCABULARY_FIELDS):
+        phrases = vocabulary[field]
+        if not isinstance(phrases, list):
+            failures.append(f"broll_vocabulary_{field}_not_a_list")
+            continue
+        if len(phrases) > _BROLL_MAX_PHRASES:
+            failures.append(f"broll_vocabulary_{field}_too_many")
+        for phrase in phrases:
+            if not isinstance(phrase, str) or not phrase.strip():
+                failures.append(f"broll_vocabulary_{field}_phrase_invalid")
+                break
+            if len(phrase.split()) > _BROLL_MAX_WORDS:
+                failures.append(f"broll_vocabulary_{field}_phrase_too_long")
+                break
+        if pack_id == "true_crime":
+            for phrase in phrases:
+                if isinstance(phrase, str) and _is_reenactment_phrase(phrase):
+                    failures.append(
+                        f"broll_vocabulary_reenactment:{phrase}"
+                    )
+    return failures
+
+
+def validate_visual_profile(profile, pack_id=None):
     """Validate one pack's visual_profile object (B.2.2).
 
     Returns a list of failure strings; empty means valid. An absent
@@ -156,7 +239,9 @@ def validate_visual_profile(profile):
     template_affinities exists in the engine registry AND has a
     production assembler; specificity_defaults may raise but never
     lower the evidence floor below "exact"; research_requirements
-    carries only its two known fields with a sane minimum.
+    carries only its two known fields with a sane minimum;
+    broll_vocabulary follows validate_broll_vocabulary (``pack_id``
+    scopes the true_crime care rule).
     """
     failures = []
     if profile is None:
@@ -245,6 +330,9 @@ def validate_visual_profile(profile):
                 or minimum < 0
             ):
                 failures.append("research_requirements_min_sources_invalid")
+    failures.extend(
+        validate_broll_vocabulary(profile.get("broll_vocabulary"), pack_id)
+    )
     return failures
 
 
@@ -286,7 +374,9 @@ def resolve_visual_profile(pack):
     }
     if not isinstance(pack, dict) or pack.get("id") == "general":
         return result
-    failures = validate_visual_profile(pack.get("visual_profile"))
+    failures = validate_visual_profile(
+        pack.get("visual_profile"), pack_id=pack.get("id")
+    )
     if failures:
         result["profile_failures"] = failures
         return result

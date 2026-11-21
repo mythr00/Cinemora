@@ -124,7 +124,9 @@ def test_kohberger_stored_profile(kohberger_dir):
     assert report["schema"] == "cinemora.production_report/1"
     assert report["verdicts"]["quality"]["verdict"] == "FAIL"
     assert report["verdicts"]["integrity"]["verdict"] == "PASS"
-    assert len(report["questions"]) == 25
+    # B-Roll B0 supersession: q26 (tier / B-roll share) is additive;
+    # the report now answers 26 questions. q01–q25 are unchanged.
+    assert len(report["questions"]) == 26
 
     # Re-measure for the metric-level assertions.
     from services.visual_quality import measure_project
@@ -290,7 +292,8 @@ def test_auditor_integration_quality_fail_integrity_passes(kohberger_dir):
 
 def test_production_report_questions_shape(kohberger_dir):
     report = build_production_report_for_project(kohberger_dir)
-    assert sorted(report["questions"].keys()) == [f"q{i:02d}" for i in range(1, 26)]
+    # B-Roll B0 supersession: additive q26 extends the shape to q01–q26.
+    assert sorted(report["questions"].keys()) == [f"q{i:02d}" for i in range(1, 27)]
     for entry in report["questions"].values():
         assert set(entry.keys()) == {"question", "answer", "state"}
         assert entry["state"] in ("answered", "unknown", "unavailable")

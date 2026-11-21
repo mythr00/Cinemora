@@ -739,7 +739,15 @@ Return ONLY a JSON list, one object per sentence:
       "place": "place or null",
       "era": "year/decade or null"
     }
-  ]
+  ],
+  "fallback_concepts": {
+    "activities": ["short phrases: activities a camera could show while this sentence is spoken, e.g. reviewing records, patrolling"],
+    "objects": ["the concrete objects in play, e.g. phone records, pickup truck"],
+    "settings": ["settings a camera could show, e.g. investigation office"],
+    "place_types": ["kinds of place, e.g. beach shoreline, suburban street"],
+    "mood": ["mood words, e.g. methodical, tense"],
+    "era_terms": ["era phrases, e.g. 2010s"]
+  }
 }
 
 Rules:
@@ -752,6 +760,10 @@ Rules:
   "representative" when a similar real-world shot works. "generic" for mood.
 - Entities and subject_ids must come from the bible. Ordinary words, sentence
   openers, and time words are never entities. Dates go in "time"/"era".
+- Also emit "fallback_concepts": what a camera could show if the exact
+  subject could not be filmed — the sentence's activities, the concrete
+  objects in play, and its setting / kind of place — the way a documentary
+  editor briefs B-roll. Phrases, not single keywords; at most 4 per list.
 - Do not invent facts that the script does not support.""" % {
     "roles": " | ".join(SENTENCE_ROLES),
     "kinds": " | ".join(SCENARIO_KINDS),
@@ -852,6 +864,315 @@ def _required_type_for(scenario, subject_entity, kind):
     return _KIND_REQUIRED_TYPE.get(kind)
 
 
+# ---------------------------------------------------------------------------
+# Fallback concepts (Intelligent B-Roll System, B1 — plan §4)
+# ---------------------------------------------------------------------------
+# Every sentence plan carries a fallback concept set: the activities a
+# camera could show while the sentence is spoken, the concrete
+# objects in play, and the setting / place-type — as if the exact
+# subject could not be filmed. B1 RECORDS the concepts (plan
+# artefacts, shot needs, the Visual Plan page); nothing searches
+# them yet — the tier-escalation loop that consumes them is B2/B3.
+#
+# Sources, stamped on every plan as ``concepts_source``:
+# - ``llm_plan``: the LLM emitted the block; normalize_plan validates
+#   it (caps below) and never invents additions.
+# - ``need_time_derivation``: the deterministic derivation below,
+#   used by the degraded planner today and at need-build time for
+#   sentence records that carry no concepts (cached/legacy plans).
+#   (Planner 2.0's factory will stamp ``planner2_factory`` when it
+#   lands — a separate programme.)
+
+#: The six concept fields, in schema order.
+FALLBACK_CONCEPT_FIELDS = (
+    "activities", "objects", "settings", "place_types", "mood", "era_terms",
+)
+
+_CONCEPT_MAX_PHRASES = 4
+_CONCEPT_MAX_WORDS = 6
+
+
+def _clean_concept_phrases(value):
+    """One concept list, cleaned: strings only, whitespace-collapsed,
+    at most 4 phrases of at most 6 words each, empties dropped,
+    duplicates removed preserving order."""
+    phrases = []
+    if isinstance(value, list):
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            phrase = " ".join(item.split())
+            if not phrase:
+                continue
+            if len(phrase.split()) > _CONCEPT_MAX_WORDS:
+                continue
+            if phrase not in phrases:
+                phrases.append(phrase)
+            if len(phrases) >= _CONCEPT_MAX_PHRASES:
+                break
+    return phrases
+
+
+def validate_fallback_concepts(raw):
+    """Validate an LLM-supplied fallback_concepts block.
+
+    Returns the cleaned block (all six fields, possibly empty lists)
+    when ``raw`` is a dict, else None — the caller then derives.
+    Validation only cleans; it never invents a phrase."""
+    if not isinstance(raw, dict):
+        return None
+    return {
+        field: _clean_concept_phrases(raw.get(field))
+        for field in FALLBACK_CONCEPT_FIELDS
+    }
+
+
+def empty_fallback_concepts():
+    return {field: [] for field in FALLBACK_CONCEPT_FIELDS}
+
+
+# Deterministic derivation (plan §4.2): a small phrase table from
+# verb lemma to the gerund activity phrase a camera could show, a
+# concrete-object noun scan, and a place-type cue table. Everything
+# derived comes from the sentence's own text or its bible entities —
+# nothing is invented.
+_ACTIVITY_PHRASES = {
+    "search": "searching",
+    "patrol": "patrolling",
+    "travel": "travelling",
+    "drive": "driving",
+    "walk": "walking",
+    "run": "running",
+    "investigate": "investigating",
+    "track": "tracking movements",
+    "follow": "following",
+    "watch": "watching",
+    "arrest": "arresting",
+    "work": "working",
+    "build": "building",
+    "sail": "sailing",
+    "fly": "flying",
+    "gather": "gathering",
+    "march": "marching",
+    "inspect": "inspecting",
+    "examine": "examining",
+    "review": "reviewing",
+    "study": "studying",
+    "check": "checking",
+    "guard": "guarding",
+    "escort": "escorting",
+    "survey": "surveying",
+    "interview": "interviewing",
+    "question": "questioning",
+    "testify": "testifying",
+    "celebrate": "celebrating",
+    "mourn": "mourning",
+    "wait": "waiting",
+}
+
+#: Surface forms the regular -s/-ing/-ed generation cannot produce.
+_ACTIVITY_FORM_OVERRIDES = {
+    "patrol": ("patrolled", "patrolling"),
+    "travel": ("travelled", "travelling"),
+    "study": ("studied", "studying", "studies"),
+    "run": ("ran", "running"),
+    "drive": ("drove", "driven", "driving"),
+    "fly": ("flew", "flown", "flying"),
+    "sail": ("sailed", "sailing"),
+    "build": ("built", "building"),
+    "mourn": ("mourned", "mourning"),
+}
+
+
+def _activity_forms(lemma):
+    forms = {lemma, lemma + "s", lemma + "es", lemma + "ing", lemma + "ed"}
+    if lemma.endswith("e"):
+        forms.add(lemma[:-1] + "ing")
+        forms.add(lemma[:-1] + "d")
+    forms.update(_ACTIVITY_FORM_OVERRIDES.get(lemma, ()))
+    return forms
+
+
+_ACTIVITY_FORM_TO_LEMMA = {
+    form: lemma
+    for lemma in _ACTIVITY_PHRASES
+    for form in _activity_forms(lemma)
+}
+
+#: Verbs whose activity, when the sentence also names records /
+#: documents / files / data, is the records-review activity a
+#: documentary actually shows (the founder's Gilgo example).
+_RECORDS_REVIEW_VERBS = {"study", "review", "examine", "inspect", "check"}
+_RECORDS_NOUNS = {"records", "record", "documents", "document", "files", "file", "data"}
+
+#: Concrete object nouns the derivation may lift from the text, with
+#: a preceding modifier word when one is present ("travel records").
+_OBJECT_NOUNS = (
+    "records", "documents", "files", "data", "phones", "phone",
+    "letters", "letter", "maps", "map", "photographs", "photograph",
+    "photo", "diary", "journal", "notebook", "car", "truck", "boat",
+    "ship", "plane", "train", "computer", "camera", "newspaper",
+    "book", "weapon", "knife", "gun",
+)
+
+#: Words that may never serve as an object's modifier.
+_MODIFIER_STOP = {
+    "the", "a", "an", "his", "her", "their", "its", "my", "your",
+    "our", "this", "that", "these", "those", "of", "and", "or",
+    "in", "on", "at", "to", "from", "with", "for", "by",
+}
+
+#: Place cue word -> (settings additions, place_types additions).
+_PLACE_CUES = {
+    "beach": (["beach"], ["beach shoreline"]),
+    "shore": (["shoreline"], ["beach shoreline"]),
+    "coast": (["coastline"], ["coastline"]),
+    "highway": (["highway"], ["highway"]),
+    "parkway": (["parkway"], ["highway"]),
+    "road": (["road"], ["road"]),
+    "street": (["street"], ["street"]),
+    "office": (["office"], []),
+    "station": (["station"], []),
+    "campus": (["college campus"], []),
+    "university": (["college campus"], []),
+    "courtroom": (["courtroom"], []),
+    "court": (["courtroom"], []),
+    "hospital": (["hospital"], []),
+    "field": (["field"], ["open field"]),
+    "forest": (["woods"], ["wooded area"]),
+    "woods": (["woods"], ["wooded area"]),
+    "brush": (["brush land"], ["wooded area"]),
+    "sea": (["open sea"], ["open water"]),
+    "ocean": (["ocean shore"], ["open water"]),
+    "harbour": (["harbour"], ["harbour"]),
+    "harbor": (["harbor"], ["harbor"]),
+    "city": ([], ["city street"]),
+    "town": ([], ["small town"]),
+    "village": ([], ["village"]),
+    "desert": (["desert"], ["desert"]),
+    "mountain": (["mountains"], ["mountain landscape"]),
+    "mountains": (["mountains"], ["mountain landscape"]),
+    "river": (["riverbank"], ["river"]),
+    "lake": (["lakeshore"], ["lake"]),
+    "prison": (["prison"], []),
+    "school": (["school"], []),
+    "house": (["house"], []),
+    "home": (["house interior"], []),
+    "farm": (["farm"], ["farmland"]),
+    "factory": (["factory"], []),
+    "laboratory": (["laboratory"], []),
+    "lab": (["laboratory"], []),
+}
+
+
+def derive_fallback_concepts(sentence_text, *, place=None, era=None, entities=()):
+    """Derive a fallback concept set deterministically from a
+    sentence's own text and its bible entities (plan §4.2).
+
+    ``entities`` are bible entity dicts (canonical + type) mentioned
+    in the sentence. Mood is never derived — the derivation cannot
+    judge it, so the list stays honestly empty; the LLM path may
+    supply it. Every list is capped by the same validation caps as
+    LLM-supplied concepts."""
+    text = str(sentence_text or "")
+    words = re.findall(r"[a-z']+", text.lower())
+    word_set = set(words)
+    concepts = empty_fallback_concepts()
+
+    # Activities: verb forms in the text, in text order. A BASE
+    # form immediately followed by an object noun is that noun's
+    # modifier, not a verb ("travel records" is not travelling);
+    # inflected forms keep their verb reading ("reviewing records"
+    # IS reviewing).
+    activities = []
+    for position, word in enumerate(words):
+        lemma = _ACTIVITY_FORM_TO_LEMMA.get(word)
+        if lemma is None:
+            continue
+        if (
+            word == lemma
+            and position + 1 < len(words)
+            and words[position + 1] in _OBJECT_NOUNS
+        ):
+            continue
+        if lemma in _RECORDS_REVIEW_VERBS and word_set & _RECORDS_NOUNS:
+            phrase = (
+                "reviewing records" if word_set & {"records", "record", "data"}
+                else "reviewing documents"
+            )
+        else:
+            phrase = _ACTIVITY_PHRASES[lemma]
+        if phrase not in activities:
+            activities.append(phrase)
+    concepts["activities"] = activities[:_CONCEPT_MAX_PHRASES]
+
+    # Objects: bible object entities first, then the noun scan.
+    objects = []
+    for entity in entities or ():
+        if isinstance(entity, dict) and entity.get("type") == "object":
+            canonical = str(entity.get("canonical") or "").strip()
+            if canonical and canonical not in objects:
+                objects.append(canonical)
+    for position, word in enumerate(words):
+        if word not in _OBJECT_NOUNS:
+            continue
+        phrase = word
+        if position > 0:
+            modifier = words[position - 1]
+            # An INFLECTED verb form is not a noun modifier
+            # ("reviewing records" -> the object is "records"); a
+            # base form may be one ("travel records").
+            _modifier_lemma = _ACTIVITY_FORM_TO_LEMMA.get(modifier)
+            if (
+                modifier not in _MODIFIER_STOP
+                and modifier not in _OBJECT_NOUNS
+                and not (
+                    _modifier_lemma is not None and modifier != _modifier_lemma
+                )
+                and len(modifier) > 2
+            ):
+                phrase = f"{modifier} {word}"
+        if phrase not in objects:
+            objects.append(phrase)
+    concepts["objects"] = objects[:_CONCEPT_MAX_PHRASES]
+
+    # Settings / place types: the named place itself is a setting a
+    # camera could show; cue words add the type vocabulary.
+    settings = []
+    place_types = []
+    named_place = str(place or "").strip()
+    if named_place:
+        settings.append(named_place)
+    for word in words:
+        cue = _PLACE_CUES.get(word)
+        if cue is None:
+            continue
+        for addition in cue[0]:
+            if addition not in settings:
+                settings.append(addition)
+        for addition in cue[1]:
+            if addition not in place_types:
+                place_types.append(addition)
+    if "police" in word_set and "station" in settings:
+        settings[settings.index("station")] = "police station"
+    concepts["settings"] = settings[:_CONCEPT_MAX_PHRASES]
+    concepts["place_types"] = place_types[:_CONCEPT_MAX_PHRASES]
+
+    # Era terms: explicit years in the text (plus their decade), and
+    # the plan's era when it resolves to a year/decade.
+    era_terms = []
+    for year in extract_years(text):
+        for term in (str(year), f"{year // 10 * 10}s"):
+            if term not in era_terms:
+                era_terms.append(term)
+    era_value = _year_or_decade(era)
+    if era_value and era_value not in era_terms:
+        era_terms.append(era_value)
+    concepts["era_terms"] = era_terms[:_CONCEPT_MAX_PHRASES]
+
+    return concepts
+
+
 def _pick_subject(mentions, by_id, sentence, carry):
     """No-LLM subject choice: named person > pronoun refers to carried subject > first mention."""
     people = [m for m in mentions if by_id[m]["type"] == "person"]
@@ -949,6 +1270,26 @@ def normalize_plan(raw, sentence, bible, carry_subject):
         "scenarios": scenarios,
         "degraded": degraded,
     }
+    # B-roll B1 (§4.1/§4.2): every plan carries its fallback concept
+    # set, stamped with its source. An LLM-supplied block is
+    # validated and used verbatim-cleaned; anything else (degraded
+    # plans, LLM output without the block) gets the deterministic
+    # derivation from the sentence's own text and bible entities.
+    concepts = validate_fallback_concepts(raw.get("fallback_concepts"))
+    if concepts is not None:
+        plan["fallback_concepts"] = concepts
+        plan["concepts_source"] = "llm_plan"
+    else:
+        plan["fallback_concepts"] = derive_fallback_concepts(
+            sentence,
+            place=(
+                (scenarios[0].get("place") if scenarios else None)
+                or raw.get("place")
+            ),
+            era=(scenarios[0].get("era") if scenarios else None),
+            entities=[by_id[e] for e in entity_ids if e in by_id],
+        )
+        plan["concepts_source"] = "need_time_derivation"
     for scenario in plan["scenarios"]:
         scenario["queries"] = compose_queries(scenario, plan, bible)
     return plan

@@ -262,6 +262,21 @@ export default function PlanReviewPage() {
               ? `${sentence.proposed_visual.kind || "visual"} — ${sentence.proposed_visual.description}`
               : "—"}
           </p>
+          {sentence.fallback_concepts &&
+            (sentence.fallback_concepts.activities.length > 0 ||
+              sentence.fallback_concepts.objects.length > 0 ||
+              sentence.fallback_concepts.settings.length > 0 ||
+              sentence.fallback_concepts.place_types.length > 0) && (
+              <p className="plan-decision-note">
+                B-roll intent:{" "}
+                {[
+                  ...sentence.fallback_concepts.activities,
+                  ...sentence.fallback_concepts.objects,
+                  ...sentence.fallback_concepts.settings,
+                  ...sentence.fallback_concepts.place_types,
+                ].join(" · ")}
+              </p>
+            )}
           {sentence.chosen_visual ? (
             <span className="plan-chosen-visual">
               {sentence.chosen_visual.media_key && (
