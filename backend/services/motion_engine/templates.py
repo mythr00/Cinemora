@@ -20,12 +20,23 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
 
-from services.motion_engine import core
+from services.motion_engine import core, motion_registry
 from services.motion_engine.core import (
-    HEIGHT, WIDTH, clamp01, ease_in_out, ease_out, fit_contain, fit_cover,
+    HEIGHT, WIDTH, clamp01, fit_contain, fit_cover,
     load_font, progressive_polyline, wrap_text,
 )
 from services.motion_engine.styles import resolve_style
+
+# Phase 8 (motion-registry migration): easings resolve through the
+# registry — the single named vocabulary — instead of importing
+# core's helpers directly. The registry re-exports core's exact
+# callables, so rendered motion is byte-for-byte unchanged. The
+# templates' remaining numeric constants are progress-domain
+# choreography multipliers (see the Phase 8 proposal for the
+# per-template account of why they are not registry DURATIONS,
+# which are seconds-domain layer-fade steps).
+ease_in_out = motion_registry.easing_function("ease_in_out")
+ease_out = motion_registry.easing_function("ease_out")
 
 
 def _meta(template, style_name, duration, sentence_index, scene_number, inputs):

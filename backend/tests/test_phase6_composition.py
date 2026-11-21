@@ -67,14 +67,19 @@ def test_footage_window_uses_recorded_window():
 
 
 def test_split_screen_layer_is_not_renderable():
+    # PHASE 8 SUPERSESSION (2026-11-21): Phase 6 shipped
+    # split_screen as constructor + validation only, marked
+    # renderable: False, and this test pinned valid_layers == [].
+    # Phase 8 wires the render path (AM-011 completion), so a
+    # valid split_screen layer is now renderable like any other;
+    # the render itself is pinned in test_phase8_composition.py.
     layer = composition.split_screen_layer(
         "/media/clip.mp4", clip_start=0.0, clip_end=4.0, duration=4.0,
     )
     plan = {"pattern": "split_screen", "layers": [layer]}
     composition.validate_composition(plan, 4.0)
     assert plan["layers"][0]["validation"]["passed"] is True
-    # Valid but honestly not renderable in this phase.
-    assert composition.valid_layers(plan) == []
+    assert composition.valid_layers(plan) == [layer]
 
 
 # ---------------------------------------------------------------------------

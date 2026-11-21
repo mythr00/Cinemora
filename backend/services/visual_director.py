@@ -31,13 +31,17 @@ Decision rules (deterministic, recorded per beat):
   data) is UNRESOLVED with reason `no_asset_outcome_recorded` —
   the Director never invents an outcome.
 
-Composition (AM-011): a FOOTAGE beat may additionally carry a
-composition decision — a lower_third_card overlay labelled with
-the covering asset's own recorded title — when the genre pack's
-composition_affinities favour the pattern and the beat is its
-scene's first covered beat (one label per scene entry, never a
-blanket overlay). The decision is data for the composition engine;
-the Director renders nothing.
+Composition (AM-011): a FOOTAGE beat may additionally carry ONE
+composition decision, by precedence: split_screen (Phase 8 —
+comparison text signal + split_screen the pack's strictly
+favoured pattern + a second verified video in the scene);
+lower_third_card (Phase 6 — labelled with the covering asset's
+own recorded title, scene's first covered beat, one per scene);
+footage_window (Phase 8 — the pack favours picture_in_picture
+and the scene holds a second verified video with a recorded
+clip window, one per scene). Every pattern is opt-in via pack
+affinities and recorded material; the Director renders nothing —
+the decision is data for the composition engine.
 
 Fact basis (AM-009): a manifest entry is stamped
 `verified_asset_metadata` ONLY when the caller supplies an
@@ -108,7 +112,13 @@ def outcomes_from_processed_scenes(processed_scenes):
     Returns {sentence_number: outcome} where outcome is:
       {sentence_number, scene_number, sentence_index, text,
        scenario, covered (bool), starved (bool),
-       tier, asset_title, asset_file, scene_photo_count}
+       tier, asset_title, asset_file, scene_photo_count,
+       secondary_video}
+    `secondary_video` (Phase 8) is the scene's first accepted
+    verified VIDEO visual that does not cover this sentence and
+    carries a recorded clip window — the only material a
+    footage_window / split_screen composition may draw on:
+      {path, clip_start, clip_end, title} or None.
     A sentence is `covered` when an explicitly accepted verified
     visual is linked to it; `starved` when the scene's
     missing_visuals record names it. A sentence in neither set is
@@ -164,6 +174,29 @@ def outcomes_from_processed_scenes(processed_scenes):
                 if scenarios and isinstance(scenarios[0], dict)
                 else {}
             )
+            secondary_video = None
+            for visual in accepted:
+                if visual is covering:
+                    continue
+                kind = (visual.get("type") or visual.get(
+                    "visual_type") or "").lower()
+                path = visual.get("file_path") or visual.get("path")
+                clip_start = visual.get("clip_start")
+                clip_end = visual.get("clip_end")
+                if (
+                    kind in {"video", "footage"}
+                    and path
+                    and isinstance(clip_start, (int, float))
+                    and isinstance(clip_end, (int, float))
+                    and clip_end > clip_start
+                ):
+                    secondary_video = {
+                        "path": path,
+                        "clip_start": clip_start,
+                        "clip_end": clip_end,
+                        "title": visual.get("title"),
+                    }
+                    break
             outcomes[number] = {
                 "sentence_number": number,
                 "scene_number": scene_number,
@@ -178,6 +211,7 @@ def outcomes_from_processed_scenes(processed_scenes):
                 "asset_file": (covering or {}).get("file_path")
                 or (covering or {}).get("path"),
                 "scene_photo_count": scene_photo_count,
+                "secondary_video": secondary_video,
             }
     return outcomes
 
@@ -288,6 +322,104 @@ def _composition_decision(row, outcome, pack, scene_labelled):
     }
 
 
+def _non_full_frame_affinities(pack):
+    profile = (pack or {}).get("visual_profile") or {}
+    affinities = profile.get("composition_affinities") or {}
+    return {
+        name: w for name, w in affinities.items()
+        if name != "full_frame" and isinstance(w, (int, float))
+    }
+
+
+def _split_screen_decision(row, outcome, pack, scene_split_used):
+    """The split_screen composition decision (Phase 8, AM-011
+    completion), or None. The most conservative trigger in the
+    system — ALL of these must hold:
+
+    * the pack's composition_affinities name split_screen with
+      weight >= 1 AND strictly greater than every other
+      non-full-frame pattern (no current pack does — the pattern
+      activates only when a pack is deliberately edited to
+      favour it; that is a data decision, not a code default);
+    * the beat's own text carries the comparison signal the
+      Director already computes (>= 2 numbers — the beat is
+      contrasting two quantities, the editorial case for showing
+      two visuals side by side);
+    * the scene holds a second verified video with a recorded
+      clip window (the outcome's secondary_video);
+    * the scene has no split decision yet (one per scene).
+    """
+    if scene_split_used:
+        return None
+    secondary = outcome.get("secondary_video")
+    if not secondary:
+        return None
+    weights = _non_full_frame_affinities(pack)
+    weight = weights.get("split_screen")
+    if not isinstance(weight, (int, float)) or weight < 1:
+        return None
+    others = [w for name, w in weights.items() if name != "split_screen"]
+    if others and weight <= max(others):
+        return None
+    if not _text_features(outcome.get("text") or "")["has_comparison"]:
+        return None
+    return {
+        "pattern": "split_screen",
+        "split_asset": {
+            "path": secondary["path"],
+            "clip_start": secondary["clip_start"],
+            "clip_end": secondary["clip_end"],
+            "side": "right",
+        },
+        "affinity": weight,
+        "reason": "comparison_split_screen",
+    }
+
+
+def _footage_window_decision(row, outcome, pack, scene_window_used):
+    """The footage_window composition decision (Phase 8, AM-011
+    completion), or None. Trigger rule (documented, conservative):
+
+    * the pack's composition_affinities favour the window pattern
+      (packs name it `picture_in_picture`) with weight >= 1 and
+      >= every other non-full-frame pattern except lower_third_card
+      (the scene-entry label keeps its own rule and precedence);
+    * the scene holds a second verified video with a recorded
+      clip window (the outcome's secondary_video) — the window
+      shows genuinely retrieved, verified footage, never a
+      re-derived or placeholder source;
+    * the scene has no window decision yet (one per scene), and
+      the beat carries no other composition (one per beat —
+      enforced by the caller's precedence chain).
+    """
+    if scene_window_used:
+        return None
+    secondary = outcome.get("secondary_video")
+    if not secondary:
+        return None
+    weights = _non_full_frame_affinities(pack)
+    weight = weights.get("picture_in_picture")
+    if not isinstance(weight, (int, float)) or weight < 1:
+        return None
+    others = [
+        w for name, w in weights.items()
+        if name not in {"picture_in_picture", "lower_third_card"}
+    ]
+    if others and weight < max(others):
+        return None
+    return {
+        "pattern": "footage_window",
+        "window_asset": {
+            "path": secondary["path"],
+            "clip_start": secondary["clip_start"],
+            "clip_end": secondary["clip_end"],
+            "title": secondary.get("title"),
+        },
+        "affinity": weight,
+        "reason": "related_verified_footage_window",
+    }
+
+
 def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                           evidence=None, production_context=None):
     """Pass-2 reconciliation. Pure: takes plain dicts, returns
@@ -311,6 +443,8 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
     counts = {TREATMENT_FOOTAGE: 0, TREATMENT_GRAPHIC: 0,
               TREATMENT_UNRESOLVED: 0}
     labelled_scenes = set()
+    split_scenes = set()
+    windowed_scenes = set()
     graphic_index = 0
 
     for row in plan_v1.get("sentences") or []:
@@ -332,13 +466,36 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                 "tier": outcome.get("tier"),
                 "asset_file": outcome.get("asset_file"),
             }
-            composition = _composition_decision(
+            # Composition precedence per beat (Phase 8): the
+            # strictest trigger first — split_screen (comparison
+            # signal + strictly-favoured affinity), then the
+            # scene-entry lower-third (Phase 6 rule, unchanged),
+            # then the footage window. One composition per beat;
+            # each pattern is capped at one per scene by its own
+            # rule.
+            scene_number = outcome.get("scene_number")
+            composition = _split_screen_decision(
                 row, outcome, pack,
-                scene_labelled=outcome.get("scene_number") in labelled_scenes,
+                scene_split_used=scene_number in split_scenes,
             )
             if composition is not None:
+                split_scenes.add(scene_number)
+            if composition is None:
+                composition = _composition_decision(
+                    row, outcome, pack,
+                    scene_labelled=scene_number in labelled_scenes,
+                )
+                if composition is not None:
+                    labelled_scenes.add(scene_number)
+            if composition is None:
+                composition = _footage_window_decision(
+                    row, outcome, pack,
+                    scene_window_used=scene_number in windowed_scenes,
+                )
+                if composition is not None:
+                    windowed_scenes.add(scene_number)
+            if composition is not None:
                 decision["composition"] = composition
-                labelled_scenes.add(outcome.get("scene_number"))
             counts[TREATMENT_FOOTAGE] += 1
         elif outcome.get("starved"):
             if _graphic_permitted(row):

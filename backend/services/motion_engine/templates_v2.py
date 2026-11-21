@@ -19,12 +19,19 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
 
-from services.motion_engine import core
+from services.motion_engine import core, motion_registry
 from services.motion_engine.core import (
-    HEIGHT, WIDTH, clamp01, ease_in_out, ease_out, fit_cover, load_font,
+    HEIGHT, WIDTH, clamp01, fit_cover, load_font,
     progressive_polyline, wrap_text,
 )
 from services.motion_engine.styles import resolve_style
+
+# Phase 8 (motion-registry migration): easings resolve through
+# the registry, as in templates.py — same callables, unchanged
+# rendering; progress-domain choreography multipliers stay
+# template-internal by design (Phase 8 proposal).
+ease_in_out = motion_registry.easing_function("ease_in_out")
+ease_out = motion_registry.easing_function("ease_out")
 from services.motion_engine.templates import (
     _clean, _dark_photo, _footer, _meta, _textured_dark,
 )

@@ -118,10 +118,16 @@ def footage_window_layer(media_path, *, clip_start, clip_end,
 def split_screen_layer(media_path, *, clip_start, clip_end,
                        start=0.0, end=None, duration=None, side="right"):
     """A split-screen primitive: the layer's media occupies one
-    half of the frame. Constructor + validation only in this
-    phase — the render path is not wired (recorded in the Phase 6
-    proposal); validation marks such layers `renderable: False`
-    so they are never silently treated as applied."""
+    half of the frame, the base clip the other half.
+
+    Phase 8 (AM-011 completion): the render path IS wired —
+    apply_composition builds the split view (base half + media
+    half, side by side) and overlays it for the layer's window.
+    Phase 6 shipped constructor + validation only and marked such
+    layers `renderable: False`; that flag is superseded — a valid
+    split_screen layer now renders like any other layer, and an
+    invalid one is excluded by validation, never by a blanket
+    flag."""
     if end is None:
         end = float(duration or 0.0)
     rect = (
@@ -145,7 +151,6 @@ def split_screen_layer(media_path, *, clip_start, clip_end,
             "clip_end": round(float(clip_end), 3),
             "side": side,
         },
-        "renderable": False,
     }
 
 
@@ -312,7 +317,9 @@ def apply_composition(base_clip, composition, out_path, work_dir):
 
     Layers apply in z_order. lower_third_card layers render via
     PNG; footage_window layers trim their source to the RECORDED
-    clip window and scale it into the layer rect."""
+    clip window and scale it into the layer rect; split_screen
+    layers build a half-and-half composite of base + source for
+    the layer's window (Phase 8)."""
     from services import renderer as _renderer
 
     record = {"applied": [], "failed": []}
@@ -349,6 +356,54 @@ def apply_composition(base_clip, composition, out_path, work_dir):
                     ":force_original_aspect_ratio=increase,"
                     f"crop={int(pos['w'])}:{int(pos['h'])},format=rgba"
                 )
+            elif kind == "split_screen":
+                # Phase 8: build the split view — the base clip
+                # scaled/cropped into one half, the layer's media
+                # (its RECORDED window) into the other — then
+                # overlay that full-frame composite for the
+                # layer's window only. Outside the window the
+                # base plays untouched.
+                source = layer["source"]
+                half_w = FRAME_WIDTH // 2
+                half = (
+                    f"scale={half_w}:{FRAME_HEIGHT}"
+                    ":force_original_aspect_ratio=increase,"
+                    f"crop={half_w}:{FRAME_HEIGHT},setsar=1"
+                )
+                if source.get("side") == "left":
+                    stack = "[med][bas]hstack=inputs=2[split]"
+                else:
+                    stack = "[bas][med]hstack=inputs=2[split]"
+                filter_complex = (
+                    f"[0:v]{half}[bas];"
+                    f"[1:v]{half}[med];"
+                    f"{stack};"
+                    f"[0:v][split]overlay=0:0"
+                    f":enable='between(t,{start},{end})'[out]"
+                )
+                command = [
+                    "ffmpeg", "-y", "-i", str(current),
+                    "-ss", str(source["clip_start"]),
+                    "-to", str(source["clip_end"]),
+                    "-i", str(source["path"]),
+                    "-filter_complex", filter_complex,
+                    "-map", "[out]", "-map", "0:a?",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-c:a", "copy", "-shortest", str(step_out),
+                ]
+                result = _renderer.run_ffmpeg(command)
+                if result is None or not step_out.exists():
+                    record["failed"].append({
+                        "kind": kind, "reason": "overlay_render_failed",
+                    })
+                    return False, record
+                record["applied"].append({
+                    "kind": kind,
+                    "z_order": layer.get("z_order"),
+                    "start": layer["start"], "end": layer["end"],
+                })
+                current = step_out
+                continue
             else:
                 record["failed"].append({
                     "kind": kind, "reason": "layer_kind_not_renderable",
@@ -434,15 +489,51 @@ def apply_decisions_to_timeline(timeline_data, plan_v2):
             duration = float(item.get("duration") or 0.0)
             if duration <= 0:
                 continue
-            layer = lower_third_layer(
-                decision.get("label"),
-                decision.get("sublabel"),
-                start=0.0,
-                duration=duration,
-                theme=(plan_v2 or {}).get("theme"),
-            )
+            pattern = decision.get("pattern") or "lower_third_card"
+            if pattern == "footage_window":
+                # Phase 8: the Director's window decision carries
+                # the second visual's RECORDED clip window; the
+                # layer is built from exactly that record — a
+                # decision without a usable window stamps nothing
+                # (the layer would fail validation anyway, but an
+                # unusable decision must not masquerade as a plan).
+                asset = decision.get("window_asset") or {}
+                if not asset.get("path") or asset.get(
+                    "clip_end", 0
+                ) <= asset.get("clip_start", 0):
+                    continue
+                layer = footage_window_layer(
+                    asset["path"],
+                    clip_start=asset["clip_start"],
+                    clip_end=asset["clip_end"],
+                    start=0.0,
+                    duration=duration,
+                )
+            elif pattern == "split_screen":
+                asset = decision.get("split_asset") or {}
+                if not asset.get("path") or asset.get(
+                    "clip_end", 0
+                ) <= asset.get("clip_start", 0):
+                    continue
+                layer = split_screen_layer(
+                    asset["path"],
+                    clip_start=asset["clip_start"],
+                    clip_end=asset["clip_end"],
+                    start=0.0,
+                    duration=duration,
+                    side=asset.get("side") or "right",
+                )
+            else:
+                layer = lower_third_layer(
+                    decision.get("label"),
+                    decision.get("sublabel"),
+                    start=0.0,
+                    duration=duration,
+                    theme=(plan_v2 or {}).get("theme"),
+                )
+                pattern = "lower_third_card"
             plan = {
-                "pattern": decision.get("pattern") or "lower_third_card",
+                "pattern": pattern,
                 "decision_reason": decision.get("reason"),
                 "layers": [layer],
             }

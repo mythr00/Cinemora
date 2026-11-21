@@ -3181,10 +3181,31 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
             "duration_seconds": audit.get("duration_seconds"),
             "exported_with_gaps": exported_with_gaps,
         }
+        # Phase 8 (AM-023 machinery): the delivery encode beside
+        # the exported master — the founder's 191MB-export problem
+        # was an editor revision export. Fail-soft: the record
+        # rides on the export; a failed encode never fails the
+        # export itself. AM-023's target value stays OPEN (the
+        # profile default is an engineering default, recorded as
+        # such on the delivery record).
+        try:
+            from services import delivery_profile as _delivery_mod
+
+            delivery_record = _delivery_mod.produce_delivery_copy(
+                revision_final,
+                project_dir / f"revision_{revision_id}_delivery.mp4",
+            )
+        except Exception as _delivery_error:  # never fail the export
+            delivery_record = {
+                "status": "failed",
+                "reason": "delivery_stage_exception",
+                "detail": str(_delivery_error),
+            }
         export = {
             "export_id": _new_id(),
             "file": str(revision_final),
             "file_name": revision_final.name,
+            "delivery": delivery_record,
             "sha256": run_ledger._file_sha256(str(revision_final), {}),
             "at": _now_iso(),
             "run_id": run_id,

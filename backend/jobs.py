@@ -1329,11 +1329,24 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                     processed_scenes
                 )
             )
+            # Phase 8 (AM-009 live producer): assemble the
+            # verified asset-data evidence for starved beats from
+            # this production's own verified assets (recorded
+            # structured facts only — see evidence_producer).
+            # Fail-soft by construction; the production record
+            # rides on plan v2's summary so the firing rate is a
+            # reported fact, never a silent zero.
+            from services import evidence_producer as _evidence
+
+            _evidence_map, _evidence_record = _evidence.build_evidence(
+                processed_scenes, _outcomes
+            )
             _plan_v2, _graphics_manifest = (
                 _visual_director.reconcile_visual_plan(
                     _plan_v1,
                     _outcomes,
                     genre_pack=_genre_pack,
+                    evidence=_evidence_map,
                     production_context={
                         "timeline_event_count": len(
                             (analysis.get("bible") or {}).get(
@@ -1344,6 +1357,9 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                     },
                 )
             )
+            (_plan_v2.setdefault("summary", {}))[
+                "evidence_production"
+            ] = _evidence_record
             _plan_document.write_visual_plan_v2_document(
                 project_dir, _plan_v2
             )
@@ -1777,6 +1793,41 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         print(
             f"FINAL OUTPUT: {final_video}"
         )
+
+        # Phase 8 (AM-023 machinery): the delivery encode beside
+        # the master — a web-playable copy at the profile's
+        # engineering-default settings (AM-023's target value is
+        # the founder's, still OPEN). Fail-soft: a failed delivery
+        # encode is recorded and the master stands alone; it never
+        # fails the production. The record rides on the run state
+        # and as a delivery.json artefact beside the master.
+        try:
+            from services import delivery_profile as _delivery
+
+            _delivery_record = _delivery.produce_delivery_copy(
+                final_video,
+                artefact_dir / "documentary_delivery.mp4",
+            )
+            state["delivery"] = _delivery_record
+            write_json_atomic(
+                artefact_dir / "delivery.json", _delivery_record
+            )
+            print(
+                "Delivery copy: "
+                f"{_delivery_record.get('status')} "
+                f"({_delivery_record.get('delivery_bytes')} bytes "
+                f"vs master {_delivery_record.get('master_bytes')})"
+            )
+        except Exception as _delivery_error:
+            print(
+                "Delivery copy FAILED (master unaffected): "
+                f"{_delivery_error}"
+            )
+            state["delivery"] = {
+                "status": "failed",
+                "reason": "delivery_stage_exception",
+                "detail": str(_delivery_error),
+            }
 
         # ----------------------------------------------
         # Stage H (M9/M10): measure the EXPORTED file's audio
