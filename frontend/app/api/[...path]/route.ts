@@ -34,6 +34,11 @@ const FORWARDED_RESPONSE_HEADERS = [
   "cache-control",
   "etag",
   "last-modified",
+  // Media streaming: without these the browser never learns the
+  // response is a byte range, and players (notably iOS Safari)
+  // refuse to play the film even when the range itself arrives.
+  "content-range",
+  "accept-ranges",
 ];
 
 async function proxy(
@@ -63,6 +68,14 @@ async function proxy(
   if (contentType) headers.set("content-type", contentType);
   const accept = request.headers.get("accept");
   if (accept) headers.set("accept", accept);
+  // Media streaming: the backend honours Range (206 + Content-Range),
+  // but only if the player's Range header actually reaches it. Without
+  // this the backend returns the whole file with a 200, which breaks
+  // in-browser playback and makes large downloads fail outright.
+  const range = request.headers.get("range");
+  if (range) headers.set("range", range);
+  const ifRange = request.headers.get("if-range");
+  if (ifRange) headers.set("if-range", ifRange);
   headers.set("x-api-key", API_TOKEN);
 
   const method = request.method;
