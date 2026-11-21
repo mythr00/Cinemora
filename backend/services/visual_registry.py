@@ -26,6 +26,13 @@ except ImportError:  # flat-layout fallback
 class VisualRegistry:
     def __init__(self, project_id=""):
         self.project_id = str(project_id or "")
+        # Master Directive Phase 2: the registry is reset per
+        # production at the asset stage (jobs), so its creation
+        # time anchors the tier ladder's wall-clock guard
+        # (services.tier_ladder.EscalationLedger).
+        import time as _time
+
+        self.created_at = _time.monotonic()
         self.used_files = set()
         self.used_sources = set()
         self.used_clips = set()

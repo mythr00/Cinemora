@@ -32,6 +32,7 @@ from services.visual_registry import get_registry
 from services import run_metrics
 from services import rejection_diagnostics
 from services import story_understanding as story
+from services import tier_ladder
 from services.media_probe import probe_image, probe_video
 from services.http_retry import request_with_retry, classify_error
 
@@ -935,6 +936,15 @@ def build_shot_needs(beat, bible=None):
                 entities=[entity] if entity else [],
             )
             _concepts_source = "need_time_derivation"
+        # Master Directive Phase 2 (§4.2): the owning sentence's
+        # visual-intention record rides beside its concepts (None
+        # for pre-Phase-2 plans — the tier ladder then works from
+        # concepts alone).
+        _intents = None
+        if isinstance(_owner_sentence, dict):
+            _recorded_intents = _owner_sentence.get("visual_intents")
+            if isinstance(_recorded_intents, dict):
+                _intents = _recorded_intents
 
         needs.append({
             "beat_id": beat.get("beat_id"),
@@ -975,6 +985,8 @@ def build_shot_needs(beat, bible=None):
             # (see above). Recorded, not yet searched.
             "fallback_concepts": _concepts,
             "concepts_source": _concepts_source,
+            # Master Directive Phase 2 (§4.2): see above.
+            "visual_intents": _intents,
             "queries": queries,
         })
 
@@ -6296,6 +6308,329 @@ def _uve_search_and_pick(
         _sentence_count,
         len(_uve_beat_distinct_asset_keys(beat_videos, beat_images)),
     )
+
+    def _pool_annotate(_items, _kind):
+        """Mirror of the combined_pool annotation in the assembly
+        above: pool copies carrying their pool kind and their
+        intent-adjusted selection score. Web sources join as video
+        candidates only when footage-capable — the same rule the
+        main assembly applies."""
+        _out = []
+        for _item in _items:
+            if _kind == "web" and not _web_source_is_video_candidate(_item):
+                continue
+            _copy = dict(_item)
+            _copy["_pool_kind"] = "video" if _kind == "web" else _kind
+            _copy["_selection_score"] = (
+                _copy.get("universal_score") or 0
+            ) + _intent_bonus("image" if _kind == "image" else "video")
+            _out.append(_copy)
+        return _out
+
+    # ------------------------------------------------------------------
+    # Tier ladder helpers (Intelligent B-Roll plan §5; Master
+    # Directive Phase 2 / B2 + D-B3).
+    #
+    # _escalate_pool runs ONE need's escalation: derived scenarios
+    # built from the need's fallback concepts + visual intentions
+    # (services.tier_ladder) are normalised through the ordinary
+    # plan machinery and searched / verified through the SAME
+    # _uve_scenario_search / _uve_verify_all path as any direct
+    # need — the Phase 1 eligibility gate and verifier are not
+    # bypassed, relaxed or duplicated. Tiers run in ladder order
+    # and stop at the first tier that yields a verified candidate.
+    # D-B2 budgets bind throughout: per-need query budgets per tier,
+    # and the production ledger's extra-search / download /
+    # wall-clock accounts. Every tier's outcome is recorded in the
+    # returned attempts list — budget exhaustion is data, never a
+    # silent stop.
+    def _escalate_pool(_need):
+        _attempts = []
+        _pool_items = []
+        _scored_by_kind = {"video": [], "web": [], "image": []}
+        if not isinstance(_need, dict) or not _need:
+            return _pool_items, _attempts, _scored_by_kind
+        _ledger = tier_ladder.ledger_for(registry)
+        _ledger.begin_escalation()
+        _pack_id, _vocabulary = tier_ladder.broll_vocabulary_for(bible)
+        _owner_sentences = (beat or {}).get("sentences") or []
+        _owner_sentence = (
+            _owner_sentences[0]
+            if _owner_sentences and isinstance(_owner_sentences[0], dict)
+            else {}
+        )
+        _owner_text = get_sentence_text(_owner_sentence)
+        for _tier in tier_ladder.tiers_after(_need.get("tier")):
+            if _pool_items:
+                break
+            _attempt = {
+                "tier": _tier,
+                "queries": [],
+                "verified": 0,
+                "outcome": None,
+                "stop_reason": None,
+            }
+            _attempts.append(_attempt)
+            if _ledger.wall_clock_exceeded():
+                _attempt["outcome"] = "budget_exhausted"
+                _attempt["stop_reason"] = tier_ladder.STOP_WALL_CLOCK
+                continue
+            _raw_scenarios = tier_ladder.derived_scenarios_for_tier(
+                _need, bible, _tier, vocabulary=_vocabulary,
+            )
+            if not _raw_scenarios:
+                _attempt["outcome"] = "no_concepts"
+                continue
+            _query_budget = tier_ladder.TIER_QUERY_BUDGETS.get(_tier, 0)
+            _tier_pool = []
+            for _raw in _raw_scenarios:
+                if len(_attempt["queries"]) >= _query_budget:
+                    break
+                _plan = story.normalize_plan({
+                    "text": _owner_text,
+                    "role": (
+                        _owner_sentence.get("role")
+                        or (beat or {}).get("role")
+                        or "background"
+                    ),
+                    "subject_id": _raw.get("subject_id"),
+                    "place": _raw.get("place") or _need.get("place"),
+                    "time": _raw.get("era") or _need.get("era"),
+                    "scenarios": [_raw],
+                    "fallback_concepts": _need.get("fallback_concepts"),
+                    "visual_intents": _need.get("visual_intents"),
+                }, _owner_text, bible, None)
+                # The pipeline reads a beat's scenarios from its
+                # sentence records (_beat_scenarios), so the
+                # derived scenario rides on a synthetic sentence
+                # record carrying the parent need's concepts and
+                # intentions — the same shape the analyzer produces.
+                _dbeat = {
+                    "beat_id": (beat or {}).get("beat_id"),
+                    "searchable": True,
+                    "sentences": [{
+                        "text": _owner_text,
+                        "role": _owner_sentence.get("role"),
+                        "scenarios": _plan["scenarios"],
+                        "fallback_concepts": _need.get("fallback_concepts"),
+                        "concepts_source": _need.get("concepts_source"),
+                        "visual_intents": _need.get("visual_intents"),
+                    }],
+                    "sentence_numbers": (
+                        (beat or {}).get("sentence_numbers") or []
+                    ),
+                    "subject_id": (beat or {}).get("subject_id"),
+                    "place": (beat or {}).get("place"),
+                }
+                _dneeds = build_shot_needs(_dbeat, bible)
+                if not _dneeds:
+                    continue
+                _dneed = _dneeds[0]
+                _dneed["tier"] = _tier
+                _dneed["derived_from"] = {
+                    "shot_index": scenario_index,
+                    "parent_tier": str(_need.get("tier") or "direct"),
+                }
+                _dneed["vocabulary_pack"] = _pack_id
+                _dscenario = (
+                    _beat_scenarios(_dbeat) or _plan["scenarios"]
+                )[0]
+                _remaining = _query_budget - len(_attempt["queries"])
+                _queries = list(_dneed.get("queries") or [])[:_remaining]
+                if not _queries:
+                    continue
+                if not _ledger.can_spend_searches(len(_queries)):
+                    _attempt["outcome"] = "budget_exhausted"
+                    _attempt["stop_reason"] = (
+                        tier_ladder.STOP_WALL_CLOCK
+                        if _ledger.wall_clock_exceeded()
+                        else tier_ladder.STOP_PRODUCTION_SEARCH_BUDGET
+                    )
+                    break
+                _dneed["queries"] = _queries
+                _dscenario["queries"] = _queries
+                _ledger.spend_searches(len(_queries))
+                _attempt["queries"].extend(_queries)
+                _raw_v, _raw_w, _raw_i = _uve_scenario_search(
+                    _dscenario, search_cache, project_id, _dneed,
+                )
+                _scored_v = _uve_verify_all(
+                    _raw_v, _dscenario, bible, shot_need=_dneed,
+                )
+                _scored_w = _uve_verify_all(
+                    _raw_w, _dscenario, bible, shot_need=_dneed,
+                )
+                _scored_i = _uve_verify_all(
+                    _raw_i, _dscenario, bible, shot_need=_dneed,
+                )
+                for _scored in (_scored_v + _scored_w + _scored_i):
+                    # The candidate's own tier stamp: its event
+                    # records (built below from the scored lists)
+                    # carry the tier it was evaluated under.
+                    _scored["tier"] = _tier
+                _funnel_add(_raw_v, _scored_v, "video")
+                _funnel_add(_raw_w, _scored_w, "web")
+                _funnel_add(_raw_i, _scored_i, "image")
+                run_metrics.candidates_discovered(
+                    len(_raw_v) + len(_raw_w) + len(_raw_i)
+                )
+                scene_stats["candidates_considered"] += (
+                    len(_scored_v) + len(_scored_w) + len(_scored_i)
+                )
+                scene_stats["candidates_rejected"] += sum(
+                    1
+                    for _cand in (_scored_v + _scored_w + _scored_i)
+                    if _cand.get("reject_reason")
+                )
+                _scored_by_kind["video"].extend(_scored_v)
+                _scored_by_kind["web"].extend(_scored_w)
+                _scored_by_kind["image"].extend(_scored_i)
+                _tier_pool.extend(_pool_annotate(_scored_v, "video"))
+                _tier_pool.extend(_pool_annotate(_scored_w, "web"))
+                _tier_pool.extend(_pool_annotate(_scored_i, "image"))
+            # One copy per candidate within the tier (two derived
+            # scenarios can surface the same source; cross-pool
+            # duplicates with the T1 pool are the draw's business —
+            # its eligibility re-check refuses a second fetch).
+            _seen_keys = set()
+            _deduped = []
+            for _item in _tier_pool:
+                _key = _uve_candidate_key(_item)
+                if _key and _key in _seen_keys:
+                    continue
+                if _key:
+                    _seen_keys.add(_key)
+                _deduped.append(_item)
+            _tier_pool = _deduped
+            _tier_pool.sort(
+                key=lambda c: c.get("_selection_score") or 0,
+                reverse=True,
+            )
+            for _rank, _item in enumerate(_tier_pool):
+                # Escalation candidates enter the draw as reserves,
+                # exactly like pick-limit reserves: the stamp is
+                # cleared by the draw when one is consumed, and
+                # stands (truthfully) on the ones never drawn.
+                _item["tier_escalation"] = _tier
+                _item["rejection_stage"] = "selection"
+                _item["reject_reason"] = (
+                    rejection_diagnostics.PICK_LIMIT_REASON
+                )
+                _item["selection_rank"] = _rank
+            _attempt["verified"] = sum(
+                1
+                for _item in _tier_pool
+                if (_item.get("verification") or {}).get("accepted")
+            )
+            if _attempt["outcome"] is None:
+                _attempt["outcome"] = (
+                    "verified" if _attempt["verified"] else "pool_exhausted"
+                )
+            # The walk continues until a tier yields a VERIFIED
+            # candidate: a tier whose pool is all rejections (its
+            # candidates' events are already recorded from the
+            # scored lists) does not stop the ladder.
+            if _attempt["verified"]:
+                _pool_items = _tier_pool
+        _ledger.end_escalation()
+        return _pool_items, _attempts, _scored_by_kind
+
+    def _draw_reserves(_items, _shortfall, _drawn_ids, _blocked,
+                       _failures):
+        """One coverage draw over reserve pool items: eligibility
+        re-checked per item at draw time, the pick-limit stamp
+        cleared on draw, fetched through the same download path as
+        primary picks. Escalation items (stamped tier_escalation)
+        additionally respect the D-B2 per-tier download budget and
+        the production ledger, and their assets record
+        selection_via="tier_escalation" with their ladder tier.
+        Returns the remaining shortfall."""
+        _tier_attempts = {}
+        _ledger = tier_ladder.ledger_for(registry)
+        for _reserve in _items:
+            if _shortfall <= 0:
+                break
+            _esc_tier = _reserve.get("tier_escalation")
+            if _esc_tier:
+                if (
+                    _tier_attempts.get(_esc_tier, 0)
+                    >= tier_ladder.TIER_DOWNLOAD_ATTEMPTS
+                ):
+                    continue
+                if not _ledger.can_spend_download():
+                    continue
+            _block = _uve_selection_block_reason(_reserve, registry)
+            if _block is not None:
+                # Truthful at draw time: the candidate WAS reached
+                # and blocked by a live selection rule — that reason
+                # replaces the pick-limit stamp on its record.
+                _reserve["reject_reason"] = _block
+                _reserve["rejection_stage"] = "selection"
+                _blocked.append({
+                    "candidate_id": _reserve.get("candidate_id"),
+                    "reason": _block,
+                })
+                continue
+            _reserve.pop("reject_reason", None)
+            _reserve.pop("rejection_stage", None)
+            _reserve["coverage_pick"] = True
+            if _esc_tier:
+                _tier_attempts[_esc_tier] = (
+                    _tier_attempts.get(_esc_tier, 0) + 1
+                )
+                _ledger.spend_download()
+            _fetch_item = dict(_reserve)
+            if shot_need:
+                _fetch_item["shot_need"] = dict(shot_need)
+            _drawn_ids.append(_reserve.get("candidate_id"))
+            _cov_asset = _uve_fetch_first(
+                [_fetch_item], _uve_download_any_candidate, scene_dir,
+                beat["sentence_numbers"][0],
+                len(beat_videos) + len(beat_images) + 1,
+                registry, used_keys, failures=_failures,
+                transcript_scenario=scenario, transcript_bible=bible,
+            )
+            if _cov_asset:
+                _cov_provider = str(
+                    _cov_asset.get("provider")
+                    or _cov_asset.get("source") or "unknown"
+                )
+                scene_stats.setdefault("providers", {}).setdefault(
+                    _cov_provider,
+                    {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+                )["downloaded"] += 1
+                _cov_annotated = _uve_annotate(
+                    _cov_asset, scenario, scenario_index,
+                    beat.get("text", ""),
+                )
+                # B-roll B0: coverage-drawn assets carry their
+                # tier exactly like primary picks (their
+                # selection_via record, not their tier, is what
+                # distinguishes how they were drawn). Escalation
+                # assets carry their ladder tier and record the
+                # route on the asset itself (B2).
+                if _esc_tier:
+                    _cov_annotated["tier"] = str(_esc_tier)
+                    _cov_annotated["selection_via"] = "tier_escalation"
+                else:
+                    _cov_annotated["tier"] = str(
+                        (shot_need or {}).get("tier") or "direct"
+                    )
+                coverage_accepted_assets.append(_cov_annotated)
+                if _cov_asset.get("type") == "video" or _cov_asset.get("visual_type") == "video":
+                    beat_videos.append(_cov_annotated)
+                    print(f"      + video (coverage pass, score {_cov_asset.get('universal_score')})")
+                else:
+                    beat_images.append(_cov_annotated)
+                    print(f"      + image (coverage pass, score {_cov_asset.get('universal_score')})")
+                _shortfall = _uve_coverage_shortfall(
+                    _sentence_count,
+                    len(_uve_beat_distinct_asset_keys(
+                        beat_videos, beat_images
+                    )),
+                )
+        return _shortfall
+
     if _shortfall > 0:
         _reserves = sorted(
             (
@@ -6312,67 +6647,37 @@ def _uve_search_and_pick(
         _drawn_ids = []
         _blocked = []
         _coverage_failures = []
-        for _reserve in _reserves:
-            if _shortfall <= 0:
-                break
-            _block = _uve_selection_block_reason(_reserve, registry)
-            if _block is not None:
-                # Truthful at draw time: the candidate WAS reached
-                # and blocked by a live selection rule — that reason
-                # replaces the pick-limit stamp on its record.
-                _reserve["reject_reason"] = _block
-                _reserve["rejection_stage"] = "selection"
-                _blocked.append({
-                    "candidate_id": _reserve.get("candidate_id"),
-                    "reason": _block,
-                })
-                continue
-            _reserve.pop("reject_reason", None)
-            _reserve.pop("rejection_stage", None)
-            _reserve["coverage_pick"] = True
-            _fetch_item = dict(_reserve)
-            if shot_need:
-                _fetch_item["shot_need"] = dict(shot_need)
-            _drawn_ids.append(_reserve.get("candidate_id"))
-            _cov_asset = _uve_fetch_first(
-                [_fetch_item], _uve_download_any_candidate, scene_dir,
-                beat["sentence_numbers"][0],
-                len(beat_videos) + len(beat_images) + 1,
-                registry, used_keys, failures=_coverage_failures,
-                transcript_scenario=scenario, transcript_bible=bible,
+        _shortfall = _draw_reserves(
+            _reserves, _shortfall, _drawn_ids, _blocked,
+            _coverage_failures,
+        )
+        # Tier ladder (B2): the draw above exhausted this pass's
+        # own verified pool with sentences still uncovered — the
+        # recorded shortfall is the ladder's only trigger. Derived
+        # candidates join this pass's pool and scored lists, and
+        # the same draw consumes them.
+        _tier_attempts = []
+        _escalation_accepted = 0
+        if _shortfall > 0:
+            _esc_items, _tier_attempts, _esc_scored = _escalate_pool(
+                shot_need
             )
-            if _cov_asset:
-                _cov_provider = str(
-                    _cov_asset.get("provider")
-                    or _cov_asset.get("source") or "unknown"
+            if _esc_items:
+                scored_videos.extend(_esc_scored["video"])
+                scored_web_sources.extend(_esc_scored["web"])
+                scored_images.extend(_esc_scored["image"])
+                combined_pool.extend(_esc_items)
+                _accepted_before = len(coverage_accepted_assets)
+                _shortfall = _draw_reserves(
+                    [
+                        _item for _item in _esc_items
+                        if (_item.get("verification") or {}).get("accepted")
+                    ],
+                    _shortfall, _drawn_ids, _blocked,
+                    _coverage_failures,
                 )
-                scene_stats.setdefault("providers", {}).setdefault(
-                    _cov_provider,
-                    {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
-                )["downloaded"] += 1
-                _cov_annotated = _uve_annotate(
-                    _cov_asset, scenario, scenario_index,
-                    beat.get("text", ""),
-                )
-                # B-roll B0: coverage-drawn assets carry the need's
-                # tier exactly like primary picks (their
-                # selection_via record, not their tier, is what
-                # distinguishes how they were drawn).
-                _cov_annotated["tier"] = str(
-                    (shot_need or {}).get("tier") or "direct"
-                )
-                coverage_accepted_assets.append(_cov_annotated)
-                if _cov_asset.get("type") == "video" or _cov_asset.get("visual_type") == "video":
-                    beat_videos.append(_cov_annotated)
-                    print(f"      + video (coverage pass, score {_cov_asset.get('universal_score')})")
-                else:
-                    beat_images.append(_cov_annotated)
-                    print(f"      + image (coverage pass, score {_cov_asset.get('universal_score')})")
-                _shortfall = _uve_coverage_shortfall(
-                    _sentence_count,
-                    len(_uve_beat_distinct_asset_keys(
-                        beat_videos, beat_images
-                    )),
+                _escalation_accepted = (
+                    len(coverage_accepted_assets) - _accepted_before
                 )
         if _coverage_failures:
             scene_stats.setdefault(
@@ -6394,6 +6699,12 @@ def _uve_search_and_pick(
             "accepted": len(coverage_accepted_assets),
             "pool_exhausted": bool(_shortfall > 0),
             "covered_after": bool(_shortfall <= 0),
+            # Master Directive Phase 2 / B2: the ladder's per-tier
+            # outcomes for this pass (empty when the pass's own
+            # pool covered — escalation never fired) and how many
+            # of the accepted assets arrived via escalation.
+            "tier_attempts": _tier_attempts,
+            "escalation_accepted": _escalation_accepted,
         })
     if not asset and not coverage_accepted_assets and picks:
         # Shot-level download failure: neither the primary pick nor
@@ -6479,8 +6790,14 @@ def _uve_search_and_pick(
             segment_id=_item.get("segment_id"),
             # B-roll B0 (§6.1): the tier of the need this candidate
             # was evaluated for — "direct" for every search the
-            # pipeline runs today.
-            tier=str((shot_need or {}).get("tier") or "direct"),
+            # pipeline runs today. Phase 2 / B2: a candidate the
+            # tier ladder produced carries its own tier stamp,
+            # which wins over the parent need's.
+            tier=str(
+                _item.get("tier")
+                or (shot_need or {}).get("tier")
+                or "direct"
+            ),
         )
 
     for _pool, _kind in (
@@ -6585,8 +6902,13 @@ def _uve_search_and_pick(
             # to be used — drawn from the verified pool by the
             # coverage pass, at its recorded selection rank — never
             # left as the pick_limit_reached rejection it carried
-            # before the draw.
-            _record["selection_via"] = "coverage_pass"
+            # before the draw. Phase 2 / B2: a candidate the tier
+            # ladder produced records its own route.
+            _record["selection_via"] = (
+                "tier_escalation"
+                if _source_item.get("tier_escalation")
+                else "coverage_pass"
+            )
             if _source_item.get("selection_rank") is not None:
                 _record["selection_rank"] = _source_item["selection_rank"]
         _records.append(_record)
@@ -6832,6 +7154,194 @@ def _recovery_queries(beat, tried_queries, broad=False, limit=4):
     return out
 
 
+def _uve_unsearched_ladder_entry(
+    beat, *, bible, registry, search_cache, project_id, used_keys,
+    scene_dir, scene_stats, beat_videos, beat_images, review_records,
+):
+    """D-B3 entry (Intelligent B-Roll plan §6.1; Master Directive
+    Phase 2): an unsearched-role beat ENTERS the tier ladder at T3.
+
+    The planner's role semantics keep these sentences out of the
+    direct search — that decision stands (never T1/T2). But a
+    documentary still shows SOMETHING while they are spoken, so
+    their merged fallback concepts (the beat's sentences' own
+    concept sets, unioned) build ONE activity-tier derived need,
+    run through the ordinary search/verify/fetch pass. The entry's
+    queries and downloads are charged to the production escalation
+    ledger (D-B2): queries before the pass, downloads by the
+    pass's own deltas afterwards (accepted assets + recorded
+    download failures). Returns the tier_attempts records for the
+    beat (also stamped on its missing_visuals entries when the
+    entry still leaves it uncovered)."""
+    sentences = beat.get("sentences") or []
+    merged = {
+        "activities": [], "objects": [], "settings": [],
+        "place_types": [], "era_terms": [], "mood": [],
+    }
+    intents = None
+    for sentence in sentences:
+        if not isinstance(sentence, dict):
+            continue
+        concepts = sentence.get("fallback_concepts")
+        if not isinstance(concepts, dict):
+            concepts = story.derive_fallback_concepts(
+                get_sentence_text(sentence),
+                place=beat.get("place"),
+                entities=[],
+            )
+        for field in merged:
+            for phrase in concepts.get(field) or []:
+                phrase = str(phrase).strip()
+                if phrase and phrase not in merged[field]:
+                    merged[field].append(phrase)
+        if intents is None and isinstance(
+            sentence.get("visual_intents"), dict
+        ):
+            intents = sentence["visual_intents"]
+    for field in merged:
+        merged[field] = merged[field][:4]
+
+    entry_tier = tier_ladder.entry_tier_for_role(beat.get("role"))
+    ledger = tier_ladder.ledger_for(registry)
+    attempt = {
+        "tier": entry_tier,
+        "queries": [],
+        "accepted": 0,
+        "outcome": None,
+        "stop_reason": None,
+        "entry": "unsearched_role",
+    }
+    probe_need = {
+        "fallback_concepts": merged,
+        "visual_intents": intents,
+        "place": beat.get("place") or "",
+        "era": "",
+    }
+    _pack_id, vocabulary = tier_ladder.broll_vocabulary_for(bible)
+    derived = tier_ladder.derived_scenarios_for_tier(
+        probe_need, bible, entry_tier, vocabulary=vocabulary,
+    )
+    if not derived:
+        attempt["outcome"] = "no_concepts"
+        return [attempt]
+    raw = derived[0]
+    first_sentence = (
+        sentences[0]
+        if sentences and isinstance(sentences[0], dict)
+        else {}
+    )
+    plan = story.normalize_plan({
+        "text": get_sentence_text(first_sentence),
+        "role": beat.get("role") or "background",
+        "subject_id": raw.get("subject_id"),
+        "place": raw.get("place") or beat.get("place"),
+        "time": raw.get("era"),
+        "scenarios": [raw],
+        "fallback_concepts": merged,
+        "visual_intents": intents,
+    }, get_sentence_text(first_sentence), bible, None)
+    # The pipeline reads a beat's scenarios from its sentence
+    # records (_beat_scenarios), so the derived scenario rides on a
+    # synthetic copy of the beat's first sentence record, carrying
+    # the merged concepts. Its role is set to a searchable one: the
+    # ladder entry IS the deliberate T3 decision (D-B3), and the
+    # role-based skip it bypasses is preserved on the need's
+    # derived_from stamp and the beat's own records.
+    synthetic_sentences = []
+    for index, sentence in enumerate(sentences):
+        record = dict(sentence) if isinstance(sentence, dict) else {}
+        if index == 0:
+            record["scenarios"] = plan["scenarios"]
+            record["fallback_concepts"] = merged
+            record["concepts_source"] = "ladder_entry"
+            record["visual_intents"] = intents
+            record["role"] = "background"
+        synthetic_sentences.append(record)
+    synthetic_beat = {
+        "beat_id": beat.get("beat_id"),
+        "searchable": True,
+        "sentences": synthetic_sentences,
+        "sentence_numbers": beat.get("sentence_numbers") or [],
+        "subject_id": beat.get("subject_id"),
+        "place": beat.get("place"),
+        "role": beat.get("role"),
+        "text": beat.get("text", ""),
+    }
+    needs = build_shot_needs(synthetic_beat, bible)
+    if not needs:
+        attempt["outcome"] = "no_concepts"
+        return [attempt]
+    need = needs[0]
+    need["tier"] = entry_tier
+    need["derived_from"] = {
+        "entry": "unsearched_role",
+        "role": beat.get("role"),
+    }
+    need["vocabulary_pack"] = _pack_id
+    # The merged concepts ARE this need's concepts: stamping them
+    # here is what lets the pass's own T4 escalation derive from
+    # the beat's real concept set.
+    need["fallback_concepts"] = merged
+    need["concepts_source"] = "ladder_entry"
+    need["visual_intents"] = intents
+    scenario = (
+        _beat_scenarios(synthetic_beat) or plan["scenarios"]
+    )[0]
+    # D-B2: the entry tier's query budget, and the production
+    # ledger's remaining search account, both bind the entry.
+    budget = tier_ladder.TIER_QUERY_BUDGETS.get(entry_tier, 0)
+    spendable = max(
+        0,
+        tier_ladder.PRODUCTION_MAX_EXTRA_SEARCHES - ledger.searches,
+    )
+    queries = list(need.get("queries") or [])[: min(budget, spendable)]
+    if not queries:
+        attempt["outcome"] = "budget_exhausted"
+        attempt["stop_reason"] = (
+            tier_ladder.STOP_TIER_QUERY_BUDGET
+            if budget <= 0
+            else tier_ladder.STOP_PRODUCTION_SEARCH_BUDGET
+        )
+        return [attempt]
+    if not ledger.can_spend_download():
+        attempt["outcome"] = "budget_exhausted"
+        attempt["stop_reason"] = (
+            tier_ladder.STOP_WALL_CLOCK
+            if ledger.wall_clock_exceeded()
+            else tier_ladder.STOP_PRODUCTION_DOWNLOAD_BUDGET
+        )
+        return [attempt]
+    need["queries"] = queries
+    scenario["queries"] = queries
+    attempt["queries"] = list(queries)
+    ledger.spend_searches(len(queries))
+    failures_before = len(scene_stats.get("download_failures") or [])
+    assets_before = len(beat_videos) + len(beat_images)
+    ledger.begin_escalation()
+    try:
+        _uve_search_and_pick(
+            scenario, need,
+            search_cache=search_cache, project_id=project_id,
+            bible=bible, registry=registry, used_keys=used_keys,
+            scene_dir=scene_dir, scene_stats=scene_stats,
+            beat=synthetic_beat,
+            beat_videos=beat_videos, beat_images=beat_images,
+            scenario_index=1, queries=queries,
+            review_records=review_records,
+        )
+    finally:
+        ledger.end_escalation()
+    gained = (len(beat_videos) + len(beat_images)) - assets_before
+    failed = (
+        len(scene_stats.get("download_failures") or []) - failures_before
+    )
+    for _ in range(gained + failed):
+        ledger.spend_download()
+    attempt["accepted"] = gained
+    attempt["outcome"] = "covered" if gained else "pool_exhausted"
+    return [attempt]
+
+
 def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
     if not isinstance(scene, dict):
         scene = {}
@@ -6890,12 +7400,9 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
         if not beat.get("searchable", True):
             print(f"  NO SEARCH (role={beat.get('role')})")
             # B-roll B0 (§3.3/§11): an unsearched-role beat's
-            # sentences are NAMED in the scene stats — today they
+            # sentences are NAMED in the scene stats — they used to
             # vanish from every record upstream of the coverage
-            # gate (the Gilgo sentence-1 shape). Deliberately a
-            # separate field, NOT missing_visuals: B0 must not
-            # change graphics targeting (T5 reachability for these
-            # sentences is B2's unsearched_role work).
+            # gate (the Gilgo sentence-1 shape). The naming stays.
             for _offset, _number in enumerate(
                 beat.get("sentence_numbers") or []
             ):
@@ -6906,6 +7413,41 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                         "role": beat.get("role"),
                     }
                 )
+            # Master Directive Phase 2 / D-B3: the beat ENTERS the
+            # tier ladder at T3 (activity tier — never T1/T2: the
+            # role semantics that kept it unsearched stand). If the
+            # entry still leaves it uncovered, its sentences join
+            # missing_visuals with reason "unsearched_role" — the
+            # SAME list every other uncovered sentence uses, so the
+            # asset report's reconciliation stamps their
+            # coverage_outcome and the T5 graphics route
+            # (jobs._build_graphic_targets reads missing_visuals)
+            # can reach them like any other missing entry.
+            _entry_attempts = _uve_unsearched_ladder_entry(
+                beat,
+                bible=bible, registry=registry,
+                search_cache=search_cache, project_id=project_id,
+                used_keys=used_keys, scene_dir=scene_dir,
+                scene_stats=scene_stats,
+                beat_videos=beat_videos, beat_images=beat_images,
+                review_records=review_records,
+            )
+            if not beat_videos and not beat_images:
+                _numbers = beat.get("sentence_numbers") or []
+                for _offset in range(len(beat.get("sentences") or [])):
+                    scene_stats.setdefault("missing_visuals", []).append(
+                        {
+                            "sentence_number": (
+                                _numbers[_offset]
+                                if _offset < len(_numbers)
+                                else None
+                            ),
+                            "reason": rejection_diagnostics.UNSEARCHED_ROLE,
+                            "role": beat.get("role"),
+                            "tier_attempts": _entry_attempts,
+                        }
+                    )
+                    run_context.note_missing_visual()
         else:
             for scenario_index, scenario in enumerate(scenarios, start=1):
                 print(f"  SHOT {scenario_index}: [{scenario.get('specificity')}/{scenario.get('kind')}] {scenario.get('visual')}")
@@ -7021,17 +7563,29 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                 for entry in scene_stats.get("coverage_passes") or []
                 if entry.get("beat_id") == beat.get("beat_id")
             )
+            # Phase 2 / B2: when this beat's passes escalated, the
+            # ladder's per-tier outcomes ride on the missing record
+            # too — a starved beat's report shows what was tried.
+            _beat_attempts = []
+            for _pass in scene_stats.get("coverage_passes") or []:
+                if _pass.get("beat_id") == beat.get("beat_id"):
+                    _beat_attempts.extend(
+                        _pass.get("tier_attempts") or []
+                    )
             for offset in range(len(beat.get("sentences") or [])):
+                _missing_entry = {
+                    "sentence_number": (
+                        numbers[offset] if offset < len(numbers) else None
+                    ),
+                    "reason": "no_verified_asset",
+                    "specificity": str(need.get("specificity") or ""),
+                    "recovery_rounds": recovery_rounds_done,
+                    "coverage_pool_exhausted": bool(_pool_exhausted),
+                }
+                if _beat_attempts:
+                    _missing_entry["tier_attempts"] = list(_beat_attempts)
                 scene_stats.setdefault("missing_visuals", []).append(
-                    {
-                        "sentence_number": (
-                            numbers[offset] if offset < len(numbers) else None
-                        ),
-                        "reason": "no_verified_asset",
-                        "specificity": str(need.get("specificity") or ""),
-                        "recovery_rounds": recovery_rounds_done,
-                        "coverage_pool_exhausted": bool(_pool_exhausted),
-                    }
+                    _missing_entry
                 )
                 run_context.note_missing_visual()
             print(
@@ -7066,6 +7620,20 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
 
             result["beat_id"] = beat["beat_id"]
             result["beat_searchable"] = beat.get("searchable", True)
+            # B-roll B1 + Master Directive Phase 2 (§4.2): the
+            # sentence's fallback concepts and visual-intention
+            # record ride on its scene result, beside the tier
+            # stamps — the report and the plan page read one shape.
+            if isinstance(sentence, dict):
+                if isinstance(sentence.get("fallback_concepts"), dict):
+                    result["fallback_concepts"] = sentence[
+                        "fallback_concepts"
+                    ]
+                    result["concepts_source"] = sentence.get(
+                        "concepts_source"
+                    )
+                if isinstance(sentence.get("visual_intents"), dict):
+                    result["visual_intents"] = sentence["visual_intents"]
             results_by_number[sentence_number] = result
 
     for sentence_index, sentence in enumerate(raw_sentences, start=1):

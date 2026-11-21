@@ -143,6 +143,23 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     discovery_failures_collected = False
     recovery_attempts: list = []
     coverage_passes: list = []
+    # Master Directive Phase 2 / B2: every tier-ladder attempt the
+    # production recorded (from coverage passes and from
+    # missing_visuals entries — the D-B3 unsearched entries carry
+    # theirs only there), deduplicated by identity: a searchable
+    # beat's attempts appear in both its coverage passes and its
+    # missing entries as the same dicts.
+    tier_attempts: list = []
+    _tier_attempt_ids: set = set()
+
+    def _collect_tier_attempts(attempts, scene_number):
+        for attempt in attempts or []:
+            if isinstance(attempt, dict) and id(attempt) not in _tier_attempt_ids:
+                _tier_attempt_ids.add(id(attempt))
+                tier_attempts.append(
+                    {"scene": scene_number, **attempt}
+                )
+
     candidate_records: list = []
 
     for scene in processed_scenes or []:
@@ -208,6 +225,10 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 coverage_passes.append(
                     {"scene": scene.get("scene_number"), **cov_pass}
                 )
+                _collect_tier_attempts(
+                    cov_pass.get("tier_attempts"),
+                    scene.get("scene_number"),
+                )
         # Sentences for which retrieval produced no verified visual.
         # Since the text-card fallback was removed, these are reported
         # explicitly here instead of being silently substituted.
@@ -216,10 +237,16 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 missing_visuals.append(
                     {"scene": scene.get("scene_number"), **missing}
                 )
+                _collect_tier_attempts(
+                    missing.get("tier_attempts"),
+                    scene.get("scene_number"),
+                )
         # B-roll B0: sentences in unsearched-role beats, named by
-        # the pipeline in scene_stats (they are deliberately NOT in
-        # missing_visuals until B2 — graphics targeting is
-        # unchanged in B0).
+        # the pipeline in scene_stats. Phase 2 / D-B3: since B2
+        # these sentences ALSO enter missing_visuals (reason
+        # "unsearched_role") when their T3 ladder entry leaves
+        # them uncovered; this list remains the scene-level naming
+        # of every unsearched-role sentence, covered or not.
         for unsearched in scene_stats.get("uncovered_unsearched") or []:
             if isinstance(unsearched, dict):
                 uncovered_unsearched.append(
@@ -575,6 +602,42 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         for entry in missing_visuals:
             entry["coverage_outcome"] = None
 
+    # Phase 2 / B2 totals: what the ladder spent and what it
+    # covered, from the attempt records alone (the production
+    # ledger itself is runtime state and is not serialised; its
+    # budget limits are the tier_ladder constants, named here so
+    # the report is self-describing).
+    from services import tier_ladder as _tier_ladder
+
+    tier_escalation_totals = {
+        "attempts": len(tier_attempts),
+        "extra_searches": sum(
+            len(attempt.get("queries") or []) for attempt in tier_attempts
+        ),
+        "by_tier": dict(
+            Counter(
+                str(attempt.get("tier") or "unknown")
+                for attempt in tier_attempts
+            )
+        ),
+        "outcomes": dict(
+            Counter(
+                str(attempt.get("outcome") or "unknown")
+                for attempt in tier_attempts
+            )
+        ),
+        "escalation_accepted": sum(
+            int(cov_pass.get("escalation_accepted") or 0)
+            for cov_pass in coverage_passes
+        ) + sum(
+            int(attempt.get("accepted") or 0)
+            for attempt in tier_attempts
+            if attempt.get("entry") == "unsearched_role"
+        ),
+        "search_budget": _tier_ladder.PRODUCTION_MAX_EXTRA_SEARCHES,
+        "download_budget": _tier_ladder.PRODUCTION_MAX_EXTRA_DOWNLOADS,
+    }
+
     return {
         "analysis_mode": analysis_mode,
         # VA-07: a failed run still produces this report (from partial
@@ -728,8 +791,10 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         # the per-sentence tier list.
         "tier_breakdown": tier_breakdown,
         # B-roll B0 (§3.3): sentences in unsearched-role beats,
-        # named here because they appear in no other record
-        # upstream of the coverage gate.
+        # named here at scene level. Phase 2 / D-B3: since B2 the
+        # still-uncovered ones ALSO appear in missing_visuals with
+        # reason "unsearched_role" (and a coverage_outcome); this
+        # list remains the naming of ALL unsearched-role sentences.
         "uncovered_unsearched": uncovered_unsearched,
         "uncovered_unsearched_count": len(uncovered_unsearched),
         "repeated_footage": repeated,
@@ -808,12 +873,31 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 "verified visual of its own, PLUS every sentence "
                 "the timeline records as uncovered (appended with "
                 "reason no_timeline_coverage) — sentence-level "
-                "non-coverage always materialises here. Each "
-                "entry's coverage_outcome is the timeline's verdict "
-                "for that sentence: uncovered, covered_by_rotation, "
-                "covered_by_graphic, covered_by_scene_asset or "
-                "covered_unidentified; null when the report was "
-                "built without a timeline (unknown, not a verdict)."
+                "non-coverage always materialises here. Phase 2 / "
+                "D-B3: sentences in unsearched-role beats whose T3 "
+                "ladder entry left them uncovered appear here too, "
+                "with reason unsearched_role and their tier "
+                "attempts recorded. Each entry's coverage_outcome "
+                "is the timeline's verdict for that sentence: "
+                "uncovered, covered_by_rotation, covered_by_graphic, "
+                "covered_by_scene_asset or covered_unidentified; "
+                "null when the report was built without a timeline "
+                "(unknown, not a verdict)."
+            ),
+            "tier_attempts": (
+                "Phase 2 / B2 — one record per tier-ladder attempt: "
+                "the tier, the queries it spent, its outcome "
+                "(verified / covered / pool_exhausted / "
+                "no_concepts / budget_exhausted) and, for budget "
+                "stops, the stop_reason. Escalation fires only on "
+                "a recorded coverage shortfall; a production whose "
+                "beats all covered has an empty list."
+            ),
+            "tier_escalation": (
+                "Phase 2 / B2 — ladder totals: attempts, extra "
+                "searches spent, attempts by tier and outcome, "
+                "assets accepted via escalation, and the D-B2 "
+                "production budgets they were spent against."
             ),
         },
         "low_confidence_selections": len(low_confidence),
@@ -858,6 +942,12 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         ),
         "recovery_attempts": recovery_attempts,
         "coverage_passes": coverage_passes,
+        # Master Directive Phase 2 / B2: the tier ladder's attempt
+        # records (per coverage pass and per D-B3 unsearched entry)
+        # and their totals — budget exhaustion is visible here,
+        # never silent.
+        "tier_attempts": tier_attempts,
+        "tier_escalation": tier_escalation_totals,
         "coverage": coverage,
         "rights": rights,
     }

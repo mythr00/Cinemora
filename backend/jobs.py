@@ -30,6 +30,7 @@ from services import visual_quality as visual_quality_service
 
 from services import genre_packs
 from services import media_paths
+from services import scene_structure
 from services import media_probe
 from services import narration as narration_service
 from services import timing as timing_service
@@ -353,6 +354,62 @@ def _planned_scenes_if_sane(planned, sentences, project_id, script_hash, bible, 
     return scenes
 
 
+def _apply_scene_governor(scenes, project_dir, sentence_count):
+    """FP-2 scene governor, post-narration split (Master Directive
+    Phase 2): when the production's narration parts manifest holds
+    a MEASURED duration for every sentence, scenes longer than
+    scene_structure.SCENE_SPLIT_THRESHOLD_SECONDS are split at beat
+    boundaries. The threshold is a founder editorial parameter —
+    it is recorded in the returned governor record (which lands in
+    the production plan) whether or not any scene split. Fail-soft:
+    no manifest, a part count that does not match the script, or
+    an unmeasured part leaves the scenes untouched and the record
+    says why."""
+    governor = {
+        "split_threshold_seconds": (
+            scene_structure.SCENE_SPLIT_THRESHOLD_SECONDS
+        ),
+        "narration_split_applied": False,
+        "scenes_split": 0,
+        "reason": None,
+    }
+    if not project_dir:
+        governor["reason"] = "no_project_dir"
+        return scenes, governor
+    try:
+        data = narration_service.load_parts_manifest_data(
+            Path(project_dir) / "narration_parts" / "parts_manifest.json"
+        )
+    except Exception:
+        data = None
+    parts = data.get("parts") if isinstance(data, dict) else None
+    if not isinstance(parts, list) or len(parts) != sentence_count:
+        governor["reason"] = "narration_manifest_unavailable"
+        return scenes, governor
+    durations = []
+    for part in parts:
+        value = (
+            part.get("measured_duration_seconds")
+            if isinstance(part, dict)
+            else None
+        )
+        try:
+            durations.append(float(value))
+        except (TypeError, ValueError):
+            governor["reason"] = "narration_not_fully_measured"
+            return scenes, governor
+    split = scene_structure.split_scenes_by_narration(scenes, durations)
+    parents = {
+        scene["narration_split"]["parent_scene_number"]
+        for scene in split
+        if scene.get("narration_split")
+    }
+    governor["scenes_split"] = len(parents)
+    governor["narration_split_applied"] = bool(parents)
+    governor["scenes_after"] = len(split)
+    return split, governor
+
+
 def build_production_scenes(script: str, project_id: str = "", project_dir=None, genre_pack=None):
     project_dir = Path(project_dir) if project_dir else (
         media_paths.project_dir(project_id) if project_id else None
@@ -403,10 +460,14 @@ def build_production_scenes(script: str, project_id: str = "", project_dir=None,
             f"Production scenes: using {len(scenes)} story-structured "
             "scene(s) from script analysis."
         )
+        scenes, scene_governor = _apply_scene_governor(
+            scenes, project_dir, len(sentences)
+        )
         return {
             "analysis": analysis,
             "sentences": sentences,
             "scenes": scenes,
+            "scene_governor": scene_governor,
             "script_hash": script_hash,
             "project_id": project_id,
             "bible": bible,
@@ -442,10 +503,14 @@ def build_production_scenes(script: str, project_id: str = "", project_dir=None,
     if not scenes:
         raise RuntimeError("Unable to create production scenes.")
 
+    scenes, scene_governor = _apply_scene_governor(
+        scenes, project_dir, len(sentences)
+    )
     return {
         "analysis": analysis,
         "sentences": sentences,
         "scenes": scenes,
+        "scene_governor": scene_governor,
         "script_hash": script_hash,
         "project_id": project_id,
         "bible": bible,
@@ -644,6 +709,14 @@ def run_analysis_phase(project_id: str, script: str, run_id: str = None, options
 
     plan_document.write_plan_document(
         project_dir, production_data["analysis"], project_id
+    )
+    # Master Directive Phase 2 (§4.2): the pre-retrieval visual
+    # plan rides beside plan.json (additive, fail-soft like it).
+    plan_document.write_visual_plan_document(
+        project_dir,
+        production_data["analysis"],
+        project_id,
+        scene_governor=production_data.get("scene_governor"),
     )
     if run_id:
         run_ledger.set_run_status(
@@ -1114,6 +1187,14 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         from services import plan_document as _plan_document
 
         _plan_document.write_plan_document(project_dir, analysis, project_id)
+        # Master Directive Phase 2 (§4.2): see the analysis-phase
+        # write — visual_plan.json v1, additive and fail-soft.
+        _plan_document.write_visual_plan_document(
+            project_dir,
+            analysis,
+            project_id,
+            scene_governor=production_data.get("scene_governor"),
+        )
         finish_stage(state, "script_analysis", project_dir)
     except Exception as error:
         fail_pipeline(state, "script_analysis", error, project_dir)

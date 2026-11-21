@@ -234,12 +234,26 @@ def test_unsearched_role_sentences_named_not_in_missing(monkeypatch, tmp_path):
         {"sentence_number": 1, "beat_id": "beat_01_hook_none_none",
          "role": "hook"}
     ]
-    # The searched-and-starved sentence is in missing_visuals; the
-    # hook sentence is NOT (B0 must not change graphics targeting).
+    # SUPERSEDED by Master Directive Phase 2 / D-B3 (2026-11-21):
+    # B0 pinned "the hook sentence is NOT in missing_visuals" because
+    # B0 must not change graphics targeting. Phase 2 deliberately
+    # changes exactly that: unsearched-role sentences enter the tier
+    # ladder at T3, and when the entry still leaves them uncovered
+    # (this fixture's search mock returns nothing at any tier) they
+    # join missing_visuals with reason "unsearched_role", becoming
+    # reachable by the T5 graphics route. The B0 naming assertion
+    # above (uncovered_unsearched) is unchanged and still pinned.
     missing_numbers = {
         entry["sentence_number"] for entry in stats["missing_visuals"]
     }
-    assert missing_numbers == {2}
+    assert missing_numbers == {1, 2}
+    hook_missing = [
+        entry for entry in stats["missing_visuals"]
+        if entry["sentence_number"] == 1
+    ]
+    assert len(hook_missing) == 1
+    assert hook_missing[0]["reason"] == "unsearched_role"
+    assert hook_missing[0]["role"] == "hook"
 
     # And the asset report surfaces the unsearched sentence by name.
     report = build_asset_report([result], timeline_result=None)

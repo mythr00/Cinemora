@@ -224,6 +224,27 @@ export type FallbackConcepts = {
   era_terms: string[];
 } | null;
 
+/** Master Directive Phase 2 (§4.2): the sentence's visual-intention
+ * record — what the viewer should see while the sentence is spoken,
+ * decided by the planner (LLM or deterministic derivation) before
+ * any retrieval. Seeded from the fallback concepts above. */
+export type VisualIntents = {
+  primary_visual_intent: string;
+  secondary_visual_intents: string[];
+  intent_queries: {
+    literal: string[];
+    activity_broll: string[];
+    establishing: string[];
+    contextual: string[];
+    archival: string[];
+  };
+  graphic_fallback: { allowed: boolean; kind: string | null } | null;
+  preferred_media_type?: string | null;
+  specificity_requirement?: string | null;
+  visual_misrepresentation_risk?: string | null;
+  intents_source?: string | null;
+} | null;
+
 export type ChosenVisual = {
   type?: string | null;
   provider?: string | null;
@@ -247,6 +268,7 @@ export type PlanSentence = {
   proposed_visual: ProposedVisual;
   fallback_concepts?: FallbackConcepts;
   concepts_source?: string | null;
+  visual_intents?: VisualIntents;
   chosen_visual: ChosenVisual;
   evidence_class?: string | null;
   rights?: {

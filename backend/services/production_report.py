@@ -356,6 +356,17 @@ def _questions(measurement, asset_report, verdicts):
                  if isinstance(asset_report.get("tier_breakdown"), dict)
                  and asset_report["tier_breakdown"].get("state") == "recorded"
                  else "unknown"),
+        # Master Directive Phase 2 / B2: the ladder question —
+        # answered from the asset report's tier_escalation totals
+        # (attempts, spend, outcomes, budget exhaustion), unknown
+        # when the report carries no ladder record (pre-B2
+        # productions). An answered zero is honest: escalation ran
+        # nowhere because no beat recorded a shortfall.
+        "q27": q("When direct footage fell short, what did the tier "
+                 "ladder try, what did it cost, and what did it cover?",
+                 asset_report.get("tier_escalation")
+                 if isinstance(asset_report.get("tier_escalation"), dict)
+                 else None),
     }
 
 

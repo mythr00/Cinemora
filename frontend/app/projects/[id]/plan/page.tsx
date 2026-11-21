@@ -277,6 +277,18 @@ export default function PlanReviewPage() {
                 ].join(" · ")}
               </p>
             )}
+          {sentence.visual_intents?.primary_visual_intent && (
+            <p className="plan-decision-note">
+              Visual intent:{" "}
+              {sentence.visual_intents.primary_visual_intent.replace(/_/g, " ")}
+              {sentence.visual_intents.secondary_visual_intents.length > 0 &&
+                ` · also ${sentence.visual_intents.secondary_visual_intents
+                  .map((intent) => intent.replace(/_/g, " "))
+                  .join(", ")}`}
+              {sentence.visual_intents.graphic_fallback?.allowed &&
+                ` · graphic fallback: ${sentence.visual_intents.graphic_fallback.kind || "graphic"}`}
+            </p>
+          )}
           {sentence.chosen_visual ? (
             <span className="plan-chosen-visual">
               {sentence.chosen_visual.media_key && (

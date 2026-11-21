@@ -36,9 +36,11 @@ import mimetypes
 from pathlib import Path
 
 from services import media_paths
+from services import tier_ladder
 from services.atomic_write import write_text_atomic
 
 PLAN_FILENAME = "plan.json"
+VISUAL_PLAN_FILENAME = "visual_plan.json"
 DECISIONS_FILENAME = "plan_decisions.json"
 
 # The pipeline's canonical output filenames (jobs.run_full_pipeline
@@ -138,6 +140,9 @@ def plan_from_analysis(analysis, project_id):
                 # the B-roll the system intends before production.
                 "fallback_concepts": sentence.get("fallback_concepts"),
                 "concepts_source": sentence.get("concepts_source"),
+                # Master Directive Phase 2 (§4.2): the sentence's
+                # visual-intention record, beside its concepts.
+                "visual_intents": sentence.get("visual_intents"),
             }
         )
     return {
@@ -154,6 +159,79 @@ def plan_from_analysis(analysis, project_id):
         "scenes": scene_rows,
         "sentences": rows,
     }
+
+
+def visual_plan_from_analysis(analysis, project_id, scene_governor=None):
+    """visual_plan.json v1 (Master Directive Phase 2, §4.2): the
+    PRE-RETRIEVAL visual plan — what the system intends to show for
+    every sentence, recorded before any search runs. One row per
+    sentence: its visual intentions, the concept set they were
+    seeded from, and the tier-ladder entry tier its role implies
+    (D-B3). Pure function — no I/O. Additive artefact: plan.json
+    and every pre-Phase-2 reader are untouched, and runs that never
+    write it (legacy paths) behave exactly as before."""
+    base = plan_from_analysis(analysis, project_id)
+    rows = []
+    for row in base["sentences"]:
+        intents = row.get("visual_intents") or {}
+        rows.append(
+            {
+                "sentence_number": row.get("sentence_number"),
+                "scene_number": row.get("scene_number"),
+                "role": row.get("role"),
+                "primary_visual_intent": intents.get(
+                    "primary_visual_intent"
+                ),
+                "secondary_visual_intents": intents.get(
+                    "secondary_visual_intents"
+                ) or [],
+                "intent_queries": intents.get("intent_queries") or {},
+                "graphic_fallback": intents.get("graphic_fallback"),
+                "preferred_media_type": intents.get(
+                    "preferred_media_type"
+                ),
+                "specificity_requirement": intents.get(
+                    "specificity_requirement"
+                ),
+                "visual_misrepresentation_risk": intents.get(
+                    "visual_misrepresentation_risk"
+                ),
+                "intents_source": intents.get("intents_source"),
+                "fallback_concepts": row.get("fallback_concepts"),
+                "concepts_source": row.get("concepts_source"),
+                "entry_tier": tier_ladder.entry_tier_for_role(
+                    row.get("role")
+                ),
+            }
+        )
+    return {
+        "version": 1,
+        "project_id": str(project_id),
+        "analysis_mode": base.get("analysis_mode"),
+        "scene_governor": scene_governor,
+        "sentences": rows,
+    }
+
+
+def write_visual_plan_document(project_dir, analysis, project_id,
+                               scene_governor=None):
+    """Persist visual_plan.json from a fresh analysis (same atomic
+    pattern as plan.json). Fail-soft: returns the path or None."""
+    from datetime import datetime, timezone
+
+    try:
+        document = visual_plan_from_analysis(
+            analysis, project_id, scene_governor=scene_governor
+        )
+        document["generated_at"] = datetime.now(timezone.utc).isoformat()
+        project_dir = Path(project_dir)
+        target = project_dir / VISUAL_PLAN_FILENAME
+        payload = json.dumps(document, indent=2, ensure_ascii=False)
+        write_text_atomic(target, payload)
+        return target
+    except Exception as error:
+        print(f"WARNING: visual plan document write failed: {error}")
+        return None
 
 
 def write_plan_document(project_dir, analysis, project_id):
@@ -209,6 +287,9 @@ def _plan_from_cache(project_dir):
                 # concepts — None, honestly unstated.
                 "fallback_concepts": plan.get("fallback_concepts"),
                 "concepts_source": plan.get("concepts_source"),
+                # Phase 2: same honesty for intentions — cached
+                # plans written before Phase 2 carry none.
+                "visual_intents": plan.get("visual_intents"),
             }
         )
     if not rows:

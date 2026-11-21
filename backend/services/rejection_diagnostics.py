@@ -230,6 +230,18 @@ def _dimension_results(contributions, stage, era_applicable):
 #: ``graphic``); the escalation tiers arrive with B2/B3.
 TIERS = ("direct", "related", "activity_broll", "atmospheric", "graphic")
 
+# Ladder outcome names (Intelligent B-Roll plan §5.3/§6.3; Master
+# Directive Phase 2). These are NOT candidate rejection reasons —
+# they name why a beat's escalation (or its unsearched entry) ended
+# the way it did, and they ride on tier_attempts records in
+# scene_stats and the asset report, never through
+# REJECTION_REASON_REGISTRY. UNSEARCHED_ROLE is additionally the
+# missing_visuals reason for a sentence the planner's role
+# semantics kept out of the direct search (D-B3).
+UNSEARCHED_ROLE = "unsearched_role"
+TIER_BUDGET_EXHAUSTED = "tier_budget_exhausted"
+TIER_POOL_EXHAUSTED = "tier_pool_exhausted"
+
 #: The tiers that count as B-roll for the §6.2 share (T3 + T4).
 BROLL_TIERS = ("activity_broll", "atmospheric")
 

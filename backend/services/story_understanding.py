@@ -747,6 +747,21 @@ Return ONLY a JSON list, one object per sentence:
     "place_types": ["kinds of place, e.g. beach shoreline, suburban street"],
     "mood": ["mood words, e.g. methodical, tense"],
     "era_terms": ["era phrases, e.g. 2010s"]
+  },
+  "visual_intents": {
+    "primary_visual_intent": "the ONE visual purpose that best serves this sentence: exact | actual_event | activity_broll | establishing | environmental_broll | object_detail | archival | documentary_context | human_activity | geographic_context | graphic_explanation | atmospheric",
+    "secondary_visual_intents": ["other purposes that would genuinely help — only ones that make sense for this sentence"],
+    "intent_queries": {
+      "literal": ["search phrases for the actual subject/place/event"],
+      "activity_broll": ["search phrases for the activity, whoever performs it"],
+      "establishing": ["search phrases for the place itself"],
+      "contextual": ["search phrases for the surrounding context"],
+      "archival": ["search phrases for period/archival material"]
+    },
+    "graphic_fallback": {"allowed": true, "kind": "map | timeline | statistic | diagram | null — a graphic that would genuinely explain, if footage fails"},
+    "preferred_media_type": "video | image | graphic | any",
+    "specificity_requirement": "exact | representative | generic",
+    "visual_misrepresentation_risk": "low | medium | high — how misleading a wrong visual would be for this sentence"
   }
 }
 
@@ -764,6 +779,17 @@ Rules:
   subject could not be filmed — the sentence's activities, the concrete
   objects in play, and its setting / kind of place — the way a documentary
   editor briefs B-roll. Phrases, not single keywords; at most 4 per list.
+- Also emit "visual_intents": decide what the viewer should SEE while
+  hearing this sentence, the way a documentary visual researcher would.
+  The primary intent is the single best visual purpose; secondary
+  intents are alternatives that genuinely fit — never list a category
+  just because it exists. Distinguish actual footage/evidence from
+  archival material, illustrative activity B-roll, contextual
+  establishing shots, explanatory graphics and atmospheric support.
+  Generic footage must never be described as if it depicted the actual
+  event or named person. If the sentence describes an activity, an
+  activity intent fits; if it describes a place, an establishing
+  intent fits; complex information may suit a graphic fallback.
 - Do not invent facts that the script does not support.""" % {
     "roles": " | ".join(SENTENCE_ROLES),
     "kinds": " | ".join(SCENARIO_KINDS),
@@ -1173,6 +1199,278 @@ def derive_fallback_concepts(sentence_text, *, place=None, era=None, entities=()
     return concepts
 
 
+# ---------------------------------------------------------------------------
+# Visual intentions (Master Directive Phase 2 / AM-002 v1 — directive §4)
+# ---------------------------------------------------------------------------
+# Every sentence plan carries a visual-intention record beside its
+# fallback concepts: what a documentary editor would want the audience
+# to SEE while the sentence is spoken. The record extends the EXISTING
+# plan schema through normalize_plan (never a competing schema) and is
+# seeded from the sentence's own scenarios + fallback concepts — the
+# derivation below invents nothing: every intent and query phrase is
+# built from the plan's scenarios, its bible entities, its place/era
+# or its concept lists.
+#
+# Sources, stamped as ``intents_source``:
+# - ``llm_plan``: the LLM emitted the block; normalize_plan validates
+#   it against the closed vocabulary (unknown intents dropped, lists
+#   capped like concepts) and fills any missing field from the
+#   derivation — validation never invents beyond the derivation.
+# - ``derivation``: the deterministic derivation (degraded planner,
+#   and LLM output without the block).
+
+#: The directive's twelve visual-intent types (Part 4.1), closed
+#: vocabulary. ``exact`` is the literal-depiction intent.
+VISUAL_INTENTS = (
+    "exact", "actual_event", "activity_broll", "establishing",
+    "environmental_broll", "object_detail", "archival",
+    "documentary_context", "human_activity", "geographic_context",
+    "graphic_explanation", "atmospheric",
+)
+
+#: The per-intent query lists the contract carries (directive §4.2).
+INTENT_QUERY_FIELDS = (
+    "literal", "activity_broll", "establishing", "contextual", "archival",
+)
+
+_GRAPHIC_FALLBACK_KINDS = ("map", "timeline", "statistic", "diagram")
+_MEDIA_TYPES = ("video", "image", "graphic", "any")
+_RISK_LEVELS = ("low", "medium", "high")
+_SECONDARY_INTENT_CAP = 4
+
+#: Scenario format intent -> the plan contract's preferred media type.
+_FORMAT_TO_MEDIA_TYPE = {
+    "footage": "video",
+    "photograph": "image",
+    "document": "image",
+    "map": "image",
+    "chart": "image",
+    "graphic": "graphic",
+    "any": "any",
+}
+
+#: Primary intent by scenario kind when the beat is not exact-led.
+_PRIMARY_INTENT_BY_KIND = {
+    "event": "actual_event",
+    "person_activity": "human_activity",
+    "place": "establishing",
+    "document": "object_detail",
+    "object": "object_detail",
+    "archival": "archival",
+    "abstract_broll": "atmospheric",
+}
+
+#: Specificity -> how misleading a wrong visual would be. An exact
+#: beat claims a specific person/place/event, so a wrong visual
+#: misrepresents; a generic beat claims only mood.
+_RISK_BY_SPECIFICITY = {
+    "exact": "high",
+    "representative": "medium",
+    "generic": "low",
+}
+
+
+def _derive_visual_intents(*, role, scenarios, concepts, place, time,
+                           events):
+    """Deterministic visual intentions from a sentence's own plan
+    material (its scenarios, fallback concepts, place, era, events).
+
+    Only sensible intents are produced: the primary follows the lead
+    scenario's kind/specificity; secondaries follow the concept
+    lists (activities -> activity B-roll, objects -> detail shots,
+    settings/place-types -> environmental, a named place ->
+    establishing, an era -> archival). Nothing references an entity,
+    place or phrase the plan itself does not carry."""
+    concepts = concepts if isinstance(concepts, dict) else {}
+    scenarios = [s for s in (scenarios or []) if isinstance(s, dict)]
+    primary_scenario = scenarios[0] if scenarios else {}
+    kind = str(primary_scenario.get("kind") or "").strip().lower()
+    specificity = str(
+        primary_scenario.get("specificity") or "representative"
+    ).strip().lower()
+    if specificity not in SPECIFICITY:
+        specificity = "representative"
+    subject = str(primary_scenario.get("subject") or "").strip()
+    era = str(primary_scenario.get("era") or time or "").strip()
+    named_place = str(
+        primary_scenario.get("place") or place or ""
+    ).strip()
+
+    # Primary: an exact event is actual-event footage; any other
+    # exact-led beat demands the literal subject; otherwise the lead
+    # scenario's kind decides.
+    if kind == "event":
+        primary = "actual_event"
+    elif specificity == "exact" and (subject or primary_scenario.get("subject_id")):
+        primary = "exact"
+    else:
+        primary = _PRIMARY_INTENT_BY_KIND.get(kind, "documentary_context")
+
+    secondary = []
+
+    def _add(intent):
+        if intent != primary and intent not in secondary:
+            secondary.append(intent)
+
+    activities = concepts.get("activities") or []
+    objects = concepts.get("objects") or []
+    settings = concepts.get("settings") or []
+    place_types = concepts.get("place_types") or []
+    era_terms = concepts.get("era_terms") or []
+    if activities:
+        _add("activity_broll")
+    if objects:
+        _add("object_detail")
+    if named_place:
+        _add("establishing")
+        if role in ("hook", "setup", "background"):
+            # A scene-setting beat benefits from knowing WHERE in
+            # the world it sits, not only the site itself.
+            _add("geographic_context")
+    if settings or place_types:
+        _add("environmental_broll")
+    if era or era_terms:
+        _add("archival")
+    if concepts.get("mood"):
+        _add("atmospheric")
+    if role in ("evidence", "legal") or events:
+        # Chronology/relationship beats are the ones a timeline or
+        # evidence graphic genuinely explains.
+        _add("graphic_explanation")
+    secondary = secondary[:_SECONDARY_INTENT_CAP]
+
+    # Per-intent query phrases — built only from plan material.
+    terms = [
+        str(t).strip()
+        for t in (primary_scenario.get("search_terms") or [])
+        if str(t).strip()
+    ]
+    literal = list(terms)
+    if not literal and subject:
+        literal = [
+            " ".join(p for p in (subject, era) if p).strip()
+        ] if era else [subject]
+    activity_queries = list(activities[:3])
+    if activity_queries and settings:
+        combined = f"{activity_queries[0]} {settings[0]}"
+        if combined not in activity_queries:
+            activity_queries.append(combined)
+    establishing_queries = []
+    if named_place:
+        establishing_queries.append(named_place)
+    establishing_queries.extend(place_types[:2])
+    contextual_queries = list(settings[:2]) + list(objects[:2])
+    archival_queries = []
+    if subject and era:
+        archival_queries.append(f"{subject} {era}")
+    archival_queries.extend(era_terms[:2])
+    if named_place and era_terms:
+        archival_queries.append(f"{named_place} {era_terms[0]}")
+    intent_queries = {
+        "literal": _clean_concept_phrases(literal),
+        "activity_broll": _clean_concept_phrases(activity_queries),
+        "establishing": _clean_concept_phrases(establishing_queries),
+        "contextual": _clean_concept_phrases(contextual_queries),
+        "archival": _clean_concept_phrases(archival_queries),
+    }
+
+    # Graphic fallback: a map when a scene-setting beat names a
+    # place; a timeline when the beat carries events or a time.
+    if named_place and role in ("hook", "setup", "background"):
+        graphic_fallback = {"allowed": True, "kind": "map"}
+    elif events or time:
+        graphic_fallback = {"allowed": True, "kind": "timeline"}
+    else:
+        graphic_fallback = {"allowed": False, "kind": None}
+
+    format_intent = str(
+        primary_scenario.get("format_intent") or "any"
+    ).strip().lower()
+    return {
+        "primary_visual_intent": primary,
+        "secondary_visual_intents": secondary,
+        "intent_queries": intent_queries,
+        "graphic_fallback": graphic_fallback,
+        "preferred_media_type": _FORMAT_TO_MEDIA_TYPE.get(
+            format_intent, "any"
+        ),
+        "specificity_requirement": specificity,
+        "visual_misrepresentation_risk": _RISK_BY_SPECIFICITY[specificity],
+    }
+
+
+def validate_visual_intents(raw, *, derived):
+    """Validate an LLM-supplied visual_intents block against the
+    closed vocabulary, field by field; every missing or invalid
+    field falls back to the derived value. Returns the cleaned
+    block, or None when ``raw`` is not a dict (caller uses the
+    derivation wholesale)."""
+    if not isinstance(raw, dict):
+        return None
+    block = dict(derived)
+    primary = str(raw.get("primary_visual_intent") or "").strip().lower()
+    if primary in VISUAL_INTENTS:
+        block["primary_visual_intent"] = primary
+    secondary_raw = raw.get("secondary_visual_intents")
+    if isinstance(secondary_raw, list):
+        secondary = []
+        for item in secondary_raw:
+            intent = str(item or "").strip().lower()
+            if (
+                intent in VISUAL_INTENTS
+                and intent != block["primary_visual_intent"]
+                and intent not in secondary
+            ):
+                secondary.append(intent)
+        block["secondary_visual_intents"] = secondary[
+            :_SECONDARY_INTENT_CAP
+        ]
+    queries_raw = raw.get("intent_queries")
+    if isinstance(queries_raw, dict):
+        block["intent_queries"] = {
+            field: _clean_concept_phrases(queries_raw.get(field))
+            for field in INTENT_QUERY_FIELDS
+        }
+    fallback_raw = raw.get("graphic_fallback")
+    if isinstance(fallback_raw, dict):
+        kind = str(fallback_raw.get("kind") or "").strip().lower()
+        block["graphic_fallback"] = {
+            "allowed": bool(fallback_raw.get("allowed")),
+            "kind": kind if kind in _GRAPHIC_FALLBACK_KINDS else None,
+        }
+    media_type = str(raw.get("preferred_media_type") or "").strip().lower()
+    if media_type in _MEDIA_TYPES:
+        block["preferred_media_type"] = media_type
+    specificity = str(
+        raw.get("specificity_requirement") or ""
+    ).strip().lower()
+    if specificity in SPECIFICITY:
+        block["specificity_requirement"] = specificity
+    risk = str(
+        raw.get("visual_misrepresentation_risk") or ""
+    ).strip().lower()
+    if risk in _RISK_LEVELS:
+        block["visual_misrepresentation_risk"] = risk
+    return block
+
+
+def build_visual_intents(raw, *, role, scenarios, concepts, place,
+                         time, events):
+    """The plan's visual-intention record: the validated LLM block
+    when one was supplied, else the deterministic derivation. The
+    record is stamped with its source either way."""
+    derived = _derive_visual_intents(
+        role=role, scenarios=scenarios, concepts=concepts,
+        place=place, time=time, events=events,
+    )
+    validated = validate_visual_intents(raw, derived=derived)
+    if validated is not None:
+        validated["intents_source"] = "llm_plan"
+        return validated
+    derived["intents_source"] = "derivation"
+    return derived
+
+
 def _pick_subject(mentions, by_id, sentence, carry):
     """No-LLM subject choice: named person > pronoun refers to carried subject > first mention."""
     people = [m for m in mentions if by_id[m]["type"] == "person"]
@@ -1290,6 +1588,20 @@ def normalize_plan(raw, sentence, bible, carry_subject):
             entities=[by_id[e] for e in entity_ids if e in by_id],
         )
         plan["concepts_source"] = "need_time_derivation"
+    # Master Directive Phase 2 (§4.2): the visual-intention record,
+    # extending this same plan — seeded from the sentence's scenarios
+    # and the concept set stamped just above, validated when the LLM
+    # supplied one, derived deterministically otherwise (the degraded
+    # planner follows the same intent principles without an LLM).
+    plan["visual_intents"] = build_visual_intents(
+        raw.get("visual_intents"),
+        role=role,
+        scenarios=plan["scenarios"],
+        concepts=plan["fallback_concepts"],
+        place=plan.get("place"),
+        time=plan.get("time"),
+        events=plan.get("events"),
+    )
     for scenario in plan["scenarios"]:
         scenario["queries"] = compose_queries(scenario, plan, bible)
     return plan

@@ -302,6 +302,11 @@ def _sentence_record(index, text, plan, bible):
         # built from pre-B1 plans — build_shot_needs then derives).
         "fallback_concepts": plan.get("fallback_concepts"),
         "concepts_source": plan.get("concepts_source"),
+        # Master Directive Phase 2 (§4.2): the plan's visual-
+        # intention record rides beside the concepts it was seeded
+        # from (None for records built from pre-Phase-2 plans —
+        # build_shot_needs then derives at need time).
+        "visual_intents": plan.get("visual_intents"),
         "degraded": bool(plan.get("degraded")),
         "entities": people_and_orgs,
         "locations": places,

@@ -777,10 +777,16 @@ def build_scene_timeline(
                     float(items[-1]["end"]),
                 )
 
+            _natural_duration = visual_end - visual_start
             sentence_duration = max(
-                visual_end - visual_start,
+                _natural_duration,
                 MIN_SENTENCE_DURATION,
             )
+            # FP-5 (Master Directive Phase 2): whether the
+            # MIN_SENTENCE_DURATION floor extended this window
+            # beyond its natural span. The floor itself stays; the
+            # item records the fact (see the duration stamp below).
+            _floor_padded = sentence_duration > _natural_duration
 
             # Visuals must never flash for a fraction of a second.
             # Keep narration timing untouched; extend only the visual window.
@@ -881,9 +887,13 @@ def build_scene_timeline(
                         3,
                     ),
 
+                # FP-5: the recorded duration is the item's actual
+                # window (end - start) after clamping — never the
+                # pre-clamp floored value, which could claim a
+                # longer window than the item occupies.
                 "duration":
                     round(
-                        sentence_duration,
+                        round(visual_end, 3) - round(visual_start, 3),
                         3,
                     ),
 
@@ -974,6 +984,12 @@ def build_scene_timeline(
             # tier). Always stamped: the tier vocabulary is closed
             # and today's visuals resolve to "direct".
             item["tier"] = _visual_tier(visual, assignment)
+
+            # FP-5: a window the duration floor extended is
+            # stamped padded (absent otherwise — an unpadded item
+            # carries no stamp, like the other hygiene stamps).
+            if _floor_padded:
+                item["padded"] = True
 
             # Stage 7 / R7+R8: the item carries the segment identity
             # of the visual actually used and the verification
