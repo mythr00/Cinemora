@@ -56,6 +56,11 @@ try:
 except ImportError:  # flat-layout fallback
     import segment_index
 
+try:
+    from services import timeline as timeline_service
+except ImportError:  # flat-layout fallback
+    import timeline as timeline_service
+
 
 # ==========================================================================
 # EVIDENCE CLASSIFICATION
@@ -5948,6 +5953,82 @@ def _uve_prepare_sentence_result(sentence, sentence_number, images, videos, stor
         },
     }
 
+def _uve_selection_block_reason(candidate, registry):
+    """The selection-eligibility checks _uve_pick applies to a
+    candidate it reaches (per-source usage cap, candidate key,
+    registry can_use), as a standalone predicate for the coverage
+    pass. Returns the registered rejection reason when the candidate
+    is blocked, else None. Mirrors _uve_pick exactly — the coverage
+    pass may only ever draw a candidate the primary pick itself
+    could have taken."""
+    candidate_url = str(
+        candidate.get("url")
+        or candidate.get("video_url")
+        or candidate.get("link")
+        or ""
+    ).strip()
+    try:
+        existing_uses = registry.source_usage_count(candidate_url)
+    except Exception:
+        existing_uses = 0
+    if existing_uses >= registry.max_source_uses:
+        return "source_usage_limit"
+    key = _uve_candidate_key(candidate)
+    if not key:
+        return rejection_diagnostics.MISSING_KEY_REASON
+    try:
+        allowed, why = registry.can_use(
+            url=key,
+            title=result_title(candidate),
+            allow_source_reuse=True,
+        )
+    except Exception:
+        allowed, why = True, ""
+    if not allowed:
+        return why or "registry_block"
+    return None
+
+
+def _uve_beat_distinct_asset_keys(beat_videos, beat_images):
+    """Distinct on-screen identities among a beat's fetched assets.
+
+    Segment identity first (Stage 7 stamps it at download), then
+    the candidate key, then the file path — the same identity
+    ladder the timeline's cap accounting reasons about, at the
+    granularity the pick stage can know."""
+    keys = set()
+    for asset in list(beat_videos or []) + list(beat_images or []):
+        if not isinstance(asset, dict):
+            continue
+        key = (
+            asset.get("segment_id")
+            or _uve_candidate_key(asset)
+            or asset.get("file_path")
+            or asset.get("candidate_id")
+            or ""
+        )
+        if key:
+            keys.add(str(key))
+    return keys
+
+
+def _uve_coverage_shortfall(sentence_count, distinct_asset_count):
+    """Additional DISTINCT assets a beat must fetch so the timeline
+    can cover every one of its sentences under the segment-use cap
+    (services.timeline TIMELINE_MAX_SEGMENT_USES per distinct
+    asset), without relying on own-beat spanning. Zero when the
+    fetched assets already suffice. This is the coverage pass's
+    only trigger arithmetic — conservative by design: scene-level
+    sharing with sibling beats can only add coverage the beat-local
+    estimate does not count."""
+    cap = timeline_service.TIMELINE_MAX_SEGMENT_USES
+    covered = cap * max(int(distinct_asset_count or 0), 0)
+    shortfall_sentences = int(sentence_count or 0) - covered
+    if shortfall_sentences <= 0:
+        return 0
+    return -(-shortfall_sentences // cap)
+
+
 def _uve_search_and_pick(
     scenario, shot_need, *,
     search_cache, project_id, bible, registry, used_keys,
@@ -5965,6 +6046,14 @@ def _uve_search_and_pick(
     beat_videos / beat_images and returned; otherwise None is returned
     and the caller decides about coverage recovery. Nothing here ever
     fabricates or substitutes an asset.
+
+    Coverage pass: when the beat's fetched assets (this pass's winner
+    plus any from earlier scenarios of the beat) cannot cover the
+    beat's sentences under the timeline's segment-use cap, further
+    verifier-accepted pool candidates are drawn in selection-rank
+    order (see the COVERAGE PASS block below) and likewise appended;
+    the first coverage asset is returned when the primary fetch
+    produced none.
     """
     raw_videos, raw_web_sources, raw_images = _uve_scenario_search(scenario, search_cache, project_id, shot_need)
     scored_videos = _uve_verify_all(
@@ -6141,7 +6230,124 @@ def _uve_search_and_pick(
         else:
             beat_images.append(annotated)
             print(f"      + image ({asset.get('verification_status')}, score {asset.get('universal_score')})")
-    elif picks:
+
+    # ------------------------------------------------------------
+    # COVERAGE PASS (founder-approved utilisation fix, 2026-11-21;
+    # founder live test 2): the pick limit is a preference, not a
+    # starvation cause. When the beat's fetched assets cannot cover
+    # all of the beat's sentences under the timeline's segment-use
+    # cap, draw further VERIFIER-ACCEPTED candidates from THIS
+    # pass's own pool — the ones _uve_pick stamped
+    # pick_limit_reached — in selection-rank order, until coverage
+    # is possible or the pool is genuinely exhausted. Only
+    # candidates the verifier accepted can be pool members at all
+    # (AUD-16: no relaxed pool, ever); each draw re-runs the pick's
+    # own eligibility checks, and a drawn candidate's
+    # pick_limit_reached stamp is cleared before its fetch, so its
+    # record shows the truth — coverage-picked, then accepted or
+    # download_failed — never left standing as rejected.
+    # ------------------------------------------------------------
+    coverage_accepted_assets = []
+    _sentence_count = len((beat or {}).get("sentence_numbers") or [])
+    _shortfall = _uve_coverage_shortfall(
+        _sentence_count,
+        len(_uve_beat_distinct_asset_keys(beat_videos, beat_images)),
+    )
+    if _shortfall > 0:
+        _reserves = sorted(
+            (
+                item for item in combined_pool
+                if item.get("reject_reason")
+                == rejection_diagnostics.PICK_LIMIT_REASON
+            ),
+            key=lambda item: (
+                item.get("selection_rank")
+                if item.get("selection_rank") is not None
+                else 1 << 30
+            ),
+        )
+        _drawn_ids = []
+        _blocked = []
+        _coverage_failures = []
+        for _reserve in _reserves:
+            if _shortfall <= 0:
+                break
+            _block = _uve_selection_block_reason(_reserve, registry)
+            if _block is not None:
+                # Truthful at draw time: the candidate WAS reached
+                # and blocked by a live selection rule — that reason
+                # replaces the pick-limit stamp on its record.
+                _reserve["reject_reason"] = _block
+                _reserve["rejection_stage"] = "selection"
+                _blocked.append({
+                    "candidate_id": _reserve.get("candidate_id"),
+                    "reason": _block,
+                })
+                continue
+            _reserve.pop("reject_reason", None)
+            _reserve.pop("rejection_stage", None)
+            _reserve["coverage_pick"] = True
+            _fetch_item = dict(_reserve)
+            if shot_need:
+                _fetch_item["shot_need"] = dict(shot_need)
+            _drawn_ids.append(_reserve.get("candidate_id"))
+            _cov_asset = _uve_fetch_first(
+                [_fetch_item], _uve_download_any_candidate, scene_dir,
+                beat["sentence_numbers"][0],
+                len(beat_videos) + len(beat_images) + 1,
+                registry, used_keys, failures=_coverage_failures,
+                transcript_scenario=scenario, transcript_bible=bible,
+            )
+            if _cov_asset:
+                _cov_provider = str(
+                    _cov_asset.get("provider")
+                    or _cov_asset.get("source") or "unknown"
+                )
+                scene_stats.setdefault("providers", {}).setdefault(
+                    _cov_provider,
+                    {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+                )["downloaded"] += 1
+                _cov_annotated = _uve_annotate(
+                    _cov_asset, scenario, scenario_index,
+                    beat.get("text", ""),
+                )
+                coverage_accepted_assets.append(_cov_annotated)
+                if _cov_asset.get("type") == "video" or _cov_asset.get("visual_type") == "video":
+                    beat_videos.append(_cov_annotated)
+                    print(f"      + video (coverage pass, score {_cov_asset.get('universal_score')})")
+                else:
+                    beat_images.append(_cov_annotated)
+                    print(f"      + image (coverage pass, score {_cov_asset.get('universal_score')})")
+                _shortfall = _uve_coverage_shortfall(
+                    _sentence_count,
+                    len(_uve_beat_distinct_asset_keys(
+                        beat_videos, beat_images
+                    )),
+                )
+        if _coverage_failures:
+            scene_stats.setdefault(
+                "download_failures", []
+            ).extend(_coverage_failures)
+            for failure in _coverage_failures:
+                entry = scene_stats.setdefault("providers", {}).setdefault(
+                    str(failure.get("provider") or "unknown"),
+                    {"discovered": 0, "verified": 0, "rejected": 0, "downloaded": 0, "download_failed": 0},
+                )
+                entry["download_failed"] += 1
+            fetch_failures.extend(_coverage_failures)
+        scene_stats.setdefault("coverage_passes", []).append({
+            "beat_id": (beat or {}).get("beat_id"),
+            "shot_index": scenario_index,
+            "sentence_count": _sentence_count,
+            "drawn": _drawn_ids,
+            "blocked": _blocked,
+            "accepted": len(coverage_accepted_assets),
+            "pool_exhausted": bool(_shortfall > 0),
+            "covered_after": bool(_shortfall <= 0),
+        })
+    if not asset and not coverage_accepted_assets and picks:
+        # Shot-level download failure: neither the primary pick nor
+        # the coverage pass produced an asset for this shot.
         scene_stats["downloads_failed"] += 1
     # VA-08: one traceable record per candidate outcome in this pass,
     # so the asset report's aggregates are built from the same records
@@ -6288,25 +6494,36 @@ def _uve_search_and_pick(
                 "stage": _stage,
                 "reason": _failure.get("reason", ""),
             })
-    if accepted_asset is not None:
+    for _accepted in (
+        [accepted_asset] if accepted_asset is not None else []
+    ) + coverage_accepted_assets:
         _source_item = (
-            _pool_by_candidate_id.get(accepted_asset.get("candidate_id"))
-            or accepted_asset
+            _pool_by_candidate_id.get(_accepted.get("candidate_id"))
+            or _accepted
         )
         _record = _event_for(
             _source_item,
             "video"
             if (
-                accepted_asset.get("type") == "video"
-                or accepted_asset.get("visual_type") == "video"
+                _accepted.get("type") == "video"
+                or _accepted.get("visual_type") == "video"
             )
             else "image",
             "accepted",
             "accepted",
             "",
         )
-        if accepted_asset.get("segment_evidence"):
-            _record["segment_evidence"] = accepted_asset["segment_evidence"]
+        if _accepted.get("segment_evidence"):
+            _record["segment_evidence"] = _accepted["segment_evidence"]
+        if _source_item.get("coverage_pick"):
+            # Coverage fix: the record shows HOW this candidate came
+            # to be used — drawn from the verified pool by the
+            # coverage pass, at its recorded selection rank — never
+            # left as the pick_limit_reached rejection it carried
+            # before the draw.
+            _record["selection_via"] = "coverage_pass"
+            if _source_item.get("selection_rank") is not None:
+                _record["selection_rank"] = _source_item["selection_rank"]
         _records.append(_record)
 
     review_records.append({
@@ -6358,7 +6575,14 @@ def _uve_search_and_pick(
     scene_stats["rejection_reasons"] = (
         rejection_diagnostics.primary_reason_counts(_records)
     )
-    return accepted_asset
+    if accepted_asset is not None:
+        return accepted_asset
+    if coverage_accepted_assets:
+        # The shot produced its asset through the coverage pass —
+        # callers deciding about further recovery must see the beat
+        # as covered by this pass, exactly as a primary success.
+        return coverage_accepted_assets[0]
+    return None
 
 
 
@@ -6705,6 +6929,16 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
             # holdover of real media — never a fabricated card.
             need = (beat.get("shot_needs") or [{}])[0]
             numbers = beat.get("sentence_numbers") or []
+            # Coverage fix: when this beat's verified pools were
+            # drawn by the coverage pass and STILL came up empty,
+            # the missing record says so — a coverage failure is
+            # only honest when the pool's exhaustion is visible
+            # beside it, not implied.
+            _pool_exhausted = any(
+                entry.get("pool_exhausted")
+                for entry in scene_stats.get("coverage_passes") or []
+                if entry.get("beat_id") == beat.get("beat_id")
+            )
             for offset in range(len(beat.get("sentences") or [])):
                 scene_stats.setdefault("missing_visuals", []).append(
                     {
@@ -6714,6 +6948,7 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                         "reason": "no_verified_asset",
                         "specificity": str(need.get("specificity") or ""),
                         "recovery_rounds": recovery_rounds_done,
+                        "coverage_pool_exhausted": bool(_pool_exhausted),
                     }
                 )
                 run_context.note_missing_visual()
@@ -6794,6 +7029,11 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                 "beat_id": beat["beat_id"],
                 "subject_id": beat.get("subject_id"),
                 "place": beat.get("place"),
+                # Coverage fix: the timeline's own-beat spanning
+                # rule keys on the beat's role — carried here
+                # additively so build_scene_timeline can read it
+                # from the scene record it already receives.
+                "role": beat.get("role"),
                 "searchable": beat.get("searchable", True),
                 "sentence_numbers": beat.get("sentence_numbers"),
                 "shot_needs": beat.get("shot_needs") or [],

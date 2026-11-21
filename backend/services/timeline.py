@@ -67,10 +67,20 @@ TIMELINE_MAX_SEGMENT_USES = TIMELINE_MAX_FILE_USES
 
 
 def _pick_rotation_visual(visuals, usage_counts, usage_durations,
-                          previous_path, item_duration, scene_duration):
+                          previous_path, item_duration, scene_duration,
+                          spanning_keys=frozenset()):
     """Fair, capped rotation draw. Returns the chosen visual or None
     when the eligible pool is exhausted under the use cap (the caller
-    then leaves the sentence uncovered)."""
+    then leaves the sentence uncovered).
+
+    ``spanning_keys`` (coverage fix, founder live test 2): the
+    segment-use keys of the CURRENT sentence's own background beat.
+    A visual in that set is the beat's backdrop being asked to span
+    its own beat — eligible regardless of the cap, because the cap
+    governs cross-beat reuse, not a backdrop's service inside the
+    beat it was verified for. The preference tiers (consecutive,
+    runtime share) still apply to it; only the cap is lifted, and
+    only within the owning beat."""
     pool = [
         visual for visual in visuals
         if not visual.get("motion_graphic") and not visual.get("generated")
@@ -85,7 +95,10 @@ def _pick_rotation_visual(visuals, usage_counts, usage_durations,
         return usage_durations.get(_visual_use_key(visual), 0.0)
 
     def under_cap(visual):
-        return count_of(visual) < TIMELINE_MAX_SEGMENT_USES
+        return (
+            count_of(visual) < TIMELINE_MAX_SEGMENT_USES
+            or _visual_use_key(visual) in spanning_keys
+        )
 
     def not_consecutive(visual):
         return _visual_use_key(visual) != previous_path
@@ -631,6 +644,52 @@ def build_scene_timeline(
         previous_path = ""
         uncovered_sentence_indexes = []
 
+        # Coverage fix (founder live test 2, part b): own-beat
+        # spanning. A background beat's accepted asset is the beat's
+        # backdrop — using it for a sentence of its OWN beat is one
+        # continuous assignment, not reuse, so it is never blocked
+        # by, and never charged against, the segment-use cap; the
+        # cap (3, unchanged) governs every OTHER use, i.e. cross-
+        # beat service. Beat membership is read from the scene
+        # record itself: sentence results carry their beat_id, the
+        # scene's beats summary carries each beat's role, and a
+        # visual's owning beat is the beat whose sentence results
+        # contain it. Scenes without that information (legacy or
+        # stored shapes) resolve no spanning keys and account
+        # exactly as before.
+        _beat_roles = {}
+        for _beat_info in scene_media.get("beats") or []:
+            if isinstance(_beat_info, dict) and _beat_info.get("beat_id"):
+                _beat_roles[_beat_info["beat_id"]] = _beat_info.get("role")
+        _sentence_beats = {}
+        _visual_beats = {}
+        for _position, _result in enumerate(
+            scene_media.get("sentences") or []
+        ):
+            if not isinstance(_result, dict):
+                continue
+            _beat_id = _result.get("beat_id")
+            if not _beat_id:
+                continue
+            _sentence_beats[_position] = _beat_id
+            for _cand in (
+                list(_result.get("videos") or [])
+                + list(_result.get("images") or [])
+            ):
+                _path = get_visual_path(_cand)
+                if _path:
+                    _visual_beats.setdefault(_path, _beat_id)
+
+        def _spanning_keys_for(position):
+            _beat_id = _sentence_beats.get(position)
+            if not _beat_id or _beat_roles.get(_beat_id) != "background":
+                return frozenset()
+            return frozenset(
+                _visual_use_key(_visual)
+                for _visual in visuals
+                if _visual_beats.get(get_visual_path(_visual)) == _beat_id
+            )
+
         for sentence_index, timing in enumerate(
             sentence_timings
         ):
@@ -680,6 +739,10 @@ def build_scene_timeline(
                 timeline_end,
                 visual_start + sentence_duration,
             )
+            # The segment keys this sentence's own background beat
+            # may span with (empty for every other sentence).
+            spanning_keys = _spanning_keys_for(sentence_index)
+
             # Prefer a motion graphic explicitly assigned to this sentence.
             assigned_graphics = [
                 v for v in visuals
@@ -703,6 +766,7 @@ def build_scene_timeline(
                 visual = _pick_rotation_visual(
                     visuals, usage_counts, usage_durations,
                     previous_path, sentence_duration, duration,
+                    spanning_keys=spanning_keys,
                 )
                 if visual is None:
                     uncovered_sentence_indexes.append(
@@ -722,12 +786,18 @@ def build_scene_timeline(
             # Stage 7 / R9: usage accounting is keyed by SEGMENT
             # identity (_visual_use_key), not by file — every
             # assignment kind (direct, graphic, rotation) consumes
-            # the same identity's allowance.
+            # the same identity's allowance. Coverage-fix exception:
+            # a spanning use (the visual is the sentence's own
+            # background beat's backdrop) is NOT charged — the cap
+            # it would consume is the cross-beat allowance, and this
+            # use is not cross-beat. previous_path still tracks it,
+            # so the consecutive-use preference keeps working.
             use_key = _visual_use_key(visual)
-            usage_counts[use_key] = usage_counts.get(use_key, 0) + 1
-            usage_durations[use_key] = (
-                usage_durations.get(use_key, 0.0) + sentence_duration
-            )
+            if use_key not in spanning_keys:
+                usage_counts[use_key] = usage_counts.get(use_key, 0) + 1
+                usage_durations[use_key] = (
+                    usage_durations.get(use_key, 0.0) + sentence_duration
+                )
             previous_path = use_key
 
             item = {

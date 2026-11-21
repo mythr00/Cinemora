@@ -374,9 +374,19 @@ def _verified_video(index, host="videos.example.org"):
     }
 
 
-def test_pick_limit_remainder_gets_full_selection_events(
+def test_pick_limit_remainder_drawn_by_coverage_pass(
     monkeypatch, tmp_path
 ):
+    # SUPERSESSION (coverage fix, founder-approved 2026-11-21): this
+    # test previously pinned the remainder candidates (ranks 3-4)
+    # being recorded pick_limit_reached WITHOUT ever being attempted
+    # while the beat's only sentence went uncovered — the exact
+    # starvation defect of founder live test 2. The coverage pass
+    # now draws them in rank order; here every download fails, so
+    # both leave download_failed records and the pool's exhaustion
+    # is recorded. The full-event pick_limit_reached behaviour for
+    # reserves the pass does NOT need is pinned by
+    # tests/test_coverage_fix.py::test_coverage_pass_draws_spares_in_rank_order.
     videos = [_verified_video(i) for i in range(5)]
     asset, scene_stats = _run_pass(
         monkeypatch, tmp_path, videos=videos,
@@ -390,36 +400,40 @@ def test_pick_limit_remainder_gets_full_selection_events(
         r for r in records
         if r["outcome"] == "rejected" and r["stage"] == "selection"
     ]
-    assert len(selection) == 2
-    for record in selection:
-        assert record["reason"] == "pick_limit_reached"
-        assert record["primary_rejection_reason"] == "pick_limit_reached"
+    assert len(selection) == 0
+    downloads = [r for r in records if r["outcome"] == "download_failed"]
+    assert len(downloads) == 5
+    for record in downloads:
         # Full events, not the old minimal dicts.
         assert record["score"] is not None
         assert record["specificity"] == "representative"
         assert record["category"] == "contextual"
         assert record["sentence_numbers"] == [1]
-        assert record["selection_rank"] in (3, 4)
-        assert rejection_diagnostics.is_registered_reason(record["reason"])
-    downloads = [r for r in records if r["outcome"] == "download_failed"]
-    assert len(downloads) == 3
+    passes = scene_stats["coverage_passes"]
+    assert len(passes) == 1
+    assert len(passes[0]["drawn"]) == 2
+    assert passes[0]["accepted"] == 0
+    assert passes[0]["pool_exhausted"] is True
     # The scene counter is derived from the records (C.A.3.4).
-    assert scene_stats["rejection_reasons"] == {"pick_limit_reached": 2}
+    assert scene_stats["rejection_reasons"] == {}
 
     report = asset_report.build_asset_report(
         [{"scene_number": 1, "asset_stats": scene_stats,
           "videos": [], "images": []}],
         None,
     )
-    assert report["rejection_funnel"]["primary_rejections"]["total"] == 2
-    assert report["rejection_reasons"] == {"pick_limit_reached": 2}
+    assert report["rejection_funnel"]["primary_rejections"]["total"] == 0
+    assert report["rejection_reasons"] == {}
     # ASSET-017: shot-level vs attempt-level download counts differ
     # and both are defined.
     assert report["failed_downloads"] == 1
-    assert report["download_attempt_failures"] == 3
+    assert report["download_attempt_failures"] == 5
     assert report["candidates_evaluated"] == 5
     assert report["total_retrieved_assets"] == 5
     assert "failed_downloads" in report["scalar_definitions"]
+    # The coverage pass's own record is lifted into the report.
+    assert len(report["coverage_passes"]) == 1
+    assert report["coverage_passes"][0]["pool_exhausted"] is True
 
 
 def test_source_cap_block_is_a_full_selection_event(monkeypatch, tmp_path):

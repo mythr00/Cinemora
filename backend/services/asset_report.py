@@ -141,6 +141,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     discovery_failures: list = []
     discovery_failures_collected = False
     recovery_attempts: list = []
+    coverage_passes: list = []
     candidate_records: list = []
 
     for scene in processed_scenes or []:
@@ -196,6 +197,15 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             if isinstance(attempt, dict):
                 recovery_attempts.append(
                     {"scene": scene.get("scene_number"), **attempt}
+                )
+        # Coverage fix: the coverage pass's per-shot record (draws
+        # from the verified pool, blocks, exhaustion) rides beside
+        # recovery_attempts, so a coverage outcome is explainable
+        # from the report alone.
+        for cov_pass in scene_stats.get("coverage_passes") or []:
+            if isinstance(cov_pass, dict):
+                coverage_passes.append(
+                    {"scene": scene.get("scene_number"), **cov_pass}
                 )
         # Sentences for which retrieval produced no verified visual.
         # Since the text-card fallback was removed, these are reported
@@ -654,6 +664,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             "recorded" if discovery_failures_collected else "not_collected"
         ),
         "recovery_attempts": recovery_attempts,
+        "coverage_passes": coverage_passes,
         "coverage": coverage,
         "rights": rights,
     }
