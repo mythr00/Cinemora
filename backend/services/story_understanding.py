@@ -151,17 +151,53 @@ def _content_tokens(text, min_len=4):
     return {_stem(t) for t in _norm(text).split() if len(t) >= min_len}
 
 
-def _call_llm_json(llm, system, user, retries=0):
+def _llm_failure_reason(error):
+    """Classify an LLM call failure for the degraded_reason record
+    (Master Directive Phase 7 / DM-2(a)): the three failure paths
+    that used to be indistinguishable downstream —
+
+      "no_key"          — no API key configured (the BLOCK-001
+                          point-of-use check in llm_client);
+      "provider_failure"— transport / HTTP / provider-side failure;
+      "invalid_plan"    — the provider answered but its response
+                          was unusable (llm_client.LLMResponseError:
+                          no text / truncated / empty / malformed),
+                          or the text did not parse as JSON.
+    """
+    if error is None:
+        return "invalid_plan"
+    message = str(error)
+    if "BREWKEG_API_KEY" in message and "not configured" in message:
+        return "no_key"
+    if type(error).__name__ == "LLMResponseError":
+        return "invalid_plan"
+    return "provider_failure"
+
+
+def _call_llm_json(llm, system, user, retries=0, failure=None):
+    """Call the LLM and parse JSON. On failure returns None and, when
+    a `failure` dict is supplied, records {"reason", "detail"} —
+    the classification the degraded fallback stamps into the plan's
+    planner block (DM-2(a)). The return contract is unchanged."""
     if llm is None:
+        if failure is not None:
+            failure.update({"reason": "no_key", "detail": "no LLM callable configured"})
         return None
     for _ in range(retries + 1):
+        error = None
         try:
             data = parse_json_loose(llm(system, user))
-        except Exception as error:  # network / provider error
-            print(f"STORY LLM ERROR: {error}")
+        except Exception as exc:  # network / provider error
+            print(f"STORY LLM ERROR: {exc}")
+            error = exc
             data = None
         if data is not None:
             return data
+        if failure is not None and "reason" not in failure:
+            failure.update({
+                "reason": _llm_failure_reason(error),
+                "detail": str(error)[:200] if error is not None else "response did not parse as JSON",
+            })
     return None
 
 
@@ -201,7 +237,30 @@ Rules:
 - Do not invent facts that are not supported by the script."""
 
 
-def build_case_bible(script_text, llm, sentences=None, max_chars=24000):
+def _fallback_bible(fallback_sentences):
+    """The degraded bible builder (Master Directive Phase 7 / P5):
+    Degraded Planner 2.0 by default, the old heuristic behind the
+    CINEMORA_DEGRADED_PLANNER hatch. A Planner 2.0 failure falls
+    back to the heuristic and says so on the bible — a fallback
+    inside the fallback is a stamped state, never a silent one
+    (Planner 2.0 plan §5.10)."""
+    from services import degraded_planner
+
+    if not degraded_planner.planner_enabled():
+        data = heuristic_bible(fallback_sentences)
+        data["planner_version"] = "heuristic-1.0"
+        return data
+    try:
+        return degraded_planner.build_bible(fallback_sentences)
+    except Exception as error:  # the fallback must never crash planning
+        print(f"STORY: Degraded Planner 2.0 failed ({error}) -> heuristic bible.")
+        data = heuristic_bible(fallback_sentences)
+        data["planner_version"] = "heuristic-1.0"
+        data["planner_fallback"] = True
+        return data
+
+
+def build_case_bible(script_text, llm, sentences=None, max_chars=24000, _diag=None):
     text = script_text
     if len(text) > max_chars:  # keep beginning, middle, end
         third = max_chars // 3
@@ -212,13 +271,24 @@ def build_case_bible(script_text, llm, sentences=None, max_chars=24000):
             + "\n[...]\n" + text[-third:]
         )
 
-    data = _call_llm_json(llm, BIBLE_SYSTEM, f"SCRIPT:\n{text}")
+    failure = {}
+    data = _call_llm_json(llm, BIBLE_SYSTEM, f"SCRIPT:\n{text}", failure=failure)
     used_llm = True
     if not isinstance(data, dict) or not data.get("entities"):
-        print("STORY: LLM case bible unavailable -> heuristic bible (DEGRADED MODE).")
+        print("STORY: LLM case bible unavailable -> deterministic bible (DEGRADED MODE).")
         used_llm = False
+        if _diag is not None:
+            # DM-2(a): record WHICH failure path degraded the bible.
+            # Parsed-but-shapeless output is an invalid plan; no
+            # recorded failure with a callable present means the
+            # response parsed but carried no entities.
+            _diag["bible_reason"] = (
+                "no_key" if llm is None
+                else failure.get("reason") or "invalid_plan"
+            )
+            _diag["bible_failure_detail"] = failure.get("detail")
         fallback = sentences or [p for p in re.split(r"(?<=[.!?])\s+", script_text) if p.strip()]
-        data = heuristic_bible(fallback)
+        data = _fallback_bible(fallback)
 
     cleaned = []
     seen = set()
@@ -230,7 +300,7 @@ def build_case_bible(script_text, llm, sentences=None, max_chars=24000):
         if not canonical or not eid or eid in seen:
             continue
         seen.add(eid)
-        cleaned.append({
+        cleaned_entity = {
             "id": eid,
             "canonical": canonical,
             "type": str(entity.get("type") or "person").lower(),
@@ -238,7 +308,18 @@ def build_case_bible(script_text, llm, sentences=None, max_chars=24000):
             "aliases": [str(a).strip() for a in entity.get("aliases", []) if str(a).strip()],
             "pronoun": (entity.get("pronoun") or None),
             "description": entity.get("description") or "",
-        })
+        }
+        # Master Directive Phase 7: Planner 2.0's additive typing
+        # provenance rides through the cleaning verbatim (absent on
+        # LLM/heuristic entities — consumers treat absence as
+        # "no recorded confidence", never as a fabricated value).
+        for key in (
+            "type_confidence", "type_source", "type_signals",
+            "type_low_confidence", "recurrence", "mention_count",
+        ):
+            if key in entity:
+                cleaned_entity[key] = entity[key]
+        cleaned.append(cleaned_entity)
     data["entities"] = cleaned
     if data.get("primary_subject_id") not in seen:
         data["primary_subject_id"] = cleaned[0]["id"] if cleaned else None
@@ -807,10 +888,21 @@ def _bible_for_prompt(bible):
     }, ensure_ascii=False)
 
 
-def analyze_sentences(sentences, bible, llm, batch_size=10, context_size=4):
-    """Returns one normalized plan dict per sentence (same order/length)."""
+def analyze_sentences(sentences, bible, llm, batch_size=10, context_size=4, _diag=None):
+    """Returns one normalized plan dict per sentence (same order/length).
+
+    Master Directive Phase 7: a sentence the LLM did not plan (no
+    callable, a failed batch, or an item missing from the batch's
+    list) is planned by Degraded Planner 2.0's scenario factory —
+    its raw plan goes through the SAME normalize_plan referee as
+    LLM output — behind the CINEMORA_DEGRADED_PLANNER hatch; with
+    the hatch off, normalize_plan's own synthesis remains the
+    fallback, exactly as before. Factory-planned sentences are
+    stamped degraded + their §5.8 confidences, and the failure
+    classification is recorded in _diag (DM-2(a))."""
     plans = [None] * len(sentences)
     carry_subject = bible.get("primary_subject_id")
+    sentence_planner = None  # built lazily, only if a sentence degrades
 
     for start in range(0, len(sentences), batch_size):
         batch = list(range(start, min(start + batch_size, len(sentences))))
@@ -823,7 +915,8 @@ def analyze_sentences(sentences, bible, llm, batch_size=10, context_size=4):
             + "\n\nSENTENCES TO ANALYZE:\n"
             + "\n".join(f"{i}: {sentences[i]}" for i in batch)
         )
-        raw = _call_llm_json(llm, SENTENCE_SYSTEM, user)
+        failure = {}
+        raw = _call_llm_json(llm, SENTENCE_SYSTEM, user, failure=failure)
         by_idx = {}
         if isinstance(raw, list):
             for item in raw:
@@ -831,7 +924,47 @@ def analyze_sentences(sentences, bible, llm, batch_size=10, context_size=4):
                     by_idx[item["idx"]] = item
 
         for i in batch:
-            plan = normalize_plan(by_idx.get(i), sentences[i], bible, carry_subject)
+            raw_item = by_idx.get(i)
+            factory_raw = None
+            if raw_item is None:
+                if _diag is not None and "sentence_reason" not in _diag:
+                    # A batch that returned a list but omitted this
+                    # sentence handed back an invalid plan for it;
+                    # a failed call recorded its own classification.
+                    _diag["sentence_reason"] = (
+                        "no_key" if llm is None
+                        else failure.get("reason") or "invalid_plan"
+                    )
+                    _diag["sentence_failure_detail"] = failure.get("detail")
+                from services import degraded_planner
+
+                if degraded_planner.planner_enabled():
+                    if sentence_planner is None:
+                        sentence_planner = degraded_planner.SentencePlanner(
+                            sentences, bible
+                        )
+                    try:
+                        factory_raw = sentence_planner.raw_plan_for(i, carry_subject)
+                    except Exception as error:  # the net inside the net
+                        print(f"STORY: Planner 2.0 factory failed on sentence {i}: {error}")
+                        factory_raw = None
+            plan = normalize_plan(
+                factory_raw if factory_raw is not None else raw_item,
+                sentences[i], bible, carry_subject,
+            )
+            if factory_raw is not None:
+                # §5.8 per-sentence stamps. The plan WAS produced by
+                # the deterministic fallback — normalize_plan's
+                # `degraded = not raw` cannot see that, so the
+                # annotation restores the honest flag (mode
+                # derivation in _analysis_mode depends on it).
+                plan["degraded"] = True
+                plan["subject_confidence"] = factory_raw.get("_subject_confidence")
+                plan["role_confidence"] = factory_raw.get("_role_confidence")
+                basis = factory_raw.get("_specificity_basis") or []
+                if len(basis) == len(plan.get("scenarios") or []):
+                    for scenario, basis_value in zip(plan["scenarios"], basis):
+                        scenario["specificity_basis"] = basis_value
             plans[i] = plan
             new_subject = plan.get("subject_id")
             if new_subject:
@@ -904,10 +1037,12 @@ def _required_type_for(scenario, subject_entity, kind):
 # - ``llm_plan``: the LLM emitted the block; normalize_plan validates
 #   it (caps below) and never invents additions.
 # - ``need_time_derivation``: the deterministic derivation below,
-#   used by the degraded planner today and at need-build time for
-#   sentence records that carry no concepts (cached/legacy plans).
-#   (Planner 2.0's factory will stamp ``planner2_factory`` when it
-#   lands — a separate programme.)
+#   used at need-build time for sentence records that carry no
+#   concepts (cached/legacy plans).
+# - ``planner2_factory``: proposed by Degraded Planner 2.0's
+#   scenario factory (Master Directive Phase 7) and validated here
+#   like an LLM block — stamped by normalize_plan when the raw plan
+#   carries the factory's marker.
 
 #: The six concept fields, in schema order.
 FALLBACK_CONCEPT_FIELDS = (
@@ -1576,7 +1711,14 @@ def normalize_plan(raw, sentence, bible, carry_subject):
     concepts = validate_fallback_concepts(raw.get("fallback_concepts"))
     if concepts is not None:
         plan["fallback_concepts"] = concepts
-        plan["concepts_source"] = "llm_plan"
+        # Master Directive Phase 7: a concept set proposed by
+        # Degraded Planner 2.0's factory is stamped with its own
+        # source (the stamp B1's comment anticipated) — never
+        # "llm_plan", which would misattribute deterministic output
+        # to the model.
+        plan["concepts_source"] = (
+            "planner2_factory" if raw.get("_planner2") else "llm_plan"
+        )
     else:
         plan["fallback_concepts"] = derive_fallback_concepts(
             sentence,
@@ -2492,6 +2634,122 @@ def _analysis_mode(bible, plans):
     return "partial_llm"
 
 
+def build_planner_block(bible, plans, mode, diag=None):
+    """The plan's self-audit block (Master Directive Phase 7 / P0;
+    Planner 2.0 plan §5.8; absorbs DM-1 + DM-2(a)).
+
+    Stamped onto the bible by plan_script, serialized into
+    plan.json / the asset report / the production report (q30) /
+    the certificate, so EVERY production states which planner
+    produced its plan, why it degraded when it did, and how well
+    the planner did — in numbers computed from the plan itself.
+    Fields a planner cannot know are None (unknown), never a
+    fabricated zero: e.g. type-confidence shares exist only when
+    the bible carries recorded confidences (Planner 2.0 bibles).
+    """
+    diag = diag or {}
+    bible = bible or {}
+    plans = plans or []
+    entities = bible.get("entities") or []
+
+    confidences = [
+        e["type_confidence"] for e in entities
+        if isinstance(e.get("type_confidence"), (int, float))
+    ]
+    trusted = sum(1 for c in confidences if c >= 0.7)
+    scenarios = [sc for plan in plans for sc in (plan.get("scenarios") or [])]
+    queries = sum(len(sc.get("queries") or []) for sc in scenarios)
+    degraded_sentences = sum(1 for plan in plans if plan.get("degraded"))
+    factory_sentences = sum(
+        1 for plan in plans if plan.get("concepts_source") == "planner2_factory"
+    )
+    subject_confident = sum(
+        1 for plan in plans
+        if isinstance(plan.get("subject_confidence"), (int, float))
+        and plan["subject_confidence"] >= 0.5
+    )
+    basis_counts = {}
+    for scenario in scenarios:
+        basis = scenario.get("specificity_basis")
+        if basis:
+            basis_counts[basis] = basis_counts.get(basis, 0) + 1
+
+    if mode == "llm":
+        planner_version = "llm"
+    elif bible.get("planner_version"):
+        planner_version = bible["planner_version"]
+    elif factory_sentences:
+        planner_version = "degraded-2.0"
+    else:
+        planner_version = "heuristic-1.0"
+
+    degraded_reason = None
+    if mode != "llm":
+        degraded_reason = (
+            diag.get("bible_reason") or diag.get("sentence_reason") or "no_key"
+        )
+
+    kb = bible.get("kb") if isinstance(bible.get("kb"), dict) else {}
+    return {
+        "mode": mode,
+        "planner_version": planner_version,
+        "degraded_reason": degraded_reason,
+        "degraded_sentences": degraded_sentences,
+        "sentences": len(plans),
+        "kb": {
+            "lookups": kb.get("lookups", 0),
+            "cache_hits": kb.get("cache_hits", 0),
+            "live": kb.get("live", 0),
+            "unreachable": bool(kb.get("unreachable", False)),
+            "budget_exhausted": bool(kb.get("budget_exhausted", False)),
+            # D-2 state, recorded on every degraded bible: the KB
+            # network source is disabled until the founder approves
+            # it — a stamped fact, not a silent absence.
+            "network_enabled": bool(kb.get("network_enabled", False)),
+        },
+        "quality": {
+            "entities": len(entities),
+            "entities_trusted_share": (
+                round(trusted / len(confidences), 4) if confidences else None
+            ),
+            "mean_type_confidence": (
+                round(sum(confidences) / len(confidences), 4) if confidences else None
+            ),
+            "sentences_subject_confident_share": (
+                round(subject_confident / len(plans), 4)
+                if plans and factory_sentences else None
+            ),
+            "place_coverage": (
+                round(sum(1 for p in plans if p.get("place")) / len(plans), 4)
+                if plans else None
+            ),
+            "era_coverage": (
+                round(sum(1 for p in plans if p.get("time")) / len(plans), 4)
+                if plans else None
+            ),
+            "scenarios_per_sentence": (
+                round(len(scenarios) / len(plans), 4) if plans else None
+            ),
+            "queries_per_scenario": (
+                round(queries / len(scenarios), 4) if scenarios else None
+            ),
+            "exact_share": (
+                round(
+                    sum(1 for sc in scenarios if sc.get("specificity") == "exact")
+                    / len(scenarios),
+                    4,
+                )
+                if scenarios else None
+            ),
+            "roles_distinct": len({p.get("role") for p in plans if p.get("role")}),
+            # D-1 evidence, recorded only: how the corroboration
+            # computation (which does NOT drive the stamps while
+            # D-1 is unmade) would have classified each scenario.
+            "specificity_basis": basis_counts,
+        },
+    }
+
+
 def plan_script(script_text, sentences, llm, cache_path=None, genre_pack=None):
     """
     Returns (bible, plans, mode). mode is "llm", "partial_llm" or
@@ -2517,8 +2775,9 @@ def plan_script(script_text, sentences, llm, cache_path=None, genre_pack=None):
         except Exception:
             pass
 
-    bible = build_case_bible(script_text, llm, sentences=sentences)
-    plans = analyze_sentences(sentences, bible, llm)
+    diag = {}
+    bible = build_case_bible(script_text, llm, sentences=sentences, _diag=diag)
+    plans = analyze_sentences(sentences, bible, llm, _diag=diag)
     # Stage 3A: research-ground the bible (both the LLM and the
     # heuristic bible paths land here) and stamp every plan with its
     # research_ref. Runs after sentence analysis so source snippets
@@ -2526,8 +2785,16 @@ def plan_script(script_text, sentences, llm, cache_path=None, genre_pack=None):
     enrich_bible_with_research(bible, script_text, sentences=sentences, genre_pack=genre_pack)
     _attach_research_refs(plans, bible)
     mode = _analysis_mode(bible, plans)
+    # Master Directive Phase 7 / P0: the plan self-audit block —
+    # mode + degraded_reason + quality, computed from the plan
+    # itself and stamped on the bible so every downstream artefact
+    # (plan.json, asset report, production report, certificate)
+    # states it. DM-6: the signage names the variable that
+    # actually gates the LLM (BLOCK-001 moved the check to
+    # llm_client's point of use).
+    bible["planner"] = build_planner_block(bible, plans, mode, diag)
     if llm is None:
-        print("STORY: no LLM configured -> DEGRADED MODE (set LLM_API_KEY for full understanding).")
+        print("STORY: no LLM configured -> DEGRADED MODE (set BREWKEG_API_KEY for full understanding).")
 
     if cache_path and mode == "llm":
         # Atomic (Stage 4): the story cache doubles as the plan

@@ -1,0 +1,37 @@
+{
+ "film1_spierer": {
+  "project_id": "a1145d94-bf3c-405d-854b-0db459e763ee",
+  "sentences": [
+   "On a quiet night in December 2010, a young woman disappeared without a trace.",
+   "Her name was Lauren Spierer.",
+   "The 20-year-old Indiana University student was last seen in the early hours of June 3, 2011, after a night out with friends.",
+   "Surveillance cameras captured her walking through the streets of Bloomington.",
+   "But then, something terrifying happened.",
+   "Lauren was never seen again.",
+   "Police questioned friends, searched nearby properties, and investigated thousands of tips.",
+   "Her phone, clothing, and personal belongings became important pieces of the investigation.",
+   "But despite years of searching, no one has ever been charged in connection with her disappearance.",
+   "More than a decade later, one question remains: What happened to Lauren Spierer?",
+   "And how can someone disappear into the night\u2026 without leaving a single answer?"
+  ]
+ },
+ "apollo13": {
+  "project_id": "34fbe725-eca0-4edc-b935-9b7cb403761f",
+  "sentences": [
+   "On April 11, 1970, NASA launched Apollo 13 into space.",
+   "Three astronauts were heading toward the Moon, expecting to make history.",
+   "But two days into the mission, everything went terribly wrong.",
+   "An oxygen tank exploded inside the spacecraft.",
+   "Suddenly, the astronauts heard a terrifying message: \u201cHouston, we\u2019ve had a problem.\u201d Their oxygen supply was disappearing.",
+   "Their electricity was failing, and the Moon landing was officially cancelled.",
+   "Now, NASA faced a much bigger challenge.",
+   "Getting three astronauts home alive.",
+   "The crew had to shut down their damaged spacecraft and use the tiny lunar module as a lifeboat.",
+   "For days, millions of people watched anxiously as NASA engineers worked desperately to find a solution.",
+   "On April 17, 1970, against incredible odds, Apollo 13 safely returned to Earth.",
+   "They never landed on the Moon.",
+   "But they achieved something just as extraordinary.",
+   "They survived one of the most dangerous missions in space history."
+  ]
+ }
+}

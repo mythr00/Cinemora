@@ -8,12 +8,17 @@ could show if the exact subject could not be filmed. Sources:
   normalize_plan validates it (<=4 phrases per list, <=6 words per
   phrase, empties dropped, nothing invented) and stamps
   concepts_source="llm_plan";
-- the degraded planner (today's heuristic path through the same
-  normalize_plan) derives the set deterministically from the
-  sentence's own text and bible entities, stamped
-  concepts_source="need_time_derivation" — the same derivation
-  build_shot_needs runs at need-build time for sentence records
-  that carry no concepts (cached/legacy plans).
+- the degraded planner derives the set deterministically from the
+  sentence's own text and bible entities. A raw plan with no
+  concepts (direct normalize_plan call, cached/legacy plans) is
+  stamped concepts_source="need_time_derivation" — the same
+  derivation build_shot_needs runs at need-build time for sentence
+  records that carry no concepts.
+  PHASE 7 SUPERSESSION (2026-11-21): end-to-end degraded analysis
+  now runs Planner 2.0, whose scenario factory emits concepts at
+  plan time, stamped concepts_source="planner2_factory"; the
+  need_time_derivation stamp remains for concept-less raw plans
+  and need-build derivation, as pinned below.
 
 Concepts are recorded on plans, sentence records, shot needs and
 the plan document (the Visual Plan page's data). Nothing searches
@@ -190,14 +195,17 @@ def test_analyze_script_degraded_records_concepts(monkeypatch):
     assert len(records) == 2
     for record in records:
         assert record["fallback_concepts"] is not None
-        assert record["concepts_source"] == "need_time_derivation"
+        # PHASE 7 SUPERSESSION: Planner 2.0's factory supplies the
+        # concepts at plan time (was need_time_derivation under the
+        # old heuristic, which produced none).
+        assert record["concepts_source"] == "planner2_factory"
     assert "searching" in records[0]["fallback_concepts"]["activities"]
     assert "reviewing records" in records[1]["fallback_concepts"]["activities"]
 
     document = plan_document.plan_from_analysis(analysis, "b1")
     rows = {row["sentence_number"]: row for row in document["sentences"]}
     assert rows[1]["fallback_concepts"] is not None
-    assert rows[1]["concepts_source"] == "need_time_derivation"
+    assert rows[1]["concepts_source"] == "planner2_factory"  # Phase 7, see above
     assert "searching" in rows[1]["fallback_concepts"]["activities"]
 
 

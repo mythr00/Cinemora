@@ -219,6 +219,11 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
                 if isinstance(partial_analysis, dict)
                 else None
             ),
+            planner=(
+                partial_analysis.get("planner")
+                if isinstance(partial_analysis, dict)
+                else None
+            ),
             run_failure={"stage": stage, "error": str(error)},
             execution=run_metrics.snapshot(),
             genre_pack=state.get("genre_pack"),
@@ -1822,6 +1827,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             timeline_result=timeline_result,
             renderer_audit=renderer_audit,
             analysis_mode=analysis.get("mode") if isinstance(analysis, dict) else None,
+            planner=analysis.get("planner") if isinstance(analysis, dict) else None,
             execution=run_metrics.snapshot(),
             soundtrack=(
                 soundtrack_record

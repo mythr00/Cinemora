@@ -1113,6 +1113,21 @@ def _read_project_json(project_dir: Path, filename: str, run_id=None):
         return None
 
 
+def _planner_block(project_id: str, run_id=None):
+    """Master Directive Phase 7 / P0 (DM-1): the production's
+    recorded planner self-audit block, read from the run's
+    plan.json exactly as the production flow recorded it — the
+    certificate states the planner mode / version / degraded
+    reason beside the run it describes. None when the production
+    predates the block or the artefact is unreadable (the
+    certificate then simply carries no planner fields)."""
+    project_dir = media_paths.project_dir(project_id)
+    plan = _read_project_json(project_dir, "plan.json", run_id)
+    if isinstance(plan, dict) and isinstance(plan.get("planner"), dict):
+        return plan["planner"]
+    return None
+
+
 def _quality_section(project_id: str, run_id=None) -> dict:
     """Quality Recovery Phase 5: the production's recorded quality
     report, surfaced on the certificate exactly as the production
@@ -1231,7 +1246,8 @@ def get_certificate(project_id: str, _=Depends(require_api_token)):
         latest["run_id"], include_revision_decisions=False
     )
     certificate = plan_document.build_certificate(
-        project_view, latest, decisions, counts
+        project_view, latest, decisions, counts,
+        planner=_planner_block(project_id, run_id=latest["run_id"]),
     )
     # Quality Recovery Phase 5: surface the recorded production
     # quality report (Phase 3) alongside the ledger certificate.

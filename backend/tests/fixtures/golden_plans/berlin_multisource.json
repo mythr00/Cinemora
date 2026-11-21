@@ -1,0 +1,500 @@
+{
+ "key": "5313530ac134ff34",
+ "mode": "llm",
+ "bible": {
+  "title": "Fall of the Berlin Wall",
+  "story_type": "history",
+  "time_period": "1989\u20131990",
+  "primary_subject_id": "berlin_wall",
+  "entities": [
+   {
+    "id": "berlin_wall",
+    "canonical": "Berlin Wall",
+    "type": "object",
+    "role": "main subject",
+    "aliases": [
+     "the wall"
+    ],
+    "pronoun": "it",
+    "description": "Barrier that formed a border around West Berlin and was torn down after checkpoints opened."
+   },
+   {
+    "id": "east_berliners",
+    "canonical": "East Berliners",
+    "type": "person",
+    "role": "crowds demanding to cross into the West",
+    "aliases": [],
+    "pronoun": "they",
+    "description": "Residents of East Berlin who gathered at the Berlin Wall on November 9, 1989."
+   },
+   {
+    "id": "border_guards",
+    "canonical": "border guards",
+    "type": "person",
+    "role": "guards who opened the checkpoints",
+    "aliases": [],
+    "pronoun": "they",
+    "description": "Guards who opened Berlin Wall checkpoints, allowing people to cross into West Berlin."
+   },
+   {
+    "id": "bornholmer_strasse",
+    "canonical": "Bornholmer Strasse",
+    "type": "place",
+    "role": "checkpoint crossing point",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "Berlin crossing point where thousands streamed from East Berlin into West Berlin."
+   },
+   {
+    "id": "west_berlin",
+    "canonical": "West Berlin",
+    "type": "place",
+    "role": "destination and area bordered by the wall",
+    "aliases": [
+     "the West"
+    ],
+    "pronoun": "it",
+    "description": "Western part of Berlin that the Berlin Wall surrounded and separated from East Berlin."
+   },
+   {
+    "id": "brandenburg_gate",
+    "canonical": "Brandenburg Gate",
+    "type": "place",
+    "role": "location of reunions",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "Berlin landmark where separated families embraced as the world watched."
+   },
+   {
+    "id": "eastern_europe",
+    "canonical": "Eastern Europe",
+    "type": "place",
+    "role": "region of peaceful revolution",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "Region where the peaceful revolution swept across in 1990."
+   },
+   {
+    "id": "germany",
+    "canonical": "Germany",
+    "type": "place",
+    "role": "country reunified",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "Country reunified in 1990 after the fall of the Berlin Wall."
+   }
+  ],
+  "timeline": [
+   {
+    "when": "November 9, 1989",
+    "what": "Crowds of East Berliners gathered at the Berlin Wall demanding to cross into the West."
+   },
+   {
+    "when": "November 9, 1989",
+    "what": "Border guards opened the checkpoints, and thousands crossed at Bornholmer Strasse into West Berlin."
+   },
+   {
+    "when": "November 9, 1989",
+    "what": "At the Brandenburg Gate, families separated for twenty-eight years embraced in tears."
+   },
+   {
+    "when": "Within days after November 9, 1989",
+    "what": "Citizens climbed the wall with hammers and chisels and began tearing it down piece by piece."
+   },
+   {
+    "when": "1990",
+    "what": "The peaceful revolution swept across Eastern Europe, and Germany was reunified."
+   }
+  ],
+  "mode": "llm"
+ },
+ "plans": [
+  {
+   "sentence": "On November 9, 1989, crowds of East Berliners gathered at the Berlin Wall demanding to cross into the West.",
+   "meaning": "On November 9, 1989, East Berliners massed at the Berlin Wall and demanded freedom to cross into West Berlin.",
+   "role": "event",
+   "subject_id": "east_berliners",
+   "entities": [
+    "East Berliners",
+    "Berlin Wall",
+    "West Berlin"
+   ],
+   "entity_ids": [
+    "east_berliners",
+    "berlin_wall",
+    "west_berlin"
+   ],
+   "resolved": {
+    "the West": "west_berlin"
+   },
+   "events": [
+    "crowd gathering",
+    "demand to cross"
+   ],
+   "time": "November 9, 1989",
+   "place": "Berlin Wall",
+   "scenarios": [
+    {
+     "visual": "A dense crowd of East Berliners pressing up against the Berlin Wall at a checkpoint, shouting and waiting to cross.",
+     "kind": "event",
+     "subject_id": "east_berliners",
+     "specificity": "exact",
+     "search_terms": [
+      "Berlin Wall crowd November 1989",
+      "East Berliners checkpoint protest",
+      "Berlin Wall crossing demand"
+     ],
+     "event": "crowd gathering",
+     "place": "Berlin Wall",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East Berliners crowd gathering 1989",
+      "East Berliners crowd gathering",
+      "East Berliners Berlin Wall crowd November 1989",
+      "East Berliners Berlin Wall"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Border guards opened the checkpoints, and thousands of people streamed through Bornholmer Strasse into West Berlin.",
+   "meaning": "Border guards opened the crossings, allowing thousands to pour through Bornholmer Strasse into West Berlin.",
+   "role": "action",
+   "subject_id": "border_guards",
+   "entities": [
+    "border guards",
+    "Bornholmer Strasse",
+    "West Berlin"
+   ],
+   "entity_ids": [
+    "border_guards",
+    "bornholmer_strasse",
+    "west_berlin"
+   ],
+   "resolved": {
+    "the checkpoints": "bornholmer_strasse"
+   },
+   "events": [
+    "checkpoint opening",
+    "crossing into West Berlin"
+   ],
+   "time": "November 9, 1989",
+   "place": "Bornholmer Strasse",
+   "scenarios": [
+    {
+     "visual": "Border guards lifting or opening a checkpoint barrier as crowds surge past into West Berlin.",
+     "kind": "event",
+     "subject_id": "border_guards",
+     "specificity": "exact",
+     "search_terms": [
+      "Bornholmer Strasse checkpoint opening",
+      "Berlin Wall guards barrier 1989",
+      "crowds crossing into West Berlin"
+     ],
+     "event": "checkpoint opening",
+     "place": "Bornholmer Strasse",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "border guards checkpoint opening 1989",
+      "border guards checkpoint opening",
+      "border guards Bornholmer Strasse checkpoint opening 1989",
+      "border guards Bornholmer Strasse"
+     ]
+    },
+    {
+     "visual": "A packed stream of people walking and cheering through Bornholmer Strasse toward West Berlin.",
+     "kind": "event",
+     "subject_id": "east_berliners",
+     "specificity": "exact",
+     "search_terms": [
+      "thousands crossing Bornholmer Strasse",
+      "East Berliners entering West Berlin",
+      "Berlin Wall crowd crossing 1989"
+     ],
+     "event": "crossing into West Berlin",
+     "place": "Bornholmer Strasse",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East Berliners crossing into West Berlin 1989",
+      "East Berliners crossing into West Berlin",
+      "East Berliners thousands crossing Bornholmer Strasse 1989",
+      "East Berliners Bornholmer Strasse"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The wall formed a border around West Berlin, cutting through streets, rivers and railway lines.",
+   "meaning": "The Berlin Wall physically divided West Berlin by cutting through the city\u2019s streets, waterways, and rail connections.",
+   "role": "background",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "border guards",
+    "West Berlin"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "border_guards",
+    "west_berlin"
+   ],
+   "resolved": {},
+   "events": [],
+   "time": "1989\u20131990",
+   "place": "West Berlin",
+   "scenarios": [
+    {
+     "visual": "An aerial or street-level view of the Berlin Wall slicing through a Berlin neighborhood beside a road and railway line.",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "exact",
+     "search_terms": [
+      "Berlin Wall aerial view",
+      "Berlin Wall street railway",
+      "Berlin Wall divided city"
+     ],
+     "event": null,
+     "place": "West Berlin",
+     "era": "1980s",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall 1980s",
+      "Berlin Wall",
+      "Berlin Wall aerial view 1980s",
+      "Berlin Wall West"
+     ]
+    },
+    {
+     "visual": "A map graphic showing the Berlin Wall encircling West Berlin and cutting across streets, rivers, and rail lines.",
+     "kind": "document",
+     "subject_id": "berlin_wall",
+     "specificity": "exact",
+     "search_terms": [
+      "map Berlin Wall West Berlin",
+      "Berlin divided city map",
+      "Berlin Wall barriers map"
+     ],
+     "event": null,
+     "place": "West Berlin",
+     "era": "1980s",
+     "format_intent": "map",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall 1980s",
+      "Berlin Wall",
+      "Berlin Wall map West 1980s",
+      "Berlin Wall West"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "At the Brandenburg Gate, families separated for twenty eight years embraced in tears as the world watched.",
+   "meaning": "At the Brandenburg Gate, families reunited after 28 years of separation, and the emotional scenes were broadcast worldwide.",
+   "role": "event",
+   "subject_id": "brandenburg_gate",
+   "entities": [
+    "Brandenburg Gate"
+   ],
+   "entity_ids": [
+    "brandenburg_gate"
+   ],
+   "resolved": {},
+   "events": [
+    "family reunion"
+   ],
+   "time": "November 9, 1989",
+   "place": "Brandenburg Gate",
+   "scenarios": [
+    {
+     "visual": "Separated family members embracing and crying in front of the Brandenburg Gate as cameras record the moment.",
+     "kind": "event",
+     "subject_id": "brandenburg_gate",
+     "specificity": "exact",
+     "search_terms": [
+      "Brandenburg Gate family reunion 1989",
+      "Berlin Wall families embracing",
+      "Berlin Wall tears cameras"
+     ],
+     "event": "family reunion",
+     "place": "Brandenburg Gate",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Brandenburg Gate family reunion 1989",
+      "Brandenburg Gate family reunion",
+      "Brandenburg Gate"
+     ]
+    },
+    {
+     "visual": "Television cameras and reporters gathered near the Brandenburg Gate filming the reunions.",
+     "kind": "event",
+     "subject_id": "brandenburg_gate",
+     "specificity": "representative",
+     "search_terms": [
+      "press cameras Brandenburg Gate 1989",
+      "journalists Berlin Wall fall",
+      "world media Berlin reunions"
+     ],
+     "event": "family reunion",
+     "place": "Brandenburg Gate",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "press cameras Brandenburg Gate 1989",
+      "journalists Berlin Wall fall Brandenburg Gate 1989",
+      "journalists Berlin Wall fall 1989",
+      "journalists Berlin Wall fall"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "In 1990 the peaceful revolution swept across Eastern Europe, and Germany was reunified at last.",
+   "meaning": "In 1990, peaceful political change spread through Eastern Europe and culminated in Germany\u2019s reunification.",
+   "role": "conclusion",
+   "subject_id": "germany",
+   "entities": [
+    "Eastern Europe",
+    "Germany"
+   ],
+   "entity_ids": [
+    "eastern_europe",
+    "germany"
+   ],
+   "resolved": {},
+   "events": [
+    "peaceful revolution",
+    "German reunification"
+   ],
+   "time": "1990",
+   "place": "Eastern Europe",
+   "scenarios": [
+    {
+     "visual": "Crowds holding flags and celebrating in a German city during reunification festivities.",
+     "kind": "event",
+     "subject_id": "germany",
+     "specificity": "representative",
+     "search_terms": [
+      "German reunification celebrations 1990",
+      "crowds German flags 1990",
+      "Berlin reunification festivities"
+     ],
+     "event": "German reunification",
+     "place": "Germany",
+     "era": "1990",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "German reunification celebrations 1990 Germany",
+      "German reunification celebrations 1990",
+      "crowds German flags 1990 Germany",
+      "crowds German flags 1990"
+     ]
+    },
+    {
+     "visual": "A map graphic showing peaceful revolution spreading across Eastern Europe and Germany reunifying in 1990.",
+     "kind": "document",
+     "subject_id": "eastern_europe",
+     "specificity": "representative",
+     "search_terms": [
+      "Eastern Europe 1990 map",
+      "peaceful revolutions Eastern Europe",
+      "Germany reunification map"
+     ],
+     "event": "peaceful revolution",
+     "place": "Eastern Europe",
+     "era": "1990",
+     "format_intent": "map",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Eastern Europe 1990 map",
+      "peaceful revolutions Eastern Europe 1990",
+      "peaceful revolutions Eastern Europe"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Within days, ordinary citizens climbed the wall with hammers and chisels and began tearing it down piece by piece.",
+   "meaning": "Within days of the checkpoints opening, ordinary people climbed the Berlin Wall and began dismantling it by hand.",
+   "role": "action",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "border guards"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "border_guards"
+   ],
+   "resolved": {},
+   "events": [
+    "dismantling the Berlin Wall"
+   ],
+   "time": "Within days after November 9, 1989",
+   "place": "Berlin Wall",
+   "scenarios": [
+    {
+     "visual": "Citizens standing on top of the Berlin Wall using hammers and chisels to break off pieces of concrete.",
+     "kind": "event",
+     "subject_id": "berlin_wall",
+     "specificity": "exact",
+     "search_terms": [
+      "citizens chiseling Berlin Wall",
+      "hammers chisels Berlin Wall fall",
+      "people climbing Berlin Wall 1989"
+     ],
+     "event": "dismantling the Berlin Wall",
+     "place": "Berlin Wall",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall dismantling the 1989",
+      "Berlin Wall dismantling the",
+      "Berlin Wall citizens chiseling 1989",
+      "Berlin Wall"
+     ]
+    },
+    {
+     "visual": "A close shot of hammer and chisel striking the concrete surface of the Berlin Wall as chips break away.",
+     "kind": "object",
+     "subject_id": "berlin_wall",
+     "specificity": "exact",
+     "search_terms": [
+      "chisel hitting Berlin Wall",
+      "Berlin Wall concrete fragments",
+      "hammer Berlin Wall demolition"
+     ],
+     "event": "dismantling the Berlin Wall",
+     "place": "Berlin Wall",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall dismantling the 1989",
+      "Berlin Wall dismantling the",
+      "Berlin Wall chisel hitting 1989",
+      "Berlin Wall"
+     ]
+    }
+   ],
+   "degraded": false
+  }
+ ]
+}

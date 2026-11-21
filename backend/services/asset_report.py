@@ -100,7 +100,7 @@ def _timeline_items(timeline_result) -> list:
     return items
 
 
-def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None, genre_pack=None, final_audio=None, audio_provenance=None) -> dict:
+def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None, genre_pack=None, final_audio=None, audio_provenance=None, planner=None) -> dict:
     """Build the report from real pipeline outputs.
 
     processed_scenes: scene result dicts from the media pipeline.
@@ -801,6 +801,13 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
 
     return {
         "analysis_mode": analysis_mode,
+        # Master Directive Phase 7 / P0 (DM-1): the planner
+        # self-audit block, verbatim from the analysis — mode,
+        # planner version, degraded_reason, degraded sentence
+        # counts and the measured plan quality. None when the
+        # caller had no analysis (never fabricated); the
+        # production report's q30 answers from this block.
+        "planner": planner,
         # VA-07: a failed run still produces this report (from partial
         # state); run_failure names the stage and error. None means
         # the run completed.

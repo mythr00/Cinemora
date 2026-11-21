@@ -125,6 +125,23 @@ CREATE TABLE IF NOT EXISTS segment_index (
     indexed_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_segment_index_key ON segment_index(source_key);
+
+-- Master Directive Phase 7 / Planner 2.0 (§5.2.4): knowledge-base
+-- lookup cache for the degraded planner's typing cascade. One row
+-- per (normalized entity query, source): the recorded verdict
+-- payload (type / confidence / description / aliases + provenance),
+-- so a second production about the same subject pays zero lookups
+-- and an offline run replays from cache. Populated ONLY by
+-- services.kb_client when its network source is enabled (founder
+-- decision D-2); while D-2 is unmade the table simply stays empty
+-- and every lookup is an honest miss.
+CREATE TABLE IF NOT EXISTS kb_lookup (
+    query_norm TEXT,
+    source TEXT,
+    payload_json TEXT,
+    fetched_at TEXT,
+    PRIMARY KEY (query_norm, source)
+);
 """
 
 _PROFILE_FIELDS = {
@@ -387,6 +404,44 @@ def segment_index_for(source_key: str) -> list:
             (source_key,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ------------------------------------------------------- KB lookups
+
+def kb_get(query_norm: str, source: str) -> Optional[dict]:
+    """The cached KB verdict for (query_norm, source), or None.
+
+    The payload is whatever services.kb_client recorded: the typed
+    verdict plus its provenance (fetch time, evidence class)."""
+    with _db() as c:
+        row = c.execute(
+            "SELECT payload_json FROM kb_lookup WHERE query_norm=? AND source=?",
+            (query_norm, source),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        payload = json.loads(row["payload_json"])
+    except (TypeError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def kb_put(query_norm: str, source: str, payload: dict) -> None:
+    """Record a KB verdict (INSERT OR REPLACE on the composite key)."""
+    from datetime import datetime, timezone
+
+    with _db() as c:
+        c.execute(
+            "INSERT OR REPLACE INTO kb_lookup "
+            "(query_norm, source, payload_json, fetched_at) VALUES (?,?,?,?)",
+            (
+                query_norm,
+                source,
+                json.dumps(payload),
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
 
 
 # ---------------------------------------------------------------- YouTube 429 breaker

@@ -292,11 +292,25 @@ export type PlanDecision = {
   [key: string]: unknown;
 };
 
+/** Master Directive Phase 7 / P0: the planner self-audit block the
+ * plan document carries — which planner produced the plan, why it
+ * degraded when it did, and its measured quality. */
+export type PlannerBlock = {
+  mode?: string | null;
+  planner_version?: string | null;
+  degraded_reason?: string | null;
+  degraded_sentences?: number | null;
+  sentences?: number | null;
+  quality?: Record<string, unknown> | null;
+  [key: string]: unknown;
+};
+
 export type PlanDocument = {
   project_id: string;
   title?: string | null;
   plan_source: "plan_json" | "story_cache";
   analysis_mode?: string | null;
+  planner?: PlannerBlock | null;
   bible: {
     title?: string | null;
     story_type?: string | null;

@@ -1,0 +1,3250 @@
+{
+ "key": "4fb1f0696ff18f58",
+ "mode": "llm",
+ "bible": {
+  "title": "The Berlin Wall",
+  "story_type": "history",
+  "time_period": "1961\u20131990, with references to the Cold War era and the post-reunification memory of the wall",
+  "primary_subject_id": "berlin_wall",
+  "entities": [
+   {
+    "id": "berlin_wall",
+    "canonical": "Berlin Wall",
+    "type": "object",
+    "role": "main subject",
+    "aliases": [
+     "the wall",
+     "anti-fascist protection rampart",
+     "fortified frontier",
+     "structure that had divided a continent"
+    ],
+    "pronoun": "it",
+    "description": "The fortified barrier dividing East and West Berlin from 1961 until its fall, and the central subject of the story."
+   },
+   {
+    "id": "berlin",
+    "canonical": "Berlin",
+    "type": "place",
+    "role": "main location",
+    "aliases": [
+     "city of Berlin",
+     "trapped city",
+     "united city",
+     "reunited city"
+    ],
+    "pronoun": "it",
+    "description": "The German city divided between East and West during the Cold War."
+   },
+   {
+    "id": "east_berlin",
+    "canonical": "East Berlin",
+    "type": "place",
+    "role": "location of East German authority and departure point in 1989",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The eastern part of Berlin, controlled by East Germany and separated from West Berlin by the wall."
+   },
+   {
+    "id": "west_berlin",
+    "canonical": "West Berlin",
+    "type": "place",
+    "role": "location enclosed by the wall and destination for refugees",
+    "aliases": [
+     "the West"
+    ],
+    "pronoun": "it",
+    "description": "The western part of Berlin, surrounded by East German territory and separated by the wall."
+   },
+   {
+    "id": "east_germany",
+    "canonical": "East Germany",
+    "type": "organization",
+    "role": "state that built the wall and suppressed emigration",
+    "aliases": [
+     "East German government",
+     "the regime",
+     "East German state"
+    ],
+    "pronoun": "it",
+    "description": "The socialist state that sealed the border, guarded the wall, and later collapsed in 1989."
+   },
+   {
+    "id": "east_german_troops",
+    "canonical": "East German troops",
+    "type": "organization",
+    "role": "forces that sealed the border",
+    "aliases": [
+     "East German soldiers",
+     "guards"
+    ],
+    "pronoun": "they",
+    "description": "Military forces that unrolled barbed wire across Berlin in August 1961 and later guarded the wall."
+   },
+   {
+    "id": "west",
+    "canonical": "the West",
+    "type": "place",
+    "role": "destination for East German refugees and symbolic side of the Cold War",
+    "aliases": [
+     "free world",
+     "Western side"
+    ],
+    "pronoun": "it",
+    "description": "The Western bloc and West Berlin as a destination for those fleeing East Germany."
+   },
+   {
+    "id": "bernauer_strasse",
+    "canonical": "Bernauer Strasse",
+    "type": "place",
+    "role": "location of dramatic window escapes and later memorial",
+    "aliases": [
+     "Bernauer Strasse"
+    ],
+    "pronoun": "it",
+    "description": "A Berlin street where buildings stood in the East while pavements lay in the West, becoming a site of escapes and deaths."
+   },
+   {
+    "id": "checkpoint_charlie",
+    "canonical": "Checkpoint Charlie",
+    "type": "place",
+    "role": "famous border crossing and tank confrontation site",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The best-known crossing point between East and West Berlin, where American and Soviet tanks faced each other in 1961."
+   },
+   {
+    "id": "united_states",
+    "canonical": "United States",
+    "type": "organization",
+    "role": "Western power involved in the Checkpoint Charlie confrontation",
+    "aliases": [
+     "American"
+    ],
+    "pronoun": "it",
+    "description": "The Western power whose tanks faced Soviet tanks at Checkpoint Charlie."
+   },
+   {
+    "id": "soviet_union",
+    "canonical": "Soviet Union",
+    "type": "organization",
+    "role": "Eastern power involved in the Checkpoint Charlie confrontation",
+    "aliases": [
+     "Soviet"
+    ],
+    "pronoun": "it",
+    "description": "The Eastern bloc power whose tanks faced American tanks at Checkpoint Charlie."
+   },
+   {
+    "id": "john_f_kennedy",
+    "canonical": "John F. Kennedy",
+    "type": "person",
+    "role": "U.S. president who expressed solidarity with West Berlin",
+    "aliases": [
+     "President John F. Kennedy",
+     "Kennedy"
+    ],
+    "pronoun": "he",
+    "description": "The American president who declared \u201cIch bin ein Berliner\u201d at Schoneberg city hall in June 1963."
+   },
+   {
+    "id": "schoneberg_city_hall",
+    "canonical": "Schoneberg City Hall",
+    "type": "place",
+    "role": "site of Kennedy\u2019s 1963 speech",
+    "aliases": [
+     "Schoneberg city hall"
+    ],
+    "pronoun": "it",
+    "description": "The West Berlin city hall where John F. Kennedy delivered his famous declaration of solidarity."
+   },
+   {
+    "id": "poland",
+    "canonical": "Poland",
+    "type": "place",
+    "role": "country where Solidarity helped challenge communist rule",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "An Eastern European country whose Solidarity movement helped open cracks in the Iron Curtain."
+   },
+   {
+    "id": "solidarity",
+    "canonical": "Solidarity",
+    "type": "organization",
+    "role": "Polish reform movement",
+    "aliases": [
+     "Poland's Solidarity movement"
+    ],
+    "pronoun": "it",
+    "description": "The Polish movement that contributed to the weakening of communist rule in Eastern Europe."
+   },
+   {
+    "id": "hungary",
+    "canonical": "Hungary",
+    "type": "place",
+    "role": "country whose reforms and border opening enabled East German escapes",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "An Eastern European country whose reformers began dismantling the border fence with Austria in 1989."
+   },
+   {
+    "id": "austria",
+    "canonical": "Austria",
+    "type": "place",
+    "role": "country across Hungary\u2019s opened border",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The country whose border with Hungary was opened, allowing many East Germans to flee westward."
+   },
+   {
+    "id": "iron_curtain",
+    "canonical": "Iron Curtain",
+    "type": "object",
+    "role": "symbolic Cold War divide",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The symbolic barrier separating Eastern and Western Europe, which reform movements began to crack."
+   },
+   {
+    "id": "prague",
+    "canonical": "Prague",
+    "type": "place",
+    "role": "city where embassy gardens filled with East German refugees",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The Czechoslovak capital where embassy gardens became refuge sites for East Germans seeking exit to the West."
+   },
+   {
+    "id": "leipzig",
+    "canonical": "Leipzig",
+    "type": "place",
+    "role": "city of major 1989 demonstrations",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The East German city where Monday prayer meetings grew into mass protests against the regime."
+   },
+   {
+    "id": "nikolaikirche",
+    "canonical": "Nikolaikirche",
+    "type": "place",
+    "role": "church where Monday prayer meetings began",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The Leipzig church whose Monday prayer meetings helped spark the peaceful revolution."
+   },
+   {
+    "id": "erich_honecker",
+    "canonical": "Erich Honecker",
+    "type": "person",
+    "role": "East German leader whose regime collapsed",
+    "aliases": [
+     "Honecker"
+    ],
+    "pronoun": "he",
+    "description": "The East German leader whose government collapsed in the wake of the 1989 protests."
+   },
+   {
+    "id": "gunter_schabowski",
+    "canonical": "Gunter Schabowski",
+    "type": "person",
+    "role": "spokesman whose press conference triggered crowds at the checkpoints",
+    "aliases": [
+     "Schabowski",
+     "a tired spokesman"
+    ],
+    "pronoun": "he",
+    "description": "The East German spokesman who announced new travel rules on November 9, 1989."
+   },
+   {
+    "id": "bornholmer_strasse",
+    "canonical": "Bornholmer Strasse",
+    "type": "place",
+    "role": "checkpoint where barriers were opened",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The Berlin border crossing where Harald Jager ordered the barriers opened on November 9, 1989."
+   },
+   {
+    "id": "harald_jager",
+    "canonical": "Harald Jager",
+    "type": "person",
+    "role": "commander who opened the Bornholmer Strasse barriers",
+    "aliases": [
+     "Jager",
+     "the overwhelmed commander"
+    ],
+    "pronoun": "he",
+    "description": "The commander at Bornholmer Strasse who ordered the barriers opened as crowds demanded passage."
+   },
+   {
+    "id": "brandenburg_gate",
+    "canonical": "Brandenburg Gate",
+    "type": "place",
+    "role": "site of reunions after the wall opened",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The Berlin landmark where separated families embraced as the wall\u2019s fall unfolded on live television."
+   },
+   {
+    "id": "germany",
+    "canonical": "Germany",
+    "type": "place",
+    "role": "nation reunified in 1990",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The country whose division was ended by reunification on October 3, 1990."
+   },
+   {
+    "id": "reichstag",
+    "canonical": "Reichstag",
+    "type": "place",
+    "role": "site where the reunified German flag rose",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The Berlin parliamentary building above which the flag of a single Germany rose after reunification."
+   },
+   {
+    "id": "east_side_gallery",
+    "canonical": "East Side Gallery",
+    "type": "place",
+    "role": "preserved painted section of the wall",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The longest remaining painted stretch of the Berlin Wall, covered with murals by artists from twenty-one countries."
+   },
+   {
+    "id": "berlin_wall_memorial",
+    "canonical": "Berlin Wall Memorial",
+    "type": "place",
+    "role": "memorial site preserving the death strip",
+    "aliases": [],
+    "pronoun": "it",
+    "description": "The memorial at Bernauer Strasse where a preserved section of the death strip shows visitors the wall\u2019s division."
+   },
+   {
+    "id": "mauerspechte",
+    "canonical": "Mauerspechte",
+    "type": "organization",
+    "role": "citizens who chipped souvenirs from the wall",
+    "aliases": [
+     "wall woodpeckers"
+    ],
+    "pronoun": "they",
+    "description": "Ordinary citizens who hacked fragments from the Berlin Wall after its fall and kept them as souvenirs."
+   }
+  ],
+  "timeline": [
+   {
+    "when": "Summer 1961",
+    "what": "Berlin remained divided between East and West, watched by soldiers on both sides of a line marked only on maps."
+   },
+   {
+    "when": "August 13, 1961",
+    "what": "East German troops unrolled barbed wire across Berlin in the early hours, sealing the border and cutting streets, neighbourhoods, and commutes."
+   },
+   {
+    "when": "Days after August 13, 1961",
+    "what": "Barbed wire began giving way to concrete as the Berlin Wall developed into a fortified frontier with watchtowers and floodlights."
+   },
+   {
+    "when": "1961 onward",
+    "what": "The wall ran for more than 150 kilometres around West Berlin, cutting through streets, rivers, cemeteries, and railway lines."
+   },
+   {
+    "when": "1961 onward",
+    "what": "At Bernauer Strasse, residents escaped from windows into blankets held by firefighters below; some jumps ended in tragedy."
+   },
+   {
+    "when": "October 1961",
+    "what": "American and Soviet tanks faced each other at Checkpoint Charlie for sixteen tense hours before both sides withdrew their armour."
+   },
+   {
+    "when": "June 1963",
+    "what": "President John F. Kennedy stood before Schoneberg city hall and declared \u201cIch bin ein Berliner,\u201d promising solidarity with the trapped city."
+   },
+   {
+    "when": "1961\u20131989",
+    "what": "Berliners adapted to division by smuggling letters, photographs, and medicine, while escape attempts included tunnels and homemade balloons."
+   },
+   {
+    "when": "1979",
+    "what": "Two families floated over the border at night in a homemade balloon and landed in a West German field at dawn."
+   },
+   {
+    "when": "1961\u20131989",
+    "what": "At least 140 people died at the Berlin Wall, including a baby of fifteen months and an eighty-year-old woman who fell from a window on Bernauer Strasse."
+   },
+   {
+    "when": "1980s",
+    "what": "A generation had grown up without knowing a united city, while reform movements in Poland and Hungary began cracking the Iron Curtain."
+   },
+   {
+    "when": "May 1989",
+    "what": "Hungary began dismantling its border fence with Austria, and thousands of East Germans travelled south to slip across."
+   },
+   {
+    "when": "Summer 1989",
+    "what": "Embassy gardens in Prague filled with East German refugees waiting for trains to the West."
+   },
+   {
+    "when": "October 9, 1989",
+    "what": "Seventy thousand demonstrators marched through Leipzig while armed police stood by and no shoot order came."
+   },
+   {
+    "when": "October 1989",
+    "what": "The peaceful revolution gained momentum and Erich Honecker\u2019s regime collapsed within days, replaced by men promising reform."
+   },
+   {
+    "when": "November 9, 1989",
+    "what": "Gunter Schabowski told a press conference that East Germans could travel freely, effective immediately as far as he knew."
+   },
+   {
+    "when": "Evening of November 9, 1989",
+    "what": "East Berliners heard the broadcast, walked to checkpoints, and demanded passage; at Bornholmer Strasse, Harald Jager ordered the barriers opened shortly before midnight."
+   },
+   {
+    "when": "After November 9, 1989",
+    "what": "Crowds crossed into West Berlin, wept, embraced strangers, danced on the wall, and reunited with separated families at the Brandenburg Gate."
+   },
+   {
+    "when": "Days after the wall opened",
+    "what": "Citizens known as Mauerspechte climbed the wall with hammers and chisels, hacking away souvenirs."
+   },
+   {
+    "when": "Within a year after November 1989",
+    "what": "Cranes and bulldozers followed the citizens\u2019 dismantling, leaving almost nothing of the wall."
+   },
+   {
+    "when": "October 3, 1990",
+    "what": "Germany was reunified, and the flag of a single nation rose above the Reichstag in Berlin."
+   },
+   {
+    "when": "After reunification",
+    "what": "The wall survived in a few painted stretches such as the East Side Gallery, where artists from twenty-one countries covered the longest remaining section with murals."
+   },
+   {
+    "when": "Today",
+    "what": "A double line of cobblestones traces the wall\u2019s path through Berlin, and the Berlin Wall Memorial at Bernauer Strasse preserves the death strip for visitors."
+   }
+  ],
+  "mode": "llm"
+ },
+ "plans": [
+  {
+   "sentence": "In the summer of 1961, the city of Berlin stood divided between two worlds, watched by soldiers on both sides of a line that existed only on maps.",
+   "meaning": "In summer 1961 Berlin was already split into opposing Cold War zones, with soldiers guarding an abstract boundary before it became a physical wall.",
+   "role": "setup",
+   "subject_id": "berlin",
+   "entities": [
+    "Berlin"
+   ],
+   "entity_ids": [
+    "berlin"
+   ],
+   "resolved": {},
+   "events": [],
+   "time": "Summer 1961",
+   "place": "Berlin",
+   "scenarios": [
+    {
+     "visual": "A wide view of a divided Berlin street with soldiers standing on opposite sides of an invisible boundary line.",
+     "kind": "place",
+     "subject_id": "berlin",
+     "specificity": "representative",
+     "search_terms": [
+      "1961 Berlin street",
+      "Cold War soldiers Berlin",
+      "divided city street"
+     ],
+     "event": null,
+     "place": "Berlin",
+     "era": "1961",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "1961 Berlin street",
+      "Cold War soldiers Berlin 1961",
+      "Cold War soldiers Berlin",
+      "Berlin 1961 street"
+     ]
+    },
+    {
+     "visual": "A period map of Berlin showing East and West sectors separated by a marked line.",
+     "kind": "document",
+     "subject_id": "berlin",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin sector map",
+      "divided Berlin map",
+      "Cold War Berlin map"
+     ],
+     "event": null,
+     "place": "Berlin",
+     "era": "1961",
+     "format_intent": "map",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin sector map 1961",
+      "Berlin sector map",
+      "divided Berlin map 1961",
+      "divided Berlin map"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "In the early hours of August 13, East German troops unrolled coils of barbed wire across the heart of the city, sealing the border in a single night.",
+   "meaning": "East German forces secretly sealed Berlin\u2019s border in the early morning by laying barbed wire across the city.",
+   "role": "action",
+   "subject_id": "east_german_troops",
+   "entities": [
+    "East German troops"
+   ],
+   "entity_ids": [
+    "east_german_troops"
+   ],
+   "resolved": {},
+   "events": [
+    "border closure"
+   ],
+   "time": "Early hours of August 13, 1961",
+   "place": "Berlin",
+   "scenarios": [
+    {
+     "visual": "East German soldiers unrolling coils of barbed wire across a dark Berlin street before dawn.",
+     "kind": "person_activity",
+     "subject_id": "east_german_troops",
+     "specificity": "representative",
+     "search_terms": [
+      "soldiers laying barbed wire",
+      "Berlin 1961 border closure",
+      "night barbed wire street"
+     ],
+     "event": "border closure",
+     "place": "Berlin",
+     "era": "1961",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "soldiers laying barbed wire Berlin 1961",
+      "soldiers laying barbed wire 1961",
+      "soldiers laying barbed wire",
+      "Berlin 1961 border closure"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Families woke to find their streets cut in two, their neighbours suddenly living in another country, and their journeys to work forbidden.",
+   "meaning": "Ordinary Berliners discovered overnight that the border closure had severed streets, separated neighbours, and blocked commutes.",
+   "role": "event",
+   "subject_id": "berlin",
+   "entities": [
+    "Berlin",
+    "East German troops"
+   ],
+   "entity_ids": [
+    "berlin",
+    "east_german_troops"
+   ],
+   "resolved": {},
+   "events": [
+    "families separated by border closure"
+   ],
+   "time": "Morning after August 13, 1961",
+   "place": "Berlin",
+   "scenarios": [
+    {
+     "visual": "Residents standing at a window and doorway looking stunned as barbed wire cuts across their street.",
+     "kind": "person_activity",
+     "subject_id": "berlin",
+     "specificity": "representative",
+     "search_terms": [
+      "Berliners barbed wire street",
+      "families separated Berlin Wall",
+      "1961 Berlin residents"
+     ],
+     "event": "families separated by border closure",
+     "place": "Berlin",
+     "era": "1961",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berliners barbed wire street Berlin 1961",
+      "Berliners barbed wire street 1961",
+      "Berliners barbed wire street",
+      "families separated Berlin Wall 1961"
+     ]
+    },
+    {
+     "visual": "A worker in work clothes halted at a newly sealed street crossing, clutching a bag while guards block the route.",
+     "kind": "person_activity",
+     "subject_id": "berlin",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin commuter blocked border",
+      "worker barbed wire Berlin",
+      "sealed street 1961"
+     ],
+     "event": "border closure",
+     "place": "Berlin",
+     "era": "1961",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin commuter blocked border 1961",
+      "Berlin commuter blocked border",
+      "worker barbed wire Berlin 1961",
+      "worker barbed wire Berlin"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Within days the barbed wire gave way to concrete, and the Berlin Wall began its long transformation into a fortified frontier of watchtowers and floodlights.",
+   "meaning": "The temporary wire barrier rapidly became a permanent concrete wall with surveillance infrastructure, turning Berlin\u2019s divide into a fortified frontier.",
+   "role": "event",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "Berlin"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "berlin"
+   ],
+   "resolved": {
+    "it": "berlin_wall"
+   },
+   "events": [
+    "construction of the Berlin Wall"
+   ],
+   "time": "Days after August 13, 1961",
+   "place": "Berlin",
+   "scenarios": [
+    {
+     "visual": "Workers building a concrete section of the Berlin Wall beside watchtowers and floodlights.",
+     "kind": "event",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall construction",
+      "concrete wall watchtower",
+      "1961 Berlin fortifications"
+     ],
+     "event": "construction of the Berlin Wall",
+     "place": "Berlin",
+     "era": "1961",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall construction 1961",
+      "Berlin Wall construction",
+      "concrete wall watchtower Berlin 1961",
+      "concrete wall watchtower 1961"
+     ]
+    },
+    {
+     "visual": "A completed stretch of wall at night lit by floodlights, with a guard tower looming above.",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall floodlights",
+      "watchtower Berlin Wall",
+      "fortified frontier Berlin"
+     ],
+     "event": null,
+     "place": "Berlin",
+     "era": "1960s",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall floodlights 1960s",
+      "Berlin Wall floodlights",
+      "watchtower Berlin Wall 1960s",
+      "watchtower Berlin Wall"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The wall ran for more than one hundred and fifty kilometres around West Berlin, cutting through streets, rivers, cemeteries and railway lines.",
+   "meaning": "The Berlin Wall encircled West Berlin across more than 150 kilometres, physically slicing through the urban and natural fabric of the city.",
+   "role": "background",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "West Berlin"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "west_berlin"
+   ],
+   "resolved": {
+    "the wall": "berlin_wall"
+   },
+   "events": [],
+   "time": "1961 onward",
+   "place": "West Berlin",
+   "scenarios": [
+    {
+     "visual": "An aerial or map-like view of the wall winding around West Berlin through streets and waterways.",
+     "kind": "abstract_broll",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall route map",
+      "aerial Berlin Wall",
+      "West Berlin encircled wall"
+     ],
+     "event": null,
+     "place": "West Berlin",
+     "era": "Cold War era",
+     "format_intent": "map",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall route map West",
+      "Berlin Wall route map",
+      "aerial Berlin Wall West",
+      "aerial Berlin Wall"
+     ]
+    },
+    {
+     "visual": "The wall cutting through a cemetery, with graves visible beside the concrete barrier.",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall cemetery",
+      "wall through graves Berlin",
+      "Berlin Wall railway line"
+     ],
+     "event": null,
+     "place": "Berlin",
+     "era": "Cold War era",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall cemetery",
+      "wall through graves Berlin"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "At Bernauer Strasse, the fronts of apartment buildings stood in the East while their pavements lay in the West, and residents jumped from windows into blankets held by firefighters below.",
+   "meaning": "At Bernauer Strasse the border ran along building fronts, so residents escaped from East-side windows onto West-side pavements with firefighters catching them in blankets.",
+   "role": "action",
+   "subject_id": "bernauer_strasse",
+   "entities": [
+    "Bernauer Strasse",
+    "Berlin Wall"
+   ],
+   "entity_ids": [
+    "bernauer_strasse",
+    "berlin_wall"
+   ],
+   "resolved": {},
+   "events": [
+    "window escapes at Bernauer Strasse"
+   ],
+   "time": "1961 onward",
+   "place": "Bernauer Strasse",
+   "scenarios": [
+    {
+     "visual": "A resident climbing from an apartment window above a street divided by the wall while firefighters hold a blanket below.",
+     "kind": "person_activity",
+     "subject_id": "bernauer_strasse",
+     "specificity": "exact",
+     "search_terms": [
+      "Bernauer Strasse window escape",
+      "firefighters blanket Berlin Wall",
+      "Berlin Wall apartment jump"
+     ],
+     "event": "window escapes at Bernauer Strasse",
+     "place": "Bernauer Strasse",
+     "era": "1960s",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Bernauer Strasse window escapes at 1960s",
+      "Bernauer Strasse window escapes at",
+      "Bernauer Strasse window escape 1960s",
+      "Bernauer Strasse"
+     ]
+    },
+    {
+     "visual": "Apartment fa\u00e7ades on Bernauer Strasse with the wall running directly along the pavement below.",
+     "kind": "place",
+     "subject_id": "bernauer_strasse",
+     "specificity": "exact",
+     "search_terms": [
+      "Bernauer Strasse buildings",
+      "Berlin Wall apartment fronts",
+      "Bernauer Strasse wall"
+     ],
+     "event": null,
+     "place": "Bernauer Strasse",
+     "era": "Cold War era",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Bernauer Strasse window escapes at",
+      "Bernauer Strasse buildings",
+      "Bernauer Strasse"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Some of those jumps ended in tragedy, and the deaths at the wall began a ledger of loss that would grow for twenty eight years.",
+   "meaning": "Some escape attempts ended in death, beginning a long toll of people killed at the wall over the next twenty-eight years.",
+   "role": "evidence",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall"
+   ],
+   "entity_ids": [
+    "berlin_wall"
+   ],
+   "resolved": {
+    "the wall": "berlin_wall",
+    "those jumps": "window escapes at Bernauer Strasse"
+   },
+   "events": [
+    "deaths at the Berlin Wall"
+   ],
+   "time": "1961\u20131989",
+   "place": "Berlin Wall",
+   "scenarios": [
+    {
+     "visual": "A somber archival photograph of a crowd gathered near the wall after a fatal escape attempt.",
+     "kind": "archival",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall death scene",
+      "fatal escape Berlin Wall",
+      "mourners Berlin Wall"
+     ],
+     "event": "deaths at the Berlin Wall",
+     "place": "Berlin Wall",
+     "era": "Cold War era",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall death scene",
+      "fatal escape Berlin Wall"
+     ]
+    },
+    {
+     "visual": "A memorial row of crosses or flowers marking deaths along the Berlin Wall.",
+     "kind": "object",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall memorial crosses",
+      "flowers for wall victims",
+      "Berlin Wall death memorial"
+     ],
+     "event": "deaths at the Berlin Wall",
+     "place": "Berlin Wall",
+     "era": "Cold War era",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall memorial crosses",
+      "flowers for wall victims Berlin",
+      "flowers for wall victims"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The East German government called it an anti-fascist protection rampart, claiming it defended socialism from Western spies and saboteurs.",
+   "meaning": "East Germany justified the wall as a defensive anti-fascist barrier, presenting itself as protecting socialism from Western threats.",
+   "role": "motivation",
+   "subject_id": "east_germany",
+   "entities": [
+    "East Germany",
+    "Berlin Wall"
+   ],
+   "entity_ids": [
+    "east_germany",
+    "berlin_wall"
+   ],
+   "resolved": {
+    "it": "berlin_wall"
+   },
+   "events": [
+    "East German propaganda justification of the wall"
+   ],
+   "time": "1961 onward",
+   "place": "East Germany",
+   "scenarios": [
+    {
+     "visual": "An East German propaganda poster or sign depicting the wall as a protective barrier against Western enemies.",
+     "kind": "document",
+     "subject_id": "east_germany",
+     "specificity": "representative",
+     "search_terms": [
+      "anti-fascist protection rampart poster",
+      "East German propaganda wall",
+      "GDR border propaganda"
+     ],
+     "event": "East German propaganda justification of the wall",
+     "place": "East Germany",
+     "era": "Cold War era",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "anti-fascist protection rampart poster East Germany",
+      "anti-fascist protection rampart poster",
+      "East German propaganda wall Germany",
+      "East German propaganda wall"
+     ]
+    },
+    {
+     "visual": "An official sign on the East German side labeling the barrier the anti-fascist protection rampart.",
+     "kind": "object",
+     "subject_id": "east_germany",
+     "specificity": "representative",
+     "search_terms": [
+      "anti-fascist protection rampart sign",
+      "East German border sign",
+      "Berlin Wall official sign"
+     ],
+     "event": "East German propaganda justification of the wall",
+     "place": "East Germany",
+     "era": "Cold War era",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "anti-fascist protection rampart sign East Germany",
+      "anti-fascist protection rampart sign",
+      "East German border sign Germany",
+      "East German border sign"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "In truth, more than two and a half million East Germans had already fled to the West, and the regime was haemorrhaging its doctors, engineers and teachers.",
+   "meaning": "The real reason for sealing the border was mass emigration: millions of skilled East Germans had fled west, draining the regime\u2019s professional classes.",
+   "role": "evidence",
+   "subject_id": "east_germany",
+   "entities": [
+    "East Germany"
+   ],
+   "entity_ids": [
+    "east_germany"
+   ],
+   "resolved": {
+    "the West": "west",
+    "the regime": "east_germany"
+   },
+   "events": [
+    "mass emigration from East Germany"
+   ],
+   "time": "Before August 1961",
+   "place": "East Germany",
+   "scenarios": [
+    {
+     "visual": "A period chart or graphic showing East German emigration numbers rising before the wall.",
+     "kind": "abstract_broll",
+     "subject_id": "east_germany",
+     "specificity": "representative",
+     "search_terms": [
+      "East German emigration chart",
+      "refugee numbers 1961",
+      "brain drain East Germany"
+     ],
+     "event": "mass emigration from East Germany",
+     "place": "East Germany",
+     "era": "1950s\u20131961",
+     "format_intent": "chart",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East German emigration chart Germany 1950s",
+      "East German emigration chart 1950s",
+      "East German emigration chart",
+      "refugee numbers 1961 East Germany 1950s"
+     ]
+    },
+    {
+     "visual": "A queue of East German refugees with luggage at a crossing point toward the West.",
+     "kind": "person_activity",
+     "subject_id": "east_germany",
+     "specificity": "representative",
+     "search_terms": [
+      "East German refugees luggage",
+      "refugees fleeing to West Berlin",
+      "Berlin crossing refugees"
+     ],
+     "event": "mass emigration from East Germany",
+     "place": "Berlin",
+     "era": "1950s\u20131961",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East German refugees luggage Berlin 1950s",
+      "East German refugees luggage 1950s",
+      "East German refugees luggage",
+      "refugees fleeing to West Berlin 1950s"
+     ]
+    },
+    {
+     "visual": "Doctors, engineers, and teachers in period work settings, suggesting the skilled professionals the regime was losing.",
+     "kind": "person_activity",
+     "subject_id": "east_germany",
+     "specificity": "representative",
+     "search_terms": [
+      "East German doctor 1960s",
+      "engineer teacher GDR",
+      "skilled workers East Germany"
+     ],
+     "event": "mass emigration from East Germany",
+     "place": "East Germany",
+     "era": "1950s\u20131961",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East German doctor 1960s Germany 1950s",
+      "East German doctor 1960s 1950s",
+      "East German doctor 1960s",
+      "engineer teacher GDR East Germany 1950s"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "In June 1963, President John F.",
+   "meaning": "The sentence begins a June 1963 segment about President John F. Kennedy\u2019s visit to West Berlin and his declaration of solidarity.",
+   "role": "transition",
+   "subject_id": "john_f_kennedy",
+   "entities": [
+    "John F. Kennedy"
+   ],
+   "entity_ids": [
+    "john_f_kennedy"
+   ],
+   "resolved": {},
+   "events": [
+    "Kennedy visit to Berlin"
+   ],
+   "time": "June 1963",
+   "place": "West Berlin",
+   "scenarios": [
+    {
+     "visual": "John F. Kennedy arriving in West Berlin during his 1963 visit, surrounded by crowds and officials.",
+     "kind": "person_activity",
+     "subject_id": "john_f_kennedy",
+     "specificity": "exact",
+     "search_terms": [
+      "Kennedy West Berlin 1963",
+      "JFK arrival Berlin",
+      "Kennedy motorcade Berlin"
+     ],
+     "event": "Kennedy visit to Berlin",
+     "place": "West Berlin",
+     "era": "1963",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "John F. Kennedy visit to Berlin 1963",
+      "John F. Kennedy visit to Berlin",
+      "John F. Kennedy West Berlin 1963",
+      "John F. Kennedy West Berlin"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Kennedy stood before the Schoneberg city hall and declared, Ich bin ein Berliner, promising that the free world stood with the trapped city.",
+   "meaning": "John F. Kennedy publicly pledged American and Western solidarity with West Berlin during its isolation behind the wall.",
+   "role": "event",
+   "subject_id": "john_f_kennedy",
+   "entities": [
+    "John F. Kennedy",
+    "Schoneberg City Hall",
+    "the West",
+    "Berlin"
+   ],
+   "entity_ids": [
+    "john_f_kennedy",
+    "schoneberg_city_hall",
+    "west",
+    "berlin"
+   ],
+   "resolved": {
+    "he": "john_f_kennedy",
+    "the free world": "west",
+    "the trapped city": "west_berlin"
+   },
+   "events": [
+    "Kennedy Berlin speech"
+   ],
+   "time": "June 1963",
+   "place": "Schoneberg City Hall",
+   "scenarios": [
+    {
+     "visual": "John F. Kennedy standing at a podium before a crowd outside Schoneberg City Hall in West Berlin",
+     "kind": "person_activity",
+     "subject_id": "john_f_kennedy",
+     "specificity": "exact",
+     "search_terms": [
+      "Kennedy Schoneberg City Hall speech",
+      "Ich bin ein Berliner",
+      "JFK Berlin 1963 crowd"
+     ],
+     "event": "Kennedy Berlin speech",
+     "place": "Schoneberg City Hall",
+     "era": "1963",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.6,
+     "queries": [
+      "John F. Kennedy Berlin speech 1963",
+      "John F. Kennedy Berlin speech",
+      "John F. Kennedy Schoneberg City Hall speech 1963",
+      "John F. Kennedy Schoneberg City Hall"
+     ]
+    },
+    {
+     "visual": "A packed West Berlin crowd listening to Kennedy, with banners and Cold War-era street surroundings",
+     "kind": "event",
+     "subject_id": "west_berlin",
+     "specificity": "representative",
+     "search_terms": [
+      "1963 Berlin speech crowd",
+      "West Berlin public rally",
+      "Kennedy Berlin audience"
+     ],
+     "event": "Kennedy Berlin speech",
+     "place": "West Berlin",
+     "era": "1963",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.6,
+     "queries": [
+      "1963 Berlin speech crowd West",
+      "1963 Berlin speech crowd",
+      "West Berlin public rally 1963",
+      "West Berlin public rally"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Checkpoint Charlie became the most famous crossing on earth, where American and Soviet tanks faced each other muzzle to muzzle in October 1961.",
+   "meaning": "Checkpoint Charlie became the iconic East-West crossing, symbolising the Cold War standoff in Berlin.",
+   "role": "setup",
+   "subject_id": "checkpoint_charlie",
+   "entities": [
+    "Checkpoint Charlie",
+    "United States",
+    "Soviet Union"
+   ],
+   "entity_ids": [
+    "checkpoint_charlie",
+    "united_states",
+    "soviet_union"
+   ],
+   "resolved": {
+    "American": "united_states",
+    "Soviet": "soviet_union"
+   },
+   "events": [
+    "Checkpoint Charlie tank confrontation"
+   ],
+   "time": "October 1961",
+   "place": "Checkpoint Charlie",
+   "scenarios": [
+    {
+     "visual": "American and Soviet tanks facing each other at close range on a Berlin street near Checkpoint Charlie",
+     "kind": "event",
+     "subject_id": "checkpoint_charlie",
+     "specificity": "exact",
+     "search_terms": [
+      "Checkpoint Charlie tanks 1961",
+      "American Soviet tanks Berlin",
+      "tank standoff Checkpoint Charlie"
+     ],
+     "event": "Checkpoint Charlie tank confrontation",
+     "place": "Checkpoint Charlie",
+     "era": "1961",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Checkpoint Charlie tank confrontation 1961",
+      "Checkpoint Charlie tank confrontation",
+      "Checkpoint Charlie tanks 1961",
+      "Checkpoint Charlie"
+     ]
+    },
+    {
+     "visual": "The Checkpoint Charlie crossing point with guards, barriers and Allied signage",
+     "kind": "place",
+     "subject_id": "checkpoint_charlie",
+     "specificity": "exact",
+     "search_terms": [
+      "Checkpoint Charlie border crossing",
+      "Berlin Allied checkpoint",
+      "Checkpoint Charlie guards"
+     ],
+     "event": null,
+     "place": "Checkpoint Charlie",
+     "era": "1961",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Checkpoint Charlie tank confrontation 1961",
+      "Checkpoint Charlie tank confrontation",
+      "Checkpoint Charlie border crossing 1961",
+      "Checkpoint Charlie"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "For sixteen tense hours the world held its breath, before both sides withdrew their armour one tank at a time.",
+   "meaning": "The tank standoff lasted sixteen hours and ended with both superpowers pulling back without firing.",
+   "role": "event",
+   "subject_id": "checkpoint_charlie",
+   "entities": [
+    "Checkpoint Charlie",
+    "John F. Kennedy"
+   ],
+   "entity_ids": [
+    "checkpoint_charlie",
+    "john_f_kennedy"
+   ],
+   "resolved": {
+    "both sides": "united_states, soviet_union"
+   },
+   "events": [
+    "withdrawal from Checkpoint Charlie tank confrontation"
+   ],
+   "time": "October 1961",
+   "place": "Checkpoint Charlie",
+   "scenarios": [
+    {
+     "visual": "A tank slowly reversing away from a tense Berlin street standoff while soldiers watch",
+     "kind": "event",
+     "subject_id": "checkpoint_charlie",
+     "specificity": "representative",
+     "search_terms": [
+      "tanks withdraw Checkpoint Charlie",
+      "1961 Berlin tank withdrawal",
+      "Cold War standoff Berlin street"
+     ],
+     "event": "withdrawal from Checkpoint Charlie tank confrontation",
+     "place": "Checkpoint Charlie",
+     "era": "1961",
+     "format_intent": "any",
+     "format_intent_confidence": 0.0,
+     "queries": [
+      "tanks withdraw Checkpoint Charlie 1961",
+      "tanks withdraw Checkpoint Charlie",
+      "1961 Berlin tank withdrawal Checkpoint Charlie",
+      "1961 Berlin tank withdrawal"
+     ]
+    },
+    {
+     "visual": "Crowds and journalists gathered near the checkpoint as the standoff continues into the evening",
+     "kind": "event",
+     "subject_id": "checkpoint_charlie",
+     "specificity": "representative",
+     "search_terms": [
+      "Checkpoint Charlie crowd 1961",
+      "Berlin tank crisis spectators",
+      "journalists Checkpoint Charlie"
+     ],
+     "event": "Checkpoint Charlie tank confrontation",
+     "place": "Checkpoint Charlie",
+     "era": "1961",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.6,
+     "queries": [
+      "Checkpoint Charlie crowd 1961",
+      "Berlin tank crisis spectators Checkpoint Charlie 1961",
+      "Berlin tank crisis spectators 1961",
+      "Berlin tank crisis spectators"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Ordinary Berliners adapted with extraordinary courage, smuggling letters, photographs and medicine across the border in coat linings and hollowed-out books.",
+   "meaning": "Berliners quietly resisted division by carrying small essential items and personal messages across the border hidden in everyday objects.",
+   "role": "action",
+   "subject_id": "berlin",
+   "entities": [
+    "Berlin"
+   ],
+   "entity_ids": [
+    "berlin"
+   ],
+   "resolved": {},
+   "events": [
+    "smuggling across Berlin Wall"
+   ],
+   "time": "1961\u20131989",
+   "place": "Berlin",
+   "scenarios": [
+    {
+     "visual": "A Berliner in a worn coat walking past a border post with letters hidden inside the lining",
+     "kind": "person_activity",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "coat lining smuggling letters",
+      "Berlin border civilian search",
+      "Cold War courier coat"
+     ],
+     "event": "smuggling across Berlin Wall",
+     "place": "Berlin",
+     "era": "1960s",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "coat lining smuggling letters Berlin 1960s",
+      "coat lining smuggling letters 1960s",
+      "coat lining smuggling letters",
+      "Berlin border civilian search 1960s"
+     ]
+    },
+    {
+     "visual": "A hollowed-out book opened to reveal folded photographs and medicine tucked inside",
+     "kind": "object",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "hollow book hidden documents",
+      "secret letters in book",
+      "hidden medicine book"
+     ],
+     "event": "smuggling across Berlin Wall",
+     "place": "Berlin",
+     "era": "Cold War era",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "hollow book hidden documents Berlin",
+      "hollow book hidden documents",
+      "secret letters in book Berlin",
+      "secret letters in book"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Escape attempts grew ever more ingenious, from tunnels dug beneath the death strip to hot air balloons stitched together from bed sheets.",
+   "meaning": "Escape plans became increasingly elaborate, using tunnels under the fortified border and improvised balloons made from household material.",
+   "role": "action",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall"
+   ],
+   "entity_ids": [
+    "berlin_wall"
+   ],
+   "resolved": {},
+   "events": [
+    "tunnel escapes",
+    "balloon escapes"
+   ],
+   "time": "1961\u20131989",
+   "place": "Berlin Wall",
+   "scenarios": [
+    {
+     "visual": "A narrow hand-dug tunnel running beneath the death strip toward West Berlin",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall escape tunnel",
+      "underground tunnel death strip",
+      "West Berlin escape tunnel"
+     ],
+     "event": "tunnel escapes",
+     "place": "Berlin Wall",
+     "era": "Cold War era",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall escape tunnel",
+      "underground tunnel death strip Berlin Wall",
+      "underground tunnel death strip"
+     ]
+    },
+    {
+     "visual": "A crude hot air balloon made from stitched fabric being prepared for a secret night escape",
+     "kind": "object",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "homemade hot air balloon escape",
+      "bed sheet balloon Berlin",
+      "fabric balloon night launch"
+     ],
+     "event": "balloon escapes",
+     "place": "Berlin",
+     "era": "Cold War era",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "homemade hot air balloon escape Berlin",
+      "homemade hot air balloon escape",
+      "bed sheet balloon Berlin"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "In 1979, two families floated silently over the border at night in a homemade balloon, landing in a West German field at dawn.",
+   "meaning": "In a specific 1979 escape, two families crossed the border by balloon at night and landed safely in West Germany at dawn.",
+   "role": "event",
+   "subject_id": "west",
+   "entities": [
+    "the West"
+   ],
+   "entity_ids": [
+    "west"
+   ],
+   "resolved": {
+    "two families": null,
+    "the border": "berlin_wall"
+   },
+   "events": [
+    "1979 balloon escape"
+   ],
+   "time": "1979",
+   "place": "West German field",
+   "scenarios": [
+    {
+     "visual": "A homemade balloon rising silently into the night sky above the Berlin border",
+     "kind": "event",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "1979 balloon escape Berlin Wall",
+      "night balloon border crossing",
+      "homemade balloon East Germany"
+     ],
+     "event": "1979 balloon escape",
+     "place": "Berlin Wall",
+     "era": "1979",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "1979 balloon escape Berlin Wall",
+      "night balloon border crossing Berlin Wall 1979",
+      "night balloon border crossing 1979",
+      "night balloon border crossing"
+     ]
+    },
+    {
+     "visual": "A family climbing out of a balloon basket in a misty field at sunrise",
+     "kind": "event",
+     "subject_id": "west",
+     "specificity": "representative",
+     "search_terms": [
+      "balloon landing field dawn",
+      "escapees West German field",
+      "sunrise balloon landing"
+     ],
+     "event": "1979 balloon escape",
+     "place": "West Germany",
+     "era": "1979",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "balloon landing field dawn West Germany 1979",
+      "balloon landing field dawn 1979",
+      "balloon landing field dawn",
+      "escapees West German field Germany 1979"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Others were not so fortunate, and at least one hundred and forty people died at the Berlin Wall, shot by guards, drowned in canals, or killed in failed escapes.",
+   "meaning": "The wall's death toll reached at least 140, with people killed in multiple ways during escape attempts or border incidents.",
+   "role": "evidence",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "East German troops"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "east_german_troops"
+   ],
+   "resolved": {
+    "guards": "east_german_troops"
+   },
+   "events": [
+    "deaths at Berlin Wall"
+   ],
+   "time": "1961\u20131989",
+   "place": "Berlin Wall",
+   "scenarios": [
+    {
+     "visual": "A memorial row of simple white crosses marking deaths at the Berlin Wall",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall memorial crosses",
+      "victims of Berlin Wall memorial",
+      "white crosses death strip"
+     ],
+     "event": "deaths at Berlin Wall",
+     "place": "Berlin Wall",
+     "era": "post-1961",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall memorial crosses 1961",
+      "Berlin Wall memorial crosses",
+      "victims of Berlin Wall memorial 1961",
+      "victims of Berlin Wall memorial"
+     ]
+    },
+    {
+     "visual": "A guard tower and canal beside the fortified border, suggesting the dangers of escape routes",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall watchtower canal",
+      "death strip guard tower",
+      "Berlin Wall canal border"
+     ],
+     "event": "deaths at Berlin Wall",
+     "place": "Berlin Wall",
+     "era": "Cold War era",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall watchtower canal",
+      "death strip guard tower Berlin Wall",
+      "death strip guard tower"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The youngest victim was a baby of fifteen months, and the oldest was an eighty year old woman who fell from a window on Bernauer Strasse.",
+   "meaning": "The victims spanned ages from a fifteen-month-old baby to an eighty-year-old woman killed in a Bernauer Strasse window fall.",
+   "role": "evidence",
+   "subject_id": "bernauer_strasse",
+   "entities": [
+    "Bernauer Strasse"
+   ],
+   "entity_ids": [
+    "bernauer_strasse"
+   ],
+   "resolved": {
+    "the youngest victim": null,
+    "the oldest": null
+   },
+   "events": [
+    "Bernauer Strasse window deaths"
+   ],
+   "time": "1961 onward",
+   "place": "Bernauer Strasse",
+   "scenarios": [
+    {
+     "visual": "A residential window above a street divided by the wall, with a border barrier directly below",
+     "kind": "place",
+     "subject_id": "bernauer_strasse",
+     "specificity": "exact",
+     "search_terms": [
+      "Bernauer Strasse windows wall",
+      "window escape Berlin Wall",
+      "Bernauer Strasse death strip"
+     ],
+     "event": "Bernauer Strasse window deaths",
+     "place": "Bernauer Strasse",
+     "era": "1960s",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Bernauer Strasse window deaths 1960s",
+      "Bernauer Strasse window deaths",
+      "Bernauer Strasse windows wall 1960s",
+      "Bernauer Strasse"
+     ]
+    },
+    {
+     "visual": "A memorial photograph or portrait display remembering individual Berlin Wall victims",
+     "kind": "document",
+     "subject_id": "berlin_wall_memorial",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall victims memorial portraits",
+      "victims of the wall exhibition",
+      "Berlin Wall memorial photographs"
+     ],
+     "event": "deaths at Berlin Wall",
+     "place": "Berlin Wall Memorial",
+     "era": "Today",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall victims memorial portraits",
+      "victims of the wall exhibition Berlin Memorial",
+      "victims of the wall exhibition",
+      "Berlin Wall Memorial victims portraits"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "In the West, the wall became a canvas, covered in murals, slogans and grief, while its eastern face remained bare grey concrete guarded by dogs and mines.",
+   "meaning": "The western side of the wall became a public surface for murals and mourning, while the eastern side remained a controlled, fortified grey barrier.",
+   "role": "background",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "John F. Kennedy"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "john_f_kennedy"
+   ],
+   "resolved": {
+    "the West": "west"
+   },
+   "events": [],
+   "time": "1961\u20131989",
+   "place": "Berlin Wall",
+   "scenarios": [
+    {
+     "visual": "A West Berlin stretch of the wall covered with colourful murals, slogans and flowers",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "West Berlin Wall murals",
+      "Berlin Wall graffiti slogans",
+      "flowers at Berlin Wall"
+     ],
+     "event": null,
+     "place": "West Berlin",
+     "era": "Cold War era",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "West Berlin Wall murals",
+      "Berlin Wall graffiti slogans West",
+      "Berlin Wall graffiti slogans",
+      "Berlin Wall West murals"
+     ]
+    },
+    {
+     "visual": "The eastern face of the wall as bare concrete with guards, dogs and restricted access",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "East side Berlin Wall concrete",
+      "border guards dogs Berlin Wall",
+      "death strip mines Berlin"
+     ],
+     "event": null,
+     "place": "East Berlin",
+     "era": "Cold War era",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East side Berlin Wall concrete",
+      "border guards dogs Berlin Wall East",
+      "border guards dogs Berlin Wall",
+      "Berlin Wall East side concrete"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "By the 1980s, a generation had grown up that had never known a united city, and many believed the division would last forever.",
+   "meaning": "By the 1980s, division had become a normal fact of life for younger Berliners, many of whom expected the wall to remain permanently.",
+   "role": "reflection",
+   "subject_id": "berlin",
+   "entities": [
+    "Berlin"
+   ],
+   "entity_ids": [
+    "berlin"
+   ],
+   "resolved": {},
+   "events": [],
+   "time": "1980s",
+   "place": "Berlin",
+   "scenarios": [
+    {
+     "visual": "Young Berliners walking along a street ending at the wall, treating the barrier as an everyday backdrop",
+     "kind": "person_activity",
+     "subject_id": "berlin",
+     "specificity": "representative",
+     "search_terms": [
+      "1980s Berliners by the Wall",
+      "young people West Berlin street",
+      "everyday life beside Berlin Wall"
+     ],
+     "event": null,
+     "place": "Berlin",
+     "era": "1980s",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "1980s Berliners by the Wall Berlin",
+      "1980s Berliners by the Wall",
+      "young people West Berlin street 1980s",
+      "young people West Berlin street"
+     ]
+    },
+    {
+     "visual": "A long grey stretch of the wall under an overcast sky, emphasising its permanence in the cityscape",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall 1980s grey concrete",
+      "divided Berlin cityscape",
+      "wall stretching through Berlin"
+     ],
+     "event": null,
+     "place": "Berlin",
+     "era": "1980s",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall 1980s grey concrete",
+      "divided Berlin cityscape 1980s",
+      "divided Berlin cityscape"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "But across Eastern Europe the ground was shifting, as Poland's Solidarity movement and Hungary's reformers pried open the first cracks in the Iron Curtain.",
+   "meaning": "Eastern Europe was beginning to loosen communist control, with reform movements in Poland and Hungary weakening the symbolic divide.",
+   "role": "background",
+   "subject_id": "iron_curtain",
+   "entities": [
+    "Solidarity",
+    "Hungary",
+    "Iron Curtain"
+   ],
+   "entity_ids": [
+    "solidarity",
+    "hungary",
+    "iron_curtain"
+   ],
+   "resolved": {},
+   "events": [
+    "reform movements",
+    "weakening of communist rule"
+   ],
+   "time": "1980s",
+   "place": "Eastern Europe",
+   "scenarios": [
+    {
+     "visual": "Crowds gathered behind Solidarity banners in Poland during the 1980s.",
+     "kind": "archival",
+     "subject_id": "solidarity",
+     "specificity": "exact",
+     "search_terms": [
+      "Solidarity Poland protests",
+      "Polish trade union march",
+      "1980s Poland demonstrations"
+     ],
+     "event": "Solidarity movement",
+     "place": "Poland",
+     "era": "1980s",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Solidarity movement 1980s",
+      "Solidarity movement",
+      "Solidarity Poland protests 1980s",
+      "Solidarity Poland"
+     ]
+    },
+    {
+     "visual": "Hungarian border guards working along the fenced frontier with Austria in the late Cold War.",
+     "kind": "archival",
+     "subject_id": "hungary",
+     "specificity": "representative",
+     "search_terms": [
+      "Hungary Austria border fence",
+      "Hungarian border guards 1989",
+      "Iron Curtain fence"
+     ],
+     "event": "border reform",
+     "place": "Hungary",
+     "era": "1980s",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Hungary Austria border fence 1980s",
+      "Hungary Austria border fence",
+      "Hungarian border guards 1989 Hungary 1980s",
+      "Hungarian border guards 1989 1980s"
+     ]
+    },
+    {
+     "visual": "A map of Eastern Europe with the Iron Curtain divide beginning to fracture.",
+     "kind": "object",
+     "subject_id": "iron_curtain",
+     "specificity": "representative",
+     "search_terms": [
+      "Cold War Europe map",
+      "Iron Curtain map",
+      "Eastern Europe 1980s map"
+     ],
+     "event": "weakening of communist rule",
+     "place": "Eastern Europe",
+     "era": "1980s",
+     "format_intent": "map",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Cold War Europe map Eastern 1980s",
+      "Cold War Europe map 1980s",
+      "Cold War Europe map",
+      "Iron Curtain map Eastern Europe 1980s"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "In May 1989, Hungary began dismantling its border fence with Austria, and thousands of East Germans began travelling south to slip across.",
+   "meaning": "Hungary opened a practical escape route by removing its border barrier with Austria, prompting East Germans to travel south and flee west.",
+   "role": "event",
+   "subject_id": "hungary",
+   "entities": [
+    "Hungary",
+    "Austria",
+    "John F. Kennedy"
+   ],
+   "entity_ids": [
+    "hungary",
+    "austria",
+    "john_f_kennedy"
+   ],
+   "resolved": {},
+   "events": [
+    "border fence dismantling",
+    "East German emigration"
+   ],
+   "time": "May 1989",
+   "place": "Hungary-Austria border",
+   "scenarios": [
+    {
+     "visual": "Workers and soldiers pulling apart sections of barbed-wire fence on the Hungarian border with Austria.",
+     "kind": "archival",
+     "subject_id": "hungary",
+     "specificity": "exact",
+     "search_terms": [
+      "Hungary dismantles border fence",
+      "Austria Hungary border 1989",
+      "barbed wire removal Hungary"
+     ],
+     "event": "border fence dismantling",
+     "place": "Hungary",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Hungary border fence dismantling 1989",
+      "Hungary border fence dismantling",
+      "Hungary dismantles border fence 1989",
+      "Hungary"
+     ]
+    },
+    {
+     "visual": "East German cars loaded with luggage heading south toward Hungary in summer 1989.",
+     "kind": "archival",
+     "subject_id": "east_germany",
+     "specificity": "representative",
+     "search_terms": [
+      "East German cars Hungary 1989",
+      "refugees travelling south",
+      "Trabant luggage 1989"
+     ],
+     "event": "East German emigration",
+     "place": "Hungary",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East German cars Hungary 1989",
+      "refugees travelling south Hungary 1989",
+      "refugees travelling south 1989",
+      "refugees travelling south"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "That summer, embassy gardens in Prague filled with refugees sleeping in tents, waiting for trains that would carry them to freedom in the West.",
+   "meaning": "East German refugees camped in Prague\u2019s embassy gardens while waiting for permission and transport to the West.",
+   "role": "event",
+   "subject_id": "prague",
+   "entities": [
+    "Prague",
+    "John F. Kennedy"
+   ],
+   "entity_ids": [
+    "prague",
+    "john_f_kennedy"
+   ],
+   "resolved": {},
+   "events": [
+    "refugee encampment",
+    "embassy asylum",
+    "emigration trains"
+   ],
+   "time": "Summer 1989",
+   "place": "Prague",
+   "scenarios": [
+    {
+     "visual": "Tents and crowded refugee camps in the garden of the West German embassy in Prague.",
+     "kind": "archival",
+     "subject_id": "prague",
+     "specificity": "exact",
+     "search_terms": [
+      "Prague embassy garden refugees",
+      "West German embassy Prague 1989",
+      "East German refugees tents Prague"
+     ],
+     "event": "refugee encampment",
+     "place": "Prague",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Prague refugee encampment 1989",
+      "Prague refugee encampment",
+      "Prague embassy garden refugees 1989",
+      "Prague"
+     ]
+    },
+    {
+     "visual": "Refugees with suitcases waiting near a train station in Prague for transport westward.",
+     "kind": "archival",
+     "subject_id": "prague",
+     "specificity": "representative",
+     "search_terms": [
+      "Prague station refugees 1989",
+      "East Germans waiting train",
+      "refugee luggage Prague"
+     ],
+     "event": "emigration trains",
+     "place": "Prague",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Prague station refugees 1989",
+      "East Germans waiting train Prague 1989",
+      "East Germans waiting train 1989",
+      "East Germans waiting train"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "In Leipzig, Monday prayer meetings at the Nikolaikirche grew into marches of tens of thousands, chanting Wir sind das Volk, we are the people.",
+   "meaning": "Peaceful prayer meetings in Leipzig became mass political demonstrations where East Germans publicly claimed the people, not the regime, held authority.",
+   "role": "event",
+   "subject_id": "nikolaikirche",
+   "entities": [
+    "Leipzig",
+    "Nikolaikirche"
+   ],
+   "entity_ids": [
+    "leipzig",
+    "nikolaikirche"
+   ],
+   "resolved": {},
+   "events": [
+    "Monday prayer meetings",
+    "Leipzig demonstrations",
+    "Wir sind das Volk chants"
+   ],
+   "time": "1989",
+   "place": "Leipzig",
+   "scenarios": [
+    {
+     "visual": "Worshippers leaving the Nikolaikirche after a Monday prayer meeting in Leipzig.",
+     "kind": "archival",
+     "subject_id": "nikolaikirche",
+     "specificity": "exact",
+     "search_terms": [
+      "Nikolaikirche Leipzig 1989",
+      "Monday prayer meetings Leipzig",
+      "Leipzig church congregation"
+     ],
+     "event": "Monday prayer meetings",
+     "place": "Leipzig",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Nikolaikirche Monday prayer meetings 1989",
+      "Nikolaikirche Monday prayer meetings",
+      "Nikolaikirche Leipzig 1989",
+      "Nikolaikirche Leipzig"
+     ]
+    },
+    {
+     "visual": "A large crowd marching through Leipzig with banners and chanting during the peaceful revolution.",
+     "kind": "archival",
+     "subject_id": "leipzig",
+     "specificity": "exact",
+     "search_terms": [
+      "Leipzig demonstrations 1989",
+      "Wir sind das Volk march",
+      "East German peace demonstrations"
+     ],
+     "event": "Leipzig demonstrations",
+     "place": "Leipzig",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Leipzig demonstrations 1989",
+      "Leipzig demonstrations",
+      "Leipzig"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "On October 9, seventy thousand demonstrators marched through Leipzig while armed police stood by, and the order to shoot never came.",
+   "meaning": "A massive Leipzig demonstration remained peaceful because security forces did not carry out a shoot order, showing the regime\u2019s grip was failing.",
+   "role": "event",
+   "subject_id": "leipzig",
+   "entities": [
+    "Leipzig"
+   ],
+   "entity_ids": [
+    "leipzig"
+   ],
+   "resolved": {},
+   "events": [
+    "October 9 demonstration",
+    "peaceful revolution",
+    "non-violent standoff"
+   ],
+   "time": "October 9, 1989",
+   "place": "Leipzig",
+   "scenarios": [
+    {
+     "visual": "Seventy thousand demonstrators filling the streets of Leipzig in a peaceful march.",
+     "kind": "archival",
+     "subject_id": "leipzig",
+     "specificity": "exact",
+     "search_terms": [
+      "Leipzig October 9 1989",
+      "70,000 demonstrators Leipzig",
+      "peaceful march Leipzig"
+     ],
+     "event": "October 9 demonstration",
+     "place": "Leipzig",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Leipzig October 9 demonstration 1989",
+      "Leipzig October 9 demonstration",
+      "Leipzig October 9 1989",
+      "Leipzig"
+     ]
+    },
+    {
+     "visual": "Armed police standing aside as demonstrators pass through Leipzig streets.",
+     "kind": "archival",
+     "subject_id": "east_germany",
+     "specificity": "representative",
+     "search_terms": [
+      "East German police Leipzig 1989",
+      "armed police stand by demonstration",
+      "Volkspolizei 1989 protest"
+     ],
+     "event": "non-violent standoff",
+     "place": "Leipzig",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East German police Leipzig 1989",
+      "armed police stand by demonstration Leipzig 1989",
+      "armed police stand by demonstration 1989",
+      "armed police stand by demonstration"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The peaceful revolution had found its courage, and the regime of Erich Honecker collapsed within days, replaced by men promising reform.",
+   "meaning": "The nonviolent protests gave East Germans confidence, and Erich Honecker\u2019s government quickly fell as reformers took over.",
+   "role": "event",
+   "subject_id": "erich_honecker",
+   "entities": [
+    "East Germany",
+    "Erich Honecker",
+    "John F. Kennedy"
+   ],
+   "entity_ids": [
+    "east_germany",
+    "erich_honecker",
+    "john_f_kennedy"
+   ],
+   "resolved": {},
+   "events": [
+    "peaceful revolution",
+    "collapse of Honecker regime",
+    "leadership change"
+   ],
+   "time": "October 1989",
+   "place": "East Germany",
+   "scenarios": [
+    {
+     "visual": "Erich Honecker appearing in public as East German leader before his fall.",
+     "kind": "archival",
+     "subject_id": "erich_honecker",
+     "specificity": "exact",
+     "search_terms": [
+      "Erich Honecker 1989",
+      "East German leader Honecker",
+      "Honecker public appearance"
+     ],
+     "event": "collapse of Honecker regime",
+     "place": "East Germany",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Erich Honecker collapse of regime 1989",
+      "Erich Honecker collapse of regime",
+      "Erich Honecker 1989",
+      "Erich Honecker East Germany"
+     ]
+    },
+    {
+     "visual": "Crowds in East Germany celebrating the peaceful revolution and political change.",
+     "kind": "archival",
+     "subject_id": "east_germany",
+     "specificity": "representative",
+     "search_terms": [
+      "East German peaceful revolution crowds",
+      "1989 East Germany protests",
+      "Berlin autumn 1989 demonstrations"
+     ],
+     "event": "peaceful revolution",
+     "place": "East Germany",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East German peaceful revolution crowds Germany 1989",
+      "East German peaceful revolution crowds 1989",
+      "East German peaceful revolution crowds",
+      "1989 East Germany protests"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "On the evening of November 9, 1989, a tired spokesman named Gunter Schabowski told a press conference that East Germans could travel freely, effective, as far as he knew, immediately.",
+   "meaning": "Gunter Schabowski\u2019s confused press announcement suggested East Germans could immediately travel freely, setting off a rush to the border.",
+   "role": "event",
+   "subject_id": "gunter_schabowski",
+   "entities": [
+    "Gunter Schabowski",
+    "Erich Honecker"
+   ],
+   "entity_ids": [
+    "gunter_schabowski",
+    "erich_honecker"
+   ],
+   "resolved": {},
+   "events": [
+    "press conference",
+    "travel rules announcement"
+   ],
+   "time": "November 9, 1989",
+   "place": "East Berlin",
+   "scenarios": [
+    {
+     "visual": "Gunter Schabowski at the East German press conference reading the new travel announcement.",
+     "kind": "archival",
+     "subject_id": "gunter_schabowski",
+     "specificity": "exact",
+     "search_terms": [
+      "Gunter Schabowski press conference",
+      "November 9 1989 press conference",
+      "Schabowski travel rules announcement"
+     ],
+     "event": "press conference",
+     "place": "East Berlin",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Gunter Schabowski press conference 1989",
+      "Gunter Schabowski press conference",
+      "Gunter Schabowski East Berlin"
+     ]
+    },
+    {
+     "visual": "Television cameras and journalists gathered for the East German government announcement.",
+     "kind": "archival",
+     "subject_id": "east_germany",
+     "specificity": "representative",
+     "search_terms": [
+      "East German press conference 1989",
+      "journalists Berlin November 1989",
+      "state television cameras 1989"
+     ],
+     "event": "press conference",
+     "place": "East Berlin",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East German press conference 1989 Berlin",
+      "East German press conference 1989",
+      "journalists Berlin November 1989 East",
+      "journalists Berlin November 1989"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Thousands of East Berliners heard the broadcast and walked to the checkpoints, demanding that the guards let them through.",
+   "meaning": "East Berliners acted on the broadcast immediately, gathering at border checkpoints and demanding that guards allow them into the West.",
+   "role": "action",
+   "subject_id": "east_berlin",
+   "entities": [
+    "East Berlin",
+    "East German troops",
+    "Gunter Schabowski"
+   ],
+   "entity_ids": [
+    "east_berlin",
+    "east_german_troops",
+    "gunter_schabowski"
+   ],
+   "resolved": {},
+   "events": [
+    "crowds at checkpoints",
+    "demands for passage"
+   ],
+   "time": "Evening of November 9, 1989",
+   "place": "Berlin checkpoints",
+   "scenarios": [
+    {
+     "visual": "East Berliners crowding toward a border checkpoint after hearing the travel announcement.",
+     "kind": "archival",
+     "subject_id": "east_berlin",
+     "specificity": "representative",
+     "search_terms": [
+      "East Berliners at checkpoints 1989",
+      "crowds demanding passage Berlin Wall",
+      "November 9 border crowd"
+     ],
+     "event": "crowds at checkpoints",
+     "place": "Berlin",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East Berliners at checkpoints 1989 Berlin",
+      "East Berliners at checkpoints 1989",
+      "crowds demanding passage Berlin Wall 1989",
+      "crowds demanding passage Berlin Wall"
+     ]
+    },
+    {
+     "visual": "East German guards facing a growing crowd at a Berlin border post.",
+     "kind": "archival",
+     "subject_id": "east_german_troops",
+     "specificity": "representative",
+     "search_terms": [
+      "East German guards checkpoint 1989",
+      "Berlin Wall border guards crowd",
+      "Bornholmer Strasse guards"
+     ],
+     "event": "demands for passage",
+     "place": "Berlin",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East German guards checkpoint 1989 Berlin",
+      "East German guards checkpoint 1989",
+      "Berlin Wall border guards crowd 1989",
+      "Berlin Wall border guards crowd"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "At Bornholmer Strasse, the crowd grew so large and so determined that the overwhelmed commander, Harald Jager, finally ordered the barriers opened shortly before midnight.",
+   "meaning": "At Bornholmer Strasse, Harald Jager responded to an unmanageable crowd by opening the barriers, effectively letting people cross.",
+   "role": "action",
+   "subject_id": "harald_jager",
+   "entities": [
+    "Bornholmer Strasse",
+    "Harald Jager"
+   ],
+   "entity_ids": [
+    "bornholmer_strasse",
+    "harald_jager"
+   ],
+   "resolved": {},
+   "events": [
+    "opening of Bornholmer Strasse barriers"
+   ],
+   "time": "Shortly before midnight, November 9, 1989",
+   "place": "Bornholmer Strasse",
+   "scenarios": [
+    {
+     "visual": "Harald Jager at the Bornholmer Strasse checkpoint during the crowd confrontation.",
+     "kind": "archival",
+     "subject_id": "harald_jager",
+     "specificity": "exact",
+     "search_terms": [
+      "Harald Jager Bornholmer Strasse",
+      "Bornholmer Strasse commander 1989",
+      "Jager checkpoint November 9"
+     ],
+     "event": "opening of Bornholmer Strasse barriers",
+     "place": "Bornholmer Strasse",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Harald Jager opening of Bornholmer Strasse barriers 1989",
+      "Harald Jager opening of Bornholmer Strasse barriers",
+      "Harald Jager Bornholmer Strasse 1989",
+      "Harald Jager Bornholmer Strasse"
+     ]
+    },
+    {
+     "visual": "The barrier at Bornholmer Strasse being raised as crowds surge toward the crossing.",
+     "kind": "archival",
+     "subject_id": "bornholmer_strasse",
+     "specificity": "exact",
+     "search_terms": [
+      "Bornholmer Strasse barrier opened",
+      "Berlin Wall checkpoint opens 1989",
+      "crowd crosses Bornholmer Strasse"
+     ],
+     "event": "opening of Bornholmer Strasse barriers",
+     "place": "Bornholmer Strasse",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Bornholmer Strasse opening of barriers 1989",
+      "Bornholmer Strasse opening of barriers",
+      "Bornholmer Strasse barrier opened 1989",
+      "Bornholmer Strasse"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "People streamed across the bridge into West Berlin, weeping, embracing strangers, and dancing on top of the wall itself.",
+   "meaning": "Once the crossing opened, people poured into West Berlin in a surge of joy, reunion, and release, physically celebrating on the wall.",
+   "role": "event",
+   "subject_id": "west_berlin",
+   "entities": [
+    "West Berlin",
+    "Berlin Wall"
+   ],
+   "entity_ids": [
+    "west_berlin",
+    "berlin_wall"
+   ],
+   "resolved": {},
+   "events": [
+    "crossing into West Berlin",
+    "reunions",
+    "celebrations on the Berlin Wall"
+   ],
+   "time": "After November 9, 1989",
+   "place": "Berlin",
+   "scenarios": [
+    {
+     "visual": "Crowds streaming across a Berlin border bridge into West Berlin, cheering and weeping.",
+     "kind": "archival",
+     "subject_id": "west_berlin",
+     "specificity": "representative",
+     "search_terms": [
+      "crowds cross into West Berlin 1989",
+      "Berlin Wall opening bridge",
+      "East Berliners welcomed West Berlin"
+     ],
+     "event": "crossing into West Berlin",
+     "place": "Berlin",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "crowds cross into West Berlin 1989",
+      "Berlin Wall opening bridge 1989",
+      "Berlin Wall opening bridge",
+      "West Berlin crowds cross into 1989"
+     ]
+    },
+    {
+     "visual": "Strangers embracing each other at a Berlin crossing as the wall opens.",
+     "kind": "archival",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall fall embraces",
+      "families reunited 1989 Berlin",
+      "strangers hugging Berlin Wall"
+     ],
+     "event": "reunions",
+     "place": "Berlin",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall fall embraces 1989",
+      "Berlin Wall fall embraces",
+      "families reunited 1989 Berlin"
+     ]
+    },
+    {
+     "visual": "People dancing on top of the Berlin Wall as crowds celebrate below.",
+     "kind": "archival",
+     "subject_id": "berlin_wall",
+     "specificity": "exact",
+     "search_terms": [
+      "dancing on Berlin Wall 1989",
+      "Berlin Wall fall celebrations",
+      "crowds atop Berlin Wall"
+     ],
+     "event": "celebrations on the Berlin Wall",
+     "place": "Berlin",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall celebrations on the 1989",
+      "Berlin Wall celebrations on the",
+      "Berlin Wall dancing on 1989",
+      "Berlin Wall"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "At the Brandenburg Gate, families separated for twenty eight years embraced in tears as the world watched on live television.",
+   "meaning": "At the Brandenburg Gate, reunions turned the opening of the wall into a global television spectacle.",
+   "role": "event",
+   "subject_id": "brandenburg_gate",
+   "entities": [
+    "Brandenburg Gate"
+   ],
+   "entity_ids": [
+    "brandenburg_gate"
+   ],
+   "resolved": {
+    "families": "berlin",
+    "the wall": "berlin_wall"
+   },
+   "events": [
+    "families reunited",
+    "live television coverage"
+   ],
+   "time": "After November 9, 1989",
+   "place": "Brandenburg Gate",
+   "scenarios": [
+    {
+     "visual": "Families embrace and cry beneath the Brandenburg Gate as cameras film the reunion.",
+     "kind": "event",
+     "subject_id": "brandenburg_gate",
+     "specificity": "exact",
+     "search_terms": [
+      "Brandenburg Gate reunions",
+      "Berlin Wall fall families",
+      "1989 live television Berlin"
+     ],
+     "event": "families reunited",
+     "place": "Brandenburg Gate",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Brandenburg Gate families reunited 1989",
+      "Brandenburg Gate families reunited",
+      "Brandenburg Gate reunions 1989",
+      "Brandenburg Gate"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Within days, ordinary citizens climbed the wall with hammers and chisels and began tearing it down piece by piece, keeping fragments as treasures.",
+   "meaning": "Ordinary Berliners began dismantling the wall themselves, taking pieces as personal trophies.",
+   "role": "action",
+   "subject_id": "mauerspechte",
+   "entities": [
+    "Mauerspechte",
+    "Berlin Wall",
+    "Harald Jager"
+   ],
+   "entity_ids": [
+    "mauerspechte",
+    "berlin_wall",
+    "harald_jager"
+   ],
+   "resolved": {
+    "ordinary citizens": "mauerspechte",
+    "the wall": "berlin_wall",
+    "it": "berlin_wall"
+   },
+   "events": [
+    "citizens dismantling the wall",
+    "souvenir taking"
+   ],
+   "time": "Within days after November 9, 1989",
+   "place": "Berlin Wall",
+   "scenarios": [
+    {
+     "visual": "Citizens climb the concrete wall with hammers and chisels, chipping off fragments.",
+     "kind": "person_activity",
+     "subject_id": "mauerspechte",
+     "specificity": "representative",
+     "search_terms": [
+      "citizens chipping Berlin Wall",
+      "Berlin Wall hammers chisels",
+      "Mauerspechte dismantling wall"
+     ],
+     "event": "citizens dismantling the wall",
+     "place": "Berlin Wall",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "citizens chipping Berlin Wall 1989",
+      "citizens chipping Berlin Wall",
+      "Berlin Wall hammers chisels 1989",
+      "Berlin Wall hammers chisels"
+     ]
+    },
+    {
+     "visual": "A person holds up a small chunk of concrete as a treasured souvenir.",
+     "kind": "object",
+     "subject_id": "mauerspechte",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall concrete fragment",
+      "souvenir piece wall",
+      "Mauerspechte fragment"
+     ],
+     "event": "souvenir taking",
+     "place": "Berlin Wall",
+     "era": "1989",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall concrete fragment 1989",
+      "Berlin Wall concrete fragment",
+      "souvenir piece wall Berlin 1989",
+      "souvenir piece wall 1989"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "These wall woodpeckers, the Mauerspechte, hacked souvenirs from the concrete that found their way to mantelpieces on every continent.",
+   "meaning": "The Mauerspechte turned pieces of the wall into souvenirs that spread worldwide.",
+   "role": "aftermath",
+   "subject_id": "mauerspechte",
+   "entities": [
+    "Mauerspechte",
+    "Harald Jager"
+   ],
+   "entity_ids": [
+    "mauerspechte",
+    "harald_jager"
+   ],
+   "resolved": {
+    "These wall woodpeckers": "mauerspechte",
+    "the Mauerspechte": "mauerspechte",
+    "the concrete": "berlin_wall"
+   },
+   "events": [
+    "souvenir taking",
+    "global spread of wall fragments"
+   ],
+   "time": "Days after the wall opened",
+   "place": "Berlin Wall",
+   "scenarios": [
+    {
+     "visual": "A wall woodpecker hacks a painted concrete fragment free with a chisel.",
+     "kind": "person_activity",
+     "subject_id": "mauerspechte",
+     "specificity": "representative",
+     "search_terms": [
+      "Mauerspechte chiseling concrete",
+      "Berlin Wall souvenir hacking",
+      "wall woodpecker chisel"
+     ],
+     "event": "souvenir taking",
+     "place": "Berlin Wall",
+     "era": "1989",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Mauerspechte chiseling concrete Berlin Wall 1989",
+      "Mauerspechte chiseling concrete 1989",
+      "Mauerspechte chiseling concrete",
+      "Berlin Wall souvenir hacking 1989"
+     ]
+    },
+    {
+     "visual": "A small Berlin Wall fragment sits on a household mantelpiece far from Berlin.",
+     "kind": "object",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall fragment mantelpiece",
+      "wall souvenir home",
+      "concrete fragment display"
+     ],
+     "event": "global spread of wall fragments",
+     "place": "Berlin Wall",
+     "era": "1989",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall fragment mantelpiece 1989",
+      "Berlin Wall fragment mantelpiece",
+      "wall souvenir home Berlin 1989",
+      "wall souvenir home 1989"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Cranes and bulldozers followed, and within a year almost nothing remained of the structure that had divided a continent.",
+   "meaning": "Heavy machinery completed the demolition, erasing almost all of the wall within a year.",
+   "role": "aftermath",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall"
+   ],
+   "entity_ids": [
+    "berlin_wall"
+   ],
+   "resolved": {
+    "the structure that had divided a continent": "berlin_wall"
+   },
+   "events": [
+    "demolition of the Berlin Wall"
+   ],
+   "time": "Within a year after November 1989",
+   "place": "Berlin",
+   "scenarios": [
+    {
+     "visual": "Cranes and bulldozers pull down long sections of the Berlin Wall amid dust.",
+     "kind": "event",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall demolition bulldozers",
+      "cranes dismantling wall",
+      "1990 wall demolition"
+     ],
+     "event": "demolition of the Berlin Wall",
+     "place": "Berlin",
+     "era": "1990",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall demolition bulldozers 1990",
+      "Berlin Wall demolition bulldozers",
+      "cranes dismantling wall Berlin 1990",
+      "cranes dismantling wall 1990"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "On October 3, 1990, Germany was reunified at last, and the flag of a single nation rose above the Reichstag in Berlin.",
+   "meaning": "Germany officially reunified, symbolized by the single German flag rising over the Reichstag.",
+   "role": "event",
+   "subject_id": "germany",
+   "entities": [
+    "Germany",
+    "Reichstag",
+    "Berlin"
+   ],
+   "entity_ids": [
+    "germany",
+    "reichstag",
+    "berlin"
+   ],
+   "resolved": {
+    "Germany": "germany",
+    "the Reichstag": "reichstag",
+    "Berlin": "berlin"
+   },
+   "events": [
+    "German reunification",
+    "flag raising"
+   ],
+   "time": "October 3, 1990",
+   "place": "Reichstag, Berlin",
+   "scenarios": [
+    {
+     "visual": "The German flag rises above the Reichstag during reunification ceremonies.",
+     "kind": "event",
+     "subject_id": "reichstag",
+     "specificity": "exact",
+     "search_terms": [
+      "German reunification flag Reichstag",
+      "October 3 1990 Berlin",
+      "Reichstag flag ceremony"
+     ],
+     "event": "German reunification",
+     "place": "Reichstag, Berlin",
+     "era": "1990",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Reichstag German reunification 1990",
+      "Reichstag German reunification",
+      "Reichstag German reunification flag 1990",
+      "Reichstag Reichstag, Berlin"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The Cold War's most brutal symbol became a memory, preserved in a few painted stretches of concrete like the East Side Gallery.",
+   "meaning": "The wall shifted from oppressive symbol to historical memory, surviving only in scattered painted remnants.",
+   "role": "reflection",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "East Side Gallery"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "east_side_gallery"
+   ],
+   "resolved": {
+    "The Cold War's most brutal symbol": "berlin_wall",
+    "the East Side Gallery": "east_side_gallery"
+   },
+   "events": [
+    "preservation of wall remnants"
+   ],
+   "time": "After reunification",
+   "place": "East Side Gallery",
+   "scenarios": [
+    {
+     "visual": "A painted stretch of the Berlin Wall stands as a preserved memorial fragment.",
+     "kind": "place",
+     "subject_id": "east_side_gallery",
+     "specificity": "exact",
+     "search_terms": [
+      "East Side Gallery painted wall",
+      "Berlin Wall mural remnant",
+      "preserved Berlin Wall section"
+     ],
+     "event": "preservation of wall remnants",
+     "place": "East Side Gallery",
+     "era": "After 1990",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East Side Gallery preservation of wall remnants 1990",
+      "East Side Gallery preservation of wall remnants",
+      "East Side Gallery painted wall 1990",
+      "East Side Gallery"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "There, artists from twenty one countries covered the longest remaining section with murals of hope, protest and joy.",
+   "meaning": "Artists transformed the longest surviving wall section into an open-air gallery of political and emotional expression.",
+   "role": "aftermath",
+   "subject_id": "east_side_gallery",
+   "entities": [
+    "East Side Gallery"
+   ],
+   "entity_ids": [
+    "east_side_gallery"
+   ],
+   "resolved": {
+    "There": "east_side_gallery",
+    "the longest remaining section": "east_side_gallery"
+   },
+   "events": [
+    "East Side Gallery murals"
+   ],
+   "time": "After reunification",
+   "place": "East Side Gallery",
+   "scenarios": [
+    {
+     "visual": "Visitors walk along the East Side Gallery past large colorful murals painted on the wall.",
+     "kind": "place",
+     "subject_id": "east_side_gallery",
+     "specificity": "exact",
+     "search_terms": [
+      "East Side Gallery murals",
+      "Berlin Wall painted section",
+      "artists murals Berlin Wall"
+     ],
+     "event": "East Side Gallery murals",
+     "place": "East Side Gallery",
+     "era": "After 1990",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "East Side Gallery murals 1990",
+      "East Side Gallery murals",
+      "East Side Gallery"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Today a double line of cobblestones traces the wall's path through the reunited city, crossing squares where children play.",
+   "meaning": "The wall\u2019s former route is now marked in the cityscape, a quiet trace beneath everyday life in reunited Berlin.",
+   "role": "aftermath",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "Berlin"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "berlin"
+   ],
+   "resolved": {
+    "the wall's path": "berlin_wall",
+    "the reunited city": "berlin"
+   },
+   "events": [
+    "commemoration of wall path"
+   ],
+   "time": "Today",
+   "place": "Berlin",
+   "scenarios": [
+    {
+     "visual": "A double line of cobblestones runs through a Berlin square while children play nearby.",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "cobblestone trace Berlin Wall",
+      "Berlin Wall path city square",
+      "children playing Berlin square"
+     ],
+     "event": "commemoration of wall path",
+     "place": "Berlin",
+     "era": "Today",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "cobblestone trace Berlin Wall",
+      "Berlin Wall path city square",
+      "Berlin Wall cobblestone trace"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "At the Berlin Wall Memorial on Bernauer Strasse, a preserved stretch of the death strip shows visitors exactly what division looked like.",
+   "meaning": "The memorial at Bernauer Strasse preserves the physical machinery of division so visitors can see how the wall operated.",
+   "role": "evidence",
+   "subject_id": "berlin_wall_memorial",
+   "entities": [
+    "Berlin Wall Memorial",
+    "Bernauer Strasse"
+   ],
+   "entity_ids": [
+    "berlin_wall_memorial",
+    "bernauer_strasse"
+   ],
+   "resolved": {
+    "the Berlin Wall Memorial": "berlin_wall_memorial",
+    "Bernauer Strasse": "bernauer_strasse",
+    "division": "berlin_wall"
+   },
+   "events": [
+    "memorial preservation",
+    "public education"
+   ],
+   "time": "Today",
+   "place": "Berlin Wall Memorial, Bernauer Strasse",
+   "scenarios": [
+    {
+     "visual": "Visitors look across a preserved death strip with wall remnants, watchtower, and empty border zone.",
+     "kind": "place",
+     "subject_id": "berlin_wall_memorial",
+     "specificity": "exact",
+     "search_terms": [
+      "Berlin Wall Memorial death strip",
+      "Bernauer Strasse memorial",
+      "visitors preserved wall"
+     ],
+     "event": "memorial preservation",
+     "place": "Berlin Wall Memorial, Bernauer Strasse",
+     "era": "Today",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall Memorial preservation",
+      "Berlin Wall Memorial death strip",
+      "Berlin Wall Memorial Memorial, Bernauer Strasse"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Historians still debate the wall's meaning, but for the families it separated, its fall remains the defining night of their lives.",
+   "meaning": "Scholars still argue over interpretation, but for separated families the fall remains an intensely personal memory.",
+   "role": "conclusion",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "Harald Jager"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "harald_jager"
+   ],
+   "resolved": {
+    "the wall": "berlin_wall",
+    "the families it separated": "berlin"
+   },
+   "events": [
+    "historical debate",
+    "personal remembrance"
+   ],
+   "time": "Today",
+   "place": "Berlin",
+   "scenarios": [
+    {
+     "visual": "An older Berliner looks at archival photographs of families separated by the wall.",
+     "kind": "person_activity",
+     "subject_id": "berlin",
+     "specificity": "representative",
+     "search_terms": [
+      "Berliner viewing wall photographs",
+      "family separated Berlin Wall",
+      "personal memory wall fall"
+     ],
+     "event": "personal remembrance",
+     "place": "Berlin",
+     "era": "Today",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berliner viewing wall photographs Berlin",
+      "Berliner viewing wall photographs",
+      "family separated Berlin Wall",
+      "Berlin Berliner viewing wall photographs"
+     ]
+    },
+    {
+     "visual": "Historians examine documents and photographs about the Berlin Wall in an archive.",
+     "kind": "document",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "historians Berlin Wall archive",
+      "Cold War documents research",
+      "wall history photographs"
+     ],
+     "event": "historical debate",
+     "place": "Berlin",
+     "era": "Today",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "historians Berlin Wall archive",
+      "Cold War documents research Berlin",
+      "Cold War documents research",
+      "Berlin Wall historians archive"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The story of the Berlin Wall is therefore not only about concrete and guards, but about the patience of ordinary people who refused to forget one another.",
+   "meaning": "The wall's history is ultimately a human story of ordinary Berliners maintaining emotional ties despite enforced separation.",
+   "role": "reflection",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "East German troops"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "east_german_troops"
+   ],
+   "resolved": {},
+   "events": [],
+   "time": "1961\u20131990",
+   "place": "berlin",
+   "scenarios": [
+    {
+     "visual": "A divided Berlin street with the wall cutting through it, while ordinary people on opposite sides hold up family photographs toward one another.",
+     "kind": "person_activity",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall divided street",
+      "families separated wall",
+      "holding photographs Berlin Wall"
+     ],
+     "event": null,
+     "place": "berlin",
+     "era": "Cold War",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall divided street",
+      "families separated wall berlin",
+      "families separated wall"
+     ]
+    },
+    {
+     "visual": "A close view of hands passing a letter or small photograph through a gap in the barrier.",
+     "kind": "object",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "letters through Berlin Wall",
+      "family photos wall divide",
+      "hands passing note barrier"
+     ],
+     "event": null,
+     "place": "berlin",
+     "era": "1961\u20131989",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "letters through Berlin Wall 1961",
+      "letters through Berlin Wall",
+      "family photos wall divide berlin 1961",
+      "family photos wall divide 1961"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "It teaches that no wall, however fortified, can permanently divide a people who insist on remaining human to each other.",
+   "meaning": "The sentence draws the moral lesson that human solidarity can outlast even the most heavily enforced political division.",
+   "role": "conclusion",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "Harald Jager"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "harald_jager"
+   ],
+   "resolved": {},
+   "events": [],
+   "time": "1961\u20131990",
+   "place": "berlin",
+   "scenarios": [
+    {
+     "visual": "A fortified concrete wall with watchtowers and barbed wire, with people embracing across a newly opened gap.",
+     "kind": "event",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "Berlin Wall fall embraces",
+      "crowds at opened border",
+      "watchtower barbed wire wall"
+     ],
+     "event": "fall of the Berlin Wall",
+     "place": "berlin",
+     "era": "1989",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall fall embraces 1989",
+      "Berlin Wall fall embraces",
+      "crowds at opened border berlin 1989",
+      "crowds at opened border 1989"
+     ]
+    },
+    {
+     "visual": "A wide shot of the Berlin Wall's cobblestone trace running through today's reunited city, with pedestrians crossing freely over it.",
+     "kind": "place",
+     "subject_id": "berlin_wall",
+     "specificity": "exact",
+     "search_terms": [
+      "Berlin Wall cobblestone trace",
+      "reunited Berlin street",
+      "wall path memorial Berlin"
+     ],
+     "event": null,
+     "place": "berlin",
+     "era": "Today",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Berlin Wall",
+      "Berlin Wall cobblestone trace"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "And when the barriers finally opened, it was not an army that crossed first, but crowds of neighbours carrying flowers, champagne and tears.",
+   "meaning": "When the checkpoints opened, ordinary Berliners\u2014not soldiers\u2014were the first to cross, celebrating reunion with flowers, champagne and tears.",
+   "role": "event",
+   "subject_id": "berlin_wall",
+   "entities": [
+    "Berlin Wall",
+    "Harald Jager"
+   ],
+   "entity_ids": [
+    "berlin_wall",
+    "harald_jager"
+   ],
+   "resolved": {},
+   "events": [
+    "opening of the Berlin Wall",
+    "crossing into West Berlin",
+    "reunion celebrations"
+   ],
+   "time": "November 9, 1989",
+   "place": "berlin",
+   "scenarios": [
+    {
+     "visual": "Crowds of East Berliners pouring through an opened checkpoint, carrying flowers and bottles and cheering as they enter West Berlin.",
+     "kind": "event",
+     "subject_id": "east_berlin",
+     "specificity": "representative",
+     "search_terms": [
+      "crowds crossing Berlin Wall 1989",
+      "flowers champagne wall fall",
+      "opened checkpoint East Berliners"
+     ],
+     "event": "opening of the Berlin Wall",
+     "place": "berlin",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "crowds crossing Berlin Wall 1989",
+      "flowers champagne wall fall berlin 1989",
+      "flowers champagne wall fall 1989",
+      "flowers champagne wall fall"
+     ]
+    },
+    {
+     "visual": "Neighbours and strangers embracing and weeping at the Brandenburg Gate as the wall's fall unfolds.",
+     "kind": "event",
+     "subject_id": "brandenburg_gate",
+     "specificity": "exact",
+     "search_terms": [
+      "Brandenburg Gate reunions 1989",
+      "families embracing Berlin Wall fall",
+      "crowds crying Brandenburg Gate"
+     ],
+     "event": "reunion celebrations",
+     "place": "brandenburg_gate",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Brandenburg Gate reunion celebrations 1989",
+      "Brandenburg Gate reunion celebrations",
+      "Brandenburg Gate reunions 1989",
+      "Brandenburg Gate brandenburg_gate"
+     ]
+    },
+    {
+     "visual": "People dancing on top of the Berlin Wall with flowers and champagne, surrounded by celebrating crowds.",
+     "kind": "event",
+     "subject_id": "berlin_wall",
+     "specificity": "representative",
+     "search_terms": [
+      "dancing on Berlin Wall",
+      "champagne Berlin Wall fall",
+      "flowers on Berlin Wall 1989"
+     ],
+     "event": "fall of the Berlin Wall",
+     "place": "berlin",
+     "era": "1989",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "dancing on Berlin Wall 1989",
+      "dancing on Berlin Wall",
+      "champagne Berlin Wall fall 1989",
+      "champagne Berlin Wall fall"
+     ]
+    }
+   ],
+   "degraded": false
+  }
+ ]
+}

@@ -135,7 +135,10 @@ def test_kohberger_stored_profile(kohberger_dir):
     # Phase 6 supersession: q29 (motion continuity measurements)
     # is additive in the same way — 29 questions now, q01–q28
     # unchanged.
-    assert len(report["questions"]) == 29
+    # Phase 7 / P0 supersession: q30 (planner mode / degraded
+    # reason / plan quality) is additive in the same way — 30
+    # questions now, q01–q29 unchanged.
+    assert len(report["questions"]) == 30
 
     # Re-measure for the metric-level assertions.
     from services.visual_quality import measure_project
@@ -310,7 +313,8 @@ def test_production_report_questions_shape(kohberger_dir):
     # Phase 2 / B2 supersession: additive q27 extends it to q01–q27.
     # Phase 3 / AM-022 supersession: additive q28 extends it to q01–q28.
     # Phase 6 supersession: additive q29 extends it to q01–q29.
-    assert sorted(report["questions"].keys()) == [f"q{i:02d}" for i in range(1, 30)]
+    # Phase 7 / P0 supersession: additive q30 extends it to q01–q30.
+    assert sorted(report["questions"].keys()) == [f"q{i:02d}" for i in range(1, 31)]
     for entry in report["questions"].values():
         assert set(entry.keys()) == {"question", "answer", "state"}
         assert entry["state"] in ("answered", "unknown", "unavailable")

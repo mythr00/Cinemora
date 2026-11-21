@@ -238,6 +238,23 @@ def _tier_answer(tier_breakdown):
     return answer
 
 
+def _planner_answer(planner):
+    """The q30 answer payload from an asset report's planner block:
+    mode, planner version, degraded_reason, degraded sentence
+    counts and the quality summary. None when no block was
+    recorded — the question then reports unknown."""
+    if not isinstance(planner, dict):
+        return None
+    return {
+        "mode": planner.get("mode"),
+        "planner_version": planner.get("planner_version"),
+        "degraded_reason": planner.get("degraded_reason"),
+        "degraded_sentences": planner.get("degraded_sentences"),
+        "sentences": planner.get("sentences"),
+        "quality": planner.get("quality"),
+    }
+
+
 def _questions(measurement, asset_report, verdicts):
     outcomes = measurement.get("sentence_outcomes") or {}
     buckets = outcomes.get("buckets") or {}
@@ -400,6 +417,16 @@ def _questions(measurement, asset_report, verdicts):
                  measurement.get("continuity")
                  if isinstance(measurement.get("continuity"), dict)
                  else None),
+        # Master Directive Phase 7 / P0 (DM-1 + DM-2(a)): the
+        # planner question — answered from the asset report's
+        # planner block: which planner produced the visual plan,
+        # why it degraded when it did, how many sentences it
+        # degraded, and its measured plan quality. Unknown when
+        # the production recorded no planner block (pre-Phase-7
+        # productions) — never a fabricated "llm".
+        "q30": q("Which planner produced the visual plan, why did "
+                 "it degrade if it did, and how good was the plan?",
+                 _planner_answer(asset_report.get("planner"))),
     }
 
 

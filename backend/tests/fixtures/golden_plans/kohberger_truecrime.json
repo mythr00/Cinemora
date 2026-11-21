@@ -1,0 +1,2132 @@
+{
+ "key": "43e5df098fe7395b",
+ "mode": "llm",
+ "bible": {
+  "title": "King Road Murders",
+  "story_type": "true_crime",
+  "time_period": "2022\u20132025",
+  "primary_subject_id": "bryan_kohberger",
+  "entities": [
+   {
+    "id": "bryan_kohberger",
+    "canonical": "Bryan Kohberger",
+    "type": "person",
+    "role": "main subject; accused killer; pleaded guilty",
+    "aliases": [
+     "Kohberger",
+     "Bryan",
+     "twenty-eight-year-old criminology student"
+    ],
+    "pronoun": "he",
+    "description": "Criminology PhD student whose car, DNA, and purchases linked him to the King Road murders."
+   },
+   {
+    "id": "madison_mogen",
+    "canonical": "Madison Mogen",
+    "type": "person",
+    "role": "victim",
+    "aliases": [
+     "Madison",
+     "Mogen"
+    ],
+    "pronoun": "she",
+    "description": "One of the four university students killed on King Road."
+   },
+   {
+    "id": "kaylee_goncalves",
+    "canonical": "Kaylee Goncalves",
+    "type": "person",
+    "role": "victim",
+    "aliases": [
+     "Kaylee",
+     "Goncalves"
+    ],
+    "pronoun": "she",
+    "description": "One of the four university students killed on King Road."
+   },
+   {
+    "id": "xana_kernodle",
+    "canonical": "Xana Kernodle",
+    "type": "person",
+    "role": "victim",
+    "aliases": [
+     "Xana",
+     "Kernodle"
+    ],
+    "pronoun": "she",
+    "description": "One of the four university students killed on King Road."
+   },
+   {
+    "id": "ethan_chapin",
+    "canonical": "Ethan Chapin",
+    "type": "person",
+    "role": "victim",
+    "aliases": [
+     "Ethan",
+     "Chapin"
+    ],
+    "pronoun": "he",
+    "description": "One of the four university students killed on King Road."
+   },
+   {
+    "id": "king_road_house",
+    "canonical": "King Road house",
+    "type": "place",
+    "role": "location of murders",
+    "aliases": [
+     "house on King Road",
+     "quiet rental house on King Road",
+     "that house"
+    ],
+    "pronoun": "it",
+    "description": "Moscow, Idaho rental house where the four students were killed and where two housemates slept."
+   },
+   {
+    "id": "moscow_idaho",
+    "canonical": "Moscow, Idaho",
+    "type": "place",
+    "role": "location of crimes; college town",
+    "aliases": [
+     "Moscow"
+    ],
+    "pronoun": "it",
+    "description": "Idaho college town where the King Road murders occurred."
+   },
+   {
+    "id": "washington_state_university",
+    "canonical": "Washington State University",
+    "type": "organization",
+    "role": "Kohberger's university",
+    "aliases": [
+     "WSU"
+    ],
+    "pronoun": "it",
+    "description": "University across the state line where Kohberger was a criminology doctoral student."
+   },
+   {
+    "id": "united_states_marine_corps",
+    "canonical": "United States Marine Corps",
+    "type": "organization",
+    "role": "source of sheath insignia",
+    "aliases": [
+     "Marine Corps"
+    ],
+    "pronoun": "it",
+    "description": "Military branch whose insignia was stamped on the knife sheath found beside a victim."
+   },
+   {
+    "id": "white_hyundai_elantra",
+    "canonical": "white Hyundai Elantra",
+    "type": "object",
+    "role": "vehicle linked to suspect",
+    "aliases": [
+     "white car",
+     "the car"
+    ],
+    "pronoun": "it",
+    "description": "Car seen circling King Road and later matched to Kohberger."
+   },
+   {
+    "id": "tan_leather_knife_sheath",
+    "canonical": "tan leather knife sheath",
+    "type": "object",
+    "role": "key forensic evidence",
+    "aliases": [
+     "sheath",
+     "knife sheath"
+    ],
+    "pronoun": "it",
+    "description": "Sheath found beside a victim, stamped with Marine Corps insignia and carrying male DNA on its button snap."
+   },
+   {
+    "id": "fbi",
+    "canonical": "Federal Bureau of Investigation",
+    "type": "organization",
+    "role": "arresting federal agency",
+    "aliases": [
+     "FBI",
+     "FBI agents"
+    ],
+    "pronoun": "it",
+    "description": "Federal agency that helped raid the family home and arrest Kohberger."
+   },
+   {
+    "id": "idaho_state_troopers",
+    "canonical": "Idaho State Police",
+    "type": "organization",
+    "role": "arresting state agency",
+    "aliases": [
+     "state troopers"
+    ],
+    "pronoun": "it",
+    "description": "State law enforcement agency that joined the FBI in the arrest operation."
+   },
+   {
+    "id": "kohberger_parents_home",
+    "canonical": "Kohberger family home in the Pocono Mountains",
+    "type": "place",
+    "role": "site of secret DNA collection and arrest",
+    "aliases": [
+     "parents' home in Pennsylvania",
+     "family home in the Pocono Mountains"
+    ],
+    "pronoun": "it",
+    "description": "Pennsylvania home where rubbish yielded DNA evidence and where Kohberger was arrested."
+   },
+   {
+    "id": "pocono_mountains",
+    "canonical": "Pocono Mountains",
+    "type": "place",
+    "role": "region of family home and arrest",
+    "aliases": [
+     "Poconos"
+    ],
+    "pronoun": "it",
+    "description": "Mountain region in Pennsylvania where the Kohberger family home was located."
+   },
+   {
+    "id": "pennsylvania",
+    "canonical": "Pennsylvania",
+    "type": "place",
+    "role": "state where family rubbish and arrest occurred",
+    "aliases": [
+     "PA"
+    ],
+    "pronoun": "it",
+    "description": "State where investigators secretly collected DNA from the family rubbish and arrested Kohberger."
+   },
+   {
+    "id": "boise_courtroom",
+    "canonical": "Boise courtroom",
+    "type": "place",
+    "role": "trial venue",
+    "aliases": [
+     "courtroom in Boise",
+     "Boise"
+    ],
+    "pronoun": "it",
+    "description": "Idaho courtroom where Kohberger's trial was scheduled after the case was moved."
+   }
+  ],
+  "timeline": [
+   {
+    "when": "early hours of November 13, 2022",
+    "what": "Four university students were killed inside the King Road rental house in Moscow, Idaho, while two housemates slept there."
+   },
+   {
+    "when": "around 4:00 a.m. on November 13, 2022",
+    "what": "A surviving housemate reported seeing a masked man in black walk past her and out of the house."
+   },
+   {
+    "when": "between 3:00 and 4:00 a.m. on November 13, 2022",
+    "what": "A white Hyundai Elantra was recorded circling King Road and passing the house at least three times."
+   },
+   {
+    "when": "4:20 a.m. on November 13, 2022",
+    "what": "The white Hyundai Elantra sped away shortly after the murders were believed to have occurred."
+   },
+   {
+    "when": "almost noon on November 13, 2022",
+    "what": "A 911 call reported an unconscious person; police arrived and found no murder weapon and no sign of forced entry."
+   },
+   {
+    "when": "after November 13, 2022",
+    "what": "Investigators found a tan leather knife sheath with Marine Corps insignia and a single sample of male DNA on its button snap."
+   },
+   {
+    "when": "days after November 13, 2022",
+    "what": "Fear emptied the campus as students left Moscow while police said they had no suspect, weapon, or explanation."
+   },
+   {
+    "when": "eight months before November 2022",
+    "what": "Kohberger bought a military-style knife and sheath online."
+   },
+   {
+    "when": "before December 30, 2022",
+    "what": "Police matched the white Hyundai Elantra to Kohberger and used DNA from rubbish outside his parents' home to link him to the sheath DNA."
+   },
+   {
+    "when": "early hours of December 30, 2022",
+    "what": "FBI agents and state troopers raided the family home in the Pocono Mountains and arrested Kohberger."
+   },
+   {
+    "when": "after December 30, 2022",
+    "what": "Kohberger was flown back to Idaho and charged with four counts of first-degree murder."
+   },
+   {
+    "when": "December 2023",
+    "what": "The King Road house was demolished."
+   },
+   {
+    "when": "before July 2, 2025",
+    "what": "The case was moved to a Boise courtroom, with trial set for summer 2025."
+   },
+   {
+    "when": "July 2, 2025",
+    "what": "Bryan Kohberger pleaded guilty to all four murders as the prosecution agreed to remove the death penalty."
+   },
+   {
+    "when": "three weeks after July 2, 2025",
+    "what": "A judge sentenced Kohberger to four consecutive life sentences without parole plus ten years for burglary."
+   }
+  ],
+  "mode": "llm"
+ },
+ "plans": [
+  {
+   "sentence": "In the early hours of November 13, 2022, four university students were killed inside a quiet rental house on King Road in Moscow, Idaho, while two of their housemates slept in the same house.",
+   "meaning": "Four students were murdered in their rented house overnight while two housemates were asleep inside.",
+   "role": "setup",
+   "subject_id": "king_road_house",
+   "entities": [
+    "King Road house",
+    "Moscow, Idaho",
+    "Bryan Kohberger"
+   ],
+   "entity_ids": [
+    "king_road_house",
+    "moscow_idaho",
+    "bryan_kohberger"
+   ],
+   "resolved": {},
+   "events": [
+    "murders"
+   ],
+   "time": "early hours of November 13, 2022",
+   "place": "King Road house, Moscow, Idaho",
+   "scenarios": [
+    {
+     "visual": "A quiet off-campus rental house at night in a college neighbourhood, lights dark and street empty.",
+     "kind": "place",
+     "subject_id": "king_road_house",
+     "specificity": "exact",
+     "search_terms": [
+      "Moscow Idaho rental house",
+      "King Road house exterior",
+      "quiet college street night"
+     ],
+     "event": "murders",
+     "place": "King Road house, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "King Road house murders 2022",
+      "King Road house murders",
+      "King Road house Moscow Idaho rental 2022",
+      "King Road house house, Moscow, Idaho"
+     ]
+    },
+    {
+     "visual": "A dim bedroom inside a shared student house with coats, bags and schoolwork scattered around, suggesting young housemates asleep upstairs and downstairs.",
+     "kind": "place",
+     "subject_id": "king_road_house",
+     "specificity": "representative",
+     "search_terms": [
+      "student house bedroom night",
+      "shared rental home interior",
+      "college housemates bedroom"
+     ],
+     "event": "murders",
+     "place": "King Road house, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "student house bedroom night King Road house, Moscow, Idaho 2022",
+      "student house bedroom night 2022",
+      "student house bedroom night",
+      "shared rental home interior King Road house, Moscow, Idaho 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The victims were Madison Mogen and Kaylee Goncalves, both twenty-one years old, and Xana Kernodle and Ethan Chapin, who were both twenty.",
+   "meaning": "The four dead students were Madison Mogen, Kaylee Goncalves, Xana Kernodle and Ethan Chapin, all in their early twenties.",
+   "role": "setup",
+   "subject_id": "madison_mogen",
+   "entities": [
+    "Madison Mogen",
+    "Kaylee Goncalves",
+    "Xana Kernodle",
+    "Ethan Chapin"
+   ],
+   "entity_ids": [
+    "madison_mogen",
+    "kaylee_goncalves",
+    "xana_kernodle",
+    "ethan_chapin"
+   ],
+   "resolved": {},
+   "events": [
+    "murders"
+   ],
+   "time": null,
+   "place": null,
+   "scenarios": [
+    {
+     "visual": "A respectful photo of Madison Mogen and Kaylee Goncalves together as young university students.",
+     "kind": "abstract_broll",
+     "subject_id": "madison_mogen",
+     "specificity": "exact",
+     "search_terms": [
+      "Madison Mogen photo",
+      "Kaylee Goncalves photo",
+      "University of Idaho students"
+     ],
+     "event": null,
+     "place": null,
+     "era": "2022",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Madison Mogen murders 2022",
+      "Madison Mogen murders",
+      "Madison Mogen photo 2022",
+      "Madison Mogen"
+     ]
+    },
+    {
+     "visual": "A respectful photo of Xana Kernodle and Ethan Chapin together as young university students.",
+     "kind": "abstract_broll",
+     "subject_id": "xana_kernodle",
+     "specificity": "exact",
+     "search_terms": [
+      "Xana Kernodle photo",
+      "Ethan Chapin photo",
+      "University of Idaho students"
+     ],
+     "event": null,
+     "place": null,
+     "era": "2022",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Xana Kernodle murders 2022",
+      "Xana Kernodle murders",
+      "Xana Kernodle photo 2022",
+      "Xana Kernodle"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The alarm was not raised until almost noon, when a 911 call reported an unconscious person, and police arrived to find no murder weapon and no sign of a forced entry.",
+   "meaning": "The killings went undiscovered until late morning, and police found no weapon and no forced entry, making the house seem initially unbreached.",
+   "role": "evidence",
+   "subject_id": "king_road_house",
+   "entities": [
+    "King Road house"
+   ],
+   "entity_ids": [
+    "king_road_house"
+   ],
+   "resolved": {},
+   "events": [
+    "911 call",
+    "police arrival"
+   ],
+   "time": "almost noon on November 13, 2022",
+   "place": "King Road house, Moscow, Idaho",
+   "scenarios": [
+    {
+     "visual": "A 911 dispatch screen or phone call scene with an operator taking a report of an unconscious person.",
+     "kind": "document",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "911 dispatch center",
+      "emergency call operator",
+      "police report screen"
+     ],
+     "event": "911 call",
+     "place": "King Road house, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "911 dispatch center King Road house, Moscow, Idaho 2022",
+      "911 dispatch center 2022",
+      "911 dispatch center",
+      "emergency call operator King Road house, Moscow, Idaho 2022"
+     ]
+    },
+    {
+     "visual": "Police officers standing outside the rental house after arrival, tape going up and the front door intact.",
+     "kind": "event",
+     "subject_id": "king_road_house",
+     "specificity": "representative",
+     "search_terms": [
+      "police at crime scene",
+      "crime scene tape house",
+      "officers at front door"
+     ],
+     "event": "police arrival",
+     "place": "King Road house, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "police at crime scene King Road house, Moscow, Idaho 2022",
+      "police at crime scene 2022",
+      "police at crime scene",
+      "crime scene tape house King Road house, Moscow, Idaho 2022"
+     ]
+    },
+    {
+     "visual": "A close view of an unforced door lock and doorframe being documented by investigators.",
+     "kind": "object",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "unforced door lock",
+      "crime scene doorframe",
+      "forensic documentation door"
+     ],
+     "event": "police investigation",
+     "place": "King Road house, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "unforced door lock King Road house, Moscow, Idaho 2022",
+      "unforced door lock 2022",
+      "unforced door lock",
+      "crime scene doorframe King Road house, Moscow, Idaho 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "One surviving housemate told police that at around four in the morning she had seen a man dressed in black, his face covered by a mask, walk past her and out of the house.",
+   "meaning": "A surviving housemate reported seeing a masked man in black leaving the house around 4 a.m.",
+   "role": "evidence",
+   "subject_id": "king_road_house",
+   "entities": [
+    "King Road house",
+    "Madison Mogen"
+   ],
+   "entity_ids": [
+    "king_road_house",
+    "madison_mogen"
+   ],
+   "resolved": {},
+   "events": [
+    "witness statement"
+   ],
+   "time": "around 4:00 a.m. on November 13, 2022",
+   "place": "King Road house, Moscow, Idaho",
+   "scenarios": [
+    {
+     "visual": "A frightened young woman in a dim hallway recalling what she saw to police.",
+     "kind": "person_activity",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "witness speaking to police",
+      "frightened housemate",
+      "night hallway reenactment"
+     ],
+     "event": "witness statement",
+     "place": "King Road house, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "witness speaking to police King Road house, Moscow, Idaho 2022",
+      "witness speaking to police 2022",
+      "witness speaking to police",
+      "frightened housemate King Road house, Moscow, Idaho 2022"
+     ]
+    },
+    {
+     "visual": "A masked figure dressed in black walking silently through a dark student-house hallway and out a door.",
+     "kind": "person_activity",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "masked intruder black clothing",
+      "dark hallway intruder",
+      "masked man leaving house"
+     ],
+     "event": "witness statement",
+     "place": "King Road house, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "masked intruder black clothing King Road house, Moscow, Idaho 2022",
+      "masked intruder black clothing 2022",
+      "masked intruder black clothing",
+      "dark hallway intruder King Road house, Moscow, Idaho 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Fear emptied the campus within days, as students left the small college town while police admitted they had no suspect, no weapon, and no explanation.",
+   "meaning": "Within days, fear drove students away from Moscow because police had no suspect, weapon or explanation.",
+   "role": "aftermath",
+   "subject_id": "moscow_idaho",
+   "entities": [
+    "Moscow, Idaho",
+    "Madison Mogen"
+   ],
+   "entity_ids": [
+    "moscow_idaho",
+    "madison_mogen"
+   ],
+   "resolved": {},
+   "events": [
+    "campus departure",
+    "police investigation"
+   ],
+   "time": "days after November 13, 2022",
+   "place": "Moscow, Idaho",
+   "scenarios": [
+    {
+     "visual": "Students carrying bags and leaving a small college town campus amid an uneasy, emptied atmosphere.",
+     "kind": "event",
+     "subject_id": "moscow_idaho",
+     "specificity": "representative",
+     "search_terms": [
+      "students leaving campus",
+      "college town fear",
+      "students with luggage campus"
+     ],
+     "event": "campus departure",
+     "place": "Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "students leaving campus Moscow, Idaho 2022",
+      "students leaving campus 2022",
+      "students leaving campus",
+      "college town fear Moscow, Idaho 2022"
+     ]
+    },
+    {
+     "visual": "A police briefing where officers face reporters without answers, with crime notices and an empty suspect board implied.",
+     "kind": "event",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "police press briefing",
+      "investigators no suspect",
+      "crime press conference"
+     ],
+     "event": "police investigation",
+     "place": "Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "police press briefing Moscow, Idaho 2022",
+      "police press briefing 2022",
+      "police press briefing",
+      "investigators no suspect Moscow, Idaho 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "On a bed beside one of the victims, investigators found a tan leather knife sheath, stamped with the insignia of the United States Marine Corps.",
+   "meaning": "Investigators found a key piece of evidence beside a victim: a tan leather knife sheath bearing Marine Corps insignia.",
+   "role": "evidence",
+   "subject_id": "tan_leather_knife_sheath",
+   "entities": [
+    "tan leather knife sheath",
+    "United States Marine Corps"
+   ],
+   "entity_ids": [
+    "tan_leather_knife_sheath",
+    "united_states_marine_corps"
+   ],
+   "resolved": {},
+   "events": [
+    "evidence discovery"
+   ],
+   "time": "after November 13, 2022",
+   "place": "King Road house, Moscow, Idaho",
+   "scenarios": [
+    {
+     "visual": "A tan leather knife sheath with military-style insignia resting on a bed as evidence is photographed.",
+     "kind": "object",
+     "subject_id": "tan_leather_knife_sheath",
+     "specificity": "exact",
+     "search_terms": [
+      "tan leather knife sheath",
+      "Marine Corps insignia sheath",
+      "evidence on bed"
+     ],
+     "event": "evidence discovery",
+     "place": "King Road house, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "tan leather knife sheath evidence discovery 2022",
+      "tan leather knife sheath evidence discovery",
+      "tan leather knife sheath 2022",
+      "tan leather knife sheath King Road house, Moscow, Idaho"
+     ]
+    },
+    {
+     "visual": "A forensic investigator in protective suit documenting an object beside a bed with a camera and evidence markers.",
+     "kind": "person_activity",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "forensic investigator bedroom",
+      "crime scene evidence photo",
+      "evidence marker bed"
+     ],
+     "event": "evidence discovery",
+     "place": "King Road house, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "forensic investigator bedroom King Road house, Moscow, Idaho 2022",
+      "forensic investigator bedroom 2022",
+      "forensic investigator bedroom",
+      "crime scene evidence photo King Road house, Moscow, Idaho 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The killer had left almost nothing behind, but on the button snap of that sheath, forensic scientists found a single sample of male DNA.",
+   "meaning": "The killer left little evidence, but the sheath's button snap held one male DNA sample that became crucial.",
+   "role": "evidence",
+   "subject_id": "tan_leather_knife_sheath",
+   "entities": [
+    "tan leather knife sheath"
+   ],
+   "entity_ids": [
+    "tan_leather_knife_sheath"
+   ],
+   "resolved": {
+    "that sheath": "tan_leather_knife_sheath"
+   },
+   "events": [
+    "DNA analysis"
+   ],
+   "time": "after November 13, 2022",
+   "place": null,
+   "scenarios": [
+    {
+     "visual": "A close-up of the sheath's metal button snap being swabbed with a sterile cotton applicator.",
+     "kind": "object",
+     "subject_id": "tan_leather_knife_sheath",
+     "specificity": "exact",
+     "search_terms": [
+      "knife sheath button snap",
+      "DNA swab evidence",
+      "forensic swab metal snap"
+     ],
+     "event": "DNA analysis",
+     "place": null,
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "tan leather knife sheath DNA analysis 2022",
+      "tan leather knife sheath DNA analysis",
+      "tan leather knife sheath button snap 2022",
+      "tan leather knife sheath"
+     ]
+    },
+    {
+     "visual": "A laboratory scientist loading a small DNA sample into forensic testing equipment.",
+     "kind": "person_activity",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "forensic DNA lab",
+      "DNA analyst sample",
+      "genetic testing equipment"
+     ],
+     "event": "DNA analysis",
+     "place": null,
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "forensic DNA lab 2022",
+      "forensic DNA lab",
+      "DNA analyst sample 2022",
+      "DNA analyst sample"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Detectives turned to the security cameras of the quiet neighbourhood, and found a white Hyundai Elantra circling King Road again and again between three and four that morning.",
+   "meaning": "Detectives used neighbourhood surveillance and found a white Hyundai Elantra repeatedly circling King Road before the murders.",
+   "role": "evidence",
+   "subject_id": "white_hyundai_elantra",
+   "entities": [
+    "white Hyundai Elantra"
+   ],
+   "entity_ids": [
+    "white_hyundai_elantra"
+   ],
+   "resolved": {},
+   "events": [
+    "surveillance review",
+    "vehicle sighting"
+   ],
+   "time": "between 3:00 and 4:00 a.m. on November 13, 2022",
+   "place": "King Road, Moscow, Idaho",
+   "scenarios": [
+    {
+     "visual": "Detectives watching multiple home security camera feeds in a dim investigation room.",
+     "kind": "person_activity",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "detectives reviewing surveillance",
+      "home security camera footage",
+      "investigation monitor room"
+     ],
+     "event": "surveillance review",
+     "place": "Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "detectives reviewing surveillance Moscow, Idaho 2022",
+      "detectives reviewing surveillance 2022",
+      "detectives reviewing surveillance",
+      "home security camera footage Moscow, Idaho 2022"
+     ]
+    },
+    {
+     "visual": "Grainy night surveillance image of a white Hyundai Elantra driving slowly past a quiet residential street.",
+     "kind": "object",
+     "subject_id": "white_hyundai_elantra",
+     "specificity": "exact",
+     "search_terms": [
+      "white Hyundai Elantra night",
+      "car circling street surveillance",
+      "residential security camera car"
+     ],
+     "event": "vehicle sighting",
+     "place": "King Road, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "white Hyundai Elantra vehicle sighting 2022",
+      "white Hyundai Elantra vehicle sighting",
+      "white Hyundai Elantra night 2022",
+      "white Hyundai Elantra King Road, Moscow, Idaho"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The car passed the house at least three times before it sped away at twenty minutes past four, shortly after the murders are believed to have taken place.",
+   "meaning": "The same car passed the house several times then sped away just after the likely time of the killings.",
+   "role": "evidence",
+   "subject_id": "white_hyundai_elantra",
+   "entities": [
+    "white Hyundai Elantra",
+    "Madison Mogen"
+   ],
+   "entity_ids": [
+    "white_hyundai_elantra",
+    "madison_mogen"
+   ],
+   "resolved": {
+    "the car": "white_hyundai_elantra",
+    "the house": "king_road_house"
+   },
+   "events": [
+    "vehicle sighting"
+   ],
+   "time": "4:20 a.m. on November 13, 2022",
+   "place": "King Road house, Moscow, Idaho",
+   "scenarios": [
+    {
+     "visual": "A timeline graphic showing a white car repeatedly passing the same house, then an arrow speeding away at 4:20 a.m.",
+     "kind": "document",
+     "subject_id": "white_hyundai_elantra",
+     "specificity": "representative",
+     "search_terms": [
+      "vehicle movement timeline",
+      "car route map graphic",
+      "surveillance timeline"
+     ],
+     "event": "vehicle sighting",
+     "place": "King Road house, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "graphic",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "vehicle movement timeline King Road house, Moscow, Idaho 2022",
+      "vehicle movement timeline 2022",
+      "vehicle movement timeline",
+      "car route map graphic King Road house, Moscow, Idaho 2022"
+     ]
+    },
+    {
+     "visual": "Night surveillance footage of a white sedan accelerating away down a dark residential road.",
+     "kind": "object",
+     "subject_id": "white_hyundai_elantra",
+     "specificity": "representative",
+     "search_terms": [
+      "white sedan speeding away",
+      "night car surveillance",
+      "residential road car"
+     ],
+     "event": "vehicle sighting",
+     "place": "King Road, Moscow, Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "white sedan speeding away King Road, Moscow, Idaho 2022",
+      "white sedan speeding away 2022",
+      "white sedan speeding away",
+      "night car surveillance King Road, Moscow, Idaho 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Ten miles away, across the state line at Washington State University, a twenty-eight-year-old criminology student named Bryan Kohberger drove a white Hyundai Elantra.",
+   "meaning": "Across the state line, Bryan Kohberger, a 28-year-old criminology PhD student at Washington State University, also drove a white Hyundai Elantra.",
+   "role": "setup",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "Washington State University",
+    "Bryan Kohberger",
+    "white Hyundai Elantra"
+   ],
+   "entity_ids": [
+    "washington_state_university",
+    "bryan_kohberger",
+    "white_hyundai_elantra"
+   ],
+   "resolved": {
+    "a twenty-eight-year-old criminology student named Bryan Kohberger": "bryan_kohberger"
+   },
+   "events": [],
+   "time": "before December 30, 2022",
+   "place": "Washington State University",
+   "scenarios": [
+    {
+     "visual": "Bryan Kohberger walking across or near the Washington State University campus as a graduate student.",
+     "kind": "person_activity",
+     "subject_id": "bryan_kohberger",
+     "specificity": "exact",
+     "search_terms": [
+      "Bryan Kohberger WSU",
+      "Washington State University campus",
+      "criminology student campus"
+     ],
+     "event": null,
+     "place": "Washington State University",
+     "era": "2022",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Bryan Kohberger 2022",
+      "Bryan Kohberger",
+      "Bryan Kohberger WSU 2022",
+      "Bryan Kohberger Washington State University"
+     ]
+    },
+    {
+     "visual": "A white Hyundai Elantra parked near a university campus or student housing area.",
+     "kind": "object",
+     "subject_id": "white_hyundai_elantra",
+     "specificity": "exact",
+     "search_terms": [
+      "white Hyundai Elantra parked",
+      "WSU student car",
+      "campus parking car"
+     ],
+     "event": null,
+     "place": "Washington State University",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "white Hyundai Elantra 2022",
+      "white Hyundai Elantra",
+      "white Hyundai Elantra parked 2022",
+      "white Hyundai Elantra Washington State University"
+     ]
+    },
+    {
+     "visual": "A map graphic showing Washington State University across the state line from Moscow, Idaho.",
+     "kind": "document",
+     "subject_id": "washington_state_university",
+     "specificity": "exact",
+     "search_terms": [
+      "WSU Moscow Idaho map",
+      "state line map",
+      "Washington Idaho campus map"
+     ],
+     "event": null,
+     "place": "Washington State University",
+     "era": "2022",
+     "format_intent": "map",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Washington State University 2022",
+      "Washington State University",
+      "Washington State University WSU Moscow Idaho map 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "He was studying for a doctorate in criminal justice, and eight months before the murders, he had bought a military-style knife and a sheath online.",
+   "meaning": "Kohberger's academic focus in criminal justice and his online purchase of a military-style knife and sheath eight months earlier became part of the circumstantial case against him.",
+   "role": "background",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "Bryan Kohberger",
+    "tan leather knife sheath"
+   ],
+   "entity_ids": [
+    "bryan_kohberger",
+    "tan_leather_knife_sheath"
+   ],
+   "resolved": {
+    "he": "bryan_kohberger"
+   },
+   "events": [
+    "online purchase of knife and sheath"
+   ],
+   "time": "eight months before November 2022",
+   "place": "Washington State University",
+   "scenarios": [
+    {
+     "visual": "Bryan Kohberger as a graduate student walking across a university campus with books and a backpack",
+     "kind": "person_activity",
+     "subject_id": "bryan_kohberger",
+     "specificity": "representative",
+     "search_terms": [
+      "criminology graduate student",
+      "university campus walk",
+      "doctoral student books"
+     ],
+     "event": null,
+     "place": "Washington State University",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "criminology graduate student Washington State University 2022",
+      "criminology graduate student 2022",
+      "criminology graduate student",
+      "university campus walk Washington State 2022"
+     ]
+    },
+    {
+     "visual": "A military-style knife and tan leather sheath displayed beside a laptop showing an online checkout page",
+     "kind": "object",
+     "subject_id": "tan_leather_knife_sheath",
+     "specificity": "representative",
+     "search_terms": [
+      "military style knife sheath",
+      "online purchase checkout",
+      "knife product listing"
+     ],
+     "event": "online purchase of knife and sheath",
+     "place": "Washington State University",
+     "era": "2022",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "military style knife sheath Washington State University 2022",
+      "military style knife sheath 2022",
+      "military style knife sheath",
+      "online purchase checkout Washington State University 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Police matched the car to Kohberger, and then matched the man to the sheath, using DNA taken secretly from the rubbish outside his parents' home in Pennsylvania.",
+   "meaning": "Investigators linked the white car and the sheath DNA to Kohberger by secretly collecting DNA from rubbish outside his parents' Pennsylvania home.",
+   "role": "evidence",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "white Hyundai Elantra",
+    "Bryan Kohberger",
+    "tan leather knife sheath",
+    "Kohberger family home in the Pocono Mountains"
+   ],
+   "entity_ids": [
+    "white_hyundai_elantra",
+    "bryan_kohberger",
+    "tan_leather_knife_sheath",
+    "kohberger_parents_home"
+   ],
+   "resolved": {
+    "the car": "white_hyundai_elantra",
+    "Kohberger": "bryan_kohberger",
+    "the sheath": "tan_leather_knife_sheath",
+    "his": "bryan_kohberger"
+   },
+   "events": [
+    "vehicle identification",
+    "secret DNA collection",
+    "DNA comparison"
+   ],
+   "time": "before December 30, 2022",
+   "place": "Kohberger family home in the Pocono Mountains",
+   "scenarios": [
+    {
+     "visual": "A white Hyundai Elantra parked outside a suburban home as investigators photograph and note the license plate",
+     "kind": "object",
+     "subject_id": "white_hyundai_elantra",
+     "specificity": "representative",
+     "search_terms": [
+      "white Hyundai Elantra parked",
+      "investigator photographing car",
+      "license plate evidence"
+     ],
+     "event": "vehicle identification",
+     "place": "Kohberger family home in the Pocono Mountains",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "white Hyundai Elantra parked Kohberger family home in the Pocono Mountains 2022",
+      "white Hyundai Elantra parked 2022",
+      "white Hyundai Elantra parked",
+      "investigator photographing car Kohberger family home in the Pocono Mountains 2022"
+     ]
+    },
+    {
+     "visual": "A trash bag at the curb outside a wooded family home being collected by plainclothes investigators",
+     "kind": "person_activity",
+     "subject_id": "kohberger_parents_home",
+     "specificity": "representative",
+     "search_terms": [
+      "trash collection evidence",
+      "plainclothes investigator rubbish",
+      "suburban home trash bag"
+     ],
+     "event": "secret DNA collection",
+     "place": "Kohberger family home in the Pocono Mountains",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "trash collection evidence Kohberger family home in the Pocono Mountains 2022",
+      "trash collection evidence 2022",
+      "trash collection evidence",
+      "plainclothes investigator rubbish Kohberger family home in the Pocono Mountains 2022"
+     ]
+    },
+    {
+     "visual": "A forensic scientist comparing DNA profiles on a laboratory computer beside a sealed knife sheath evidence bag",
+     "kind": "document",
+     "subject_id": "tan_leather_knife_sheath",
+     "specificity": "representative",
+     "search_terms": [
+      "DNA profile comparison",
+      "forensic lab evidence bag",
+      "knife sheath evidence"
+     ],
+     "event": "DNA comparison",
+     "place": "Kohberger family home in the Pocono Mountains",
+     "era": "2022",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "DNA profile comparison Kohberger family home in the Pocono Mountains 2022",
+      "DNA profile comparison 2022",
+      "DNA profile comparison",
+      "forensic lab evidence bag Kohberger family home in the Pocono Mountains 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The DNA from the family rubbish showed that its owner was almost certainly the father of the man whose DNA was found on the sheath.",
+   "meaning": "The rubbish DNA established a biological family link: its owner was almost certainly the father of the man whose DNA was on the sheath, pointing investigators toward Kohberger's family line.",
+   "role": "evidence",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "Bryan Kohberger",
+    "tan leather knife sheath"
+   ],
+   "entity_ids": [
+    "bryan_kohberger",
+    "tan_leather_knife_sheath"
+   ],
+   "resolved": {
+    "its": "kohberger_parents_home",
+    "the sheath": "tan_leather_knife_sheath"
+   },
+   "events": [
+    "familial DNA identification"
+   ],
+   "time": "before December 30, 2022",
+   "place": "Pennsylvania",
+   "scenarios": [
+    {
+     "visual": "A forensic DNA report showing a familial match highlighted beside a family-tree diagram",
+     "kind": "document",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "familial DNA report",
+      "DNA family tree diagram",
+      "genetic genealogy match"
+     ],
+     "event": "familial DNA identification",
+     "place": "Pennsylvania",
+     "era": "2022",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "familial DNA report Pennsylvania 2022",
+      "familial DNA report 2022",
+      "familial DNA report",
+      "DNA family tree diagram Pennsylvania 2022"
+     ]
+    },
+    {
+     "visual": "A sealed tan leather knife sheath evidence bag next to a DNA swab tube on a laboratory bench",
+     "kind": "object",
+     "subject_id": "tan_leather_knife_sheath",
+     "specificity": "representative",
+     "search_terms": [
+      "knife sheath evidence bag",
+      "DNA swab tube",
+      "forensic laboratory bench"
+     ],
+     "event": "familial DNA identification",
+     "place": "Pennsylvania",
+     "era": "2022",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "knife sheath evidence bag Pennsylvania 2022",
+      "knife sheath evidence bag 2022",
+      "knife sheath evidence bag",
+      "DNA swab tube Pennsylvania 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "In the early hours of December 30, seven weeks after the murders, FBI agents and state troopers raided the family home in the Pocono Mountains and arrested Kohberger.",
+   "meaning": "In the pre-dawn hours of December 30, federal and state officers surrounded the Pocono Mountains family home and arrested Kohberger.",
+   "role": "action",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "Federal Bureau of Investigation",
+    "Idaho State Police",
+    "Kohberger family home in the Pocono Mountains",
+    "Bryan Kohberger"
+   ],
+   "entity_ids": [
+    "fbi",
+    "idaho_state_troopers",
+    "kohberger_parents_home",
+    "bryan_kohberger"
+   ],
+   "resolved": {
+    "the family home": "kohberger_parents_home",
+    "Kohberger": "bryan_kohberger"
+   },
+   "events": [
+    "police raid",
+    "arrest"
+   ],
+   "time": "early hours of December 30, 2022",
+   "place": "Kohberger family home in the Pocono Mountains",
+   "scenarios": [
+    {
+     "visual": "Police vehicles with headlights off parked along a dark wooded Pennsylvania road outside a family home before dawn",
+     "kind": "place",
+     "subject_id": "kohberger_parents_home",
+     "specificity": "representative",
+     "search_terms": [
+      "pre dawn police raid",
+      "wooded Pennsylvania home",
+      "tactical vehicles headlights off"
+     ],
+     "event": "police raid",
+     "place": "Kohberger family home in the Pocono Mountains",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "pre dawn police raid Kohberger family home in the Pocono Mountains 2022",
+      "pre dawn police raid 2022",
+      "pre dawn police raid",
+      "wooded Pennsylvania home Kohberger family in the Pocono Mountains 2022"
+     ]
+    },
+    {
+     "visual": "FBI agents and Idaho State troopers escorting a handcuffed Bryan Kohberger from the home",
+     "kind": "event",
+     "subject_id": "bryan_kohberger",
+     "specificity": "representative",
+     "search_terms": [
+      "FBI agents arrest suspect",
+      "state troopers handcuffed suspect",
+      "nighttime arrest home"
+     ],
+     "event": "arrest",
+     "place": "Kohberger family home in the Pocono Mountains",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "FBI agents arrest suspect Kohberger family home in the Pocono Mountains 2022",
+      "FBI agents arrest suspect 2022",
+      "FBI agents arrest suspect",
+      "state troopers handcuffed suspect Kohberger family home in the Pocono Mountains 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "He was flown back to Idaho and charged with four counts of first-degree murder, and when the charges were read to him in court, he stood silent, saying nothing at all.",
+   "meaning": "After his arrest, Kohberger was transported to Idaho, formally charged with four first-degree murders, and remained silent during the court reading of the charges.",
+   "role": "legal",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "Bryan Kohberger"
+   ],
+   "entity_ids": [
+    "bryan_kohberger"
+   ],
+   "resolved": {
+    "He": "bryan_kohberger",
+    "him": "bryan_kohberger"
+   },
+   "events": [
+    "transfer to Idaho",
+    "criminal charges",
+    "court arraignment"
+   ],
+   "time": "after December 30, 2022",
+   "place": "Idaho",
+   "scenarios": [
+    {
+     "visual": "A handcuffed suspect being escorted through an airport terminal by law enforcement for transport back to Idaho",
+     "kind": "event",
+     "subject_id": "bryan_kohberger",
+     "specificity": "representative",
+     "search_terms": [
+      "suspect airport escort",
+      "handcuffed prisoner transport",
+      "law enforcement terminal"
+     ],
+     "event": "transfer to Idaho",
+     "place": "Idaho",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "suspect airport escort Idaho 2022",
+      "suspect airport escort 2022",
+      "suspect airport escort",
+      "handcuffed prisoner transport Idaho 2022"
+     ]
+    },
+    {
+     "visual": "A court clerk reading charges in an Idaho courtroom while Bryan Kohberger stands silently beside his attorney",
+     "kind": "event",
+     "subject_id": "bryan_kohberger",
+     "specificity": "representative",
+     "search_terms": [
+      "court charges reading",
+      "silent defendant courtroom",
+      "first degree murder charges"
+     ],
+     "event": "court arraignment",
+     "place": "Idaho",
+     "era": "2023",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "court charges reading Idaho 2023",
+      "court charges reading 2023",
+      "court charges reading",
+      "silent defendant courtroom Idaho 2023"
+     ]
+    },
+    {
+     "visual": "A criminal complaint listing four counts of first-degree murder",
+     "kind": "document",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "four counts murder complaint",
+      "criminal charging document",
+      "first degree murder charges"
+     ],
+     "event": "criminal charges",
+     "place": "Idaho",
+     "era": "2023",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "four counts murder complaint Idaho 2023",
+      "four counts murder complaint 2023",
+      "four counts murder complaint",
+      "criminal charging document Idaho 2023"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The court papers described a mobile phone that went dark during the hours of the murders, a white car recorded near the house twelve times in the months before, and a sheath bought with a single click.",
+   "meaning": "The court documents laid out the evidentiary case against Kohberger: a phone inactive during the murders, repeated white-car sightings near the house, and the sheath purchase.",
+   "role": "evidence",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "Bryan Kohberger",
+    "white Hyundai Elantra",
+    "tan leather knife sheath"
+   ],
+   "entity_ids": [
+    "bryan_kohberger",
+    "white_hyundai_elantra",
+    "tan_leather_knife_sheath"
+   ],
+   "resolved": {
+    "the house": "king_road_house"
+   },
+   "events": [
+    "court filing",
+    "phone data analysis",
+    "vehicle sightings",
+    "online purchase evidence"
+   ],
+   "time": "months before November 2022 and hours of the murders",
+   "place": "King Road house",
+   "scenarios": [
+    {
+     "visual": "A court filing with highlighted lines about phone activity, a white car, and a sheath purchase",
+     "kind": "document",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "court filing highlighted evidence",
+      "probable cause affidavit",
+      "criminal court papers"
+     ],
+     "event": "court filing",
+     "place": "King Road house",
+     "era": "2023",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "court filing highlighted evidence King Road house 2023",
+      "court filing highlighted evidence 2023",
+      "court filing highlighted evidence",
+      "probable cause affidavit King Road house 2023"
+     ]
+    },
+    {
+     "visual": "A phone screen showing no activity overnight beside a timeline graphic marked with the murder hours",
+     "kind": "abstract_broll",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "phone activity timeline",
+      "mobile phone data graphic",
+      "overnight phone inactivity"
+     ],
+     "event": "phone data analysis",
+     "place": "King Road house",
+     "era": "2022",
+     "format_intent": "graphic",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "phone activity timeline King Road house 2022",
+      "phone activity timeline 2022",
+      "phone activity timeline",
+      "mobile phone data graphic King Road house 2022"
+     ]
+    },
+    {
+     "visual": "A white car passing a quiet rental house in repeated surveillance-camera frames",
+     "kind": "archival",
+     "subject_id": "white_hyundai_elantra",
+     "specificity": "representative",
+     "search_terms": [
+      "surveillance car passing house",
+      "white car street camera",
+      "repeated vehicle sightings"
+     ],
+     "event": "vehicle sightings",
+     "place": "King Road house",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "surveillance car passing house King Road 2022",
+      "surveillance car passing house 2022",
+      "surveillance car passing house",
+      "white car street camera King Road house 2022"
+     ]
+    },
+    {
+     "visual": "A tan leather sheath product page with a single-click purchase button highlighted",
+     "kind": "document",
+     "subject_id": "tan_leather_knife_sheath",
+     "specificity": "representative",
+     "search_terms": [
+      "online sheath purchase",
+      "single click checkout",
+      "knife sheath product page"
+     ],
+     "event": "online purchase evidence",
+     "place": "King Road house",
+     "era": "2022",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "online sheath purchase King Road house 2022",
+      "online sheath purchase 2022",
+      "online sheath purchase",
+      "single click checkout King Road house 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "The house on King Road was demolished in December 2023, and the case was moved to a courtroom in Boise, where Kohberger's trial was set for the summer of 2025.",
+   "meaning": "The murder house was torn down, and the legal case was relocated to Boise for a summer 2025 trial.",
+   "role": "transition",
+   "subject_id": "king_road_house",
+   "entities": [
+    "King Road house",
+    "Boise courtroom",
+    "Bryan Kohberger"
+   ],
+   "entity_ids": [
+    "king_road_house",
+    "boise_courtroom",
+    "bryan_kohberger"
+   ],
+   "resolved": {
+    "The house on King Road": "king_road_house",
+    "the case": "King Road Murders",
+    "a courtroom in Boise": "boise_courtroom",
+    "Kohberger's": "bryan_kohberger"
+   },
+   "events": [
+    "house demolition",
+    "venue change",
+    "trial scheduling"
+   ],
+   "time": "December 2023; summer 2025",
+   "place": "King Road house; Boise courtroom",
+   "scenarios": [
+    {
+     "visual": "An excavator tearing down the King Road rental house amid debris and bare winter trees",
+     "kind": "event",
+     "subject_id": "king_road_house",
+     "specificity": "exact",
+     "search_terms": [
+      "King Road house demolition",
+      "excavator demolishing house",
+      "December demolition site"
+     ],
+     "event": "house demolition",
+     "place": "King Road house",
+     "era": "2023",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "King Road house demolition 2023",
+      "King Road house demolition",
+      "King Road house"
+     ]
+    },
+    {
+     "visual": "An empty Boise courtroom with judge's bench, jury box, and counsel tables before trial",
+     "kind": "place",
+     "subject_id": "boise_courtroom",
+     "specificity": "representative",
+     "search_terms": [
+      "empty Idaho courtroom",
+      "Boise courtroom interior",
+      "judge bench jury box"
+     ],
+     "event": "venue change",
+     "place": "Boise courtroom",
+     "era": "2025",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "empty Idaho courtroom Boise 2025",
+      "empty Idaho courtroom 2025",
+      "empty Idaho courtroom",
+      "Boise courtroom interior 2025"
+     ]
+    },
+    {
+     "visual": "A court calendar graphic marking a summer 2025 trial date in Boise",
+     "kind": "abstract_broll",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "court calendar trial date",
+      "summer 2025 trial graphic",
+      "Boise court schedule"
+     ],
+     "event": "trial scheduling",
+     "place": "Boise courtroom",
+     "era": "2025",
+     "format_intent": "graphic",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "court calendar trial date Boise courtroom 2025",
+      "court calendar trial date 2025",
+      "court calendar trial date",
+      "summer 2025 trial graphic Boise courtroom"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Then, on July 2, 2025, weeks before that trial was due to begin, Bryan Kohberger pleaded guilty to all four murders.",
+   "meaning": "Shortly before the scheduled trial, Kohberger abruptly pleaded guilty to all four murders on July 2, 2025.",
+   "role": "event",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "Bryan Kohberger"
+   ],
+   "entity_ids": [
+    "bryan_kohberger"
+   ],
+   "resolved": {
+    "that trial": "trial",
+    "Bryan Kohberger": "bryan_kohberger"
+   },
+   "events": [
+    "guilty plea"
+   ],
+   "time": "July 2, 2025",
+   "place": "Boise courtroom",
+   "scenarios": [
+    {
+     "visual": "Bryan Kohberger standing in a Boise courtroom as his guilty plea is entered",
+     "kind": "event",
+     "subject_id": "bryan_kohberger",
+     "specificity": "representative",
+     "search_terms": [
+      "defendant entering guilty plea",
+      "Boise courtroom plea hearing",
+      "murder guilty plea"
+     ],
+     "event": "guilty plea",
+     "place": "Boise courtroom",
+     "era": "2025",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "defendant entering guilty plea Boise courtroom 2025",
+      "defendant entering guilty plea 2025",
+      "defendant entering guilty plea",
+      "Boise courtroom plea hearing 2025"
+     ]
+    },
+    {
+     "visual": "A courtroom clerk's document marked guilty plea to four counts of murder",
+     "kind": "document",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "guilty plea document",
+      "four murder counts plea",
+      "court plea paperwork"
+     ],
+     "event": "guilty plea",
+     "place": "Boise courtroom",
+     "era": "2025",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "guilty plea document Boise courtroom 2025",
+      "guilty plea document 2025",
+      "guilty plea document",
+      "four murder counts plea Boise courtroom 2025"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "In open court he admitted killing each of the four students, one by one, as the prosecution agreed to take the death penalty off the table.",
+   "meaning": "In court, Kohberger verbally admitted killing Madison Mogen, Kaylee Goncalves, Xana Kernodle, and Ethan Chapin individually, while prosecutors dropped the death penalty as part of the plea agreement.",
+   "role": "legal",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "Bryan Kohberger"
+   ],
+   "entity_ids": [
+    "bryan_kohberger"
+   ],
+   "resolved": {
+    "He": "bryan_kohberger",
+    "the four students": [
+     "madison_mogen",
+     "kaylee_goncalves",
+     "xana_kernodle",
+     "ethan_chapin"
+    ]
+   },
+   "events": [
+    "guilty plea allocation",
+    "death penalty removed"
+   ],
+   "time": "July 2, 2025",
+   "place": "Boise courtroom",
+   "scenarios": [
+    {
+     "visual": "Bryan Kohberger speaking at a courtroom podium during the plea hearing while the judge and attorneys listen",
+     "kind": "event",
+     "subject_id": "bryan_kohberger",
+     "specificity": "representative",
+     "search_terms": [
+      "defendant speaking in court",
+      "plea hearing podium",
+      "judge attorneys courtroom"
+     ],
+     "event": "guilty plea allocation",
+     "place": "Boise courtroom",
+     "era": "2025",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "defendant speaking in court Boise courtroom 2025",
+      "defendant speaking in court 2025",
+      "defendant speaking in court",
+      "plea hearing podium Boise courtroom 2025"
+     ]
+    },
+    {
+     "visual": "Four victim name cards or photographs arranged quietly on a courtroom evidence table",
+     "kind": "object",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "victim photographs courtroom",
+      "four victim names",
+      "memorial photos students"
+     ],
+     "event": "guilty plea allocation",
+     "place": "Boise courtroom",
+     "era": "2025",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "victim photographs courtroom Boise 2025",
+      "victim photographs courtroom 2025",
+      "victim photographs courtroom",
+      "four victim names Boise courtroom 2025"
+     ]
+    },
+    {
+     "visual": "A plea agreement document with the death penalty provision crossed out or omitted",
+     "kind": "document",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "plea agreement document",
+      "death penalty removed",
+      "prosecution agreement paperwork"
+     ],
+     "event": "death penalty removed",
+     "place": "Boise courtroom",
+     "era": "2025",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "plea agreement document Boise courtroom 2025",
+      "plea agreement document 2025",
+      "plea agreement document",
+      "death penalty removed Boise courtroom 2025"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "Three weeks later, a judge sentenced him to four consecutive life sentences without the possibility of parole, plus ten more years for burglary.",
+   "meaning": "Three weeks after the guilty plea, Kohberger received four life sentences without parole plus ten years for burglary, closing the criminal case with permanent imprisonment.",
+   "role": "aftermath",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "Bryan Kohberger"
+   ],
+   "entity_ids": [
+    "bryan_kohberger"
+   ],
+   "resolved": {
+    "him": "bryan_kohberger"
+   },
+   "events": [
+    "sentencing",
+    "life sentences",
+    "burglary sentence"
+   ],
+   "time": "three weeks after July 2, 2025",
+   "place": "Boise courtroom",
+   "scenarios": [
+    {
+     "visual": "A judge delivering sentence from the bench while Bryan Kohberger stands before the court",
+     "kind": "event",
+     "subject_id": "bryan_kohberger",
+     "specificity": "representative",
+     "search_terms": [
+      "judge delivering sentence",
+      "defendant sentencing hearing",
+      "courtroom sentencing"
+     ],
+     "event": "sentencing",
+     "place": "Boise courtroom",
+     "era": "2025",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "judge delivering sentence Boise courtroom 2025",
+      "judge delivering sentence 2025",
+      "judge delivering sentence",
+      "defendant sentencing hearing Boise courtroom 2025"
+     ]
+    },
+    {
+     "visual": "A sentencing document listing four consecutive life sentences without parole plus ten years for burglary",
+     "kind": "document",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "sentencing order document",
+      "four life sentences",
+      "burglary ten years"
+     ],
+     "event": "life sentences",
+     "place": "Boise courtroom",
+     "era": "2025",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "sentencing order document Boise courtroom 2025",
+      "sentencing order document 2025",
+      "sentencing order document",
+      "four life sentences Boise courtroom 2025"
+     ]
+    },
+    {
+     "visual": "Courtroom doors closing after the sentencing hearing, with empty chairs left behind",
+     "kind": "place",
+     "subject_id": "boise_courtroom",
+     "specificity": "representative",
+     "search_terms": [
+      "courtroom doors closing",
+      "empty courtroom after hearing",
+      "sentencing aftermath"
+     ],
+     "event": "sentencing",
+     "place": "Boise courtroom",
+     "era": "2025",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "courtroom doors closing Boise 2025",
+      "courtroom doors closing 2025",
+      "courtroom doors closing",
+      "empty courtroom after hearing Boise 2025"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "He offered no motive, no apology, and no explanation, and under the terms of his plea, he gave up the right to appeal.",
+   "meaning": "Kohberger's guilty plea closed the case legally without giving families a reason, remorse, or any route to challenge the sentence.",
+   "role": "legal",
+   "subject_id": "bryan_kohberger",
+   "entities": [
+    "Bryan Kohberger"
+   ],
+   "entity_ids": [
+    "bryan_kohberger"
+   ],
+   "resolved": {
+    "he": "bryan_kohberger"
+   },
+   "events": [
+    "guilty plea",
+    "sentencing",
+    "waiver of appeal rights"
+   ],
+   "time": "July 2, 2025 and three weeks later",
+   "place": "boise_courtroom",
+   "scenarios": [
+    {
+     "visual": "Bryan Kohberger seated silently in a courtroom beside his lawyer as the judge speaks from the bench.",
+     "kind": "event",
+     "subject_id": "bryan_kohberger",
+     "specificity": "exact",
+     "search_terms": [
+      "courtroom plea hearing",
+      "defendant seated silently",
+      "judge at bench"
+     ],
+     "event": "guilty plea",
+     "place": "boise_courtroom",
+     "era": "2025",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "Bryan Kohberger guilty plea 2025",
+      "Bryan Kohberger guilty plea",
+      "Bryan Kohberger courtroom plea hearing 2025",
+      "Bryan Kohberger boise_courtroom"
+     ]
+    },
+    {
+     "visual": "A signed plea agreement document showing legal terms and signatures, with appeal rights and sentencing terms visible as fine print.",
+     "kind": "document",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "signed plea agreement",
+      "court document signatures",
+      "legal fine print"
+     ],
+     "event": "waiver of appeal rights",
+     "place": "boise_courtroom",
+     "era": "2025",
+     "format_intent": "document",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "signed plea agreement boise_courtroom 2025",
+      "signed plea agreement 2025",
+      "signed plea agreement",
+      "court document signatures boise_courtroom 2025"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "For the families, the central questions remain unanswered: why those four students, why that house, and what really happened inside it that night.",
+   "meaning": "The victims' families are left with the emotional core of the case unresolved: why the victims were chosen, why the King Road house was targeted, and what occurred inside.",
+   "role": "reflection",
+   "subject_id": "king_road_house",
+   "entities": [
+    "King Road house",
+    "Bryan Kohberger"
+   ],
+   "entity_ids": [
+    "king_road_house",
+    "bryan_kohberger"
+   ],
+   "resolved": {
+    "those four students": [
+     "madison_mogen",
+     "kaylee_goncalves",
+     "xana_kernodle",
+     "ethan_chapin"
+    ],
+    "that house": "king_road_house",
+    "it": "king_road_house"
+   },
+   "events": [],
+   "time": "after July 2, 2025",
+   "place": "king_road_house",
+   "scenarios": [
+    {
+     "visual": "Grieving family members sitting together in silence, holding photographs of the four students.",
+     "kind": "person_activity",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "grieving family photographs",
+      "mourners holding photos",
+      "silent family vigil"
+     ],
+     "event": null,
+     "place": "king_road_house",
+     "era": "2025",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "grieving family photographs king_road_house 2025",
+      "grieving family photographs 2025",
+      "grieving family photographs",
+      "mourners holding photos king_road_house 2025"
+     ]
+    },
+    {
+     "visual": "The King Road house at night, seen from the street with its windows dark and an empty feeling around it.",
+     "kind": "place",
+     "subject_id": "king_road_house",
+     "specificity": "exact",
+     "search_terms": [
+      "King Road house exterior",
+      "Moscow Idaho rental house",
+      "dark house at night"
+     ],
+     "event": null,
+     "place": "king_road_house",
+     "era": "2022",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "King Road house 2022",
+      "King Road house",
+      "King Road house exterior 2022",
+      "King Road house king_road_house"
+     ]
+    },
+    {
+     "visual": "Four separate student portraits arranged side by side, suggesting the victims whose deaths remain unexplained.",
+     "kind": "document",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "student victim portraits",
+      "four photographs memorial",
+      "university students memorial"
+     ],
+     "event": null,
+     "place": "king_road_house",
+     "era": "2022",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "student victim portraits king_road_house 2022",
+      "student victim portraits 2022",
+      "student victim portraits",
+      "four photographs memorial king_road_house 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  },
+  {
+   "sentence": "A trace of DNA on a button snap, a white car on a neighbour's camera, and a phone that went silent are still the whole of the public answer.",
+   "meaning": "The public record explains the case only through fragmented forensic and digital clues, not through a full account of motive or the night itself.",
+   "role": "evidence",
+   "subject_id": "white_hyundai_elantra",
+   "entities": [
+    "white Hyundai Elantra"
+   ],
+   "entity_ids": [
+    "white_hyundai_elantra"
+   ],
+   "resolved": {
+    "a trace of DNA on a button snap": "tan_leather_knife_sheath",
+    "a white car": "white_hyundai_elantra"
+   },
+   "events": [
+    "DNA evidence collection",
+    "vehicle surveillance"
+   ],
+   "time": "after November 13, 2022",
+   "place": "moscow_idaho",
+   "scenarios": [
+    {
+     "visual": "A tan leather knife sheath lying on an evidence surface, with the button snap highlighted as the source of male DNA.",
+     "kind": "object",
+     "subject_id": "tan_leather_knife_sheath",
+     "specificity": "exact",
+     "search_terms": [
+      "tan leather knife sheath",
+      "button snap DNA evidence",
+      "Marine Corps insignia sheath"
+     ],
+     "event": "DNA evidence collection",
+     "place": "moscow_idaho",
+     "era": "2022",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "tan leather knife sheath DNA evidence collection 2022",
+      "tan leather knife sheath DNA evidence collection",
+      "tan leather knife sheath 2022",
+      "tan leather knife sheath moscow_idaho"
+     ]
+    },
+    {
+     "visual": "A white Hyundai Elantra captured by a home security camera driving past a dark residential street at night.",
+     "kind": "object",
+     "subject_id": "white_hyundai_elantra",
+     "specificity": "exact",
+     "search_terms": [
+      "white Hyundai Elantra",
+      "doorbell camera car footage",
+      "night surveillance vehicle"
+     ],
+     "event": "vehicle surveillance",
+     "place": "king_road_house",
+     "era": "2022",
+     "format_intent": "footage",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "white Hyundai Elantra vehicle surveillance 2022",
+      "white Hyundai Elantra vehicle surveillance",
+      "white Hyundai Elantra 2022",
+      "white Hyundai Elantra king_road_house"
+     ]
+    },
+    {
+     "visual": "A phone screen showing no calls, no messages, and a dead or silent notification panel in a dark room.",
+     "kind": "object",
+     "subject_id": null,
+     "specificity": "representative",
+     "search_terms": [
+      "silent phone screen",
+      "phone no notifications",
+      "dark smartphone closeup"
+     ],
+     "event": null,
+     "place": "moscow_idaho",
+     "era": "2022",
+     "format_intent": "photograph",
+     "format_intent_confidence": 0.8,
+     "queries": [
+      "silent phone screen moscow_idaho 2022",
+      "silent phone screen 2022",
+      "silent phone screen",
+      "phone no notifications moscow_idaho 2022"
+     ]
+    }
+   ],
+   "degraded": false
+  }
+ ]
+}

@@ -275,6 +275,15 @@ def _sentence_record(index, text, plan, bible):
     places = [e["canonical"] for e in named if e["type"] == "place"]
     if plan.get("place") and plan["place"] not in places:
         places.append(plan["place"])
+    # FP-3 (absorbed by Master Directive Phase 7 / Planner 2.0
+    # §5.5): the scenario-place fallback — a sentence whose own
+    # scenarios name a place records it as a location even when no
+    # place-typed entity was among its mentions, so scene
+    # derivation's place rule has a signal to fire on.
+    for scenario in plan.get("scenarios", []):
+        scenario_place = scenario.get("place")
+        if scenario_place and scenario_place not in places:
+            places.append(scenario_place)
 
     keywords, queries, kinds = [], [], []
     for scenario in plan.get("scenarios", []):
@@ -452,6 +461,11 @@ def analyze_script(script, project_id="", cache_path=None, llm="auto", genre_pac
         "scenes": scenes,
         "bible": serialized_bible,
         "mode": mode,
+        # Master Directive Phase 7 / P0: the planner self-audit
+        # block (mode + degraded_reason + quality), threaded from
+        # plan_script's stamp on the bible to the plan document,
+        # asset report and certificate.
+        "planner": serialized_bible.get("planner"),
         "project_id": project_id,
     }
 

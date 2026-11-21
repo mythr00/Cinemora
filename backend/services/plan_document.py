@@ -149,6 +149,11 @@ def plan_from_analysis(analysis, project_id):
         "version": 1,
         "project_id": str(project_id),
         "analysis_mode": analysis.get("mode"),
+        # Master Directive Phase 7 / P0 (DM-1): the planner
+        # self-audit block — which planner produced this plan, why
+        # it degraded when it did, and its measured quality. None
+        # for analyses that predate the block (never fabricated).
+        "planner": analysis.get("planner"),
         "bible": {
             "title": bible.get("title"),
             "story_type": bible.get("story_type"),
@@ -757,11 +762,19 @@ def _music_section_from_decisions(decisions):
     }
 
 
-def build_certificate(project, run, decisions, counts):
+def build_certificate(project, run, decisions, counts, planner=None):
     """Assemble the provenance certificate from ledger records.
     `decisions` are run_ledger.list_decisions rows; `counts` is
     run_ledger.decision_counts for the same run. Claims nothing the
-    records do not support."""
+    records do not support.
+
+    Master Directive Phase 7 / P0 (DM-1): when the caller supplies
+    the production's recorded planner block (from plan.json), the
+    run section states the analysis mode, planner version,
+    degraded_reason and the planner quality summary — a degraded
+    production's certificate says it was degraded, and why. Absent
+    the block (pre-Phase-7 productions), the fields are simply not
+    present; nothing is backfilled."""
     rows = []
     for decision in decisions:
         if decision.get("decision_type") == "music":
@@ -854,6 +867,18 @@ def build_certificate(project, run, decisions, counts):
             "script_hash": run.get("script_hash") if run else None,
             "created_at": run.get("created_at") if run else None,
             "finished_at": run.get("finished_at") if run else None,
+            # Phase 7 / P0 (DM-1): planner facts, present only when
+            # the production recorded a planner block.
+            **(
+                {
+                    "analysis_mode": planner.get("mode"),
+                    "planner_version": planner.get("planner_version"),
+                    "degraded_reason": planner.get("degraded_reason"),
+                    "planner_quality": planner.get("quality"),
+                }
+                if isinstance(planner, dict)
+                else {}
+            ),
         },
         "summary": counts,
         "assets": rows,
