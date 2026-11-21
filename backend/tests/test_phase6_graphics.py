@@ -385,6 +385,57 @@ def test_evidence_board_with_path_objects_in_scene_records(tmp_path):
     assert manifest["count"] == 1
 
 
+def test_engine_record_style_is_json_safe_with_theme_tokens(tmp_path):
+    """Regression (live failure, Petito production 2026-11-21, second
+    leak of the PosixPath class): in manifest mode a target's style
+    is the resolved theme TOKEN DICT, whose font/font_bold values
+    are Path objects. The engine record stamped it verbatim (and
+    the recipe embedded it), so motion_graphics.json died with
+    'Object of type PosixPath is not JSON serializable' even after
+    the evidence-board photo paths were stringified. Records must
+    carry the style with text font paths, and the manifest must be
+    written."""
+    import json
+
+    from PIL import Image
+
+    photo = tmp_path / "verified_photo.jpg"
+    Image.new("RGB", (640, 480), (120, 60, 30)).save(photo)
+    data = _data()
+    data["processed_scenes"] = [
+        {
+            "scene": {"scene_number": 2},
+            "images": [
+                {
+                    "verification": {"accepted": True},
+                    "file_path": str(photo),
+                    "title": "The tunnel entrance",
+                },
+            ],
+            "videos": [],
+        },
+    ]
+    entry = _entry(
+        "gm_0001", 2, 1, 4,
+        "Crowds gathered at the crossing in silence.",
+        templates=["evidence_board"], families=[],
+    )
+    out = tmp_path / "graphics"
+    assets = graphics_pipeline.build_motion_graphics_assets(
+        data, out, mode="balanced",
+        manifest=_manifest([entry], theme="editorial_dark"),
+    )
+    assert len(assets) == 1
+    style = assets[0]["style"]
+    assert isinstance(style, dict)
+    assert isinstance(style["font"], str)
+    assert isinstance(style["font_bold"], str)
+    recipe_style = assets[0]["graphic_recipe"]["style"]
+    assert isinstance(recipe_style["font"], str)
+    manifest = json.loads((out / "motion_graphics.json").read_text())
+    assert manifest["count"] == 1
+
+
 def test_evidence_board_without_verified_photos_assembles_nothing(tmp_path):
     entry = _entry(
         "gm_0001", 2, 1, 4,

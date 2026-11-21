@@ -1864,6 +1864,24 @@ def extract_comparison(text):
     return items
 
 
+def _record_style(style):
+    """The style value as it may ride on an asset record (and from
+    there into JSON artefacts): a style NAME passes through, but a
+    motion-engine token dict carries font Paths — records store
+    text. (Live failure, Petito production 2026-11-21: in manifest
+    mode _style_for_target returns the resolved theme token dict,
+    which was stamped verbatim onto engine records; the
+    motion_graphics.json write died on the font PosixPaths after
+    the evidence-board photo-path fix had cleared the first leak
+    of the same class.)"""
+    if isinstance(style, dict):
+        return {
+            key: (str(value) if isinstance(value, Path) else value)
+            for key, value in style.items()
+        }
+    return style
+
+
 def build_motion_graphics_assets(
     data,
     output_dir,
@@ -2094,7 +2112,7 @@ def build_motion_graphics_assets(
             "template": template,
             "template_version": None,
             "inputs": inputs,
-            "style": style,
+            "style": _record_style(style),
             "duration": duration,
             "purpose": purpose,
             "scene_number": scene_number,
@@ -2906,7 +2924,7 @@ def build_motion_graphics_assets(
         record["targeted"] = True
         record["family"] = "motion_engine"
         record["template"] = template_name
-        record["style"] = style
+        record["style"] = _record_style(style)
         record["engine_inputs"] = copy.deepcopy(engine_data)
         record["engine_metadata"] = metadata
         record["delivered"] = True
