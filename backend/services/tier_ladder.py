@@ -81,6 +81,22 @@ TIER_DOWNLOAD_ATTEMPTS = 2
 PRODUCTION_MAX_EXTRA_SEARCHES = 40
 PRODUCTION_MAX_EXTRA_DOWNLOADS = 20
 
+#: Breadth-first allocation (founder live test, Petito run
+#: 1b0a4508): the caps above used to be spent strictly in scene
+#: order, so early scenes' repeated full ladder walks drained the
+#: account and the final scene's sentences recorded
+#: budget_exhausted attempts with zero executed queries — the
+#: ladder never ran for them at all. The ledger now allocates the
+#: SAME caps breadth-first: every escalating need's FIRST executed
+#: query is a protected "breadth" spend (it may use the whole
+#: remaining account), and "deepening" spends (every later query
+#: or download for that need) are gated so a fairness reserve
+#: survives — one slot per registered need that has not had its
+#: first attempt yet, plus this lookahead for needs in scenes the
+#: stage has not reached. The caps themselves are unchanged.
+FAIRNESS_LOOKAHEAD_SEARCHES = 8
+FAIRNESS_LOOKAHEAD_DOWNLOADS = 4
+
 #: Soft wall-clock guard: once escalation has consumed more than
 #: this fraction of the asset stage's elapsed time, remaining needs
 #: stop escalating (recorded, never silent).
@@ -118,7 +134,13 @@ class EscalationLedger:
     The stage's start is the registry's creation time — the
     registry is reset when the asset stage begins — passed in as
     ``stage_started_at``; a ledger without one anchors to its own
-    creation and the guard then measures from there."""
+    creation and the guard then measures from there.
+
+    Allocation (breadth-first): the search/download accounts are
+    spent through allocate_searches / can_spend_download with a
+    need key, so the caps are shared fairly across every uncovered
+    need instead of draining in scene order — see
+    FAIRNESS_LOOKAHEAD_SEARCHES and allocate_searches."""
 
     def __init__(self, clock=None, stage_started_at=None):
         self._clock = clock or time.monotonic
@@ -131,6 +153,19 @@ class EscalationLedger:
         self._active_started = None
         self.searches = 0
         self.downloads = 0
+        # Breadth-first allocation state: per-need executed
+        # escalation searches / downloads, keyed by the need key
+        # the pipeline registers (see register_need). A need's
+        # first executed search is its breadth spend; every later
+        # one is deepening. Needs may be registered before they
+        # escalate (the scene driver registers a whole scene's
+        # needs up front) — a registered need with no executed
+        # search holds a fairness-reserve slot until it spends or
+        # is released.
+        self._need_searches = {}
+        self._need_downloads = {}
+        self.breadth_searches = 0
+        self.deepening_searches = 0
 
     # -- wall clock -------------------------------------------------
     def begin_escalation(self):
@@ -161,25 +196,131 @@ class EscalationLedger:
             return False
         return active > WALL_CLOCK_FRACTION * stage_elapsed
 
-    # -- searches ---------------------------------------------------
-    def can_spend_searches(self, count=1):
-        return (
-            self.searches + int(count) <= PRODUCTION_MAX_EXTRA_SEARCHES
-            and not self.wall_clock_exceeded()
+    # -- need registration (breadth-first allocation) ---------------
+    def register_need(self, key):
+        """Register an escalating need before it spends. Idempotent;
+        a ``None`` key is ignored (unattributed legacy spends keep
+        the pre-fairness account semantics). Registration alone
+        spends nothing — it reserves the need a fairness slot."""
+        if key is None:
+            return
+        if key not in self._need_searches:
+            self._need_searches[key] = 0
+        if key not in self._need_downloads:
+            self._need_downloads[key] = 0
+
+    def release_need(self, key):
+        """Drop a registered need that never spent (its beat
+        completed without escalating) from the reserve accounting.
+        A need that HAS spent keeps its record — its breadth spend
+        is historical fact, not a reservable slot."""
+        if key is None:
+            return
+        if self._need_searches.get(key) == 0:
+            self._need_searches.pop(key, None)
+        if self._need_downloads.get(key) == 0:
+            self._need_downloads.pop(key, None)
+
+    def needs_registered(self):
+        return len(self._need_searches)
+
+    def needs_with_first_attempt(self):
+        return sum(
+            1 for spent in self._need_searches.values() if spent > 0
         )
 
-    def spend_searches(self, count=1):
-        self.searches += int(count)
+    def fairness_reserve(self):
+        """Searches that must survive deepening spends: one per
+        registered need still waiting for its first attempt, plus
+        the lookahead for needs in scenes not yet reached."""
+        unserved = sum(
+            1 for spent in self._need_searches.values() if spent <= 0
+        )
+        return unserved + FAIRNESS_LOOKAHEAD_SEARCHES
+
+    # -- searches ---------------------------------------------------
+    def allocate_searches(self, count=1, need_key=None):
+        """How many of ``count`` requested escalation searches may
+        execute NOW for this need, under breadth-first allocation.
+        Does not spend — pair with spend_searches.
+
+        - The wall-clock guard and the production cap bind first.
+        - A need that has never executed a search gets its first
+          one protected (breadth): it may use the whole remaining
+          account, so a late scene's first attempt is never refused
+          while any budget remains.
+        - Every further search is deepening: it may execute only
+          while the fairness reserve survives the spend.
+        - Without a need key the historical semantics hold (the
+          whole remaining account, nothing reserved)."""
+        count = int(count)
+        if count <= 0 or self.wall_clock_exceeded():
+            return 0
+        remaining = PRODUCTION_MAX_EXTRA_SEARCHES - self.searches
+        if remaining <= 0:
+            return 0
+        allowed = min(count, remaining)
+        if need_key is None:
+            return allowed
+        self.register_need(need_key)
+        if self._need_searches.get(need_key, 0) <= 0:
+            # Breadth: one protected search, the rest deepening.
+            deepening_room = max(
+                PRODUCTION_MAX_EXTRA_SEARCHES
+                - self.fairness_reserve()
+                - self.searches
+                - 1,
+                0,
+            )
+            return 1 + min(allowed - 1, deepening_room)
+        deepening_room = max(
+            PRODUCTION_MAX_EXTRA_SEARCHES
+            - self.fairness_reserve()
+            - self.searches,
+            0,
+        )
+        return min(allowed, deepening_room)
+
+    def can_spend_searches(self, count=1, need_key=None):
+        return self.allocate_searches(count, need_key=need_key) >= int(count)
+
+    def spend_searches(self, count=1, need_key=None):
+        count = int(count)
+        self.searches += count
+        if need_key is None or count <= 0:
+            return
+        self.register_need(need_key)
+        prior = self._need_searches.get(need_key, 0)
+        breadth = 1 if prior <= 0 else 0
+        self.breadth_searches += breadth
+        self.deepening_searches += count - breadth
+        self._need_searches[need_key] = prior + count
 
     # -- downloads --------------------------------------------------
-    def can_spend_download(self):
+    def can_spend_download(self, need_key=None):
+        if self.wall_clock_exceeded():
+            return False
+        if self.downloads >= PRODUCTION_MAX_EXTRA_DOWNLOADS:
+            return False
+        if need_key is None:
+            return True
+        self.register_need(need_key)
+        if self._need_downloads.get(need_key, 0) <= 0:
+            # A need's first escalation download is breadth too.
+            return True
         return (
-            self.downloads < PRODUCTION_MAX_EXTRA_DOWNLOADS
-            and not self.wall_clock_exceeded()
+            self.downloads + 1 + FAIRNESS_LOOKAHEAD_DOWNLOADS
+            <= PRODUCTION_MAX_EXTRA_DOWNLOADS
         )
 
-    def spend_download(self):
+    def spend_download(self, need_key=None):
         self.downloads += 1
+        if need_key is None:
+            return
+        self.register_need(need_key)
+        self._need_downloads[need_key] = (
+            self._need_downloads.get(need_key, 0) + 1
+        )
 
     def summary(self):
         return {
@@ -187,6 +328,14 @@ class EscalationLedger:
             "extra_downloads": self.downloads,
             "search_budget": PRODUCTION_MAX_EXTRA_SEARCHES,
             "download_budget": PRODUCTION_MAX_EXTRA_DOWNLOADS,
+            # Breadth-first allocation accounting (additive): how
+            # the search account split between protected first
+            # attempts and deepening, and the reserve still held.
+            "breadth_searches": self.breadth_searches,
+            "deepening_searches": self.deepening_searches,
+            "needs_registered": self.needs_registered(),
+            "needs_with_first_attempt": self.needs_with_first_attempt(),
+            "fairness_reserve_searches": self.fairness_reserve(),
         }
 
 

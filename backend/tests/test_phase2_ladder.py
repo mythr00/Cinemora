@@ -543,3 +543,263 @@ def test_unsearched_hook_uncovered_joins_missing_visuals(
         and attempt.get("entry") == "unsearched_role"
         for attempt in report["tier_attempts"]
     )
+
+
+# ---------------------------------------------------------------------------
+# Breadth-first budget allocation (founder live test, Petito run
+# 1b0a4508): the production search account is shared fairly across
+# ALL uncovered needs — every need's first query is protected,
+# deepening stops at the fairness reserve — instead of draining in
+# scene order and leaving the final scene's sentences with
+# budget_exhausted attempts that never executed a query.
+# ---------------------------------------------------------------------------
+
+def _starved_beat(number):
+    """The Gilgo sentence-9 shape, renumbered: a starved beat whose
+    direct pool is junk, so its coverage pass must escalate."""
+    beat, scenario, need = _s9_fixture()
+    beat = {
+        **beat,
+        "beat_id": f"beat_f{number}",
+        "sentence_numbers": [number],
+        "sentences": [
+            {**beat["sentences"][0], "sentence_number": number}
+        ],
+    }
+    scenario = {**scenario, "sentence_number": number}
+    need = {**need, "beat_id": f"beat_f{number}"}
+    return beat, scenario, need
+
+
+def _executed_queries(scene_stats):
+    attempts = scene_stats["coverage_passes"][0]["tier_attempts"]
+    return sum(len(a["queries"]) for a in attempts), attempts
+
+
+def test_ledger_breadth_first_allocation_units():
+    """The allocation rule itself: a first query is protected to
+    the last search in the account; deepening yields to the
+    fairness reserve; the accounting splits breadth/deepening."""
+    ledger = tier_ladder.EscalationLedger()
+    ledger.spend_searches(tier_ladder.PRODUCTION_MAX_EXTRA_SEARCHES - 2)
+    ledger.register_need("need_a")
+    # Need A's first query runs; its deepening does not.
+    assert ledger.allocate_searches(3, need_key="need_a") == 1
+    ledger.spend_searches(1, need_key="need_a")
+    assert ledger.allocate_searches(3, need_key="need_a") == 0
+    # Need B, registering later, still gets its first query.
+    ledger.register_need("need_b")
+    assert ledger.allocate_searches(3, need_key="need_b") == 1
+    ledger.spend_searches(1, need_key="need_b")
+    # The account is now exactly spent; a third need gets nothing.
+    ledger.register_need("need_c")
+    assert ledger.allocate_searches(1, need_key="need_c") == 0
+    summary = ledger.summary()
+    assert summary["extra_searches"] == (
+        tier_ladder.PRODUCTION_MAX_EXTRA_SEARCHES
+    )
+    assert summary["breadth_searches"] == 2
+    assert summary["deepening_searches"] == 0
+    assert summary["needs_with_first_attempt"] == 2
+
+
+def test_tight_budget_gives_every_need_a_first_attempt(
+    monkeypatch, tmp_path
+):
+    """Six starved beats share one production ledger with only six
+    searches left: EACH executes at least one real escalation
+    query (the first beat exactly one — its deepening is refused),
+    and a seventh beat, arriving after the account is spent,
+    records the honest exhaustion stamps with zero queries."""
+    registry = VisualRegistry()
+    ledger = tier_ladder.ledger_for(registry)
+    ledger.spend_searches(tier_ladder.PRODUCTION_MAX_EXTRA_SEARCHES - 6)
+
+    def search(scenario_, need_):
+        return ([_junk()], [], [])
+
+    executed = []
+    last_stats = None
+    for number in range(21, 28):
+        beat, scenario, need = _starved_beat(number)
+        _asset, scene_stats, _v, _i, _calls = _run_pass(
+            monkeypatch, tmp_path,
+            search=search, beat=beat, shot_need=need,
+            scenario=scenario, registry=registry, bible=_bible(),
+        )
+        count, _attempts = _executed_queries(scene_stats)
+        executed.append(count)
+        last_stats = scene_stats
+
+    # Beats 1-6 each ran at least one query; the FIRST beat ran
+    # exactly one (breadth protected, deepening reserved away).
+    assert executed[:6] == [1, 1, 1, 1, 1, 1]
+    # Beat 7 arrived after the account was spent: nothing executed,
+    # and the refusal is recorded, never silent.
+    assert executed[6] == 0
+    attempts = last_stats["coverage_passes"][0]["tier_attempts"]
+    assert attempts
+    assert any(
+        a["outcome"] == "budget_exhausted"
+        and a["stop_reason"] == "production_search_budget"
+        and a["queries"] == []
+        for a in attempts
+    )
+    assert ledger.searches == tier_ladder.PRODUCTION_MAX_EXTRA_SEARCHES
+    assert ledger.breadth_searches == 6
+    assert ledger.deepening_searches == 0
+    assert ledger.needs_with_first_attempt() == 6
+
+
+def test_ample_budget_walks_unchanged_for_every_need(
+    monkeypatch, tmp_path
+):
+    """With budget to spare, fairness changes nothing: two starved
+    beats in sequence each walk T2 -> T3 with their full per-tier
+    query budgets and cover at T3, exactly as before."""
+    registry = VisualRegistry()
+    good = {
+        "url": "https://media.example.org/reviewing-records",
+        "title": "Investigators reviewing records at a desk",
+        "snippet": "reviewing records investigators office",
+        "provider": "youtube",
+    }
+
+    def search(scenario_, need_):
+        if (need_ or {}).get("tier") == "activity_broll":
+            return ([good], [], [])
+        return ([_junk()], [], [])
+
+    downloader, _a = _downloader(succeed_markers=("reviewing-records",))
+    recorded = []
+    for number in (31, 32):
+        beat, scenario, need = _starved_beat(number)
+        asset, scene_stats, _v, _i, _calls = _run_pass(
+            monkeypatch, tmp_path,
+            search=search, beat=beat, shot_need=need,
+            scenario=scenario, registry=registry,
+            downloader=downloader, bible=_bible(),
+        )
+        assert asset is not None
+        assert asset["tier"] == "activity_broll"
+        attempts = scene_stats["coverage_passes"][0]["tier_attempts"]
+        assert [a["tier"] for a in attempts] == [
+            "related", "activity_broll",
+        ]
+        assert attempts[0]["outcome"] == "pool_exhausted"
+        assert attempts[1]["outcome"] == "verified"
+        assert 1 <= len(attempts[0]["queries"]) <= 2
+        assert 1 <= len(attempts[1]["queries"]) <= 3
+        recorded.append(
+            sum(len(a["queries"]) for a in attempts)
+        )
+    # The second need's walk was NOT throttled by the first's.
+    assert recorded[0] == recorded[1]
+    ledger = tier_ladder.ledger_for(registry)
+    assert ledger.searches == sum(recorded)
+    assert ledger.downloads == 2
+    assert ledger.breadth_searches == 2
+    assert ledger.deepening_searches == sum(recorded) - 2
+
+
+def test_unsearched_entries_share_the_fairness(monkeypatch, tmp_path):
+    """D-B3 entries draw on the same fair account: with two
+    searches left, two unsearched beats each execute their entry
+    query; a third records budget_exhausted with no queries."""
+    registry = VisualRegistry()
+    ledger = tier_ladder.ledger_for(registry)
+    ledger.spend_searches(tier_ladder.PRODUCTION_MAX_EXTRA_SEARCHES - 2)
+    monkeypatch.setattr(
+        mp, "_uve_scenario_search",
+        lambda scenario, cache, pid, need: ([_junk()], [], []),
+    )
+
+    def _entry(number):
+        sentence = {
+            "sentence_number": number,
+            "text": GILGO_S9, "role": "reflection",
+            "fallback_concepts": S9_CONCEPTS,
+            "concepts_source": "llm_plan",
+        }
+        beat = {
+            "beat_id": f"beat_u{number}", "searchable": False,
+            "role": "reflection", "sentence_numbers": [number],
+            "sentences": [sentence], "place": None,
+            "text": GILGO_S9, "shot_needs": [],
+        }
+        scene_stats = {
+            "candidates_considered": 0, "candidates_rejected": 0,
+            "downloads_failed": 0, "providers": {}, "kinds": {},
+        }
+        attempts = mp._uve_unsearched_ladder_entry(
+            beat,
+            bible=_bible(), registry=registry, search_cache={},
+            project_id="t", used_keys=set(), scene_dir=tmp_path,
+            scene_stats=scene_stats, beat_videos=[], beat_images=[],
+            review_records=[],
+        )
+        return attempts[0]
+
+    first = _entry(41)
+    assert len(first["queries"]) == 1
+    assert first["entry"] == "unsearched_role"
+    second = _entry(42)
+    assert len(second["queries"]) == 1
+    third = _entry(43)
+    assert third["queries"] == []
+    assert third["outcome"] == "budget_exhausted"
+    assert third["stop_reason"] == "production_search_budget"
+    assert ledger.breadth_searches == 2
+    assert ledger.searches == tier_ladder.PRODUCTION_MAX_EXTRA_SEARCHES
+
+
+def test_scene_registration_protects_later_beats_in_scene(
+    monkeypatch, tmp_path
+):
+    """Scene level, the production shape: the scene driver
+    registers BOTH starved beats' needs before either spends, so
+    with three searches left in the production account the first
+    beat's escalation (and its recovery rounds) cannot starve the
+    second beat — each beat's missing record shows at least one
+    executed ladder query."""
+    from services.visual_registry import get_registry
+
+    project_id = f"p2-fair-{uuid.uuid4()}"
+    beats = []
+    sentences = []
+    for number in (51, 52):
+        beat, scenario, need = _starved_beat(number)
+        sentence = {
+            **beat["sentences"][0], "scenarios": [scenario],
+        }
+        beats.append({
+            **beat, "sentences": [sentence], "shot_needs": [need],
+        })
+        sentences.append(sentence)
+
+    monkeypatch.setattr(mp, "build_story_beats", lambda s, b: beats)
+    monkeypatch.setattr(mp, "_load_case_bible", lambda s, p: _bible())
+    monkeypatch.setattr(
+        mp, "_uve_scenario_search",
+        lambda scenario, cache, pid, need: ([_junk()], [], []),
+    )
+    ledger = tier_ladder.ledger_for(get_registry(project_id))
+    ledger.spend_searches(tier_ladder.PRODUCTION_MAX_EXTRA_SEARCHES - 3)
+
+    scene = {
+        "scene_number": 1, "project_id": project_id,
+        "sentences": sentences,
+    }
+    result = mp._uve_process_scene_media(scene, str(tmp_path))
+    missing = result["asset_stats"]["missing_visuals"]
+    assert {m["sentence_number"] for m in missing} == {51, 52}
+    for entry in missing:
+        executed = sum(
+            len(a["queries"]) for a in entry["tier_attempts"]
+        )
+        assert executed >= 1, (
+            f"sentence {entry['sentence_number']} starved: "
+            f"{entry['tier_attempts']}"
+        )
+    assert ledger.breadth_searches == 2
+    assert ledger.deepening_searches == 0

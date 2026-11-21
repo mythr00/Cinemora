@@ -6835,6 +6835,19 @@ def _uve_search_and_pick(
     # wall-clock accounts. Every tier's outcome is recorded in the
     # returned attempts list — budget exhaustion is data, never a
     # silent stop.
+    # Breadth-first allocation (tier_ladder): this pass's need key.
+    # Stable across the beat's primary pass and its coverage
+    # recovery rounds (same beat dict, same scenario index, same
+    # first sentence), unique across scenes (sentence numbers are
+    # production-unique), and identical to the key the unsearched
+    # entry registers for its own beat — so a beat's T3 entry and
+    # its T4 continuation inside this pass share one account.
+    _escalation_need_key = (
+        (shot_need or {}).get("beat_id") or (beat or {}).get("beat_id"),
+        scenario_index,
+        ((beat or {}).get("sentence_numbers") or [None])[0],
+    )
+
     def _escalate_pool(_need):
         _attempts = []
         _pool_items = []
@@ -6842,6 +6855,7 @@ def _uve_search_and_pick(
         if not isinstance(_need, dict) or not _need:
             return _pool_items, _attempts, _scored_by_kind
         _ledger = tier_ladder.ledger_for(registry)
+        _ledger.register_need(_escalation_need_key)
         _ledger.begin_escalation()
         _pack_id, _vocabulary = tier_ladder.broll_vocabulary_for(bible)
         _owner_sentences = (beat or {}).get("sentences") or []
@@ -6930,7 +6944,16 @@ def _uve_search_and_pick(
                 _queries = list(_dneed.get("queries") or [])[:_remaining]
                 if not _queries:
                     continue
-                if not _ledger.can_spend_searches(len(_queries)):
+                # Breadth-first allocation: the ledger may grant
+                # fewer searches than the batch asks for — a need's
+                # protected first query always runs while budget
+                # remains, but deepening stops at the fairness
+                # reserve. Only the granted queries execute, and
+                # only they are recorded on the attempt.
+                _allowed = _ledger.allocate_searches(
+                    len(_queries), need_key=_escalation_need_key,
+                )
+                if _allowed <= 0:
                     _attempt["outcome"] = "budget_exhausted"
                     _attempt["stop_reason"] = (
                         tier_ladder.STOP_WALL_CLOCK
@@ -6938,9 +6961,12 @@ def _uve_search_and_pick(
                         else tier_ladder.STOP_PRODUCTION_SEARCH_BUDGET
                     )
                     break
+                _queries = _queries[:_allowed]
                 _dneed["queries"] = _queries
                 _dscenario["queries"] = _queries
-                _ledger.spend_searches(len(_queries))
+                _ledger.spend_searches(
+                    len(_queries), need_key=_escalation_need_key,
+                )
                 _attempt["queries"].extend(_queries)
                 _raw_v, _raw_w, _raw_i = _uve_scenario_search(
                     _dscenario, search_cache, project_id, _dneed,
@@ -7059,7 +7085,9 @@ def _uve_search_and_pick(
                     >= tier_ladder.TIER_DOWNLOAD_ATTEMPTS
                 ):
                     continue
-                if not _ledger.can_spend_download():
+                if not _ledger.can_spend_download(
+                    need_key=_escalation_need_key
+                ):
                     continue
             _block = _uve_selection_block_reason(_reserve, registry)
             if _block is not None:
@@ -7083,7 +7111,7 @@ def _uve_search_and_pick(
                 _tier_attempts[_esc_tier] = (
                     _tier_attempts.get(_esc_tier, 0) + 1
                 )
-                _ledger.spend_download()
+                _ledger.spend_download(need_key=_escalation_need_key)
             _fetch_item = dict(_reserve)
             if shot_need:
                 _fetch_item["shot_need"] = dict(shot_need)
@@ -7970,14 +7998,23 @@ def _uve_unsearched_ladder_entry(
     scenario = (
         _beat_scenarios(synthetic_beat) or plan["scenarios"]
     )[0]
-    # D-B2: the entry tier's query budget, and the production
-    # ledger's remaining search account, both bind the entry.
-    budget = tier_ladder.TIER_QUERY_BUDGETS.get(entry_tier, 0)
-    spendable = max(
-        0,
-        tier_ladder.PRODUCTION_MAX_EXTRA_SEARCHES - ledger.searches,
+    # Breadth-first allocation: the entry's need key — the same
+    # key this beat's own pick pass uses (scenario_index 1), so
+    # the entry and any T4 continuation inside the pass share one
+    # account, and the entry's first query is protected like every
+    # other need's.
+    _entry_key = (
+        beat.get("beat_id"),
+        need.get("shot_index") or 1,
+        (beat.get("sentence_numbers") or [None])[0],
     )
-    queries = list(need.get("queries") or [])[: min(budget, spendable)]
+    ledger.register_need(_entry_key)
+    # D-B2: the entry tier's query budget, and the production
+    # ledger's remaining search account, both bind the entry —
+    # allocated breadth-first, so the entry's deepening cannot
+    # drain the fairness reserve held for later scenes.
+    budget = tier_ladder.TIER_QUERY_BUDGETS.get(entry_tier, 0)
+    queries = list(need.get("queries") or [])[:budget]
     if not queries:
         attempt["outcome"] = "budget_exhausted"
         attempt["stop_reason"] = (
@@ -7994,10 +8031,16 @@ def _uve_unsearched_ladder_entry(
             else tier_ladder.STOP_PRODUCTION_DOWNLOAD_BUDGET
         )
         return [attempt]
+    _allowed = ledger.allocate_searches(len(queries), need_key=_entry_key)
+    queries = queries[:_allowed]
+    if not queries:
+        attempt["outcome"] = "budget_exhausted"
+        attempt["stop_reason"] = tier_ladder.STOP_PRODUCTION_SEARCH_BUDGET
+        return [attempt]
     need["queries"] = queries
     scenario["queries"] = queries
     attempt["queries"] = list(queries)
-    ledger.spend_searches(len(queries))
+    ledger.spend_searches(len(queries), need_key=_entry_key)
     failures_before = len(scene_stats.get("download_failures") or [])
     assets_before = len(beat_videos) + len(beat_images)
     ledger.begin_escalation()
@@ -8020,7 +8063,7 @@ def _uve_unsearched_ladder_entry(
         len(scene_stats.get("download_failures") or []) - failures_before
     )
     for _ in range(gained + failed):
-        ledger.spend_download()
+        ledger.spend_download(need_key=_entry_key)
     attempt["accepted"] = gained
     attempt["outcome"] = "covered" if gained else "pool_exhausted"
     return [attempt]
@@ -8048,6 +8091,30 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
     bible = _load_case_bible(scene, project_dir)
     beats = build_story_beats(raw_sentences, bible)
     write_beats_debug(beats, project_dir, scene_number=scene_number)
+    # Breadth-first allocation (tier_ladder): register this scene's
+    # needs with the production ledger BEFORE any beat spends, so
+    # an early beat's deepening cannot consume the fairness slots
+    # held for this scene's later beats. Registration spends
+    # nothing; a beat that completes without escalating releases
+    # its unspent keys at the end of its turn (below), so the
+    # reserve never outlives the scene. Keys match the ones the
+    # pick pass and the unsearched entry compute for the same
+    # needs (beat id, shot index, first sentence number).
+    _scene_ledger = tier_ladder.ledger_for(registry)
+
+    def _beat_need_keys(_b):
+        _first = ((_b or {}).get("sentence_numbers") or [None])[0]
+        if (_b or {}).get("searchable", True):
+            _keys = [
+                (_b.get("beat_id"), _n.get("shot_index") or 1, _first)
+                for _n in _b.get("shot_needs") or []
+            ]
+            return _keys or [(_b.get("beat_id"), 1, _first)]
+        return [(_b.get("beat_id"), 1, _first)]
+
+    for _b in beats:
+        for _key in _beat_need_keys(_b):
+            _scene_ledger.register_need(_key)
     print(f"BEATS: {len(beats)}")
 
     search_cache, used_keys = {}, set()
@@ -8346,6 +8413,13 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                 if isinstance(sentence.get("visual_intents"), dict):
                     result["visual_intents"] = sentence["visual_intents"]
             results_by_number[sentence_number] = result
+
+        # Breadth-first allocation: this beat's turn is over — any
+        # of its registered needs that never escalated release
+        # their fairness slots (release_need only drops unspent
+        # keys; a need that spent keeps its record).
+        for _key in _beat_need_keys(beat):
+            _scene_ledger.release_need(_key)
 
     for sentence_index, sentence in enumerate(raw_sentences, start=1):
         sentence_number = get_sentence_number(sentence, sentence_index)
