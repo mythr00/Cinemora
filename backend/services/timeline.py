@@ -30,6 +30,11 @@ except ImportError:  # flat-layout fallback
     import segment_index
 
 try:
+    from services import visual_identity
+except ImportError:  # flat-layout fallback
+    import visual_identity
+
+try:
     from services import rejection_diagnostics
 except ImportError:  # flat-layout fallback
     import rejection_diagnostics
@@ -73,7 +78,8 @@ TIMELINE_MAX_SEGMENT_USES = TIMELINE_MAX_FILE_USES
 
 def _pick_rotation_visual(visuals, usage_counts, usage_durations,
                           previous_path, item_duration, scene_duration,
-                          spanning_keys=frozenset()):
+                          spanning_keys=frozenset(), key_of=None,
+                          shown_keys=None):
     """Fair, capped rotation draw. Returns the chosen visual or None
     when the eligible pool is exhausted under the use cap (the caller
     then leaves the sentence uncovered).
@@ -85,7 +91,25 @@ def _pick_rotation_visual(visuals, usage_counts, usage_durations,
     governs cross-beat reuse, not a backdrop's service inside the
     beat it was verified for. The preference tiers (consecutive,
     runtime share) still apply to it; only the cap is lifted, and
-    only within the owning beat."""
+    only within the owning beat.
+
+    ``key_of`` (Phase 5): the scene build's identity resolver —
+    services.visual_identity groups (ladder + content-hash
+    unification) — so rotation accounting deals DISTINCT visuals,
+    never two files of one visual as if they were two cards. The
+    default remains the per-record ladder key.
+
+    ``shown_keys`` (Phase 5 / AM-003): identity keys already ON
+    SCREEN in this scene by any assignment kind. The charged
+    counts alone cannot express the variety preference — a
+    background beat's spanning uses are deliberately uncharged,
+    so its backdrop would tie at zero with a never-shown distinct
+    asset forever and win on pool order, stranding the very
+    assets the variety pass fetched. Among count-tied candidates
+    a never-shown visual therefore sorts first: rotation of an
+    already-used asset yields to a distinct unused one, exactly
+    AM-003's preference. Caps, tiers and spanning are untouched."""
+    _key = key_of or _visual_use_key
     pool = [
         visual for visual in visuals
         if not visual.get("motion_graphic") and not visual.get("generated")
@@ -94,19 +118,19 @@ def _pick_rotation_visual(visuals, usage_counts, usage_durations,
         return None
 
     def count_of(visual):
-        return usage_counts.get(_visual_use_key(visual), 0)
+        return usage_counts.get(_key(visual), 0)
 
     def duration_of(visual):
-        return usage_durations.get(_visual_use_key(visual), 0.0)
+        return usage_durations.get(_key(visual), 0.0)
 
     def under_cap(visual):
         return (
             count_of(visual) < TIMELINE_MAX_SEGMENT_USES
-            or _visual_use_key(visual) in spanning_keys
+            or _key(visual) in spanning_keys
         )
 
     def not_consecutive(visual):
-        return _visual_use_key(visual) != previous_path
+        return _key(visual) != previous_path
 
     def under_share(visual):
         if not scene_duration or scene_duration <= 0:
@@ -114,12 +138,19 @@ def _pick_rotation_visual(visuals, usage_counts, usage_durations,
         projected = duration_of(visual) + max(float(item_duration or 0.0), 0.0)
         return projected / scene_duration <= TIMELINE_MAX_FILE_RUNTIME_SHARE
 
-    # Least-used first (count, then accumulated duration, then pool
-    # order for determinism): stranded eligible assets are drawn
-    # before any file is repeated (VV-07).
+    def shown_of(visual):
+        return 1 if (shown_keys and _key(visual) in shown_keys) else 0
+
+    # Least-used first (count, then never-shown before shown, then
+    # accumulated duration, then pool order for determinism):
+    # stranded eligible assets are drawn before any file is
+    # repeated (VV-07; the shown tiebreak is Phase 5 / AM-003).
     ordered = sorted(
         enumerate(pool),
-        key=lambda pair: (count_of(pair[1]), duration_of(pair[1]), pair[0]),
+        key=lambda pair: (
+            count_of(pair[1]), shown_of(pair[1]),
+            duration_of(pair[1]), pair[0],
+        ),
     )
     tiers = [
         lambda v: under_cap(v) and not_consecutive(v) and under_share(v),
@@ -159,18 +190,19 @@ def _visual_use_key(visual):
       segment of any source);
     - anything without source identity falls back to its file path,
       the pre-Stage-7 behaviour for identity-less records.
-    """
+
+    Phase 5 / AM-017: this ladder is now DEFINED ONCE in
+    services.visual_identity (the platform's single distinct-visual
+    definition) and delegated to here — the semantics above are
+    that module's ladder, unchanged. The scene build additionally
+    resolves identity GROUPS through the same module, so two files
+    carrying identical bytes under different canonical identities
+    are dealt as the one visual they are."""
     if not isinstance(visual, dict):
         return ""
-    path = get_visual_path(visual)
-    if visual.get("motion_graphic") or visual.get("generated"):
-        return f"file:{path}"
-    segment_id = segment_index.segment_id_for_asset(visual)
-    if segment_id:
-        if get_visual_type(visual) == "video":
-            return f"segment:{segment_id}"
-        return f"asset:{segment_id}"
-    return f"file:{path}"
+    return visual_identity.base_identity_key(
+        visual, fallback=f"file:{get_visual_path(visual)}"
+    )
 
 
 def _visual_tier(visual, assignment=None):
@@ -666,6 +698,47 @@ def build_scene_timeline(
         }
 
     # --------------------------------------------------------
+    # PHASE 5: IDENTITY GROUPS FOR THIS SCENE'S DEALING
+    # --------------------------------------------------------
+    # Distinctness in this build is resolved ONCE through
+    # services.visual_identity: the canonical/segment ladder plus
+    # content-hash unification, so the same source image downloaded
+    # twice under different files (film 1's duplicated photo) is
+    # dealt and cap-accounted as the ONE visual it is — never as
+    # two cards in the hand. Resolution covers the aggregates and
+    # every assigned candidate; copies of one asset resolve to the
+    # same group via their shared ladder key.
+    _identity_records = list(visuals)
+    _identity_seen = {id(_record) for _record in _identity_records}
+    for _candidate in assigned_by_position.values():
+        if id(_candidate) not in _identity_seen:
+            _identity_seen.add(id(_candidate))
+            _identity_records.append(_candidate)
+    _identity_groups = visual_identity.resolve_identity_groups(
+        _identity_records
+    )
+    _group_by_object = {
+        id(_record): _group
+        for _record, _group in zip(_identity_records, _identity_groups)
+    }
+    _group_by_base = {}
+    for _record, _group in zip(_identity_records, _identity_groups):
+        _group_by_base.setdefault(
+            visual_identity.base_identity_key(
+                _record, fallback=f"file:{get_visual_path(_record)}"
+            ),
+            _group,
+        )
+
+    def _use_key(visual):
+        if id(visual) in _group_by_object:
+            return _group_by_object[id(visual)]
+        _base = visual_identity.base_identity_key(
+            visual, fallback=f"file:{get_visual_path(visual)}"
+        )
+        return _group_by_base.get(_base, _base)
+
+    # --------------------------------------------------------
     # SENTENCE-LEVEL WINDOWS
     # --------------------------------------------------------
 
@@ -692,6 +765,17 @@ def build_scene_timeline(
         usage_durations = {}
         previous_path = ""
         uncovered_sentence_indexes = []
+
+        # Phase 5 / repetition cheap win 1 (video continuation):
+        # the source windows this build has already shown, per
+        # identity group — a reused video segment continues into
+        # its unused seconds instead of restarting at its head.
+        shown_windows = {}
+
+        # Phase 5 / AM-003: every identity this build has put on
+        # screen so far (any assignment kind, charged or spanning)
+        # — the rotation draw's variety tiebreak.
+        shown_keys = set()
 
         # Coverage fix (founder live test 2, part b): own-beat
         # spanning. A background beat's accepted asset is the beat's
@@ -734,7 +818,7 @@ def build_scene_timeline(
             if not _beat_id or _beat_roles.get(_beat_id) != "background":
                 return frozenset()
             return frozenset(
-                _visual_use_key(_visual)
+                _use_key(_visual)
                 for _visual in visuals
                 if _visual_beats.get(get_visual_path(_visual)) == _beat_id
             )
@@ -822,6 +906,8 @@ def build_scene_timeline(
                     visuals, usage_counts, usage_durations,
                     previous_path, sentence_duration, duration,
                     spanning_keys=spanning_keys,
+                    key_of=_use_key,
+                    shown_keys=shown_keys,
                 )
                 if visual is None:
                     uncovered_sentence_indexes.append(
@@ -847,7 +933,8 @@ def build_scene_timeline(
             # it would consume is the cross-beat allowance, and this
             # use is not cross-beat. previous_path still tracks it,
             # so the consecutive-use preference keeps working.
-            use_key = _visual_use_key(visual)
+            use_key = _use_key(visual)
+            shown_keys.add(use_key)
             if use_key not in spanning_keys:
                 usage_counts[use_key] = usage_counts.get(use_key, 0) + 1
                 usage_durations[use_key] = (
@@ -1001,6 +1088,12 @@ def build_scene_timeline(
             # the accounting falls back exactly as before.
             if visual.get("segment_id"):
                 item["segment_id"] = visual["segment_id"]
+            # Phase 5: the downloaded bytes' hash rides onto the
+            # item (when the pipeline stamped it at download), so
+            # measurement can unify identical bytes under different
+            # canonical identities without re-reading files.
+            if visual.get("content_hash"):
+                item["content_hash"] = visual["content_hash"]
             _item_verdict = visual.get("verification")
             if isinstance(_item_verdict, dict) and _item_verdict.get(
                 "category"
@@ -1051,7 +1144,76 @@ def build_scene_timeline(
                 # Stage 3F: segment offset of the visual actually
                 # chosen (sentence / rotation / motion-graphic paths
                 # all arrive here with `visual` already resolved).
-                item["clip_start"] = get_clip_start(visual)
+                #
+                # Phase 5 / repetition cheap win 1 — VIDEO
+                # CONTINUATION: when this segment has already been
+                # shown in this scene, the item continues into the
+                # segment's UNUSED seconds (the offset advances past
+                # the previously shown window) instead of restarting
+                # at its head — the frame audit found Apollo's Moon
+                # video restarting at 0.0 three times while its last
+                # 2.3s never appeared. The item records the ACTUAL
+                # source window shown (clip_start / clip_end): when
+                # the remaining tail is shorter than the item's
+                # window, clip_end stops at the segment's real end
+                # (the renderer loops the tail, and the record says
+                # so); when the segment is fully consumed, the item
+                # restarts at the segment head and the recorded
+                # window shows exactly that. The use CAP is untouched
+                # — continuation changes WHICH seconds show, never
+                # how many uses are allowed. Generated graphics are
+                # exempt: a designed graphic restarts by definition.
+                _base_start = get_clip_start(visual)
+                _segment_length = None
+                for _length_field in ("clip_duration", "duration_seconds"):
+                    _length_value = visual.get(_length_field)
+                    if isinstance(_length_value, (int, float)) and not isinstance(
+                        _length_value, bool
+                    ):
+                        _segment_length = float(_length_value)
+                        break
+                _segment_end = (
+                    _base_start + _segment_length
+                    if _segment_length is not None
+                    else None
+                )
+                _clip_start = _base_start
+                _continued = False
+                if not (
+                    visual.get("motion_graphic") or visual.get("generated")
+                ):
+                    _shown = shown_windows.setdefault(use_key, [])
+                    if _shown and _segment_end is not None:
+                        # Continuation requires the segment's REAL
+                        # end: advancing on an unknown length could
+                        # record source seconds the segment does not
+                        # have. Unknown length -> restart at the
+                        # head, recorded exactly so.
+                        _furthest = max(_e for _, _e in _shown)
+                        if _base_start < _furthest < _segment_end:
+                            _clip_start = _furthest
+                            _continued = True
+                    _clip_end = _clip_start + float(item["duration"] or 0.0)
+                    if _segment_end is not None:
+                        _clip_end = min(_clip_end, _segment_end)
+                    if _clip_end <= _clip_start:
+                        # Degenerate window (a zero-length tail):
+                        # record the window as rendered from the
+                        # segment head rather than an empty span.
+                        _clip_start = _base_start
+                        _clip_end = _clip_start + float(
+                            item["duration"] or 0.0
+                        )
+                        _continued = False
+                    _shown.append((_clip_start, _clip_end))
+                else:
+                    _clip_end = _clip_start + float(item["duration"] or 0.0)
+                    if _segment_end is not None:
+                        _clip_end = min(_clip_end, _segment_end)
+                item["clip_start"] = round(_clip_start, 3)
+                item["clip_end"] = round(_clip_end, 3)
+                if _continued:
+                    item["clip_continued"] = True
 
             else:
 

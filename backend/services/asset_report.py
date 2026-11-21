@@ -38,6 +38,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from services import rejection_diagnostics
+from services import visual_identity
 from services.atomic_write import write_json_atomic
 
 # The verifier's representative-specificity acceptance threshold
@@ -144,6 +145,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     discovery_failures_collected = False
     recovery_attempts: list = []
     coverage_passes: list = []
+    variety_passes: list = []
     # Master Directive Phase 2 / B2: every tier-ladder attempt the
     # production recorded (from coverage passes and from
     # missing_visuals entries — the D-B3 unsearched entries carry
@@ -247,6 +249,15 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                     cov_pass.get("tier_attempts"),
                     scene.get("scene_number"),
                 )
+        # Phase 5 / AM-003: the variety pass's per-shot record
+        # (distinct counts before/after, draws, blocks) rides
+        # beside coverage_passes, so a variety outcome is
+        # explainable from the report alone.
+        for var_pass in scene_stats.get("variety_passes") or []:
+            if isinstance(var_pass, dict):
+                variety_passes.append(
+                    {"scene": scene.get("scene_number"), **var_pass}
+                )
         # Sentences for which retrieval produced no verified visual.
         # Since the text-card fallback was removed, these are reported
         # explicitly here instead of being silently substituted.
@@ -334,15 +345,37 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         for path, asset in accepted_by_path.items()
         if isinstance(asset.get("duration_seconds"), (int, float))
     }
-    seen_paths: set[str] = set()
+    # Phase 5 / AM-017: repetition and the distinct headline are
+    # resolved through services.visual_identity — the ONE
+    # distinct-visual definition visual_quality and the production
+    # report also use — never from file paths: the same source
+    # image downloaded twice is ONE visual here too. (Stills
+    # hash-unify from the files on disk at report time; an
+    # unreadable file falls back to the canonical ladder.)
+    _dict_items = [item for item in items if isinstance(item, dict)]
+    _item_identities = visual_identity.resolve_asset_groups(
+        _dict_items,
+        hash_of=lambda _item: visual_identity.content_hash_for_file(
+            str(_item.get("file_path") or _item.get("path") or "")
+        ),
+    )
+    distinct_visuals_on_timeline = len(set(_item_identities))
+    _identity_by_item = {
+        id(_item): _identity
+        for _item, _identity in zip(_dict_items, _item_identities)
+    }
+    seen_identities: set[str] = set()
     repeated = 0
     for item in items:
         if not isinstance(item, dict):
             continue
         path = str(item.get("file_path") or item.get("path") or "")
-        is_repeat = bool(path and path in seen_paths)
-        if path:
-            seen_paths.add(path)
+        _identity = _identity_by_item.get(id(item))
+        is_repeat = bool(
+            _identity is not None and _identity in seen_identities
+        )
+        if _identity is not None:
+            seen_identities.add(_identity)
         loops = False
         real_duration = probed_duration.get(path)
         item_duration = item.get("duration")
@@ -931,6 +964,12 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "uncovered_unsearched": uncovered_unsearched,
         "uncovered_unsearched_count": len(uncovered_unsearched),
         "repeated_footage": repeated,
+        # Phase 5 / AM-017: THE canonical distinct-asset headline
+        # (definition in scalar_definitions) — the same number
+        # visual_quality reports as
+        # unique_canonical_assets_on_timeline and the production
+        # report answers as q08, from the same identity function.
+        "distinct_visuals_on_timeline": distinct_visuals_on_timeline,
         "failed_downloads": stats["downloads_failed"],
         # Stage 6 / ASSET-017: attempt-level counterpart of the
         # shot-level scalar above (definitions in scalar_definitions).
@@ -942,6 +981,26 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         # were never defined together; these definitions are the
         # reconciliation — values are unchanged, scopes are explicit.
         "scalar_definitions": {
+            "distinct_visuals_on_timeline": (
+                "Phase 5 / AM-017 — THE canonical distinct-asset "
+                "headline, defined once in services.visual_identity "
+                "and used identically by visual_quality "
+                "(unique_canonical_assets_on_timeline) and the "
+                "production report (q08): distinct visuals among "
+                "timeline items at canonical SOURCE identity where "
+                "a source URL exists (a video counts by its source "
+                "— the clip is one visual however many of its "
+                "windows are shown — and a still by its whole "
+                "source), with content-hash unification where two "
+                "stills' canonical identities differ but their "
+                "downloaded bytes are identical, and a file-path "
+                "fallback for identity-less items. DEFINITION "
+                "CHANGE (Phase 5): pre-Phase-5 counts were "
+                "file-path counts and overstated variety whenever "
+                "one visual was downloaded twice (film 1: 5 files, "
+                "4 visuals); historical comparisons shift by "
+                "exactly those merged duplicates."
+            ),
             "total_retrieved_assets": (
                 "Legacy name for candidates_evaluated: the sum over "
                 "scenes of candidates_considered — candidate rows "
@@ -1115,6 +1174,8 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         ),
         "recovery_attempts": recovery_attempts,
         "coverage_passes": coverage_passes,
+        # Phase 5 / AM-003: per-shot variety-pass records.
+        "variety_passes": variety_passes,
         # Master Directive Phase 2 / B2: the tier ladder's attempt
         # records (per coverage pass and per D-B3 unsearched entry)
         # and their totals — budget exhaustion is visible here,

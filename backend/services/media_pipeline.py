@@ -33,6 +33,7 @@ from services import run_metrics
 from services import rejection_diagnostics
 from services import story_understanding as story
 from services import tier_ladder
+from services import visual_identity
 from services.media_probe import probe_image, probe_video
 from services.http_retry import request_with_retry, classify_error
 
@@ -6082,6 +6083,30 @@ def _uve_download_any_candidate(candidate, scene_dir, sentence_number, asset_ind
     )
 
 
+_CONTENT_HASH_CACHE: dict = {}
+
+
+def _uve_content_hash(path):
+    """SHA-256 of a downloaded file's bytes (Phase 5 dedupe
+    identity), cached per (path, size, mtime) for the process —
+    a segment-reused asset shares the first download's file, so
+    repeat stamps of one file cost one read. None when the file
+    cannot be read: identity then falls back to the canonical
+    ladder, never to a guessed hash."""
+    if not path:
+        return None
+    try:
+        stat = os.stat(path)
+        cache_key = (str(path), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        return None
+    if cache_key not in _CONTENT_HASH_CACHE:
+        _CONTENT_HASH_CACHE[cache_key] = (
+            visual_identity.content_hash_for_file(path)
+        )
+    return _CONTENT_HASH_CACHE[cache_key]
+
+
 def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_index, registry, used_keys, failures=None, transcript_scenario=None, transcript_bible=None):
     for candidate in candidates:
         if not isinstance(candidate, dict):
@@ -6317,6 +6342,20 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
         except Exception:
             pass
 
+        # Phase 5 / dedupe by source image: stamp the downloaded
+        # bytes' hash on the asset. Where canonical identity
+        # differs but the bytes are identical (the same source
+        # image downloaded twice), this stamp is what lets every
+        # distinctness consumer — coverage/variety arithmetic,
+        # timeline dealing, visual_quality, the asset report —
+        # count the visual ONCE (services.visual_identity).
+        if isinstance(asset, dict) and not asset.get("content_hash"):
+            _hash = _uve_content_hash(
+                asset.get("file_path") or asset.get("path")
+            )
+            if _hash:
+                asset["content_hash"] = _hash
+
         return asset
 
     return None
@@ -6387,26 +6426,58 @@ def _uve_selection_block_reason(candidate, registry):
 
 
 def _uve_beat_distinct_asset_keys(beat_videos, beat_images):
-    """Distinct on-screen identities among a beat's fetched assets.
+    """Distinct on-screen identities among a beat's fetched assets,
+    at the ladder's SEGMENT level — the coverage arithmetic's unit,
+    matching the timeline cap it feeds (Stage 7: two windows of
+    one source are two cards with separate allowances).
 
-    Segment identity first (Stage 7 stamps it at download), then
-    the candidate key, then the file path — the same identity
-    ladder the timeline's cap accounting reasons about, at the
-    granularity the pick stage can know."""
-    keys = set()
-    for asset in list(beat_videos or []) + list(beat_images or []):
-        if not isinstance(asset, dict):
-            continue
-        key = (
-            asset.get("segment_id")
-            or _uve_candidate_key(asset)
-            or asset.get("file_path")
-            or asset.get("candidate_id")
-            or ""
-        )
-        if key:
-            keys.add(str(key))
-    return keys
+    Phase 5 / AM-017: resolved through services.visual_identity —
+    the ONE distinct-visual definition (canonical/segment ladder
+    plus content-hash unification for stills). The ladder's
+    fallback tier keeps the historical order (candidate key, then
+    file path, then candidate id) for records with no source
+    identity."""
+    assets = [
+        asset
+        for asset in list(beat_videos or []) + list(beat_images or [])
+        if isinstance(asset, dict)
+    ]
+    if not assets:
+        return set()
+    groups = visual_identity.resolve_identity_groups(
+        assets,
+        fallback_of=lambda _index, _asset: str(
+            _uve_candidate_key(_asset)
+            or _asset.get("file_path")
+            or _asset.get("candidate_id")
+            or f"fetched:{_index}"
+        ),
+    )
+    return set(groups)
+
+
+def _uve_beat_distinct_asset_level_keys(beat_videos, beat_images):
+    """Distinct fetched ASSETS at the ladder's ASSET level — the
+    variety pass's unit (AM-003 draws distinct ASSETS toward the
+    FP-4 target, and AM-017's headline counts assets: one clip is
+    one visual however many of its windows a beat fetched)."""
+    assets = [
+        asset
+        for asset in list(beat_videos or []) + list(beat_images or [])
+        if isinstance(asset, dict)
+    ]
+    if not assets:
+        return set()
+    groups = visual_identity.resolve_asset_groups(
+        assets,
+        fallback_of=lambda _index, _asset: str(
+            _uve_candidate_key(_asset)
+            or _asset.get("file_path")
+            or _asset.get("candidate_id")
+            or f"fetched:{_index}"
+        ),
+    )
+    return set(groups)
 
 
 def _uve_coverage_shortfall(sentence_count, distinct_asset_count):
@@ -6724,6 +6795,7 @@ def _uve_search_and_pick(
     # download_failed — never left standing as rejected.
     # ------------------------------------------------------------
     coverage_accepted_assets = []
+    variety_accepted_assets = []
     _sentence_count = len((beat or {}).get("sentence_numbers") or [])
     _shortfall = _uve_coverage_shortfall(
         _sentence_count,
@@ -6955,7 +7027,8 @@ def _uve_search_and_pick(
         return _pool_items, _attempts, _scored_by_kind
 
     def _draw_reserves(_items, _shortfall, _drawn_ids, _blocked,
-                       _failures):
+                       _failures, _via="coverage_pass", _need_fn=None,
+                       _sink=None):
         """One coverage draw over reserve pool items: eligibility
         re-checked per item at draw time, the pick-limit stamp
         cleared on draw, fetched through the same download path as
@@ -6963,7 +7036,17 @@ def _uve_search_and_pick(
         additionally respect the D-B2 per-tier download budget and
         the production ledger, and their assets record
         selection_via="tier_escalation" with their ladder tier.
-        Returns the remaining shortfall."""
+        Returns the remaining shortfall.
+
+        Phase 5 / AM-003: the VARIETY pass reuses this exact draw
+        with ``_via="variety_pass"`` — the same eligibility
+        re-checks, the same fetch path, the same budgets for
+        escalation items; only the need arithmetic differs
+        (``_need_fn`` recomputes the remaining DISTINCT-asset need
+        instead of the coverage shortfall) and drawn candidates
+        stamp variety_pick, so their records read
+        selection_via="variety_pass". Accepted assets land in
+        ``_sink`` when given, else the coverage list."""
         _tier_attempts = {}
         _ledger = tier_ladder.ledger_for(registry)
         for _reserve in _items:
@@ -6992,7 +7075,10 @@ def _uve_search_and_pick(
                 continue
             _reserve.pop("reject_reason", None)
             _reserve.pop("rejection_stage", None)
-            _reserve["coverage_pick"] = True
+            if _via == "variety_pass":
+                _reserve["variety_pick"] = True
+            else:
+                _reserve["coverage_pick"] = True
             if _esc_tier:
                 _tier_attempts[_esc_tier] = (
                     _tier_attempts.get(_esc_tier, 0) + 1
@@ -7027,15 +7113,28 @@ def _uve_search_and_pick(
                 # selection_via record, not their tier, is what
                 # distinguishes how they were drawn). Escalation
                 # assets carry their ladder tier and record the
-                # route on the asset itself (B2).
+                # route on the asset itself (B2). Phase 5: a variety
+                # draw records its own route the same way — the
+                # asset's tier still names the ladder tier it was
+                # verified under; selection_via names the draw.
                 if _esc_tier:
                     _cov_annotated["tier"] = str(_esc_tier)
-                    _cov_annotated["selection_via"] = "tier_escalation"
+                    _cov_annotated["selection_via"] = (
+                        "variety_pass"
+                        if _via == "variety_pass"
+                        else "tier_escalation"
+                    )
                 else:
                     _cov_annotated["tier"] = str(
                         (shot_need or {}).get("tier") or "direct"
                     )
-                coverage_accepted_assets.append(_cov_annotated)
+                    if _via == "variety_pass":
+                        _cov_annotated["selection_via"] = "variety_pass"
+                (
+                    _sink
+                    if _sink is not None
+                    else coverage_accepted_assets
+                ).append(_cov_annotated)
                 # Phase 3 / AM-004: coverage/escalation accepts count
                 # in the per-kind funnel's accepted stage too.
                 _cov_kind = _cov_asset.get("_pool_kind") or (
@@ -7051,16 +7150,19 @@ def _uve_search_and_pick(
                 )["accepted"] = _kind_funnel[_cov_kind].get("accepted", 0) + 1
                 if _cov_asset.get("type") == "video" or _cov_asset.get("visual_type") == "video":
                     beat_videos.append(_cov_annotated)
-                    print(f"      + video (coverage pass, score {_cov_asset.get('universal_score')})")
+                    print(f"      + video ({_via.replace('_', ' ')}, score {_cov_asset.get('universal_score')})")
                 else:
                     beat_images.append(_cov_annotated)
-                    print(f"      + image (coverage pass, score {_cov_asset.get('universal_score')})")
-                _shortfall = _uve_coverage_shortfall(
-                    _sentence_count,
-                    len(_uve_beat_distinct_asset_keys(
-                        beat_videos, beat_images
-                    )),
-                )
+                    print(f"      + image ({_via.replace('_', ' ')}, score {_cov_asset.get('universal_score')})")
+                if _need_fn is not None:
+                    _shortfall = _need_fn()
+                else:
+                    _shortfall = _uve_coverage_shortfall(
+                        _sentence_count,
+                        len(_uve_beat_distinct_asset_keys(
+                            beat_videos, beat_images
+                        )),
+                    )
         return _shortfall
 
     if _shortfall > 0:
@@ -7138,6 +7240,116 @@ def _uve_search_and_pick(
             "tier_attempts": _tier_attempts,
             "escalation_accepted": _escalation_accepted,
         })
+    # ------------------------------------------------------------
+    # VARIETY PASS (Master Directive Phase 5 / AM-003 + FP-4):
+    # coverage being POSSIBLE is not the same as a film worth
+    # watching — a beat whose sentences can only be covered by
+    # rotating a 1–2-card hand still repeats the same visuals for
+    # its whole span (the repetition audit: founder films dealt
+    # 4–7 distinct visuals per film, 53.7–59.6% repeated runtime).
+    # When coverage is already secured, draw further DISTINCT
+    # verifier-accepted assets from this pass's own pools — the
+    # pick_limit_reached reserves and any verified ladder items
+    # the coverage draw left behind — toward the FP-4 sufficiency
+    # target of ⌈sentences/2⌉ distinct verified assets per beat.
+    # Precedence is strict: primary picks first, coverage second,
+    # variety last — relevance is never traded for novelty, the
+    # draw is the coverage draw's own machinery (eligibility
+    # re-checked per item, escalation budgets intact), and
+    # rotation remains the timeline's fallback when the pool
+    # holds no distinct verified asset. Every draw is stamped
+    # selection_via="variety_pass" and recorded in
+    # scene_stats["variety_passes"].
+    # ------------------------------------------------------------
+    if _shortfall <= 0 and _sentence_count >= 2:
+        _variety_target = -(-_sentence_count // 2)
+        _distinct_before = len(
+            _uve_beat_distinct_asset_level_keys(beat_videos, beat_images)
+        )
+        _variety_need = _variety_target - _distinct_before
+        if _variety_need > 0:
+            _fetched_ids = {
+                _a.get("candidate_id")
+                for _a in list(beat_videos) + list(beat_images)
+                if isinstance(_a, dict) and _a.get("candidate_id")
+            }
+            _variety_reserves = sorted(
+                (
+                    item for item in combined_pool
+                    if (
+                        item.get("reject_reason")
+                        == rejection_diagnostics.PICK_LIMIT_REASON
+                        or (
+                            item.get("tier_escalation")
+                            and (item.get("verification") or {}).get(
+                                "accepted"
+                            )
+                            and not item.get("coverage_pick")
+                            and not item.get("variety_pick")
+                        )
+                    )
+                    and item.get("candidate_id") not in _fetched_ids
+                ),
+                key=lambda item: (
+                    item.get("selection_rank")
+                    if item.get("selection_rank") is not None
+                    else 1 << 30
+                ),
+            )
+            _variety_drawn = []
+            _variety_blocked = []
+            _variety_failures = []
+            if _variety_reserves:
+
+                def _variety_remaining():
+                    return max(
+                        0,
+                        _variety_target
+                        - len(_uve_beat_distinct_asset_level_keys(
+                            beat_videos, beat_images
+                        )),
+                    )
+
+                _variety_need = _draw_reserves(
+                    _variety_reserves, _variety_need, _variety_drawn,
+                    _variety_blocked, _variety_failures,
+                    _via="variety_pass", _need_fn=_variety_remaining,
+                    _sink=variety_accepted_assets,
+                )
+            if _variety_failures:
+                scene_stats.setdefault(
+                    "download_failures", []
+                ).extend(_variety_failures)
+                for failure in _variety_failures:
+                    entry = scene_stats.setdefault(
+                        "providers", {}
+                    ).setdefault(
+                        str(failure.get("provider") or "unknown"),
+                        {"discovered": 0, "verified": 0,
+                         "rejected": 0, "downloaded": 0,
+                         "download_failed": 0},
+                    )
+                    entry["download_failed"] += 1
+                fetch_failures.extend(_variety_failures)
+            # Recorded whenever the target was unmet — including
+            # an empty reserve pool (drawn == [] and pool_exhausted
+            # say so), never silently skipped.
+            scene_stats.setdefault("variety_passes", []).append({
+                "beat_id": (beat or {}).get("beat_id"),
+                "shot_index": scenario_index,
+                "sentence_count": _sentence_count,
+                "distinct_before": _distinct_before,
+                "target_distinct": _variety_target,
+                "drawn": _variety_drawn,
+                "blocked": _variety_blocked,
+                "accepted": len(variety_accepted_assets),
+                "distinct_after": len(
+                    _uve_beat_distinct_asset_level_keys(
+                        beat_videos, beat_images
+                    )
+                ),
+                "pool_exhausted": bool(_variety_need > 0),
+            })
     if not asset and not coverage_accepted_assets and picks:
         # Shot-level download failure: neither the primary pick nor
         # the coverage pass produced an asset for this shot.
@@ -7326,7 +7538,7 @@ def _uve_search_and_pick(
             })
     for _accepted in (
         [accepted_asset] if accepted_asset is not None else []
-    ) + coverage_accepted_assets:
+    ) + coverage_accepted_assets + variety_accepted_assets:
         _source_item = (
             _pool_by_candidate_id.get(_accepted.get("candidate_id"))
             or _accepted
@@ -7353,7 +7565,15 @@ def _uve_search_and_pick(
             _record["intent_reasons"] = list(_source_item["_intent_reasons"])
         if _source_item.get("video_preference_applied"):
             _record["video_preference_applied"] = True
-        if _source_item.get("coverage_pick"):
+        if _source_item.get("variety_pick"):
+            # Phase 5 / AM-003: drawn by the variety pass from the
+            # verified pool, after coverage was already secured —
+            # the record names that route (and its rank), never the
+            # pick_limit_reached rejection it carried before.
+            _record["selection_via"] = "variety_pass"
+            if _source_item.get("selection_rank") is not None:
+                _record["selection_rank"] = _source_item["selection_rank"]
+        elif _source_item.get("coverage_pick"):
             # Coverage fix: the record shows HOW this candidate came
             # to be used — drawn from the verified pool by the
             # coverage pass, at its recorded selection rank — never
@@ -7425,6 +7645,13 @@ def _uve_search_and_pick(
         # callers deciding about further recovery must see the beat
         # as covered by this pass, exactly as a primary success.
         return coverage_accepted_assets[0]
+    if variety_accepted_assets:
+        # Defensive only: variety fires solely when coverage is
+        # already secured, which implies a primary or coverage
+        # asset exists — but if that ever changed, a shot whose
+        # only assets arrived via variety must still read as
+        # covered by this pass, never as a failure.
+        return variety_accepted_assets[0]
     return None
 
 

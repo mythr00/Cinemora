@@ -22,14 +22,39 @@ Metric definitions (every number in the output follows these exactly)
 Canonical asset identity:
     ``file_path`` of a timeline item, else its ``path``, else its
     ``source_url`` / ``video_url`` / ``image_url`` / ``url``.
-    LIMITATION (also emitted in the output metadata): the stored
-    timeline items carry no stable asset id, no content hash and no
-    canonicalised URL. Identity is therefore the recorded path/URL
-    STRING exactly as written. The same underlying content stored
-    under two different paths, or reached via a redirect-wrapper URL
-    vs its canonical URL, counts as two assets; identical paths
-    always count as one. No content-hash or perceptual dedup is
-    performed, because the artefacts do not carry the data for it.
+    This file-level id (``canonical_asset_id``) is used for asset
+    KIND classification and targeted-graphics matching, where the
+    file is the right unit.
+
+Headline distinct-visual identity (Master Directive Phase 5 /
+AM-017 — a DEFINITION CHANGE from the pre-Phase-5 path identity,
+recorded here and in the asset report's scalar_definitions):
+    Distinctness — the headline
+    ``unique_canonical_assets_on_timeline``, diversity D1, the
+    per-asset reuse accounting, consecutive repeats and the
+    ``film_level`` block — is resolved through
+    services.visual_identity, the platform's ONE definition,
+    shared with the asset report, the production report and the
+    pipeline's variety arithmetic: canonical SOURCE identity
+    where a source URL exists (a video counts by its source — the
+    clip is one visual however many of its windows are shown; a
+    still by its whole source), content-hash unification where
+    two stills' canonical identities differ but their downloaded
+    bytes are identical (the hash comes from the item's
+    ``content_hash`` stamp, or — in ``measure_project`` — from
+    the file the stored project left on disk), and the file-level
+    id above as the fallback for identity-less items. (Dealing —
+    rotation and the use caps — works at the same ladder's
+    SEGMENT level, Stage 7, where two windows of one source are
+    two cards with separate allowances.)
+    LIMITATION (also emitted in the output metadata): an item with
+    no stable asset id, no source identity and no readable file
+    still falls back to its recorded path string, and only EXACT
+    byte identity unifies — no perceptual dedup is performed.
+    Historical comparisons against pre-Phase-5 measurements shift
+    by exactly the duplicates this definition now merges; the
+    stored baselines' own numbers under the new definition are
+    pinned by the Phase 5 replay tests.
 
 Timeline items:
     Items are taken from ``timeline["scenes"][*]["items"]`` in scene
@@ -144,6 +169,26 @@ Segment reuse (Stage 7 / R9, Architecture Review C.F.3):
     Stage 7: per-segment uses here are directly comparable to the
     cap value, per-file uses above are not.
 
+Film-level repetition (Master Directive Phase 5 / B4):
+    ``film_level`` measures the finished film as a viewer meets
+    it, at the headline identity above. ``repeat_runtime_seconds``
+    counts, per item in timeline order, the seconds that show
+    content already shown: for a still or graphic, its whole
+    duration when its visual was shown before; for a video, the
+    part of its shown window (``clip_start``..``clip_end``) that
+    overlaps windows of the same visual shown earlier, plus any
+    item duration beyond the window itself (the renderer loops
+    the window — looped seconds are repeats by construction).
+    ``repeat_share`` is that over total runtime; the frame-level
+    audit baselines are Apollo post-fix 0.537 and film 1 0.596.
+    ``unique_moving_seconds`` is the union of source windows
+    actually shown by moving items — a zoomed still is NOT moving
+    (kind classification decides), and a frozen or looped-identical
+    video window adds no unique moving seconds.
+    ``longest_single_visual_stretch_seconds`` is the longest run
+    of one visual by summed duration; ``source_concentration``
+    reports the largest canonical-source runtime share.
+
 B-roll tier accounting (Intelligent B-Roll B0, plan §6.1/§6.2):
     ``tier_accounting`` groups timeline items by their stamped
     ``tier`` (direct / related / activity_broll / atmospheric /
@@ -212,6 +257,7 @@ from pathlib import Path
 from services import media_paths
 from services import rejection_diagnostics
 from services import segment_index
+from services import visual_identity
 from services.atomic_write import write_text_atomic
 
 GRAPHICS_SOURCE = "cinemora_motion_graphics"
@@ -518,6 +564,7 @@ def measure_visual_quality(
     run_manifest_present: bool | None = None,
     project_id: str | None = None,
     project_dir: str | None = None,
+    content_hashes: dict | None = None,
 ) -> dict:
     """Compute the visual-quality measurement from parsed artefacts.
 
@@ -548,8 +595,46 @@ def measure_visual_quality(
             missing_identifier_items += 1
         canonical_ids.append(cid)
 
+    # Phase 5 / AM-017: the headline identity — services.
+    # visual_identity ASSET-level groups (canonical source identity
+    # + still content-hash unification), the ONE definition the
+    # asset report and the production report also use. (The
+    # timeline's dealing works at the ladder's segment level —
+    # Stage 7 — where two windows of one source are two cards;
+    # the headline counts ASSETS, so one clip is one visual
+    # however many of its windows are shown.) An item's own
+    # content_hash stamp wins; measure_project's on-disk hashes
+    # (content_hashes, keyed by file path) serve stored items that
+    # predate the stamp. Display keys keep the historical shape:
+    # the asset identity when the visual carries one, else the
+    # file-level canonical id.
+    _hash_by_path = content_hashes or {}
+
+    def _item_content_hash(item):
+        stamp = visual_identity.stamped_content_hash(item)
+        if stamp:
+            return stamp
+        return _hash_by_path.get(
+            str(item.get("file_path") or item.get("path") or "")
+        )
+
+    _identity_groups = visual_identity.resolve_asset_groups(
+        items,
+        hash_of=_item_content_hash,
+        fallback_of=lambda _i, _item: canonical_ids[_i],
+    )
+    _group_display: dict[str, str] = {}
+    for _position, _group in enumerate(_identity_groups):
+        if _group not in _group_display:
+            _group_display[_group] = (
+                _group
+                if _group.startswith(("segment:", "asset:"))
+                else canonical_ids[_position]
+            )
+    identity_ids = [_group_display[_g] for _g in _identity_groups]
+
     per_asset: dict[str, dict] = {}
-    for cid, duration in zip(canonical_ids, durations):
+    for cid, duration in zip(identity_ids, durations):
         entry = per_asset.setdefault(cid, {"count": 0, "runtime_seconds": 0.0})
         entry["count"] += 1
         entry["runtime_seconds"] += duration
@@ -625,7 +710,7 @@ def measure_visual_quality(
     max_run = 0
     current_run = 0
     previous = None
-    for cid in canonical_ids:
+    for cid in identity_ids:
         if cid == previous:
             consecutive_repeats += 1
             current_run += 1
@@ -654,6 +739,85 @@ def measure_visual_quality(
     for kind in ("moving", "still", "graphics", UNKNOWN):
         kind_totals.setdefault(kind, 0.0)
         assignment_method_totals.setdefault(kind, 0.0)
+
+    # Phase 5 / B4: film-level repetition at the headline identity
+    # (definitions in the module docstring). One pass in timeline
+    # order: repeat seconds per item, unique moving seconds from
+    # shown-window unions, the longest single-visual stretch, and
+    # canonical-source concentration.
+    _repeat_seconds = 0.0
+    _unique_moving_seconds = 0.0
+    _seen_identities: set = set()
+    _shown_windows: dict[str, list] = {}
+    _stretch_seconds = 0.0
+    _run_identity = None
+    _run_seconds = 0.0
+    _source_runtime: dict[str, float] = {}
+    for item, duration, identity, cid in zip(
+        items, durations, identity_ids, canonical_ids
+    ):
+        kind = classify_asset_kind(item, cid)
+        if identity == _run_identity:
+            _run_seconds += duration
+        else:
+            _run_identity = identity
+            _run_seconds = duration
+        _stretch_seconds = max(_stretch_seconds, _run_seconds)
+        _source_key = segment_index.source_key_for(item) or identity
+        _source_runtime[_source_key] = (
+            _source_runtime.get(_source_key, 0.0) + duration
+        )
+        if kind == "moving":
+            _w_start, _w_end = visual_identity.video_window(item)
+            if _w_end is None or _w_end < _w_start:
+                _w_end = _w_start + duration
+            _fresh_window = min(duration, max(_w_end - _w_start, 0.0))
+            _displayed = (_w_start, _w_start + _fresh_window)
+            _overlap = 0.0
+            for _prev_start, _prev_end in _shown_windows.get(identity, []):
+                _overlap += max(
+                    0.0,
+                    min(_displayed[1], _prev_end)
+                    - max(_displayed[0], _prev_start),
+                )
+            _overlap = min(_overlap, _fresh_window)
+            _fresh = _fresh_window - _overlap
+            _unique_moving_seconds += _fresh
+            _repeat_seconds += duration - _fresh
+            if _fresh_window > 0:
+                _shown_windows.setdefault(identity, []).append(_displayed)
+        elif identity in _seen_identities:
+            _repeat_seconds += duration
+        _seen_identities.add(identity)
+    if _source_runtime:
+        _top_source, _top_seconds = sorted(
+            _source_runtime.items(), key=lambda kv: (-kv[1], kv[0])
+        )[0]
+    else:
+        _top_source, _top_seconds = None, 0.0
+    film_level = {
+        "distinct_visuals": len(per_asset),
+        "repeat_runtime_seconds": round(_repeat_seconds, 6),
+        "repeat_share": _share(_repeat_seconds, total_runtime),
+        "still_runtime_seconds": round(float(kind_totals["still"]), 6),
+        "moving_runtime_seconds": round(float(kind_totals["moving"]), 6),
+        "graphics_runtime_seconds": round(
+            float(kind_totals["graphics"]), 6
+        ),
+        "unique_moving_seconds": round(_unique_moving_seconds, 6),
+        "consecutive_identical_pairs": consecutive_repeats,
+        "longest_single_visual_stretch_seconds": round(
+            _stretch_seconds, 6
+        ),
+        "source_concentration": {
+            "top_source": _top_source,
+            "top_source_runtime_seconds": round(_top_seconds, 6),
+            "top_source_runtime_share": _share(
+                _top_seconds, total_runtime
+            ),
+            "distinct_sources": len(_source_runtime),
+        },
+    }
 
     # Stage 1 / §2.6: FORMAT runtime accounting — an orthogonal
     # dimension to the kind totals above (whose definitions are
@@ -1072,15 +1236,23 @@ def measure_visual_quality(
         "metadata": {
             "measurement_only": True,
             "canonical_identity": (
-                "timeline item file_path, else path, else "
-                "source_url/video_url/image_url/url (exact recorded string)"
+                "AM-017 headline identity (Phase 5, services."
+                "visual_identity — one definition shared with the "
+                "asset report and the production report): canonical "
+                "SOURCE identity where a source URL exists (a video "
+                "counts by its source, not by window), content-hash "
+                "unification for identical still bytes, file path "
+                "fallback. The file-level id (file_path, else path, "
+                "else source_url/video_url/image_url/url) remains "
+                "in use for asset-kind classification and "
+                "targeted-graphics matching."
             ),
             "canonical_identity_limitation": (
-                "Stored timeline items carry no stable asset id and no "
-                "content hash; identity is the recorded path/URL string "
-                "only. The same content under two different paths/URLs "
-                "counts as two assets, and no content-hash or perceptual "
-                "dedup is performed."
+                "Items with no stable asset id, no source identity "
+                "and no readable file still fall back to their "
+                "recorded path/URL string only. Only exact byte "
+                "identity unifies differing canonical identities; "
+                "no perceptual dedup is performed."
             ),
             "artefacts": {
                 "timeline_present": bool(timeline),
@@ -1118,6 +1290,10 @@ def measure_visual_quality(
             "reuse_per_asset": reuse,
             "segment_reuse": segment_reuse,
         },
+        # Phase 5 / B4: the film-level repetition block (repeat
+        # share, canonical distinct count, unique moving seconds,
+        # longest stretch, source concentration).
+        "film_level": film_level,
         "runtime_share": _runtime_block(dict(kind_totals), total_runtime),
         "runtime_share_by_format": runtime_share_by_format,
         "tier_accounting": tier_accounting,
@@ -1212,6 +1388,22 @@ def measure_project(project_dir) -> dict:
         media_paths.resolve_artefact(project_dir, "rights_manifest.json"), []
     )
     mg = _load_json(project_dir / "motion_graphics" / "motion_graphics.json", {})
+    # Phase 5: content hashes of the files the stored timeline
+    # items point at (stills only — videos never hash-unify), so
+    # stored productions that predate the pipeline's content_hash
+    # stamp still dedupe by source image. Unreadable files simply
+    # contribute no hash; identity falls back to the ladder.
+    content_hashes: dict[str, str] = {}
+    for _item in timeline_items(
+        timeline if isinstance(timeline, dict) else {}
+    ):
+        if visual_identity.record_visual_type(_item) == "video":
+            continue
+        _path = str(_item.get("file_path") or _item.get("path") or "")
+        if _path and _path not in content_hashes:
+            _digest = visual_identity.content_hash_for_file(_path)
+            if _digest:
+                content_hashes[_path] = _digest
     return measure_visual_quality(
         timeline=timeline if isinstance(timeline, dict) else {},
         asset_report=report if isinstance(report, dict) else {},
@@ -1222,6 +1414,7 @@ def measure_project(project_dir) -> dict:
         ).exists(),
         project_id=(timeline.get("project_id") if isinstance(timeline, dict) else None),
         project_dir=str(project_dir),
+        content_hashes=content_hashes,
     )
 
 

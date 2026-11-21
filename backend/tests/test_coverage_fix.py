@@ -139,8 +139,17 @@ def test_coverage_pass_draws_spares_in_rank_order(monkeypatch, tmp_path):
     )
     assert asset is not None
     # Rank order: the primary fetch stops at rank 0's success; the
-    # coverage pass then attempts rank 3 — and nothing else.
-    assert attempts == [videos[0]["url"], videos[3]["url"]]
+    # coverage pass then attempts rank 3.
+    # Phase 5 SUPERSESSION: after coverage is secured, the VARIETY
+    # pass (AM-003/FP-4) draws toward ⌈5/2⌉ = 3 distinct assets and
+    # so also attempts ranks 4 and 5 — both fail to download here,
+    # which the variety record shows honestly. Pre-Phase-5 this
+    # asserted attempts == [rank 0, rank 3] and pick_limit records
+    # standing for ranks 4–5.
+    assert attempts == [
+        videos[0]["url"], videos[3]["url"],
+        videos[4]["url"], videos[5]["url"],
+    ]
     assert len(beat_videos) + len(beat_images) == 2
 
     # (c) the drawn spare's record is an acceptance via the coverage
@@ -154,15 +163,26 @@ def test_coverage_pass_draws_spares_in_rank_order(monkeypatch, tmp_path):
         r for r in drawn_records
         if r["outcome"] == "rejected" and r["stage"] == "selection"
     ]
-    # Untouched reserves keep their truthful pick_limit records.
+    # The variety-attempted reserves carry download_failed records
+    # (Phase 5 supersession — they no longer stand as pick_limit).
     for index in (4, 5):
-        selection = [
-            r for r in _records_for(scene_stats, videos[index]["url"])
+        records = _records_for(scene_stats, videos[index]["url"])
+        assert [
+            r for r in records if r["outcome"] == "download_failed"
+        ]
+        assert not [
+            r for r in records
             if r["outcome"] == "rejected" and r["stage"] == "selection"
         ]
-        assert len(selection) == 1
-        assert selection[0]["reason"] == "pick_limit_reached"
-    assert scene_stats["rejection_reasons"] == {"pick_limit_reached": 2}
+    assert scene_stats["rejection_reasons"] == {}
+    variety = scene_stats["variety_passes"]
+    assert len(variety) == 1
+    assert variety[0]["distinct_before"] == 2
+    assert variety[0]["target_distinct"] == 3
+    assert variety[0]["accepted"] == 0
+    assert variety[0]["distinct_after"] == 2
+    assert variety[0]["pool_exhausted"] is True
+    assert len(variety[0]["drawn"]) == 2
 
     passes = scene_stats["coverage_passes"]
     assert len(passes) == 1
@@ -197,7 +217,17 @@ def test_coverage_pass_never_admits_verifier_rejected_candidate(
     )
     assert asset is not None
     assert spam["url"] not in attempts
-    assert len(beat_videos) + len(beat_images) == 2
+    # Phase 5 SUPERSESSION: primary (rank 0) + coverage (rank 3) +
+    # variety (rank 4, toward ⌈5/2⌉ = 3 distinct) = 3 assets; the
+    # verifier-rejected spam candidate is still never attempted by
+    # ANY pass. Pre-Phase-5 this asserted 2 assets.
+    assert len(beat_videos) + len(beat_images) == 3
+    variety_records = _records_for(scene_stats, videos[4]["url"])
+    variety_accepted = [
+        r for r in variety_records if r["outcome"] == "accepted"
+    ]
+    assert len(variety_accepted) == 1
+    assert variety_accepted[0]["selection_via"] == "variety_pass"
     spam_records = _records_for(scene_stats, spam["url"])
     assert spam_records
     assert all(r["outcome"] == "rejected" for r in spam_records)

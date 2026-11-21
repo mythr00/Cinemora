@@ -167,8 +167,13 @@ def test_berlin_stored_profile(berlin_dir):
     asset_report = json.loads((berlin_dir / "asset_report.json").read_text())
 
     diversity = measurement["diversity"]
-    assert diversity["d1_unique_assets"] == 27
-    assert diversity["d1_unique_assets_per_minute"] == pytest.approx(4.92, rel=0.02)
+    # Phase 5 / AM-017 SUPERSESSION: D1 is now the canonical
+    # ASSET-level headline (services.visual_identity) — Berlin's
+    # two windows of one YouTube source are ONE distinct asset
+    # (26), where the pre-Phase-5 file-path count said 27. The
+    # segment-level view is unchanged in segment_reuse.
+    assert diversity["d1_unique_assets"] == 26
+    assert diversity["d1_unique_assets_per_minute"] == pytest.approx(4.74, rel=0.02)
 
     outcomes = measurement["sentence_outcomes"]
     assert sum(outcomes["buckets"].values()) == 43

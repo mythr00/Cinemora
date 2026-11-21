@@ -584,7 +584,14 @@ def test_visual_quality_segment_reuse_measurement():
     assert seg["exact_segment_reuse_items"] == 1
     assert seg["items_without_segment_identity"] == 0
     assert seg["distinct_segments_per_source"]["youtube:abc123XYZ"] == 2
-    # The per-file numbers are unchanged and visibly DIFFERENT:
-    # four files, one of them notionally "reused" zero times.
-    assert result["timeline"]["unique_canonical_assets_on_timeline"] == 4
-    assert result["timeline"]["assets_reused"] == 0
+    # Phase 5 / AM-017 SUPERSESSION: the headline distinct count
+    # is no longer the per-file count — it is the canonical
+    # ASSET-level identity count (services.visual_identity), so
+    # all three windows of the one YouTube source are ONE distinct
+    # visual and that visual IS reused; the segment-level view
+    # above (3 segments) is unchanged. (Pre-Phase-5 this asserted
+    # 4 / 0: the file-path headline AM-017 abolished precisely
+    # because it overstated variety — cf. film 1's "5 files,
+    # 4 visuals".)
+    assert result["timeline"]["unique_canonical_assets_on_timeline"] == 2
+    assert result["timeline"]["assets_reused"] == 1
