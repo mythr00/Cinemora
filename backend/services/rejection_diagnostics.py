@@ -256,6 +256,8 @@ def build_event(
     verdict_reasons=None,
     contributing_reasons=None,
     dimension_results=None,
+    era_waived=None,
+    title="",
     era_applicable=False,
     segment_evidence=None,
     segment_failure_cause=None,
@@ -277,7 +279,12 @@ def build_event(
     (Stage 6 collect-all diagnostics; None when the producing path
     could not evaluate them, e.g. legacy callers).
     ``verdict_reasons`` / ``contributions`` are the contributing
-    evidence — non-additive diagnostics only."""
+    evidence — non-additive diagnostics only. ``dimension_results``
+    is the verdict's own per-dimension record when the caller
+    supplies it (Phase 1 / AM-007: the C.B.3 11-dimension shape);
+    the synthesised subject/topical/era shape below is only the
+    fallback for paths that carry no verdict (gate events were
+    never scored, so theirs stays all-``not_evaluated``)."""
     if score_basis is None:
         if stage == "metadata_gate":
             score_basis = "gate_pre_scoring"
@@ -306,6 +313,16 @@ def build_event(
             else None
         ),
         "dimension_results": dimension_results,
+        # Phase 1 / AM-007: the verdict's era waiver (C.B.2) rides
+        # beside dimension_results — the environmental profile's
+        # recorded waiver was previously lost at this boundary.
+        # None when the producing path carried no verdict (gate
+        # events, legacy callers): unstated, never fabricated.
+        "era_waived": era_waived,
+        # Phase 1 / AM-014: the candidate's recorded title, so the
+        # ledger rows built from these records can carry it (the
+        # ledger previously dropped asset titles entirely).
+        "title": title,
         "segment_evidence": segment_evidence,
         # Stage 7 / R8 (C.D.3): evaluation events reference the
         # segment they concern, so segment-level provenance and

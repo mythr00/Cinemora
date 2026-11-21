@@ -1553,7 +1553,12 @@ def _op_replace_clip(doc, op, ctx):
     sentence_result = {"sentence_number": item.get("sentence_number"),
                        "sentence": sentence_obj}
     refreshed, _accepted = media_pipeline._refresh_swapped_asset(
-        pipeline_original, bucket, swap_path, decision, sentence_result, bible
+        pipeline_original, bucket, swap_path, decision, sentence_result, bible,
+        # Phase 1 / AM-013: an editor replace whose fresh verdict
+        # rejects is applied as a recorded override; the op may
+        # carry the operator's reason, else the recorded default
+        # inside _refresh_swapped_asset applies.
+        override_reason=op.get("override_reason"),
     )
     if refreshed is None:
         raise EditorError(
@@ -1573,6 +1578,10 @@ def _op_replace_clip(doc, op, ctx):
         "decision_id": None,
         "evidence_class": refreshed.get("segment_evidence"),
         "verification": refreshed.get("verification"),
+        # Phase 1 / AM-013: a rejected-verdict replace is an
+        # override; the revision document records it too (the
+        # ledger row carries it via _verification_with_segment).
+        "swap_override": refreshed.get("swap_override"),
         "rights": run_ledger._asset_rights(refreshed),
         "user_supplied": bool(asset.get("user_supplied")),
         "generated": False,

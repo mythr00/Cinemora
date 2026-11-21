@@ -423,8 +423,28 @@ export type Certificate = {
     source_url?: string | null;
     interval: { start?: number | null; duration?: number | null };
     evidence_class?: string | null;
-    verification?: { accepted?: boolean; reason?: string | null; transcript_check?: string | null } | null;
-    rights?: { license: string; rights_status?: string | null; creator?: string | null; source?: string | null } | null;
+    /** Phase 1 / AM-014: the asset's recorded title (null on pre-Phase-1 rows). */
+    title?: string | null;
+    verification?: {
+      accepted?: boolean;
+      reason?: string | null;
+      transcript_check?: string | null;
+      /** Phase 1 / AM-013: a swap applied despite a rejected fresh verdict. */
+      swap_override?: {
+        applied_despite_rejection?: boolean;
+        rejection_reason?: string;
+        override_reason?: string;
+      } | null;
+    } | null;
+    rights?: {
+      license: string;
+      /** Phase 1 / AM-014: licence evidence URL + retrieval timestamp. */
+      license_url?: string | null;
+      rights_status?: string | null;
+      creator?: string | null;
+      source?: string | null;
+      retrieved_at?: string | null;
+    } | null;
     recorded_at?: string | null;
   }>;
   disclaimers: string[];

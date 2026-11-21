@@ -152,10 +152,12 @@ class AssetDecision(Base):
 
     One row per decision: an accepted asset selected for a sentence, a
     rotation assignment, a generated graphic, a missing visual, a
-    rejected candidate, or a review swap (swapped_in / swapped_out,
-    linked by previous_decision_id). Rows are NEVER updated or
-    deleted — a later decision supersedes an earlier one by pointing
-    at it, so the evidence trail cannot be rewritten.
+    rejected candidate, a verified-but-not-picked candidate or a
+    download failure (Phase 1 / AM-015), or a review swap
+    (swapped_in / swapped_out, linked by previous_decision_id). Rows
+    are NEVER updated or deleted — a later decision supersedes an
+    earlier one by pointing at it, so the evidence trail cannot be
+    rewritten.
     Schema authority: migrations/versions/0002_run_ledger.py (AUD-09).
     """
 

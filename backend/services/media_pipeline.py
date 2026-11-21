@@ -6452,6 +6452,17 @@ def _uve_search_and_pick(
             contributions=_verdict.get("contributions"),
             verdict_reasons=_verdict.get("reasons"),
             contributing_reasons=_contributing,
+            # Phase 1 / AM-007: the verdict's OWN per-dimension
+            # record (the C.B.3 11-dimension shape) and its era
+            # waiver pass through verbatim — build_event's
+            # synthesised 3-key shape remains only for verdict-less
+            # paths (gate events carry {"accepted", "score"} only,
+            # so theirs still synthesises, truthfully unscored).
+            dimension_results=_verdict.get("dimension_results"),
+            era_waived=_verdict.get("era_waived"),
+            # Phase 1 / AM-014: the candidate's title, so ledger
+            # rows built from these records can carry it.
+            title=str(_item.get("title") or ""),
             era_applicable=bool(
                 (scenario or {}).get("era") or (shot_need or {}).get("era")
             ),
@@ -7156,7 +7167,17 @@ def write_decision_template(project_dir, scene_number, beats):
     return path
 
 
-def _refresh_swapped_asset(asset, bucket, swap_path, decision, sentence_result, bible):
+# Phase 1 / AM-013: the recorded default when a swap whose fresh
+# verdict REJECTED is applied without the caller supplying an
+# override reason. The swap is still applied (operator-supplied
+# media workflows depend on it — blocking outright is NOT the
+# policy), but the decision record must say, truthfully, that it
+# was applied despite the rejection and why — or that no reason
+# was recorded.
+SWAP_OVERRIDE_DEFAULT_REASON = "applied_without_recorded_reason"
+
+
+def _refresh_swapped_asset(asset, bucket, swap_path, decision, sentence_result, bible, override_reason=None):
     """MA-33: build the replacement record for a manual review swap.
 
     The replacement inherits NOTHING evidentiary from the original:
@@ -7177,6 +7198,16 @@ def _refresh_swapped_asset(asset, bucket, swap_path, decision, sentence_result, 
       rejection ("manual_swap_unverified") so every downstream
       filter treats the swap as unverified instead of inheriting
       the original's acceptance.
+
+    Phase 1 / AM-013: when the fresh verdict REJECTS and the swap
+    is nevertheless applied by the caller, the refreshed record
+    carries a ``swap_override`` stamp — the rejection reason plus
+    the override reason (the caller's ``override_reason``, or the
+    decision record's own ``override_reason`` field, or the
+    recorded default SWAP_OVERRIDE_DEFAULT_REASON). The stamp
+    rides into the ledger's verification JSON and the certificate,
+    so an overridden rejection is never silent. An ACCEPTED swap
+    carries no stamp: nothing was overridden.
 
     Returns (refreshed_asset, verification_accepted), or
     (None, False) when the probe fails — the caller then leaves the
@@ -7255,6 +7286,25 @@ def _refresh_swapped_asset(asset, bucket, swap_path, decision, sentence_result, 
     refreshed["verification_status"] = (
         "verified" if verification.get("accepted") else "swapped"
     )
+    if not verification.get("accepted"):
+        # Phase 1 / AM-013: a rejected fresh verdict does not block
+        # the swap (the caller applies it — user-supplied media
+        # workflows depend on that), but the application is an
+        # OVERRIDE and is recorded as one, with its reason.
+        reason = (
+            str(override_reason or "").strip()
+            or str((decision or {}).get("override_reason") or "").strip()
+            or SWAP_OVERRIDE_DEFAULT_REASON
+        )
+        refreshed["swap_override"] = {
+            "applied_despite_rejection": True,
+            "rejection_reason": (
+                verification.get("rejection_reason")
+                or verification.get("reason")
+                or ""
+            ),
+            "override_reason": reason,
+        }
     return refreshed, bool(verification.get("accepted"))
 
 
@@ -7333,6 +7383,11 @@ def apply_review_decisions(result, project_dir, bible=None):
                         "previous_candidate_id": asset.get("candidate_id") or "",
                         "outcome": "swapped",
                         "verification_accepted": accepted,
+                        # Phase 1 / AM-013: when the fresh verdict
+                        # rejected and the swap was applied anyway,
+                        # the outcome record names the override and
+                        # its recorded reason (None otherwise).
+                        "swap_override": refreshed.get("swap_override"),
                     })
                     aggregate_swaps[previous_path] = refreshed
                     refreshed_bucket.append(refreshed)

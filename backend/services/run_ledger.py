@@ -910,7 +910,12 @@ def _file_sha256(path, cache):
 
 def _asset_rights(asset):
     """The rights classification dict for an asset, mirroring
-    build_rights_manifest exactly ("unknown" stays "unknown")."""
+    build_rights_manifest exactly ("unknown" stays "unknown").
+
+    Phase 1 / AM-014: the asset's recorded title rides in the same
+    JSON dict — the ledger previously dropped asset titles
+    entirely, so the certificate built from it could not name the
+    assets it certifies."""
     return {
         "license": asset.get("license") or "unknown",
         "license_url": asset.get("license_url") or "",
@@ -919,6 +924,7 @@ def _asset_rights(asset):
         "creator": asset.get("creator") or asset.get("channel") or "",
         "source": asset.get("source") or "",
         "retrieved_at": asset.get("retrieved_at") or "",
+        "title": asset.get("title") or "",
     }
 
 
@@ -941,16 +947,25 @@ def _verification_with_segment(asset):
     pipeline and is never mutated by recording.
 
     B-roll B0 (§6.1): the asset's tier rides in the same JSON copy,
-    so the certificate assembled from the ledger can state it."""
+    so the certificate assembled from the ledger can state it.
+
+    Phase 1 / AM-013: a swap override stamp (a rejected fresh
+    verdict applied anyway, with its recorded reason) rides in the
+    same copy, so the certificate can surface the override."""
     verification = _asset_verification(asset)
     if not isinstance(verification, dict):
         return verification
     segment_id = asset.get("segment_id") if isinstance(asset, dict) else None
     tier = asset.get("tier") if isinstance(asset, dict) else None
+    swap_override = (
+        asset.get("swap_override") if isinstance(asset, dict) else None
+    )
     if segment_id:
         verification = {**verification, "segment_id": segment_id}
     if tier:
         verification = {**verification, "tier": tier}
+    if isinstance(swap_override, dict) and swap_override:
+        verification = {**verification, "swap_override": swap_override}
     return verification
 
 
@@ -1014,6 +1029,11 @@ def record_decisions(run_id, project_id, asset_report, timeline,
     - timeline items with assignment == "rotation" -> rotated.
     - report missing_visuals -> missing.
     - report candidate_records with outcome == "rejected" -> rejected.
+    - report candidate_records with outcome == "verified" whose
+      candidate never reached the film and never failed a download
+      -> verified_not_picked (Phase 1 / AM-015).
+    - report candidate_records with outcome == "download_failed"
+      -> download_failed (Phase 1 / AM-015).
 
     Idempotent per run: a run that already has decisions is skipped
     (the ledger is append-only; re-recording would duplicate history).
@@ -1386,9 +1406,146 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                         # candidate was evaluated for rides in the
                         # same JSON column (None on pre-B0 records).
                         "tier": record.get("tier"),
+                        # Phase 1 / AM-007: the verdict's own
+                        # per-dimension record (the C.B.3
+                        # 11-dimension shape) and its era waiver —
+                        # previously lost here even though the
+                        # report record carried them (None on
+                        # pre-Phase-1 records).
+                        "dimension_results": record.get(
+                            "dimension_results"
+                        ),
+                        "era_waived": record.get("era_waived"),
+                        # Phase 1 / AM-014: the candidate's title.
+                        "title": record.get("title"),
                     },
                     "rights": None,
                     "decision_type": "rejected",
+                    "previous_decision_id": None,
+                })
+
+            # ---- verified but not picked (Phase 1 / AM-015) ------
+            # The ledger previously had NO row for a candidate the
+            # verifier accepted but selection never used, nor for a
+            # verified candidate whose download failed — both event
+            # classes existed in the asset report only, so the
+            # certificate (built from the ledger alone) inherited
+            # the gap. Both classes are recorded now, from the same
+            # report records, with the same verification-JSON shape
+            # discipline as the rejected rows above. A candidate
+            # that reached the film (an "accepted" event) or whose
+            # download failed is NOT also "not picked": the classes
+            # are disjoint by candidate_id across the whole record
+            # set. Idempotency is the run-level guard above (a run
+            # with decisions is never re-recorded).
+            _accepted_candidate_ids = {
+                record.get("candidate_id")
+                for record in records
+                if isinstance(record, dict)
+                and record.get("outcome") == "accepted"
+            }
+            _download_failed_candidate_ids = {
+                record.get("candidate_id")
+                for record in records
+                if isinstance(record, dict)
+                and record.get("outcome") == "download_failed"
+            }
+
+            def _candidate_event_verification(record, *, accepted):
+                return {
+                    "accepted": accepted,
+                    "stage": record.get("stage"),
+                    "score": record.get("score"),
+                    "score_basis": record.get("score_basis"),
+                    "category": record.get("category"),
+                    "kind": record.get("kind"),
+                    "contributions": record.get("contributions"),
+                    "contributing_reasons": (
+                        record.get("contributing_reasons")
+                        if record.get("contributing_reasons")
+                        is not None
+                        else record.get("verdict_reasons")
+                    ),
+                    "specificity": record.get("specificity"),
+                    "matched_query": record.get("matched_query"),
+                    "tier": record.get("tier"),
+                    "dimension_results": record.get(
+                        "dimension_results"
+                    ),
+                    "era_waived": record.get("era_waived"),
+                    "title": record.get("title"),
+                }
+
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                if record.get("outcome") != "verified":
+                    continue
+                candidate_id = record.get("candidate_id")
+                if candidate_id in _accepted_candidate_ids:
+                    continue
+                if candidate_id in _download_failed_candidate_ids:
+                    continue
+                _sentences = record.get("sentence_numbers") or []
+                rows.append({
+                    "run_id": str(run_id),
+                    "project_id": str(project_id),
+                    "asset_key": candidate_id,
+                    "content_hash": None,
+                    "source_url": record.get("url") or None,
+                    "provider": str(record.get("provider") or "unknown"),
+                    "scene_number": record.get("scene"),
+                    "sentence_number": (
+                        _sentences[0] if _sentences else None
+                    ),
+                    "interval_start": None,
+                    "interval_duration": None,
+                    "evidence_class": None,
+                    "verification": _candidate_event_verification(
+                        record, accepted=True
+                    ),
+                    "rights": None,
+                    "decision_type": "verified_not_picked",
+                    "previous_decision_id": None,
+                })
+
+            # ---- download failures (Phase 1 / AM-015) -------------
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                if record.get("outcome") != "download_failed":
+                    continue
+                _sentences = record.get("sentence_numbers") or []
+                # The candidate WAS verified (accepted=True in the
+                # shared shape); the failure is the download itself,
+                # recorded with its reason and segment cause when
+                # the event carries them.
+                _verification = {
+                    **_candidate_event_verification(
+                        record, accepted=True
+                    ),
+                    "reason": record.get("reason"),
+                    "segment_failure_cause": record.get(
+                        "segment_failure_cause"
+                    ),
+                }
+                rows.append({
+                    "run_id": str(run_id),
+                    "project_id": str(project_id),
+                    "asset_key": record.get("candidate_id"),
+                    "content_hash": None,
+                    "source_url": record.get("url") or None,
+                    "provider": str(record.get("provider") or "unknown"),
+                    "scene_number": record.get("scene"),
+                    "sentence_number": (
+                        _sentences[0] if _sentences else None
+                    ),
+                    "interval_start": None,
+                    "interval_duration": None,
+                    "evidence_class": None,
+                    "verification": _verification,
+                    "rights": None,
+                    "decision_type": "download_failed",
                     "previous_decision_id": None,
                 })
 

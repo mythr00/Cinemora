@@ -486,6 +486,95 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     if isinstance(timeline_result, dict):
         coverage = timeline_result.get("coverage")
 
+    # Phase 1 / AM-018: ONE coverage rule, applied here — the only
+    # place both facts exist side by side. Retrieval records a
+    # sentence in missing_visuals when its beat produced no verified
+    # asset; the timeline records a sentence as uncovered when no
+    # item covers its narration window. They are different facts,
+    # and stored reports used to read as contradictions (a failed
+    # run with missing_visuals=[] beside incomplete coverage; a
+    # completed run whose rotation-filled gaps still read as bare
+    # "missing"). The rule (defined in scalar_definitions below):
+    # sentence-level non-coverage ALWAYS materialises into
+    # missing_visuals, and every entry carries its coverage_outcome
+    # — the timeline's verdict for that sentence. Entries the
+    # timeline knows but retrieval never recorded are appended
+    # with reason "no_timeline_coverage". The coverage GATE is
+    # untouched: this is reporting semantics only. When the report
+    # is built without a timeline, outcomes are None (unknown,
+    # never a fabricated verdict). The appended-entry shape is the
+    # base missing_visuals shape (scene / sentence_number / reason)
+    # plus coverage_outcome and the uncovered window — Phase 2's
+    # unsearched_role entries extend THIS shape, not a parallel one.
+    if isinstance(coverage, dict):
+        _uncovered = {
+            entry.get("sentence_number"): entry
+            for entry in coverage.get("uncovered_sentences") or []
+            if isinstance(entry, dict)
+        }
+        # Scene sentence offsets from the timeline's own scene
+        # records (each scene's sentence_timings slice is that
+        # scene's sentences, in order), so a global sentence number
+        # maps to the scene-local sentence_index timeline items
+        # carry — the covering item's assignment then names HOW a
+        # retrieval-missing sentence was covered.
+        _scene_offsets = {}
+        _offset = 0
+        for _scene_result in timeline_result.get("scenes") or []:
+            if not isinstance(_scene_result, dict):
+                continue
+            _scene_count = len(
+                _scene_result.get("sentence_timings") or []
+            )
+            _scene_number = _scene_result.get("scene_number")
+            if _scene_number is not None and _scene_count:
+                _scene_offsets[_scene_number] = _offset
+            _offset += _scene_count
+        _covering_assignment = {}
+        for _item in items:
+            if not isinstance(_item, dict):
+                continue
+            _key = (_item.get("scene_number"), _item.get("sentence_index"))
+            if _key not in _covering_assignment:
+                _covering_assignment[_key] = _item.get("assignment")
+
+        def _coverage_outcome(entry):
+            number = entry.get("sentence_number")
+            if number in _uncovered:
+                return "uncovered"
+            scene = entry.get("scene")
+            if scene in _scene_offsets and number is not None:
+                local = (number - 1) - _scene_offsets[scene]
+                assignment = _covering_assignment.get((scene, local))
+                if assignment == "rotation":
+                    return "covered_by_rotation"
+                if assignment == "motion_graphic":
+                    return "covered_by_graphic"
+                if assignment:
+                    return "covered_by_scene_asset"
+            return "covered_unidentified"
+
+        _known_missing = set()
+        for entry in missing_visuals:
+            entry["coverage_outcome"] = _coverage_outcome(entry)
+            _known_missing.add(entry.get("sentence_number"))
+        for number, uncovered_entry in _uncovered.items():
+            if number in _known_missing:
+                continue
+            missing_visuals.append(
+                {
+                    "scene": uncovered_entry.get("scene_number"),
+                    "sentence_number": number,
+                    "reason": "no_timeline_coverage",
+                    "coverage_outcome": "uncovered",
+                    "start": uncovered_entry.get("start"),
+                    "end": uncovered_entry.get("end"),
+                }
+            )
+    else:
+        for entry in missing_visuals:
+            entry["coverage_outcome"] = None
+
     return {
         "analysis_mode": analysis_mode,
         # VA-07: a failed run still produces this report (from partial
@@ -713,6 +802,19 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 "lands in B3). Null when the timeline carries no "
                 "tier stamps (pre-B0 productions): unknown, not zero."
             ),
+            "missing_visuals": (
+                "Phase 1 / AM-018 — the ONE coverage rule: an entry "
+                "for every sentence that retrieval left without a "
+                "verified visual of its own, PLUS every sentence "
+                "the timeline records as uncovered (appended with "
+                "reason no_timeline_coverage) — sentence-level "
+                "non-coverage always materialises here. Each "
+                "entry's coverage_outcome is the timeline's verdict "
+                "for that sentence: uncovered, covered_by_rotation, "
+                "covered_by_graphic, covered_by_scene_asset or "
+                "covered_unidentified; null when the report was "
+                "built without a timeline (unknown, not a verdict)."
+            ),
         },
         "low_confidence_selections": len(low_confidence),
         "sentence_assignment_accuracy": assignment_accuracy,
@@ -772,6 +874,28 @@ def write_asset_report(project_dir, report) -> Path:
     return path
 
 
+def _rights_warnings(entry):
+    """Phase 1 / AM-014: the per-asset warnings for a rights
+    manifest entry, derived ONLY from the entry's own recorded
+    fields — a warning names a gap in the recorded evidence (an
+    unknown licence, a missing licence URL, creator, retrieval
+    timestamp or source URL). Nothing is inferred beyond the
+    entry itself, and a fully evidenced entry warns about
+    nothing."""
+    warnings = []
+    if not entry.get("license") or entry.get("license") == "unknown":
+        warnings.append("unknown_licence")
+    if not entry.get("license_url"):
+        warnings.append("licence_url_not_recorded")
+    if not entry.get("creator"):
+        warnings.append("creator_not_recorded")
+    if not entry.get("retrieved_at"):
+        warnings.append("retrieved_at_not_recorded")
+    if not entry.get("source_url"):
+        warnings.append("source_url_not_recorded")
+    return warnings
+
+
 def build_rights_manifest(processed_scenes, soundtrack=None) -> list:
     """Per-asset rights evidence for a project (AUD-15).
 
@@ -779,6 +903,10 @@ def build_rights_manifest(processed_scenes, soundtrack=None) -> list:
     the provider reports it), its licence exactly as recorded — "unknown"
     stays "unknown" — and when it was retrieved. This manifest is the
     project's reuse evidence; nothing in it is inferred or upgraded.
+
+    Phase 1 / AM-014: every entry also carries a "warnings" list
+    naming the gaps in its own recorded evidence (see
+    _rights_warnings).
 
     Stage H (M7): when the production's soundtrack record shows an
     APPLIED track, the manifest gains one "music" entry for it —
@@ -815,46 +943,46 @@ def build_rights_manifest(processed_scenes, soundtrack=None) -> list:
 
     manifest = []
     for path, asset in entries.items():
-        manifest.append(
-            {
-                "file_path": path,
-                "type": asset.get("type") or asset.get("visual_type") or "",
-                "title": asset.get("title") or "",
-                "source": asset.get("source") or "",
-                "source_url": asset.get("source_url") or asset.get("link") or "",
-                "content_url": asset.get("video_url")
-                or asset.get("image_url")
-                or asset.get("url")
-                or "",
-                "creator": asset.get("creator") or asset.get("channel") or "",
-                "license": asset.get("license") or "unknown",
-                "license_url": asset.get("license_url") or "",
-                "rights_status": asset.get("rights_status") or "verify_before_publish",
-                "retrieved_at": asset.get("retrieved_at") or "",
-                "sentence_numbers": sentences_by_path.get(path, []),
-            }
-        )
+        entry = {
+            "file_path": path,
+            "type": asset.get("type") or asset.get("visual_type") or "",
+            "title": asset.get("title") or "",
+            "source": asset.get("source") or "",
+            "source_url": asset.get("source_url") or asset.get("link") or "",
+            "content_url": asset.get("video_url")
+            or asset.get("image_url")
+            or asset.get("url")
+            or "",
+            "creator": asset.get("creator") or asset.get("channel") or "",
+            "license": asset.get("license") or "unknown",
+            "license_url": asset.get("license_url") or "",
+            "rights_status": asset.get("rights_status") or "verify_before_publish",
+            "retrieved_at": asset.get("retrieved_at") or "",
+            "sentence_numbers": sentences_by_path.get(path, []),
+        }
+        entry["warnings"] = _rights_warnings(entry)
+        manifest.append(entry)
     if isinstance(soundtrack, dict) and soundtrack.get("state") == "applied":
         identity = soundtrack.get("identity") or {}
-        manifest.append(
-            {
-                "file_path": identity.get("file_path")
-                or soundtrack.get("requested_file")
-                or "",
-                "type": "music",
-                "title": "",
-                "source": soundtrack.get("source_type") or "",
-                "source_url": "",
-                "content_url": "",
-                "creator": "",
-                "license": identity.get("license") or "unknown",
-                "license_url": "",
-                "rights_status": "verify_before_publish",
-                "retrieved_at": "",
-                "sentence_numbers": [],
-                "content_sha256": identity.get("content_sha256"),
-            }
-        )
+        music_entry = {
+            "file_path": identity.get("file_path")
+            or soundtrack.get("requested_file")
+            or "",
+            "type": "music",
+            "title": "",
+            "source": soundtrack.get("source_type") or "",
+            "source_url": "",
+            "content_url": "",
+            "creator": "",
+            "license": identity.get("license") or "unknown",
+            "license_url": "",
+            "rights_status": "verify_before_publish",
+            "retrieved_at": "",
+            "sentence_numbers": [],
+            "content_sha256": identity.get("content_sha256"),
+        }
+        music_entry["warnings"] = _rights_warnings(music_entry)
+        manifest.append(music_entry)
     return manifest
 
 

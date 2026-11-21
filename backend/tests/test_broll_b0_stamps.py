@@ -274,8 +274,15 @@ def _timings(n, step=5.0):
 def test_timeline_items_carry_tier(tmp_path):
     direct = _visual(tmp_path, "direct.mp4")
     broll = _visual(tmp_path, "broll.mp4", tier="activity_broll")
+    # Phase 1 / AM-012 supersession: a generated graphic must now
+    # carry a passing validation verdict and not be undelivered to
+    # be timeline-eligible at all (the pre-AM-012 fixture carried
+    # neither and relied on the wholesale graphics exemption). The
+    # stamps below are the honest post-MG-07 production shape; the
+    # B0 behaviour pinned here (tier stamping) is unchanged.
     graphic = _visual(
         tmp_path, "graphic.mp4", motion_graphic=True, sentence_index=2,
+        validation={"passed": True}, delivered=True,
     )
     scene_media = {
         "scene_number": 1,

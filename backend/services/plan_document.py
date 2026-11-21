@@ -594,6 +594,11 @@ def _verification_outcome(verification):
             "reason": verification.get("rejection_reason")
             or verification.get("reason"),
             "transcript_check": verification.get("transcript_check"),
+            # Phase 1 / AM-013: a swap applied despite a rejected
+            # fresh verdict carries its override stamp in the
+            # ledger's verification JSON; the certificate surfaces
+            # it (None for every non-override row).
+            "swap_override": verification.get("swap_override"),
         }
     return {"status": verification.get("status")}
 
@@ -639,11 +644,27 @@ def build_certificate(project, run, decisions, counts):
             # certified in the dedicated "music" section below.
             continue
         rights = decision.get("rights") or {}
+        verification = decision.get("verification")
         rows.append(
             {
                 "sentence_number": decision.get("sentence_number"),
                 "scene_number": decision.get("scene_number"),
                 "decision_type": decision.get("decision_type"),
+                # Phase 1 / AM-014: the asset's recorded title —
+                # carried in the ledger's rights JSON for film
+                # assets and in the verification JSON for
+                # candidate-class rows (rejected /
+                # verified_not_picked / download_failed); None when
+                # the row predates the carry (never backfilled).
+                "title": (
+                    rights.get("title")
+                    if isinstance(rights, dict) and rights.get("title")
+                    else (
+                        verification.get("title")
+                        if isinstance(verification, dict)
+                        else None
+                    )
+                ) or None,
                 "asset_key": decision.get("asset_key"),
                 "content_hash": decision.get("content_hash"),
                 "provider": decision.get("provider"),
@@ -668,6 +689,12 @@ def build_certificate(project, run, decisions, counts):
                     "license": rights.get("license", "unknown")
                     if isinstance(rights, dict)
                     else "unknown",
+                    # Phase 1 / AM-014: the licence evidence URL and
+                    # the retrieval timestamp ride with the licence
+                    # (None on rows recorded before the carry).
+                    "license_url": rights.get("license_url")
+                    if isinstance(rights, dict)
+                    else None,
                     "rights_status": rights.get("rights_status")
                     if isinstance(rights, dict)
                     else None,
@@ -675,6 +702,9 @@ def build_certificate(project, run, decisions, counts):
                     if isinstance(rights, dict)
                     else None,
                     "source": rights.get("source")
+                    if isinstance(rights, dict)
+                    else None,
+                    "retrieved_at": rights.get("retrieved_at")
                     if isinstance(rights, dict)
                     else None,
                 }

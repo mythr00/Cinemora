@@ -257,7 +257,16 @@ def timeline_eligible(visual):
       verification was earned under another run's contract and does
       not transfer;
     - a generated motion graphic is eligible as its own honestly
-      labelled class (it never claims to be verified footage);
+      labelled class (it never claims to be verified footage) —
+      but, since Phase 1 / AM-012, only when it carries a PASSING
+      post-render validation verdict and is not recorded as
+      undelivered; a missing validation record means the graphic
+      was never validated, so it is out under the same MA-37
+      doctrine as footage (never verified by silence). The jobs
+      attach gate (MG-07) enforces the same rule at the only
+      production entry path; this is the assignment-layer
+      enforcement, so a direct timeline build that bypasses the
+      attach gate is held to it too;
     - any other asset needs a verification record carrying an
       explicit acceptance. A rejected asset is out (VA-16), and an
       asset with NO verification record is out too: a missing
@@ -276,6 +285,22 @@ def timeline_eligible(visual):
         return False
 
     if visual.get("motion_graphic") or visual.get("generated"):
+        # Phase 1 / AM-012: the generated class used to be exempted
+        # wholesale (return True), so eligibility for graphics held
+        # only via the jobs attach gate being the sole entry path.
+        # The class now requires its own recorded evidence: a
+        # validation dict whose "passed" is exactly True, and a
+        # "delivered" stamp that is not False (a missing delivered
+        # stamp is not a refusal — delivery is the builder's
+        # positive act recorded elsewhere; a missing VALIDATION
+        # record, by contrast, means never validated: out).
+        validation = visual.get("validation")
+        if not isinstance(validation, dict):
+            return False
+        if validation.get("passed") is not True:
+            return False
+        if visual.get("delivered") is False:
+            return False
         return True
 
     verification = visual.get("verification")

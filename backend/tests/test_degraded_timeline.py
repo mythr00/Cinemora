@@ -917,6 +917,15 @@ def _t20_production(tmp_path):
     )
     graphic.pop("verification")
     graphic.pop("verification_status")
+    # Phase 1 / AM-012 supersession: a generated graphic must now
+    # carry a passing validation verdict and not be undelivered to
+    # be timeline-eligible at all (this fixture previously relied
+    # on the wholesale graphics exemption in timeline_eligible).
+    # The stamps below are the honest post-MG-07 attach shape —
+    # every graphic the jobs attach gate admits carries them — so
+    # the class distinctions test 20 reconciles are unchanged.
+    graphic["validation"] = {"passed": True}
+    graphic["delivered"] = True
     positional = _t20_asset(
         tmp_path, "t20-positional.mp4", "video",
         segment_evidence="positional_no_contract", clip_start=20,
