@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Film, Image as ImageIcon } from "lucide-react";
-import { fetchMediaObjectUrl, mediaKeyForProjectPath } from "@/lib/api";
+import { fetchMediaObjectUrl, mediaKeyForProjectPath, streamMediaUrl } from "@/lib/api";
 
 /**
  * A real thumbnail for an editor timeline item's media file.
@@ -41,6 +41,19 @@ export function ItemThumb({
       try {
         const key = await mediaKeyForProjectPath(projectId, filePath);
         if (!key) throw new Error("path outside project");
+        const streamUrl = streamMediaUrl(projectId, key);
+        if (streamUrl) {
+          // Same-origin deployments stream the thumbnail source
+          // directly; an element error (unrecorded file) still
+          // lands on the honest fallback via onError below.
+          if (!controller.signal.aborted) {
+            setMedia({
+              url: streamUrl,
+              contentType: mediaType === "video" ? "video/mp4" : "image/*",
+            });
+          }
+          return;
+        }
         const result = await fetchMediaObjectUrl(projectId, key, controller.signal);
         objectUrl = result.url;
         if (!controller.signal.aborted) setMedia(result);
@@ -52,7 +65,7 @@ export function ItemThumb({
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [projectId, filePath]);
+  }, [projectId, filePath, mediaType]);
 
   if (unavailable || !filePath) {
     const Icon = mediaType === "image" ? ImageIcon : Film;
@@ -80,9 +93,10 @@ export function ItemThumb({
         muted
         playsInline
         aria-label={label}
+        onError={() => setUnavailable(true)}
       />
     );
   }
-  // eslint-disable-next-line @next/next/no-img-element -- authenticated blob URL; next/image cannot send the API token header
-  return <img className="editor-thumb" src={media.url} alt={label} />;
+  // eslint-disable-next-line @next/next/no-img-element -- authenticated media URL; next/image cannot send the API token header
+  return <img className="editor-thumb" src={media.url} alt={label} onError={() => setUnavailable(true)} />;
 }

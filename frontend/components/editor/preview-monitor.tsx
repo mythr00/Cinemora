@@ -2,16 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
-import { fetchMediaObjectUrl, mediaKeyForProjectPath, type RevisionExport } from "@/lib/api";
+import { fetchMediaObjectUrl, mediaKeyForProjectPath, streamMediaUrl, type RevisionExport } from "@/lib/api";
 import { formatTime } from "./shared";
 
 /**
  * The editor's preview monitor (C-03): plays the actual film —
  * the current revision's latest export when the media endpoint
- * can serve it, otherwise the original production film — through
- * the authenticated media path (a bare <video src> cannot send
- * the X-API-Key header, so the bytes arrive as an object URL via
- * fetchMediaObjectUrl).
+ * can serve it, otherwise the original production film. In
+ * same-origin deployments the server proxy authenticates bare
+ * media URLs, so the monitor streams the URL directly (Range
+ * requests, no whole-file download); in direct mode a bare
+ * <video src> cannot send the X-API-Key header, so the bytes
+ * arrive as an object URL via fetchMediaObjectUrl.
  *
  * Honest fallback, surfaced in the UI when it occurs: if the
  * latest revision export cannot be loaded for preview — no
@@ -79,6 +81,22 @@ export function PreviewMonitor({
         try {
           const key = await mediaKeyForProjectPath(projectId, latestExport.file);
           if (!key) throw new Error("no key");
+          const streamUrl = streamMediaUrl(projectId, key);
+          if (streamUrl) {
+            if (!controller.signal.aborted) {
+              setResolved({
+                key: sourceKey,
+                exportNote: null,
+                source: {
+                  kind: "ready",
+                  url: streamUrl,
+                  isExport: true,
+                  label: `Revision ${revisionNumber} export — ${latestExport.file_name} (rendered ${new Date(latestExport.at).toLocaleString()})`,
+                },
+              });
+            }
+            return;
+          }
           const result = await fetchMediaObjectUrl(projectId, key, controller.signal);
           objectUrl = result.url;
           if (!controller.signal.aborted) {
@@ -101,6 +119,25 @@ export function PreviewMonitor({
         }
       }
       if (filmMediaKey) {
+        const filmStreamUrl = streamMediaUrl(projectId, filmMediaKey);
+        if (filmStreamUrl) {
+          if (!controller.signal.aborted) {
+            setResolved({
+              key: sourceKey,
+              exportNote: note,
+              source: {
+                kind: "ready",
+                url: filmStreamUrl,
+                isExport: false,
+                label:
+                  exports.length === 0
+                    ? "Original production film — this revision has not been rendered yet"
+                    : "Original production film",
+              },
+            });
+          }
+          return;
+        }
         try {
           const result = await fetchMediaObjectUrl(projectId, filmMediaKey, controller.signal);
           objectUrl = result.url;
@@ -156,6 +193,40 @@ export function PreviewMonitor({
     (ready && mediaDuration?.url === ready.url ? mediaDuration.duration : null) ??
     documentDuration;
 
+  // A streamed source can still fail at the element (missing
+  // file, undecodable): keep the honest fallback contract — an
+  // export that cannot play falls back to the production film
+  // and says so; anything else becomes unavailable.
+  function handleVideoError() {
+    if (!ready) return;
+    if (ready.isExport && filmMediaKey) {
+      const filmStreamUrl = streamMediaUrl(projectId, filmMediaKey);
+      if (filmStreamUrl) {
+        setResolved({
+          key: sourceKey,
+          exportNote:
+            "The latest revision export could not be loaded for preview, so the preview shows the original production film instead.",
+          source: {
+            kind: "ready",
+            url: filmStreamUrl,
+            isExport: false,
+            label: "Original production film",
+          },
+        });
+        return;
+      }
+    }
+    setResolved({
+      key: sourceKey,
+      exportNote,
+      source: {
+        kind: "unavailable",
+        message:
+          "No playable media is available for this project. The production film could not be loaded from the media endpoint.",
+      },
+    });
+  }
+
   function togglePlay() {
     const video = videoRef.current;
     if (!video) return;
@@ -183,6 +254,7 @@ export function PreviewMonitor({
             onPlay={() => onPlayingChange(true)}
             onPause={() => onPlayingChange(false)}
             onEnded={() => onPlayingChange(false)}
+            onError={handleVideoError}
           />
         ) : (
           <div className="editor-preview-empty" role={source.kind === "unavailable" ? "alert" : "status"}>
