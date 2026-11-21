@@ -265,6 +265,8 @@ GRAPHIC_SKIP_REASONS = frozenset({
     "rendering_failure",         # a renderer raised
     "validation_failed",         # probed OK but spec mismatch (dims/fps/duration)
     "invalid_graphic_output",    # missing/empty/undecodable/no video stream
+    "document_presentation_disabled",  # Phase 6: founder rule — no genuine document source exists
+    "stat_cap_reached",          # Phase 6: legacy-mode stat cap (max_stats) reached
 })
 
 # Fact-basis classes for rendered factual claims (MG-09). The three
@@ -1869,6 +1871,7 @@ def build_motion_graphics_assets(
     targets=None,
     max_stats=None,
     genre_pack=None,
+    manifest=None,
 ):
     """
     Generate real standalone MP4 motion-graphic assets.
@@ -1881,14 +1884,28 @@ def build_motion_graphics_assets(
     sentences — dicts with scene_number, sentence_index (scene-local,
     0-based), sentence_number, text and optional scenario fields —
     typically derived from the Asset Manager's missing-visual records.
-    Targeted sentences get a graphic FIRST and are never blocked by
-    the untargeted stat cap; a targeted sentence with no defensible
-    graphic content is skipped and the skip is recorded in the
-    manifest (no invented content, no text cards).
+    A targeted sentence with no defensible graphic content is
+    skipped and the skip is recorded in the manifest (no invented
+    content, no text cards).
 
-    `max_stats` caps the number of UNTARGETED stat graphics
-    (None = the historical per-mode default: 3 in balanced mode,
-    uncapped in heavy mode).
+    Phase 6 (AM-001/D1 + AM-002 Pass-2): graphics are generated
+    ONLY for targeted requirements. The untargeted statistics sweep
+    and the unconditional chronology/process renders are REMOVED:
+    with no targets there are no graphics, and the chronology and
+    process graphics render only when a target claims them through
+    the targeted chain. `manifest` (the Visual Director's
+    graphics_manifest dict, or its entries list) is the production
+    input: when supplied, its entries ARE the targets, each entry
+    restricting the chain to its recorded template/family
+    candidates and carrying its theme, fact basis and any
+    evidence_ref/verified_data (AM-009). No manifest entry, no
+    graphic.
+
+    `max_stats` (legacy mode only) caps the number of stat-family
+    graphics produced for manifest-less targets — a cap, never a
+    quota (None = the historical per-mode default: 3 in balanced
+    mode, uncapped in heavy mode). Manifest-driven targets are
+    governed by the manifest, not by this cap.
     """
 
     if mode in {"off", "none", "disabled"}:
@@ -1899,12 +1916,83 @@ def build_motion_graphics_assets(
         # uncapped (kept effectively uncapped here).
         max_stats = 3 if mode == "balanced" else 1_000_000
 
+    # Phase 6: manifest entries become the target list. Each entry
+    # converts to a target dict carrying the Director's recorded
+    # restrictions and stamps; the chain below consumes them.
+    manifest_entries = None
+    if manifest is not None:
+        if isinstance(manifest, dict):
+            manifest_entries = manifest.get("entries") or []
+        elif isinstance(manifest, list):
+            manifest_entries = manifest
+    if manifest_entries is not None:
+        targets = []
+        for entry in manifest_entries:
+            if not isinstance(entry, dict):
+                continue
+            target_ref = entry.get("target") or {}
+            targets.append(
+                {
+                    "scene_number": target_ref.get("scene_number"),
+                    "sentence_index": target_ref.get("sentence_index"),
+                    "sentence_number": target_ref.get("sentence_number"),
+                    "text": entry.get("text") or "",
+                    "scenario": entry.get("scenario") or {},
+                    "money": entry.get("money"),
+                    "manifest_id": entry.get("manifest_id"),
+                    "template_candidates": entry.get(
+                        "template_candidates"
+                    ),
+                    "family_candidates": entry.get("family_candidates"),
+                    "fact_basis": entry.get("fact_basis"),
+                    "evidence_ref": entry.get("evidence_ref"),
+                    "verified_data": entry.get("verified_data"),
+                    "theme": entry.get("theme"),
+                }
+            )
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     case_bible = data.get("case_bible") or {}
     timeline_events = case_bible.get("timeline") or []
     scenes = data.get("scenes") or []
+
+    # Phase 6 (AM-024): the production theme, selected by the
+    # genre pack's visual_theme through the six-theme design
+    # system. Recorded on the graphics manifest and on every asset
+    # record; in manifest mode it also supplies the motion-engine
+    # style for engine graphics (see _style_for_target). None when
+    # no pack selects a theme — legacy style behaviour then applies
+    # unchanged.
+    from services.motion_engine import themes as _themes_module
+
+    _production_theme = _themes_module.theme_for_pack(genre_pack)
+    _production_theme_name = (
+        _production_theme.get("name") if _production_theme else None
+    )
+    if manifest_entries is not None and _production_theme_name is None:
+        _manifest_theme = (
+            manifest.get("theme") if isinstance(manifest, dict) else None
+        )
+        _resolved = _themes_module.resolve_theme(_manifest_theme)
+        if _resolved is not None:
+            _production_theme = _resolved
+            _production_theme_name = _resolved.get("name")
+
+    def _style_for_target(target, default):
+        """The motion-engine style for one target's graphics. In
+        manifest mode the entry's theme (falling back to the
+        production theme) supplies a full theme token dict — the
+        theme IS the style. Legacy targets keep the historical
+        style names/defaults exactly."""
+        if target is not None and target.get("manifest_id"):
+            theme = _themes_module.resolve_theme(
+                target.get("theme") or _production_theme_name
+            )
+            if theme is not None:
+                return theme
+        return default
 
     assets = []
     index = 0
@@ -2050,6 +2138,17 @@ def build_motion_graphics_assets(
                 # sentence record's money field; when it does not,
                 # _make_stat falls back to the scene sentence record.
                 "money": target.get("money"),
+                # Phase 6: Visual Director manifest fields, carried
+                # through when the target came from a manifest
+                # entry (None/absent for legacy targets — the chain
+                # then runs unrestricted, as before).
+                "manifest_id": target.get("manifest_id"),
+                "template_candidates": target.get("template_candidates"),
+                "family_candidates": target.get("family_candidates"),
+                "fact_basis": target.get("fact_basis"),
+                "evidence_ref": target.get("evidence_ref"),
+                "verified_data": target.get("verified_data"),
+                "theme": target.get("theme"),
             }
         )
 
@@ -2110,11 +2209,13 @@ def build_motion_graphics_assets(
                 process_anchor = target_list[0]
                 process_anchor_reason = "single_target"
     else:
-        # No uncovered sentences: anchor the chronology to the first
-        # scene's first sentence so it can still reach the film, and
-        # do not anchor the process graphic (it summarises the same
-        # events; one anchored summary graphic is enough).
-        timeline_anchor = _first_scene_anchor()
+        # Phase 6 (AM-001/D1): no targets — NO chronology anchor.
+        # The pre-D1 behaviour anchored the chronology graphic to
+        # the first scene's first sentence so it could reach the
+        # film unasked; D1 removed exactly that: a graphic exists
+        # only for a targeted requirement, so with no targets the
+        # timeline and process graphics are not rendered at all.
+        timeline_anchor = None
         process_anchor = None
         process_anchor_reason = "no_targets"
 
@@ -2128,7 +2229,25 @@ def build_motion_graphics_assets(
     # STORY TIMELINE
     # -----------------------------------------------------
 
-    if timeline_events and mode in {"balanced", "heavy"}:
+    # Phase 6 (AM-001/D1): the chronology graphic renders ONLY
+    # when a target anchors it (timeline_anchor is a target), and —
+    # in manifest mode — only when that target's recorded family
+    # candidates include the timeline family. The targeted loop
+    # below claims the rendered asset for its anchor target.
+    _timeline_family_ok = True
+    if timeline_anchor is not None and (
+        timeline_anchor.get("family_candidates") is not None
+    ):
+        _timeline_family_ok = (
+            "timeline" in timeline_anchor["family_candidates"]
+        )
+
+    if (
+        timeline_events
+        and mode in {"balanced", "heavy"}
+        and timeline_anchor is not None
+        and _timeline_family_ok
+    ):
         path = output_dir / "motion_graphic_timeline_001.mp4"
         try:
             spacing_mode = _render_timeline_graphic(
@@ -2215,12 +2334,38 @@ def build_motion_graphics_assets(
         sentence_record = _sentences_by_key.get(
             (scene_number, sentence_index)
         )
-        record_for_stat = None
-        if target and target.get("money"):
-            record_for_stat = {"money": target.get("money")}
-        elif sentence_record and sentence_record.get("money"):
-            record_for_stat = sentence_record
-        info = extract_stat(text, sentence_record=record_for_stat)
+        # Phase 6 (AM-009): the verified asset-data path. When the
+        # caller (a Visual Director manifest entry, via its target)
+        # supplies verified_data drawn from a VERIFIED asset's
+        # recorded metadata TOGETHER WITH an evidence_ref naming
+        # that asset (asset_id), the stat presents that data and
+        # carries the FACT_BASIS_ASSET stamp + the evidence_ref on
+        # the record and recipe. Without BOTH, this path is not
+        # taken — a script claim is never promoted on request.
+        _verified = (target or {}).get("verified_data")
+        _evidence_ref = (target or {}).get("evidence_ref")
+        if (
+            isinstance(_verified, dict)
+            and _verified.get("display")
+            and isinstance(_evidence_ref, dict)
+            and _evidence_ref.get("asset_id")
+        ):
+            info = {
+                "kind": _verified.get("kind") or "verified_value",
+                "display": _verified["display"],
+                "source": "verified_asset_metadata",
+                "fact_basis": FACT_BASIS_ASSET,
+                "evidence_ref": _evidence_ref,
+                "range_start": _verified.get("range_start"),
+                "range_end": _verified.get("range_end"),
+            }
+        else:
+            record_for_stat = None
+            if target and target.get("money"):
+                record_for_stat = {"money": target.get("money")}
+            elif sentence_record and sentence_record.get("money"):
+                record_for_stat = sentence_record
+            info = extract_stat(text, sentence_record=record_for_stat)
         if not info:
             return False, "no_usable_statistic", ""
         if info.get("kind") == "range_unrepresentable":
@@ -2277,11 +2422,18 @@ def build_motion_graphics_assets(
                 scene_number=scene_number,
                 sentence_index=sentence_index,
                 sentence_number=sentence_number or sentence_index + 1,
-                source_references=[{
-                    "type": "script_sentence",
-                    "scene_number": scene_number,
-                    "sentence_number": sentence_number or sentence_index + 1,
-                }],
+                source_references=(
+                    [{
+                        "type": "verified_asset_metadata",
+                        "evidence_ref": info["evidence_ref"],
+                    }]
+                    if info.get("evidence_ref")
+                    else [{
+                        "type": "script_sentence",
+                        "scene_number": scene_number,
+                        "sentence_number": sentence_number or sentence_index + 1,
+                    }]
+                ),
             ),
             fact_basis=fact_basis,
         )
@@ -2302,6 +2454,13 @@ def build_motion_graphics_assets(
         record["delivered"] = True
         if info.get("range_end"):
             record["stat_range_end"] = info["range_end"]
+        if info.get("evidence_ref"):
+            # AM-009: the evidence trail rides on the asset record
+            # (and, via the recipe's source_references pattern, is
+            # recoverable at regeneration time).
+            record["evidence_ref"] = info["evidence_ref"]
+        if target and target.get("manifest_id"):
+            record["manifest_id"] = target["manifest_id"]
         return True, None, ""
 
     # -----------------------------------------------------
@@ -2533,6 +2692,120 @@ def build_motion_graphics_assets(
         _schematic_scenes.add(scene_number)
         return True, None, ""
 
+    # -----------------------------------------------------
+    # Phase 6 (AM-010): production assemblers for the templates
+    # the Stage 3 chain could not reach. Each assembler builds a
+    # template's engine data ONLY from recorded material — the
+    # target sentence's own analysis, the case bible, or the
+    # scene's verified assets — and returns None when that
+    # material does not exist. An assembler never invents data:
+    # None means the template is not attempted for this target.
+    # -----------------------------------------------------
+
+    def _assemble_territory_map(target):
+        """territory_map data from the target's recorded place:
+        the scenario's place (or the sentence record's first
+        location) must resolve EXACTLY to a country in the motion
+        engine's geography dataset — an unresolved place assembles
+        nothing (the template itself refuses invented geography)."""
+        scenario = target.get("scenario") or {}
+        sentence = _sentences_by_key.get(
+            (target["scene_number"], target["sentence_index"]), {}
+        )
+        locations = sentence.get("locations") or []
+        place = clean_text(
+            scenario.get("place")
+            or scenario.get("location")
+            or (locations[0] if locations else "")
+            or ""
+        )
+        if not place:
+            return None
+        try:
+            from services.motion_engine import geography
+
+            names = geography.country_names()
+        except Exception:
+            return None
+        match = next(
+            (n for n in names if n.lower() == place.lower()), None
+        )
+        if match is None:
+            return None
+        return {
+            "regions": [{"country": match, "label": match}],
+            "title": place,
+        }
+
+    def _assemble_evidence_board(target):
+        """evidence_board data from the target scene's VERIFIED
+        image assets (explicit acceptance only, files that exist):
+        polaroid cards of real retrieved photographs, captioned
+        with the assets' own recorded titles. No verified photos —
+        no board."""
+        scene_number = target["scene_number"]
+        photos = []
+        for _ps in data.get("processed_scenes") or []:
+            if not isinstance(_ps, dict):
+                continue
+            if (_ps.get("scene") or {}).get("scene_number") != scene_number:
+                continue
+            for _v in _ps.get("images") or []:
+                if not isinstance(_v, dict):
+                    continue
+                if (_v.get("verification") or {}).get(
+                    "accepted"
+                ) is not True:
+                    continue
+                _p = _v.get("file_path") or _v.get("path")
+                if _p and Path(_p).exists():
+                    photos.append(
+                        {
+                            "path": _p,
+                            "caption": clean_text(_v.get("title") or ""),
+                        }
+                    )
+            break
+        if not photos:
+            return None
+        scenario = target.get("scenario") or {}
+        title = clean_text(scenario.get("event") or "") or shorten(
+            target["text"], 52
+        )
+        return {"photos": photos[:4], "title": title, "labels": []}
+
+    def _assemble_outcome_path(target):
+        """outcome_path data from the case bible's recorded
+        timeline events (their "what" labels, in order). Only for
+        a target whose own text carries sequence markers — the
+        template visualises a progression, so a non-sequence
+        sentence never assembles it (the same trigger the process
+        family uses). Fewer than two recorded events assemble
+        nothing."""
+        if not _has_sequence_marker(target.get("text") or ""):
+            return None
+        events = [
+            clean_text(e.get("what", ""))
+            for e in timeline_events
+            if clean_text(e.get("what", ""))
+        ]
+        if len(events) < 2:
+            return None
+        return {
+            "outcomes": [
+                {"label": shorten(e, 40)} for e in events[:6]
+            ],
+        }
+
+    #: Template name -> assembler. Templates NOT listed here have
+    #: no production assembler (see the Phase 6 proposal's audit
+    #: table for the per-template disposition).
+    _ASSEMBLERS = {
+        "territory_map": _assemble_territory_map,
+        "evidence_board": _assemble_evidence_board,
+        "outcome_path": _assemble_outcome_path,
+    }
+
     def _make_engine_graphic(target, template_name, engine_data,
                              style="editorial", duration=3.0):
         """Stage 3E integration: render one Motion Engine template
@@ -2551,6 +2824,20 @@ def build_motion_graphics_assets(
         from the script. Before this, only an input SUMMARY
         (engine_metadata) survived and the raw data was discarded.
         """
+        if template_name == "document_presentation":
+            # Phase 6: document_presentation stays DISABLED in
+            # production (founder rule: no genuine document source
+            # exists). The refusal is explicit and typed — the
+            # chain never feeds it fabricated document content, and
+            # a manifest entry naming it is refused the same way.
+            # The engine template itself is untouched and remains
+            # available to a future caller with a genuine document.
+            return (
+                False,
+                "document_presentation_disabled",
+                "document_presentation is disabled: no genuine "
+                "document source exists",
+            )
         try:
             from services.motion_engine import templates as _engine
 
@@ -2616,6 +2903,15 @@ def build_motion_graphics_assets(
         record["engine_inputs"] = copy.deepcopy(engine_data)
         record["engine_metadata"] = metadata
         record["delivered"] = True
+        # Phase 6: a manifest-driven graphic carries its manifest
+        # identity + theme onto the asset record (and from there
+        # onto the timeline item), so the rendered film stays
+        # traceable to the Director's decision that ordered it.
+        if target.get("manifest_id"):
+            record["manifest_id"] = target["manifest_id"]
+        _record_theme = target.get("theme") or _production_theme_name
+        if _record_theme:
+            record["theme"] = _record_theme
         return True, None, ""
 
     covered = set()
@@ -2689,7 +2985,55 @@ def build_motion_graphics_assets(
             "outcome": outcome,
             "family": family,
             "reason": reason,
+            # Phase 6: the Director decision this target answers
+            # to, when it came from the graphics manifest.
+            "manifest_id": target.get("manifest_id"),
         })
+
+    def _family_permitted(target, family):
+        """Phase 6 manifest gating: a manifest target's recorded
+        family_candidates restrict which chain families may run
+        for it. Legacy targets (no family list) are unrestricted,
+        exactly as before."""
+        families = target.get("family_candidates")
+        return families is None or family in families
+
+    def _feature_data(name, target, comparison, percent, text):
+        """Engine data for one template name from the target's own
+        recorded material: feature builders for the four historical
+        templates, the Phase 6 assemblers for the rest. None when
+        the material does not support the template."""
+        if name == "document_presentation":
+            # The attempt is made deliberately (with no data) so
+            # _make_engine_graphic's explicit disabled refusal is
+            # what gets recorded — never a fabricated document.
+            return {}
+        if name == "bar_chart" and comparison:
+            return {"items": comparison, "title": shorten(text, 60)}
+        if name == "stat_comparison" and comparison:
+            return {"items": comparison, "title": shorten(text, 60)}
+        if name == "data_gauge" and percent is not None:
+            return {
+                "percent": percent, "label": shorten(text, 52),
+                "sublabel": text,
+            }
+        if name == "ring_badges":
+            if comparison:
+                return {"badges": _badges_from_items(comparison)}
+            if percent is not None:
+                return {
+                    "badges": [{
+                        "value": f"{percent:g}%",
+                        "label": shorten(text, 44),
+                    }],
+                }
+            return None
+        assemble = _ASSEMBLERS.get(name)
+        if assemble is not None:
+            return assemble(target)
+        return None
+
+    _legacy_stats_created = 0
 
     # Targeted graphics FIRST — they answer a recorded coverage
     # failure, so the untargeted cap must never block them.
@@ -2777,7 +3121,13 @@ def build_motion_graphics_assets(
         # Variety pre-pass: if the previous target used the stat
         # family and an engine alternative fits this one, try the
         # alternative FIRST (stat remains the fallback below).
-        if _last_family == "stat" and comparison is None:
+        # Manifest targets skip the pre-pass — the Director already
+        # ordered their candidates; the chain does not re-decide.
+        if (
+            _last_family == "stat"
+            and comparison is None
+            and not target.get("manifest_id")
+        ):
             _alt = _engine_alternative()
             if _alt and _make_engine_graphic(
                 target, _alt[0], _alt[1], style=_alt[2]
@@ -2787,26 +3137,49 @@ def build_motion_graphics_assets(
 
         # 1) Stat (broadened extraction). A comparison sentence is
         # NOT reduced to a single-value stat card — it falls
-        # through to the stat_comparison template below.
-        if produced_family is None and comparison is None:
-            _stat_ok, _stat_reason, _stat_detail = _make_stat(
-                target["scene_number"],
-                target["sentence_index"],
-                target["sentence_number"],
-                text,
-                targeted=True,
-                target=target,
-            )
-            if _stat_ok:
-                produced_family = "stat"
-                produced_reason = "stat_value"
+        # through to the stat_comparison template below. Phase 6:
+        # manifest targets run the stat family only when the
+        # Director listed it; legacy targets are bounded by the
+        # max_stats cap (a cap, never a quota — D1 removed the
+        # untargeted sweep it used to bound).
+        if (
+            produced_family is None
+            and comparison is None
+            and _family_permitted(target, "stat")
+        ):
+            if (
+                not target.get("manifest_id")
+                and _legacy_stats_created >= max_stats
+            ):
+                _stat_reason = "stat_cap_reached"
+            else:
+                _stat_ok, _stat_reason, _stat_detail = _make_stat(
+                    target["scene_number"],
+                    target["sentence_index"],
+                    target["sentence_number"],
+                    text,
+                    targeted=True,
+                    target=target,
+                )
+                if _stat_ok:
+                    produced_family = "stat"
+                    produced_reason = "stat_value"
+                    if not target.get("manifest_id"):
+                        _legacy_stats_created += 1
 
         # 2) Chronology / timeline: this target is the timeline
         # graphic's MA-06 anchor and the timeline is unclaimed.
-        if produced_family is None and has_date and not _timeline_claimed:
+        if (
+            produced_family is None
+            and has_date
+            and not _timeline_claimed
+            and _family_permitted(target, "timeline")
+        ):
             if _timeline_asset is not None and _timeline_anchor_key == key:
                 _timeline_claimed = True
                 _timeline_asset["targeted"] = True
+                if target.get("manifest_id"):
+                    _timeline_asset["manifest_id"] = target["manifest_id"]
                 produced_family = "timeline"
                 produced_reason = "chronology_sentence"
 
@@ -2814,7 +3187,12 @@ def build_motion_graphics_assets(
         # The claim rebinds process_anchor (this loop runs in the
         # enclosing function scope), which the process render
         # stage below stamps onto the process asset.
-        if produced_family is None and has_sequence and not _process_claimed:
+        if (
+            produced_family is None
+            and has_sequence
+            and not _process_claimed
+            and _family_permitted(target, "process")
+        ):
             if _process_available:
                 process_anchor = target
                 process_anchor_reason = "sequence_sentence"
@@ -2825,7 +3203,9 @@ def build_motion_graphics_assets(
         # 4) Event schematic (conservative trigger, motif-gated).
         _schematic_reason = None
         _schematic_detail = ""
-        if produced_family is None:
+        if produced_family is None and _family_permitted(
+            target, "event_schematic"
+        ):
             _schematic_ok, _schematic_reason, _schematic_detail = (
                 _make_schematic(target)
             )
@@ -2840,7 +3220,27 @@ def build_motion_graphics_assets(
         # render failure).
         if produced_family is None:
             _candidates = []
-            if _pack_id is not None:
+            _manifest_restricted = (
+                target.get("manifest_id")
+                and target.get("template_candidates") is not None
+            )
+            if _manifest_restricted:
+                # Phase 6 manifest mode: ONLY the Visual Director's
+                # recorded candidates, in the Director's order,
+                # with data from the feature builders / assemblers,
+                # styled by the entry's theme.
+                for _name in target["template_candidates"]:
+                    _data = _feature_data(
+                        _name, target, comparison, percent, text
+                    )
+                    if _data is not None:
+                        _candidates.append((
+                            _name, _data,
+                            _style_for_target(
+                                target, _style_for("editorial")
+                            ),
+                        ))
+            elif _pack_id is not None:
                 # Stage 5A/5B: pack-ordered candidates, including
                 # the v2 bar_chart (multi-value comparisons) and
                 # ring_badges; styles come from the pack's family.
@@ -2864,7 +3264,6 @@ def build_motion_graphics_assets(
                     _candidates.append(("ring_badges", {
                         "badges": [{"value": f"{percent:g}%", "label": shorten(text, 44)}],
                     }, _style_for("editorial")))
-                _candidates = _order_by_motif(_candidates)
             else:
                 if comparison:
                     _candidates.append(("stat_comparison", {
@@ -2877,6 +3276,22 @@ def build_motion_graphics_assets(
                         "percent": percent, "label": shorten(text, 52),
                         "sublabel": text,
                     }, "editorial"))
+            if not _manifest_restricted:
+                # Phase 6 (AM-010): the assembled templates join
+                # the legacy candidate list AFTER the historical
+                # candidates — a target the historical chain already
+                # serves is served exactly as before; the assemblers
+                # only reach targets nothing else fitted.
+                for _name, _assemble in _ASSEMBLERS.items():
+                    if any(c[0] == _name for c in _candidates):
+                        continue
+                    _data = _assemble(target)
+                    if _data is not None:
+                        _candidates.append((
+                            _name, _data, _style_for("editorial"),
+                        ))
+                if _pack_id is not None:
+                    _candidates = _order_by_motif(_candidates)
             for _name, _data, _style in _candidates:
                 _engine_ok, _engine_reason, _engine_detail = (
                     _make_engine_graphic(
@@ -2930,6 +3345,13 @@ def build_motion_graphics_assets(
                 _reason = "no_eligible_graphic_purpose"
             if _reason is None and comparison:
                 _reason = "comparison_not_rendered"
+            if _reason is None and (
+                _engine_reason == "document_presentation_disabled"
+            ):
+                # Phase 6: the explicit founder-rule refusal wins
+                # over the generic document-cue reason — the
+                # template WAS attempted and refused as disabled.
+                _reason, _detail = _engine_reason, _engine_detail
             if _reason is None and has_document:
                 _reason = "missing_document_source"
             if _reason is None and _engine_reason:
@@ -2961,48 +3383,41 @@ def build_motion_graphics_assets(
             # second attempt).
             covered.add((target["scene_number"], target["sentence_index"]))
 
-    # Untargeted stats, capped by max_stats (Stage A: parameterised;
-    # historically a hardcoded 3 in balanced mode).
-    stats_created = 0
+    # Phase 6 (AM-001/D1): the untargeted statistics sweep that
+    # used to run here — every non-target sentence in the script
+    # re-attempted as a stat, capped by max_stats — is REMOVED.
+    # D1's rule is absolute: a graphic exists only for a targeted
+    # requirement (a manifest entry, or a legacy target). Sentences
+    # nobody targeted get no graphic, however stat-shaped they are.
 
-    for scene in scenes:
-        if stats_created >= max_stats:
-            break
-        scene_number = scene.get("scene_number")
-
-        for sentence_index, sentence in enumerate(
-            scene.get("sentences") or []
-        ):
-            if stats_created >= max_stats:
-                break
-            if not isinstance(sentence, dict):
-                continue
-            if (scene_number, sentence_index) in covered:
-                continue
-
-            text = clean_text(
-                sentence.get("text")
-                or sentence.get("sentence_text")
-                or ""
-            )
-
-            if not text:
-                continue
-
-            if _make_stat(
-                scene_number,
-                sentence_index,
-                sentence.get("sentence_number"),
-                text,
-                targeted=False,
-            )[0]:
-                covered.add((scene_number, sentence_index))
-                stats_created += 1
     # -----------------------------------------------------
     # PROCESS / TRANSFORMATION GRAPHIC
     # -----------------------------------------------------
 
-    if mode in {"balanced", "heavy"}:
+    # Phase 6 (AM-001/D1): the process graphic — a chapter-level
+    # summary, like the chronology — renders ONLY when a target
+    # anchors it: the MA-06 anchor selection above assigns
+    # process_anchor whenever at least one target exists (a
+    # sequence target by claim, else the next/single target), and
+    # with NO targets there is no anchor and no render (the pre-D1
+    # code rendered it whenever the bible held >= 3 events and
+    # recorded the unanchored render as "undelivered"). In
+    # manifest mode the anchor target's recorded family candidates
+    # must additionally include the process family — the Director
+    # is authoritative there.
+    _process_family_ok = True
+    if (
+        isinstance(process_anchor, dict)
+        and process_anchor.get("family_candidates") is not None
+    ):
+        _process_family_ok = (
+            "process" in process_anchor["family_candidates"]
+        )
+    if (
+        mode in {"balanced", "heavy"}
+        and process_anchor is not None
+        and _process_family_ok
+    ):
         steps = []
 
         # MA-01: steps are the events' "what"/action text
@@ -3061,6 +3476,13 @@ def build_motion_graphics_assets(
                     record["process_steps"] = [
                         s["label"] for s in steps
                     ]
+                    if (
+                        isinstance(process_anchor, dict)
+                        and process_anchor.get("manifest_id")
+                    ):
+                        record["manifest_id"] = process_anchor[
+                            "manifest_id"
+                        ]
                     if process_anchor is None:
                         # MA-03: rendered but undeliverable — recorded
                         # as undelivered, not silently counted.
@@ -3083,6 +3505,13 @@ def build_motion_graphics_assets(
                     "detail": str(error),
                 })
 
+    # Phase 6: every asset record carries the production theme
+    # when one was selected (engine records already carry their
+    # entry theme; setdefault keeps theirs).
+    if _production_theme_name:
+        for _asset in assets:
+            _asset.setdefault("theme", _production_theme_name)
+
     manifest = output_dir / "motion_graphics.json"
 
     write_json_atomic(
@@ -3091,6 +3520,22 @@ def build_motion_graphics_assets(
             "mode": mode,
             "max_stats": max_stats,
             "genre_pack": _pack_id,
+            # Phase 6 (AM-002): how this generation was targeted —
+            # by the Visual Director's graphics manifest (the
+            # production path) or by legacy caller-supplied targets.
+            "targeting": {
+                "mode": (
+                    "graphics_manifest"
+                    if manifest_entries is not None
+                    else "legacy_targets"
+                ),
+                "manifest_entries": (
+                    len(manifest_entries)
+                    if manifest_entries is not None
+                    else None
+                ),
+                "theme": _production_theme_name,
+            },
             "count": len(assets),
             "assets": assets,
             "targets": {

@@ -554,6 +554,14 @@ def import_production(project_id, run) -> dict:
                         # before recipes were recorded — regeneration
                         # then honestly refuses (inputs not recorded).
                         "recipe": item.get("graphic_recipe"),
+                        # Phase 6 (AM-002/AM-009): the Visual
+                        # Director manifest entry that ordered this
+                        # graphic and its fact basis, carried so a
+                        # revision never severs the graphic from
+                        # the decision + evidence that produced it.
+                        "manifest_id": item.get("manifest_id"),
+                        "fact_basis": item.get("fact_basis"),
+                        "evidence_ref": item.get("evidence_ref"),
                     }
                 items.append(
                     {
@@ -570,6 +578,11 @@ def import_production(project_id, run) -> dict:
                         "transition": item.get("transition") or "cut",
                         "asset": asset,
                         "graphic": graphic,
+                        # Phase 6 (AM-011): the item's composition
+                        # plan, when the production stamped one —
+                        # carried verbatim so revision renders apply
+                        # the same layers as the production render.
+                        "composition": item.get("composition"),
                         "classification": classify_asset(asset, kind),
                         "flags": [],
                     }
@@ -2533,6 +2546,10 @@ def _build_render_scenes(doc):
 
     def _cover(gap, held_item):
         cover = dict(held_item)
+        # Phase 6: a gap holdover is not the item the composition
+        # decision was made for — the held visual's label must not
+        # reappear over the gap window.
+        cover.pop("composition", None)
         cover["start"] = gap["start"]
         cover["end"] = gap["end"]
         cover["duration"] = gap["duration"]
@@ -2597,6 +2614,10 @@ def _renderer_item(item) -> dict:
         "clip_start": asset.get("clip_start") or 0,
         "motion": "zoom_in",
         "transition": item.get("transition") or "cut",
+        # Phase 6 (AM-011): the item's composition plan rides into
+        # the revision render so the editor's render applies the
+        # same layers the production render applied.
+        "composition": item.get("composition"),
         "video_url": path if asset.get("type") == "video" else None,
         "image_url": path if asset.get("type") == "image" else None,
     }

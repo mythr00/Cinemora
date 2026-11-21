@@ -103,7 +103,19 @@ def test_working_graphic_is_registered(tmp_path, monkeypatch):
         },
     )
 
-    assets = graphics_pipeline.build_motion_graphics_assets(data, tmp_path, mode="balanced")
+    # Phase 6 supersession (AM-001/D1): this test previously
+    # relied on the untargeted statistics sweep finding the
+    # sentence on its own. The sweep is deleted — a graphic is
+    # generated only for a targeted requirement — so the sentence
+    # is now passed as an explicit target; the MG-05 registration
+    # behaviour under test is unchanged.
+    assets = graphics_pipeline.build_motion_graphics_assets(
+        data, tmp_path, mode="balanced",
+        targets=[{
+            "scene_number": 1, "sentence_index": 0, "sentence_number": 1,
+            "text": "It cost $5 million to build.",
+        }],
+    )
     assert len(assets) == 1
     assert assets[0]["graphic_type"] == "stat"
 

@@ -191,44 +191,69 @@ def test_timeline_and_process_graphics_are_anchored(tmp_path, monkeypatch):
         assert asset.get("sentence_index") is not None
 
 
-def test_no_targets_anchors_timeline_to_first_scene(tmp_path, monkeypatch):
+def test_no_targets_produces_no_graphics(tmp_path, monkeypatch):
+    # Phase 6 SUPERSESSION (AM-001/D1, founder-approved removal):
+    # this test previously pinned the chronology graphic anchoring
+    # itself to the first scene's first sentence when NO sentence
+    # was targeted. D1 removed exactly that behaviour — a graphic
+    # exists only for a targeted requirement — so with no targets
+    # there are no graphics of any family.
     _fake_renders(monkeypatch)
     assets = graphics_pipeline.build_motion_graphics_assets(
         _data(), tmp_path, mode="balanced"
     )
-    by_type = {a["graphic_type"]: a for a in assets}
-    assert by_type["timeline"]["scene_number"] == 1
-    assert by_type["timeline"]["sentence_index"] == 0
-    # Process stays unanchored when there are no targets (jobs.py
-    # will skip it) rather than competing for the same sentence.
-    assert by_type["process"].get("scene_number") is None
+    assert assets == []
 
 
-def test_max_stats_zero_suppresses_untargeted_but_not_targeted(
+def test_max_stats_zero_suppresses_legacy_stats_not_manifest(
     tmp_path, monkeypatch
 ):
+    # Phase 6 SUPERSESSION (AM-001/D1): max_stats used to cap only
+    # UNTARGETED stats (the sweep), leaving targeted stats exempt.
+    # The sweep is deleted; the cap now bounds stat-family
+    # graphics for legacy (manifest-less) targets — targeted ones
+    # included — while Visual Director manifest targets are
+    # governed by the manifest, never by this cap.
     _fake_renders(monkeypatch)
     assets = graphics_pipeline.build_motion_graphics_assets(
         _data(), tmp_path, mode="balanced",
         targets=_targets(), max_stats=0,
     )
     stats = [a for a in assets if a["graphic_type"] == "stat"]
+    assert stats == []
+    manifest_assets = graphics_pipeline.build_motion_graphics_assets(
+        _data(), tmp_path / "m", mode="balanced",
+        max_stats=0,
+        manifest={
+            "version": 1, "entries": [{
+                "manifest_id": "gm_0001",
+                "target": {"scene_number": 2, "sentence_index": 0,
+                           "sentence_number": 3},
+                "text": "The tunnel ran 140 feet beneath the wall.",
+                "family_candidates": ["stat"],
+                "template_candidates": [],
+            }],
+        },
+    )
+    stats = [a for a in manifest_assets if a["graphic_type"] == "stat"]
     assert len(stats) == 1
-    assert stats[0].get("targeted") is True
-    assert stats[0]["scene_number"] == 2
+    assert stats[0]["manifest_id"] == "gm_0001"
 
 
-def test_default_cap_still_allows_untargeted_stats(tmp_path, monkeypatch):
+def test_no_untargeted_stats_exist(tmp_path, monkeypatch):
+    # Phase 6 SUPERSESSION (AM-001/D1): this test previously
+    # pinned the untargeted sweep producing a second stat for
+    # scene 1's "$25 million" sentence, which nobody targeted.
+    # The sweep is deleted: only the targeted stat is produced.
     _fake_renders(monkeypatch)
     assets = graphics_pipeline.build_motion_graphics_assets(
         _data(), tmp_path, mode="balanced", targets=_targets()
     )
     stats = [a for a in assets if a["graphic_type"] == "stat"]
-    # Targeted (scene 2) + untargeted "$25 million" (scene 1).
-    assert len(stats) == 2
-    untargeted = [a for a in stats if not a.get("targeted")]
-    assert untargeted[0]["scene_number"] == 1
-    assert untargeted[0]["sentence_index"] == 0
+    assert len(stats) == 1
+    assert stats[0].get("targeted") is True
+    assert stats[0]["scene_number"] == 2
+    assert stats[0]["sentence_index"] == 0
 
 
 # ---------------------------------------------------------------------------

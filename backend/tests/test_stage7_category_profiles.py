@@ -380,8 +380,12 @@ def test_visual_profile_field_by_field_fallback():
 
 @pytest.mark.parametrize("profile,failure", [
     ({"category_priors": {"evidence": 0.5}}, "category_priors_sum"),
-    ({"template_affinities": {"territory_map": 1}},
-     "template_affinity_unassembled:territory_map"),
+    # Phase 6 supersession (AM-010): territory_map gained a
+    # production assembler, so it is no longer an "unassembled"
+    # affinity; cross_section remains data-only/unassembled and
+    # exercises the same validation branch.
+    ({"template_affinities": {"cross_section": 1}},
+     "template_affinity_unassembled:cross_section"),
     ({"template_affinities": {"nope_template": 1}},
      "template_affinity_unknown:nope_template"),
     ({"specificity_defaults": {"evidence": "representative"}},

@@ -1300,6 +1300,65 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 f"{len(graphic_targets)}"
             )
 
+        # Phase 6 (AM-002 Pass-2 + AM-001/D1): the Visual Director
+        # reconciles the pre-retrieval visual plan (v1) against the
+        # Asset Manager's actual per-sentence outcomes and issues
+        # the authoritative graphics manifest; graphics generation
+        # consumes the manifest — no manifest entry, no graphic.
+        # visual_plan.json is upgraded in place to v2 and
+        # graphics_manifest.json written beside it (both fail-soft).
+        # D2 record-and-continue: if reconciliation itself fails,
+        # the failure is printed and production continues on the
+        # legacy targets path rather than dying.
+        _graphics_manifest = None
+        try:
+            from services import visual_director as _visual_director
+
+            _plan_v1 = _plan_document.visual_plan_from_analysis(
+                analysis,
+                project_id,
+                scene_governor=production_data.get("scene_governor"),
+            )
+            _outcomes = (
+                _visual_director.outcomes_from_processed_scenes(
+                    processed_scenes
+                )
+            )
+            _plan_v2, _graphics_manifest = (
+                _visual_director.reconcile_visual_plan(
+                    _plan_v1,
+                    _outcomes,
+                    genre_pack=_genre_pack,
+                    production_context={
+                        "timeline_event_count": len(
+                            (analysis.get("bible") or {}).get(
+                                "timeline"
+                            )
+                            or []
+                        ),
+                    },
+                )
+            )
+            _plan_document.write_visual_plan_v2_document(
+                project_dir, _plan_v2
+            )
+            _plan_document.write_graphics_manifest_document(
+                project_dir, _graphics_manifest
+            )
+            print(
+                "Visual Director Pass-2: "
+                f"{len(_graphics_manifest.get('entries') or [])} "
+                "targeted graphic(s) manifested, "
+                f"{(_plan_v2.get('summary') or {}).get('compositions', 0)} "
+                "composition decision(s)."
+            )
+        except Exception as _director_error:
+            print(
+                "Visual Director Pass-2 FAILED (continuing on "
+                f"legacy targets): {_director_error}"
+            )
+            _graphics_manifest = None
+
         motion_graphics_dir = project_dir / "motion_graphics"
         motion_graphics = build_motion_graphics_assets(
             motion_data,
@@ -1308,6 +1367,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             targets=graphic_targets,
             max_stats=MOTION_GRAPHIC_MAX_STATS,
             genre_pack=_genre_pack,
+            manifest=_graphics_manifest,
         )
 
         # Attach each standalone motion graphic to its target
@@ -1551,6 +1611,42 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             f"Preparing "
             f"{len(render_scenes)} scenes..."
         )
+
+        # Phase 6 (AM-011): stamp the Visual Director's composition
+        # decisions (visual_plan.json v2) onto the timeline items
+        # before rendering, and persist the stamped timeline so the
+        # artefact of record — the one the editor imports — carries
+        # the same composition plans the renderer will apply.
+        # Fail-soft: a composition failure never blocks the render;
+        # the items simply render uncomposed.
+        try:
+            _plan_v2_path = project_dir / "visual_plan.json"
+            if _plan_v2_path.exists():
+                _plan_v2_doc = json.loads(
+                    _plan_v2_path.read_text(encoding="utf-8")
+                )
+                if (
+                    isinstance(_plan_v2_doc, dict)
+                    and _plan_v2_doc.get("version") == 2
+                ):
+                    from services import composition as _composition
+
+                    _stamped = (
+                        _composition.apply_decisions_to_timeline(
+                            timeline_data, _plan_v2_doc
+                        )
+                    )
+                    if _stamped:
+                        write_json_atomic(timeline_file, timeline_data)
+                        print(
+                            f"Composition: {_stamped} timeline "
+                            "item(s) carry a composition plan."
+                        )
+        except Exception as _composition_error:
+            print(
+                "Composition stamping failed (rendering "
+                f"uncomposed): {_composition_error}"
+            )
 
         render_timeline(
             render_scenes,

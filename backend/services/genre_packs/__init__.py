@@ -145,11 +145,17 @@ PROFILE_CATEGORIES = (
 #: Templates a pack's template_affinities may name TODAY: exactly
 #: the templates with a production assembler in graphics_pipeline's
 #: targeted-graphics chain. Naming a registered-but-unassembled
-#: template (territory_map, evidence_board, ...) is a validation
-#: failure, not dead configuration — the MG-104 failure mode, linted
-#: from day one. This set grows when Stage 10 lands assemblers.
+#: template is a validation failure, not dead configuration — the
+#: MG-104 failure mode, linted from day one. Phase 6 (AM-010)
+#: landed the territory_map, evidence_board and outcome_path
+#: assemblers; the remaining registered templates
+#: (editorial_panel, split_panel, scan_grid, photo_node_diagram,
+#: cross_section, satellite_annotation, document_presentation)
+#: still have none — document_presentation by founder rule (it
+#: stays disabled), the rest per the Phase 6 audit table.
 ASSEMBLED_TEMPLATES = frozenset({
     "bar_chart", "data_gauge", "ring_badges", "stat_comparison",
+    "territory_map", "evidence_board", "outcome_path",
 })
 
 _PROFILE_FIELDS = frozenset({

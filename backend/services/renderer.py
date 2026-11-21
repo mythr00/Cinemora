@@ -594,6 +594,9 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
     # and the project asset report. If the scene has no genuine media
     # at all, rendering fails loudly instead of shipping a card.
     holdover_items = []
+    # Phase 6 (AM-011): per-item composition outcomes for the
+    # scene audit — applied layers and honest failures alike.
+    composition_records = []
     scene_fallback_media = None
     for _candidate in items:
         _candidate_path = _candidate.get("file_path") or _candidate.get("path") or ""
@@ -720,6 +723,42 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
         elif media_ok:
             last_good_media = (media_type, media_path)
 
+        # Phase 6 (AM-011): composition. When the item carries a
+        # composition plan, its validated layers are overlaid on
+        # the rendered base clip BEFORE the frame audit, so the
+        # audit verifies the clip the audience will actually see.
+        # Skipped on holdovers — a layer's label names the planned
+        # visual, not the held one. A failed layer never fails the
+        # item: the base clip stands, and the outcome (applied or
+        # failed) is recorded on the item and in the scene audit.
+        if success and not used_holdover and item.get("composition"):
+            from services import composition as _composition_module
+
+            _composed_path = clips_dir / f"clip_{index + 1:04d}.composed.mp4"
+            _comp_ok, _comp_record = (
+                _composition_module.apply_composition(
+                    output_path,
+                    item["composition"],
+                    _composed_path,
+                    clips_dir / f"composition_{index + 1:04d}",
+                )
+            )
+            if _comp_ok:
+                _composed_path.replace(output_path)
+            _comp_record = {
+                **_comp_record,
+                "item_index": index + 1,
+                "applied_to_item": _comp_ok,
+            }
+            if isinstance(item.get("composition"), dict):
+                item["composition"]["render"] = _comp_record
+            composition_records.append(_comp_record)
+            print(
+                f"Composition for item {index + 1}: "
+                f"{'applied' if _comp_ok else 'FAILED — base clip kept'} "
+                f"({_comp_record})"
+            )
+
         audit = audit_clip(
             output_path,
             expected_frames=frame_count,
@@ -773,6 +812,8 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
         "placeholder_items": [],
         "holdover_count": len(holdover_items),
         "holdover_items": holdover_items,
+        # Phase 6 (AM-011): composition outcomes for this scene.
+        "composition_records": composition_records,
     }
 
     print()

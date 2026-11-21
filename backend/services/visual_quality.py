@@ -819,6 +819,47 @@ def measure_visual_quality(
         },
     }
 
+    # Phase 6 (motion continuity): adjacent-item continuity
+    # MEASUREMENTS over the same pass — reported, never used to
+    # rewrite editorial choices. A video "restart repeat" is a
+    # showing of an already-shown segment whose recorded window
+    # starts where an earlier showing of the same segment started
+    # and is not stamped as a continuation (Phase 5 stamps make
+    # this measurable; pre-Phase-5 items without windows count as
+    # not measured, never as restarts).
+    _restart_repeats = 0
+    _windows_seen: dict[str, set] = {}
+    _composed_items = 0
+    _kind_switches = 0
+    _prev_kind = None
+    for item, duration, identity, cid in zip(
+        items, durations, identity_ids, canonical_ids
+    ):
+        kind = classify_asset_kind(item, cid)
+        if _prev_kind is not None and kind != _prev_kind:
+            _kind_switches += 1
+        _prev_kind = kind
+        if isinstance(item.get("composition"), dict) and (
+            item["composition"].get("layers")
+        ):
+            _composed_items += 1
+        if kind != "moving":
+            continue
+        _w_start, _w_end = visual_identity.video_window(item)
+        if _w_end is None:
+            continue
+        _starts = _windows_seen.setdefault(identity, set())
+        if _w_start in _starts and item.get("clip_continued") is not True:
+            _restart_repeats += 1
+        _starts.add(_w_start)
+    continuity = {
+        "video_restart_repeats": _restart_repeats,
+        "consecutive_identical_pairs": consecutive_repeats,
+        "kind_switches": _kind_switches,
+        "composed_items": _composed_items,
+        "items_measured": len(items),
+    }
+
     # Stage 1 / §2.6: FORMAT runtime accounting — an orthogonal
     # dimension to the kind totals above (whose definitions are
     # frozen). Timeline items are joined by file path to the format
@@ -1294,6 +1335,7 @@ def measure_visual_quality(
         # share, canonical distinct count, unique moving seconds,
         # longest stretch, source concentration).
         "film_level": film_level,
+        "continuity": continuity,
         "runtime_share": _runtime_block(dict(kind_totals), total_runtime),
         "runtime_share_by_format": runtime_share_by_format,
         "tier_accounting": tier_accounting,

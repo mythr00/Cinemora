@@ -171,16 +171,22 @@ def test_process_anchors_to_single_target(tmp_path, monkeypatch):
     assert process.get("delivered") is True
 
 
-def test_process_undelivered_recorded_with_zero_targets(tmp_path, monkeypatch):
+def test_process_not_rendered_with_zero_targets(tmp_path, monkeypatch):
+    # Phase 6 SUPERSESSION (AM-001/D1): this test previously
+    # pinned the process graphic rendering unanchored with zero
+    # targets and being recorded as "undelivered". D1 removed the
+    # unconditional render: with no targets there is no process
+    # graphic at all — nothing rendered, nothing to record as
+    # undelivered.
     _fake_renders(monkeypatch)
     assets = graphics_pipeline.build_motion_graphics_assets(
         _bible_data(), tmp_path, mode="balanced",
     )
-    process = next(a for a in assets if a["graphic_type"] == "process")
-    assert process.get("scene_number") is None
-    assert process.get("delivered") is False
+    assert [a for a in assets if a["graphic_type"] == "process"] == []
     manifest = json.loads((tmp_path / "motion_graphics.json").read_text())
-    assert any(u["graphic_type"] == "process" for u in manifest["undelivered"])
+    assert not any(
+        u["graphic_type"] == "process" for u in manifest["undelivered"]
+    )
 
 
 # ---------------------------------------------------------------------------

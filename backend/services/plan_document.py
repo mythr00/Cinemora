@@ -234,6 +234,50 @@ def write_visual_plan_document(project_dir, analysis, project_id,
         return None
 
 
+GRAPHICS_MANIFEST_FILENAME = "graphics_manifest.json"
+
+
+def write_visual_plan_v2_document(project_dir, document):
+    """Persist the Visual Director's reconciled plan (Phase 6,
+    AM-002 Pass-2) as visual_plan.json — the same artefact the v1
+    write produced, upgraded in place: the document's own
+    `version: 2` field records the upgrade and every v1 row rides
+    inside it with its decision appended. Fail-soft: returns the
+    path or None."""
+    from datetime import datetime, timezone
+
+    try:
+        document = dict(document)
+        document["generated_at"] = datetime.now(timezone.utc).isoformat()
+        project_dir = Path(project_dir)
+        target = project_dir / VISUAL_PLAN_FILENAME
+        payload = json.dumps(document, indent=2, ensure_ascii=False)
+        write_text_atomic(target, payload)
+        return target
+    except Exception as error:
+        print(f"WARNING: visual plan v2 document write failed: {error}")
+        return None
+
+
+def write_graphics_manifest_document(project_dir, manifest):
+    """Persist graphics_manifest.json (Phase 6, AM-002): the
+    authoritative list of targeted graphics the Visual Director
+    ordered. Fail-soft: returns the path or None."""
+    from datetime import datetime, timezone
+
+    try:
+        document = dict(manifest)
+        document["generated_at"] = datetime.now(timezone.utc).isoformat()
+        project_dir = Path(project_dir)
+        target = project_dir / GRAPHICS_MANIFEST_FILENAME
+        payload = json.dumps(document, indent=2, ensure_ascii=False)
+        write_text_atomic(target, payload)
+        return target
+    except Exception as error:
+        print(f"WARNING: graphics manifest write failed: {error}")
+        return None
+
+
 def write_plan_document(project_dir, analysis, project_id):
     """Persist plan.json from a fresh analysis (atomic write via
     services.atomic_write, the single MA-11 pattern since Stage 4).

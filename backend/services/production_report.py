@@ -387,6 +387,19 @@ def _questions(measurement, asset_report, verdicts):
                  asset_report.get("discovery")
                  if isinstance(asset_report.get("discovery"), dict)
                  else None),
+        # Master Directive Phase 6 (motion continuity): answered
+        # from the measurement's continuity block (visual_quality)
+        # — restart repeats of already-shown video windows,
+        # consecutive identical items, kind switches and composed
+        # items, measured on the finished timeline. Unknown when
+        # the measurement carries no continuity block (pre-Phase-6
+        # measurements).
+        "q29": q("Does the finished film repeat itself — restarted "
+                 "video windows, back-to-back identical visuals — "
+                 "and where do composed overlays appear?",
+                 measurement.get("continuity")
+                 if isinstance(measurement.get("continuity"), dict)
+                 else None),
     }
 
 

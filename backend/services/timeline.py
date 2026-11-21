@@ -1130,6 +1130,15 @@ def build_scene_timeline(
                     "engine_inputs",
                     "engine_metadata",
                     "graphic_recipe",
+                    # Phase 6 (AM-002): the Visual Director manifest
+                    # entry that ordered this graphic, so the film
+                    # stays traceable to the decision.
+                    "manifest_id",
+                    "theme",
+                    # Phase 6 (AM-009): the verified-data evidence
+                    # trail, when the graphic carries one.
+                    "evidence_ref",
+                    "fact_basis",
                 ):
                     if visual.get(_graphic_field) is not None:
                         item[_graphic_field] = visual.get(_graphic_field)
