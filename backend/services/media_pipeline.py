@@ -6709,6 +6709,23 @@ def _uve_beat_distinct_asset_level_keys(beat_videos, beat_images):
     return set(groups)
 
 
+# Run-11 fix 3: the per-beat download-attempt cap for ONE
+# coverage/variety draw session (a single _uve_search_and_pick
+# pass over one beat: its primary-reserve draw plus its
+# tier-escalation draw). A beat with a verified pool keeps drawing
+# — a failed fetch never ends the draw the way a successful pick
+# ends the primary fetch — until coverage is met, the pool is
+# genuinely exhausted, a D-B2 budget binds, or this cap binds.
+# The cap exists so a pathological pool of dead URLs cannot loop
+# a beat's draw forever; when it binds, the stop is recorded on
+# the coverage record (STOP_BEAT_DOWNLOAD_ATTEMPT_CAP), never
+# silent. 16 is far above any legitimate beat need (run 11's
+# hungriest beat drew 9 across a whole pass) and far below the
+# run's 105 total attempts.
+COVERAGE_DRAW_MAX_ATTEMPTS = 16
+STOP_BEAT_DOWNLOAD_ATTEMPT_CAP = "beat_download_attempt_cap"
+
+
 def _uve_coverage_shortfall(sentence_count, distinct_asset_count):
     """Additional DISTINCT assets a beat must fetch so the timeline
     can cover every one of its sentences under the segment-use cap
@@ -7246,12 +7263,29 @@ def _uve_search_and_pick(
                     len(_queries), need_key=_escalation_need_key,
                 )
                 if _allowed <= 0:
-                    _attempt["outcome"] = "budget_exhausted"
                     _attempt["stop_reason"] = (
                         tier_ladder.STOP_WALL_CLOCK
                         if _ledger.wall_clock_exceeded()
                         else tier_ladder.STOP_PRODUCTION_SEARCH_BUDGET
                     )
+                    # Run-11 fix 4: the budget stop ends this
+                    # tier's DEEPENING — it does not rewrite what
+                    # the tier already did. When an earlier batch
+                    # of this same walk verified candidates into
+                    # the tier pool (run 11 sentence 12: "phone
+                    # 2021" verified 5, then the next batch's
+                    # allocation hit the wall clock and the attempt
+                    # was recorded budget_exhausted despite the
+                    # verified pool), the outcome stays the pool's
+                    # truth — the post-loop computation records
+                    # "verified" — and only the stop_reason names
+                    # the budget cause. budget_exhausted is
+                    # recorded only when the tier verified nothing.
+                    if not any(
+                        (_item.get("verification") or {}).get("accepted")
+                        for _item in _tier_pool
+                    ):
+                        _attempt["outcome"] = "budget_exhausted"
                     break
                 _queries = _queries[:_allowed]
                 _dneed["queries"] = _queries
@@ -7385,7 +7419,8 @@ def _uve_search_and_pick(
 
     def _draw_reserves(_items, _shortfall, _drawn_ids, _blocked,
                        _failures, _via="coverage_pass", _need_fn=None,
-                       _sink=None):
+                       _sink=None, _budget_blocked=None,
+                       _draw_stats=None):
         """One coverage draw over reserve pool items: eligibility
         re-checked per item at draw time, the pick-limit stamp
         cleared on draw, fetched through the same download path as
@@ -7403,11 +7438,40 @@ def _uve_search_and_pick(
         instead of the coverage shortfall) and drawn candidates
         stamp variety_pick, so their records read
         selection_via="variety_pass". Accepted assets land in
-        ``_sink`` when given, else the coverage list."""
+        ``_sink`` when given, else the coverage list.
+
+        Run-11 fixes 3+4: a budget gate that refuses an escalation
+        item no longer skips it SILENTLY — the refusal is recorded
+        in ``_budget_blocked`` (candidate, typed stop reason, tier)
+        so the coverage record can tell a budget-stopped draw from
+        a genuinely exhausted pool; the item keeps its
+        pick_limit_reached stamp (it was never examined, and a
+        later pass may still draw it). The ledger gate is
+        can_draw_verified_download: this draw only ever fetches
+        candidates from an already-verified pool, so the
+        wall-clock guard — which gates NEW searches — does not
+        strand the pool; the D-B2 production download cap and the
+        fairness reserve still bind. Every fetch in the draw is
+        counted in ``_draw_stats`` and the whole draw is bounded
+        by the per-beat COVERAGE_DRAW_MAX_ATTEMPTS cap, recorded
+        the same way when it binds."""
         _tier_attempts = {}
         _ledger = tier_ladder.ledger_for(registry)
         for _reserve in _items:
             if _shortfall <= 0:
+                break
+            if (
+                _draw_stats is not None
+                and _draw_stats.get("attempts", 0)
+                >= COVERAGE_DRAW_MAX_ATTEMPTS
+            ):
+                if _budget_blocked is not None:
+                    _budget_blocked.append({
+                        "candidate_id": None,
+                        "reason": STOP_BEAT_DOWNLOAD_ATTEMPT_CAP,
+                        "tier": _reserve.get("tier_escalation"),
+                        "undrawn": len(_items) - len(_drawn_ids),
+                    })
                 break
             _esc_tier = _reserve.get("tier_escalation")
             if _esc_tier:
@@ -7415,10 +7479,27 @@ def _uve_search_and_pick(
                     _tier_attempts.get(_esc_tier, 0)
                     >= tier_ladder.TIER_DOWNLOAD_ATTEMPTS
                 ):
+                    if _budget_blocked is not None:
+                        _budget_blocked.append({
+                            "candidate_id": _reserve.get("candidate_id"),
+                            "reason": (
+                                tier_ladder.STOP_TIER_DOWNLOAD_BUDGET
+                            ),
+                            "tier": _esc_tier,
+                        })
                     continue
-                if not _ledger.can_spend_download(
+                if not _ledger.can_draw_verified_download(
                     need_key=_escalation_need_key
                 ):
+                    if _budget_blocked is not None:
+                        _budget_blocked.append({
+                            "candidate_id": _reserve.get("candidate_id"),
+                            "reason": (
+                                tier_ladder
+                                .STOP_PRODUCTION_DOWNLOAD_BUDGET
+                            ),
+                            "tier": _esc_tier,
+                        })
                     continue
             _block = _uve_selection_block_reason(_reserve, registry)
             if _block is not None:
@@ -7447,6 +7528,10 @@ def _uve_search_and_pick(
             if shot_need:
                 _fetch_item["shot_need"] = dict(shot_need)
             _drawn_ids.append(_reserve.get("candidate_id"))
+            if _draw_stats is not None:
+                _draw_stats["attempts"] = (
+                    _draw_stats.get("attempts", 0) + 1
+                )
             _cov_asset = _uve_fetch_first(
                 [_fetch_item], _uve_download_any_candidate, scene_dir,
                 beat["sentence_numbers"][0],
@@ -7539,10 +7624,13 @@ def _uve_search_and_pick(
         )
         _drawn_ids = []
         _blocked = []
+        _budget_blocked = []
+        _draw_stats = {"attempts": 0}
         _coverage_failures = []
         _shortfall = _draw_reserves(
             _reserves, _shortfall, _drawn_ids, _blocked,
             _coverage_failures,
+            _budget_blocked=_budget_blocked, _draw_stats=_draw_stats,
         )
         # Tier ladder (B2): the draw above exhausted this pass's
         # own verified pool with sentences still uncovered — the
@@ -7568,6 +7656,8 @@ def _uve_search_and_pick(
                     ],
                     _shortfall, _drawn_ids, _blocked,
                     _coverage_failures,
+                    _budget_blocked=_budget_blocked,
+                    _draw_stats=_draw_stats,
                 )
                 _escalation_accepted = (
                     len(coverage_accepted_assets) - _accepted_before
@@ -7589,6 +7679,15 @@ def _uve_search_and_pick(
             "sentence_count": _sentence_count,
             "drawn": _drawn_ids,
             "blocked": _blocked,
+            # Run-11 fix 3: budget-gate refusals during the draw
+            # (per-tier attempt cap, production download cap,
+            # per-beat attempt cap) — recorded with their typed
+            # stop reasons, so a budget-stopped draw is never
+            # mistaken for a genuinely exhausted pool; the draw's
+            # own attempt count and cap ride along.
+            "budget_blocked": _budget_blocked,
+            "download_attempts": _draw_stats["attempts"],
+            "download_attempt_cap": COVERAGE_DRAW_MAX_ATTEMPTS,
             "accepted": len(coverage_accepted_assets),
             "pool_exhausted": bool(_shortfall > 0),
             "covered_after": bool(_shortfall <= 0),

@@ -402,8 +402,8 @@ class EscalationLedger:
         self._need_searches[need_key] = prior + count
 
     # -- downloads --------------------------------------------------
-    def can_spend_download(self, need_key=None):
-        if self.wall_clock_exceeded():
+    def _download_gate(self, need_key, wall_clock_binds):
+        if wall_clock_binds and self.wall_clock_exceeded():
             return False
         if self.downloads >= PRODUCTION_MAX_EXTRA_DOWNLOADS:
             return False
@@ -417,6 +417,30 @@ class EscalationLedger:
             self.downloads + 1 + FAIRNESS_LOOKAHEAD_DOWNLOADS
             <= PRODUCTION_MAX_EXTRA_DOWNLOADS
         )
+
+    def can_spend_download(self, need_key=None):
+        """Whether a NEW escalation download spend may start. The
+        wall-clock guard binds here: it exists to stop new
+        escalation work late in the stage."""
+        return self._download_gate(need_key, wall_clock_binds=True)
+
+    def can_draw_verified_download(self, need_key=None):
+        """Whether a fetch may be drawn from an ALREADY-VERIFIED
+        pool (run-11 fix 4).
+
+        The wall-clock guard gates NEW searches and new escalation
+        spends; it must not strand a pool that was verified before
+        the guard tripped. Run 11's sentence 12 verified 5
+        candidates, had the batch's outcome overwritten to
+        budget_exhausted/wall_clock, and then drew ZERO of them —
+        every draw was refused by the wall-clock check inside
+        can_spend_download — and a later batch verified 12 more
+        with the same result. Drawing from a verified pool is not
+        new escalation work: the searches are already spent. The
+        production download cap (D-B2) and the breadth-first
+        fairness reserve bind exactly as in can_spend_download;
+        ONLY the wall-clock check does not apply."""
+        return self._download_gate(need_key, wall_clock_binds=False)
 
     def spend_download(self, need_key=None):
         self.downloads += 1
