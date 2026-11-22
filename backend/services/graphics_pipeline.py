@@ -3611,7 +3611,20 @@ def build_motion_graphics_assets(
     #: Assemblers the undirected chain never appends on its own —
     #: these templates are proposed by the Visual Director (or
     #: not at all), never volunteered by the coverage chain.
-    _DIRECTOR_ONLY_ASSEMBLERS = {"archival_title"}
+    _DIRECTOR_ONLY_ASSEMBLERS = {
+        "archival_title",
+        # Wave 2: these templates draw on production-global pools
+        # (the whole case-bible timeline / fact table) or a gated
+        # document asset, not on data belonging to the target beat
+        # itself. In the undirected chain they would fire on ANY
+        # unserved beat and pre-empt the coverage guarantee's
+        # floor (the Wave 1 T5 tests pin that floor), so — like
+        # archival_title — they are reachable only through a
+        # Director manifest entry, where the candidacy conditions
+        # in visual_director are their recorded-evidence gate.
+        "milestone_waveform", "bubble_chart", "animated_dashboard",
+        "holographic_panel", "classified_file",
+    }
 
     #: Template name -> assembler. Templates NOT listed here have
     #: no production assembler (see the Phase 6 proposal's audit
