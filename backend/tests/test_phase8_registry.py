@@ -25,13 +25,19 @@ def test_templates_resolve_easings_through_registry():
 
 
 def test_registry_covers_all_fifteen_templates():
-    # Wave 1 (Phase 2.5) supersedes the count: the registry grew
+    # Wave 1 (Phase 2.5) superseded the count: the registry grew
     # from 15 to 31 — the original fifteen plus the sixteen Wave 1
     # registrations (F1 charts, F3 map variants, F4 investigation
     # variants, F5 schematic variants, F6/F7 text treatments, F8
-    # parallax). The fifteen-template vocabulary itself is intact.
+    # parallax). Wave 2 (breadth) grows it again, 31 to 49: the
+    # eighteen Wave 2 registrations (F1 completion, F2 checklist /
+    # waveform, F3 expansion / satellite zoom / heatmap, F4
+    # classified file / newspaper wall / crime-scene schematic,
+    # F5 construction / molecular, F7/F8 HUD / holographic /
+    # before-after / layered reveal / object labels). The
+    # fifteen-template vocabulary itself is intact.
     names = set(templates.TEMPLATES) | set(templates_v2.V2_TEMPLATES)
-    assert len(names) == 31
+    assert len(names) == 49
     # The run-10 T5 guarantee template is part of the vocabulary.
     assert "closing_card" in names
     for name in (
@@ -40,6 +46,16 @@ def test_registry_covers_all_fifteen_templates():
         "mechanical_cutaway", "blueprint_section", "red_string_board",
         "newspaper_montage", "profile_reveal", "photo_parallax",
         "text_overlay", "text_highlight", "archival_title",
+    ):
+        assert name in names, name
+    for name in (
+        "bubble_chart", "population_pyramid", "animated_dashboard",
+        "checklist_graphic", "milestone_waveform",
+        "territory_expansion", "satellite_zoom", "heatmap",
+        "classified_file", "newspaper_wall", "crime_scene_diagram",
+        "construction_sequence", "molecular_diagram",
+        "hud_overlay", "holographic_panel", "before_after",
+        "layered_reveal", "object_labels",
     ):
         assert name in names, name
 
