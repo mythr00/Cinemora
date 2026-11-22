@@ -89,20 +89,62 @@ _SEQUENCE_MARKERS = (
 )
 
 
-def _text_features(text):
+_PAIR_CUES = (
+    "than", "versus", "vs", "compared", "while", "whereas",
+)
+
+
+def _text_features(text, scenario=None):
     """Plan-level text features for template routing. Deliberately
     lightweight: the graphics pipeline's assemblers remain the
     authority on whether a candidate can actually be built, and a
     refusal there is recorded — the Director only orders the
-    attempt."""
+    attempt.
+
+    Wave 1 (§D.1) features: has_series (>= 3 measured numbers,
+    bare years excluded), has_pair (two values joined by a
+    comparison cue), has_places (>= 2 distinct places recorded
+    for the beat: geography-dataset countries named in the text
+    plus the scenario's place)."""
     text = text or ""
     numbers = _NUMBER_RE.findall(text)
+
+    def _is_bare_year(token):
+        if "," in token or "." in token:
+            return False
+        try:
+            value = int(token)
+        except ValueError:
+            return False
+        return 1000 <= value <= 2099
+
+    measured = [n for n in numbers if not _is_bare_year(n)]
+    lowered = text.lower()
+    places = set()
+    scenario = scenario or {}
+    scenario_place = scenario.get("place") or scenario.get("location")
+    if scenario_place:
+        places.add(str(scenario_place).strip().lower())
+    try:
+        from services.motion_engine import geography
+
+        for name in geography.country_names():
+            if name.lower() in lowered:
+                places.add(name.lower())
+    except Exception:
+        pass
     return {
         "has_percent": bool(_PERCENT_RE.search(text)),
         "has_comparison": len(numbers) >= 2,
         "has_date": bool(_YEAR_RE.search(text) or _MONTH_RE.search(text)),
-        "has_sequence": any(m in text.lower() for m in _SEQUENCE_MARKERS),
+        "has_sequence": any(m in lowered for m in _SEQUENCE_MARKERS),
         "has_number": bool(numbers),
+        "has_series": len(measured) >= 3,
+        "has_pair": len(measured) >= 2 and any(
+            re.search(rf"\b{cue}\b", lowered) for cue in _PAIR_CUES
+        ),
+        "has_places": len(places) >= 2,
+        "places": sorted(places),
     }
 
 
@@ -156,6 +198,32 @@ def outcomes_from_processed_scenes(processed_scenes):
             or v.get("image_url") or v.get("file_path", "").lower().endswith(
                 (".jpg", ".jpeg", ".png", ".webp")
             )
+        )
+        # Wave 1 document unlock (§D.1 has_document): the scene's
+        # genuine document asset — an accepted verified visual the
+        # evidence layer classified as a document, with a file and
+        # recorded provenance. Its presence is what lets the
+        # Director propose document_presentation WITH a source.
+        document_asset = None
+        for visual in accepted:
+            if visual.get("evidence_type") != "document":
+                continue
+            path = visual.get("file_path") or visual.get("path")
+            provenance = (
+                visual.get("provider") or visual.get("source") or "")
+            url = visual.get("source_url") or visual.get("url") or ""
+            if path and (provenance or url):
+                document_asset = {
+                    "path": path,
+                    "title": visual.get("title"),
+                    "source": provenance,
+                    "url": url,
+                }
+                break
+        scene_has_identity_photo = any(
+            v.get("evidence_type") == "identity"
+            or v.get("asset_role") == "real_person_photo"
+            for v in accepted
         )
         for index, sentence in enumerate(sentences):
             if not isinstance(sentence, dict):
@@ -216,6 +284,8 @@ def outcomes_from_processed_scenes(processed_scenes):
                 or (covering or {}).get("path"),
                 "scene_photo_count": scene_photo_count,
                 "secondary_video": secondary_video,
+                "document_asset": document_asset,
+                "scene_has_identity_photo": scene_has_identity_photo,
             }
     return outcomes
 
@@ -236,20 +306,71 @@ def _template_candidates(row, outcome, pack):
     plan-level features, ordered by the pack's template_affinities
     (AM-008 consumer: higher affinity first; unlisted templates
     keep feature order after listed ones). Returns (candidates,
-    affinities_used). document_presentation is NEVER a candidate —
-    it stays disabled (no genuine document source exists)."""
-    features = _text_features(outcome.get("text") or "")
+    affinities_used).
+
+    Wave 1 (§D.2): EVERY engine template is registered here under
+    its recorded-evidence condition — closing the reachability
+    gap is a wave acceptance criterion. document_presentation is
+    proposed ONLY when the scene carries a genuine document asset
+    (outcome["document_asset"], recorded provenance) — without
+    one it stays refused, exactly as before (AM-010)."""
+    text = outcome.get("text") or ""
     scenario = outcome.get("scenario") or {}
+    features = _text_features(text, scenario)
+    lowered = text.lower()
     candidates = []
     if features["has_comparison"]:
         candidates += ["bar_chart", "stat_comparison"]
     if features["has_percent"]:
         candidates += ["data_gauge", "ring_badges"]
+    # F1 charts: a measured series, a comparable pair.
+    if features["has_series"]:
+        candidates.append("line_chart")
+    if features["has_pair"]:
+        candidates.append("pie_chart")
     place = scenario.get("place") or scenario.get("location")
     if place:
         candidates.append("territory_map")
-    if (outcome.get("scene_photo_count") or 0) > 0:
+        # F3 map overlays, each on its recorded cue.
+        if any(m in lowered for m in ("border", "boundary", "frontier")):
+            candidates.append("border_map")
+        if features["has_places"]:
+            candidates.append("route_map")
+        if any(m in lowered for m in (
+                "troops", "army", "offensive", "invasion", "advanced on")):
+            candidates.append("military_map")
+        if any(m in lowered for m in (
+                "trade", "shipping", "cargo", "exports", "port")):
+            candidates.append("trade_route_map")
+    # F5 schematic variants: only on caller-recorded layers.
+    layers = scenario.get("layers")
+    if isinstance(layers, list) and layers:
+        candidates += [
+            "exploded_view", "mechanical_cutaway", "blueprint_section"]
+    photo_count = outcome.get("scene_photo_count") or 0
+    if photo_count > 0:
         candidates.append("evidence_board")
+    if photo_count >= 2:
+        # F4: the red-string board is the evidence board's
+        # connected variant — proposed after it, never instead.
+        candidates.append("red_string_board")
+    # F4 investigation variants on their recorded material.
+    if outcome.get("document_asset"):
+        candidates.append("document_presentation")
+    if any(m in lowered for m in (
+            "newspaper", "headline", "front page", "press reported")):
+        candidates.append("newspaper_montage")
+    if outcome.get("scene_has_identity_photo") or (
+        scenario.get("subject_type") == "person"
+    ):
+        candidates.append("profile_reveal")
+    # F8/F6 photo & text treatments on recorded photos / quotes.
+    if photo_count >= 1:
+        candidates += ["photo_parallax", "text_overlay"]
+    if outcome.get("sentence_index") == 0:
+        candidates.append("archival_title")
+    if '"' in text or "“" in text:
+        candidates.append("text_highlight")
     # Dedupe, preserving feature order.
     candidates = list(dict.fromkeys(candidates))
 

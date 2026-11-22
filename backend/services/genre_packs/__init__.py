@@ -169,14 +169,27 @@ PROFILE_CATEGORIES = (
 #: template is a validation failure, not dead configuration — the
 #: MG-104 failure mode, linted from day one. Phase 6 (AM-010)
 #: landed the territory_map, evidence_board and outcome_path
-#: assemblers; the remaining registered templates
+#: assemblers; Wave 1 of the Motion Graphics Engine plan landed
+#: the rest of the assembled set below — including
+#: document_presentation, whose assembler exists but yields a
+#: render ONLY for a genuine retrieved document asset with
+#: recorded provenance (without one the attempt records the
+#: AM-010 refusal). The remaining registered templates
 #: (editorial_panel, split_panel, scan_grid, photo_node_diagram,
-#: cross_section, satellite_annotation, document_presentation)
-#: still have none — document_presentation by founder rule (it
-#: stays disabled), the rest per the Phase 6 audit table.
+#: cross_section, satellite_annotation) still have no targeted-
+#: chain assembler — cross_section renders via the event
+#: schematic family instead — per the Phase 6 audit table.
 ASSEMBLED_TEMPLATES = frozenset({
     "bar_chart", "data_gauge", "ring_badges", "stat_comparison",
     "territory_map", "evidence_board", "outcome_path",
+    # Wave 1 (Motion Graphics Engine plan §C).
+    "line_chart", "pie_chart",
+    "border_map", "route_map", "trade_route_map", "military_map",
+    "exploded_view", "mechanical_cutaway", "blueprint_section",
+    "red_string_board", "newspaper_montage", "profile_reveal",
+    "document_presentation",
+    "photo_parallax", "text_overlay", "text_highlight",
+    "archival_title",
 })
 
 _PROFILE_FIELDS = frozenset({

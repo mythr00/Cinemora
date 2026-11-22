@@ -1,1 +1,182 @@
-{"description":"Documentaries about engineering failures and disasters: structures, loads, inspections, collapse and the investigations that follow. Research leans on official inquiry records and technical reports; graphics lean on process sequences, chronology and evidence boards.","entity_handling":["Never invent a failure cause, a load figure, a material property or a casualty count — if the script and retrieved sources do not state it, it does not appear.","A cause stays under investigation in the telling until a retrieved source (an inquiry report, a court record, an engineering analysis) supports it; competing explanations are recorded as conflicts, never resolved silently.","Technical terms from the script are kept exact — a hanger rod is not renamed a bolt, a load path is not simplified into a different mechanism.","Casualty and injury figures stay exactly as the script states them; they are never rounded, merged or updated from a single secondary summary."],"expectations":{"broll_share":{"basis":"founder_band","range":[0.0,0.4]},"document_share":{"basis":"uncalibrated","range":null},"graphic_share":{"basis":"uncalibrated","range":null},"moving_share":{"basis":"uncalibrated","range":null},"still_share":{"basis":"uncalibrated","range":null},"uncovered_share":{"basis":"uncalibrated","range":null}},"format_preferences":{"chart":2,"document":3,"footage":1,"graphic":2,"map":1,"photograph":2},"graphics_motifs":["outcome_path","cross_section","evidence_board","bar_chart","stat_comparison","data_gauge","document_presentation","ring_badges","photo_node_diagram","split_panel","scan_grid","territory_map","satellite_annotation","editorial_panel"],"id":"engineering","label":"Engineering disaster","mix_preset":{"duck_ratio":8,"fade_in_seconds":1.5,"fade_out_seconds":2.5,"music_volume":0.09},"music_mood":"Measured, tense underscore — low strings and mechanical pulses (metadata only — no music library is integrated; the soundtrack remains user-supplied or absent).","pacing":{"narration_speed":0.94,"notes":"Slightly slower narration for technical density (narration_speed, Phase 2.4); the sentence target stays informational.","target_seconds_per_sentence":4.5},"research_query_templates":["{name} structural failure investigation","{name} engineering report findings","{name} {place} collapse inquiry"],"style_family":"editorial","visual_profile":{"broll_vocabulary":{"activities":["inspecting steel beams","examining wreckage","surveying a structure","testing materials in a laboratory","reviewing engineering drawings","lifting debris with cranes","measuring cracks in concrete","walking an inspection gantry"],"mood":["procedural","somber","methodical"],"place_types":["bridge","high-rise building","dam","industrial plant","railway viaduct"],"settings":["construction site","inspection laboratory","collapsed structure site","engineering office","bridge deck","dam control room"]},"care_rules_ref":"entity_handling","category_priors":{"atmosphere":0.1,"contextual":0.25,"environmental":0.1,"evidence":0.25,"explanatory_graphic":0.3},"composition_affinities":{"full_frame":2,"lower_third_card":1,"side_panel":2},"profile_version":1,"research_requirements":{"min_sources_per_primary_subject":2,"prefer_primary_sources":true},"specificity_defaults":{"contextual":"representative","environmental":"representative","evidence":"exact"},"template_affinities":{"bar_chart":1,"data_gauge":1,"evidence_board":2,"outcome_path":3,"ring_badges":1,"stat_comparison":2,"territory_map":1}},"visual_theme":"editorial"}
+{
+  "description": "Documentaries about engineering failures and disasters: structures, loads, inspections, collapse and the investigations that follow. Research leans on official inquiry records and technical reports; graphics lean on process sequences, chronology and evidence boards.",
+  "entity_handling": [
+    "Never invent a failure cause, a load figure, a material property or a casualty count — if the script and retrieved sources do not state it, it does not appear.",
+    "A cause stays under investigation in the telling until a retrieved source (an inquiry report, a court record, an engineering analysis) supports it; competing explanations are recorded as conflicts, never resolved silently.",
+    "Technical terms from the script are kept exact — a hanger rod is not renamed a bolt, a load path is not simplified into a different mechanism.",
+    "Casualty and injury figures stay exactly as the script states them; they are never rounded, merged or updated from a single secondary summary."
+  ],
+  "expectations": {
+    "broll_share": {
+      "basis": "founder_band",
+      "range": [
+        0.0,
+        0.4
+      ]
+    },
+    "document_share": {
+      "basis": "uncalibrated",
+      "range": null
+    },
+    "graphic_share": {
+      "basis": "uncalibrated",
+      "range": null
+    },
+    "moving_share": {
+      "basis": "uncalibrated",
+      "range": null
+    },
+    "still_share": {
+      "basis": "uncalibrated",
+      "range": null
+    },
+    "uncovered_share": {
+      "basis": "uncalibrated",
+      "range": null
+    }
+  },
+  "format_preferences": {
+    "chart": 2,
+    "document": 3,
+    "footage": 1,
+    "graphic": 2,
+    "map": 1,
+    "photograph": 2
+  },
+  "graphics_motifs": [
+    "outcome_path",
+    "cross_section",
+    "evidence_board",
+    "bar_chart",
+    "stat_comparison",
+    "data_gauge",
+    "document_presentation",
+    "ring_badges",
+    "photo_node_diagram",
+    "split_panel",
+    "scan_grid",
+    "territory_map",
+    "satellite_annotation",
+    "editorial_panel",
+    "line_chart",
+    "pie_chart",
+    "border_map",
+    "route_map",
+    "trade_route_map",
+    "military_map",
+    "exploded_view",
+    "mechanical_cutaway",
+    "blueprint_section",
+    "red_string_board",
+    "newspaper_montage",
+    "profile_reveal",
+    "photo_parallax",
+    "text_overlay",
+    "text_highlight",
+    "archival_title"
+  ],
+  "id": "engineering",
+  "label": "Engineering disaster",
+  "mix_preset": {
+    "duck_ratio": 8,
+    "fade_in_seconds": 1.5,
+    "fade_out_seconds": 2.5,
+    "music_volume": 0.09
+  },
+  "music_mood": "Measured, tense underscore — low strings and mechanical pulses (metadata only — no music library is integrated; the soundtrack remains user-supplied or absent).",
+  "pacing": {
+    "narration_speed": 0.94,
+    "notes": "Slightly slower narration for technical density (narration_speed, Phase 2.4); the sentence target stays informational.",
+    "target_seconds_per_sentence": 4.5
+  },
+  "research_query_templates": [
+    "{name} structural failure investigation",
+    "{name} engineering report findings",
+    "{name} {place} collapse inquiry"
+  ],
+  "style_family": "editorial",
+  "visual_profile": {
+    "broll_vocabulary": {
+      "activities": [
+        "inspecting steel beams",
+        "examining wreckage",
+        "surveying a structure",
+        "testing materials in a laboratory",
+        "reviewing engineering drawings",
+        "lifting debris with cranes",
+        "measuring cracks in concrete",
+        "walking an inspection gantry"
+      ],
+      "mood": [
+        "procedural",
+        "somber",
+        "methodical"
+      ],
+      "place_types": [
+        "bridge",
+        "high-rise building",
+        "dam",
+        "industrial plant",
+        "railway viaduct"
+      ],
+      "settings": [
+        "construction site",
+        "inspection laboratory",
+        "collapsed structure site",
+        "engineering office",
+        "bridge deck",
+        "dam control room"
+      ]
+    },
+    "care_rules_ref": "entity_handling",
+    "category_priors": {
+      "atmosphere": 0.1,
+      "contextual": 0.25,
+      "environmental": 0.1,
+      "evidence": 0.25,
+      "explanatory_graphic": 0.3
+    },
+    "composition_affinities": {
+      "full_frame": 2,
+      "lower_third_card": 2,
+      "side_panel": 2
+    },
+    "profile_version": 1,
+    "research_requirements": {
+      "min_sources_per_primary_subject": 2,
+      "prefer_primary_sources": true
+    },
+    "specificity_defaults": {
+      "contextual": "representative",
+      "environmental": "representative",
+      "evidence": "exact"
+    },
+    "template_affinities": {
+      "bar_chart": 1,
+      "data_gauge": 1,
+      "evidence_board": 2,
+      "outcome_path": 3,
+      "ring_badges": 1,
+      "stat_comparison": 2,
+      "territory_map": 1,
+      "exploded_view": 3,
+      "mechanical_cutaway": 3,
+      "blueprint_section": 3,
+      "line_chart": 2,
+      "text_overlay": 2,
+      "text_highlight": 2,
+      "document_presentation": 2,
+      "pie_chart": 1,
+      "archival_title": 1,
+      "photo_parallax": 1,
+      "newspaper_montage": 1,
+      "profile_reveal": 1,
+      "red_string_board": 1,
+      "border_map": 1,
+      "route_map": 1,
+      "trade_route_map": 1,
+      "military_map": 1
+    }
+  },
+  "visual_theme": "editorial"
+}

@@ -1878,6 +1878,60 @@ def extract_comparison(text):
     return items
 
 
+def _series_from_text(text):
+    """Wave 1 (F1): every quantity in a sentence, in order, as
+    line-chart points — the series analogue of extract_comparison
+    (which keeps only the first two). Bare years are excluded
+    (they are dates, not measurements — the same rule
+    extract_comparison applies). Returns points or None when
+    fewer than three measured values exist."""
+    text = clean_text(text)
+    if not text:
+        return None
+    values = []
+    for match in re.finditer(
+        r"(\d[\d,]*(?:\.\d+)?)\s*(%|percent\b|million|billion)?\s*([A-Za-z][A-Za-z\-]*)?",
+        text, re.I,
+    ):
+        number_text = match.group(1)
+        try:
+            numeric = float(number_text.replace(",", ""))
+        except ValueError:
+            continue
+        if (1000 <= numeric <= 2100 and "," not in number_text
+                and "." not in number_text and not match.group(2)):
+            continue  # bare year
+        scale = (match.group(2) or "").lower()
+        if scale == "million":
+            numeric *= 1_000_000
+        elif scale == "billion":
+            numeric *= 1_000_000_000
+        noun = (match.group(3) or "")
+        if noun.lower() in _STAT_STOP_NOUNS:
+            noun = ""
+        display = clean_text(
+            f"{number_text} {match.group(2) or ''} {noun}".replace(
+                "percent", "%")
+        )
+        values.append({
+            "start": match.start(), "value": numeric,
+            "display": display,
+        })
+    if len(values) < 3:
+        return None
+    points = []
+    for idx, entry in enumerate(values):
+        start = 0 if idx == 0 else values[idx - 1]["start"] + 1
+        segment = text[start:entry["start"]].strip(" ,;—-")
+        words = segment.split()
+        label = " ".join(words[-3:]) if words else entry["display"]
+        points.append({
+            "label": label, "value": entry["value"],
+            "display": entry["display"],
+        })
+    return points
+
+
 def _record_style(style):
     """The style value as it may ride on an asset record (and from
     there into JSON artefacts): a style NAME passes through, but a
@@ -2604,6 +2658,10 @@ def build_motion_graphics_assets(
     # -----------------------------------------------------
 
     _verified_by_scene = {}
+    # Wave 1: the accepted verified asset dicts per scene — the
+    # material the document/profile/newspaper/parallax assemblers
+    # build from (same acceptance rule as the counts below).
+    _verified_by_scene_assets = {}
     # Per-sentence coverage (Stage 3D): keys of sentences that have
     # an explicitly accepted verified visual LINKED to them (via
     # sentence_index, or sentence_number resolved through the
@@ -2635,6 +2693,7 @@ def build_motion_graphics_assets(
             if (_v.get("verification") or {}).get("accepted") is not True:
                 continue
             _genuine += 1
+            _verified_by_scene_assets.setdefault(_sn, []).append(_v)
             _linked_index = _v.get("sentence_index")
             if _linked_index is None and _v.get("sentence_number") is not None:
                 for _i, _s in enumerate(_ps_sentences):
@@ -2931,6 +2990,301 @@ def build_motion_graphics_assets(
             ],
         }
 
+    # -----------------------------------------------------
+    # Wave 1 assemblers (Motion Graphics Engine plan §C).
+    # Every assembler returns engine data built ONLY from the
+    # target's recorded material, or None — the template then
+    # stays unproposed for this target and any attempt records
+    # the engine's typed refusal.
+    # -----------------------------------------------------
+
+    def _fact_quantities():
+        """Recorded quantity facts from the Phase 2.3 fact table,
+        grouped by unit: {unit: [fact, ...]} in sentence order."""
+        grouped = {}
+        for fact in (case_bible.get("script_facts") or []):
+            if not isinstance(fact, dict) or fact.get("kind") != "quantity":
+                continue
+            unit = clean_text(fact.get("unit") or "").lower()
+            try:
+                value = float(fact.get("value"))
+            except (TypeError, ValueError):
+                continue
+            grouped.setdefault(unit, []).append({
+                "value": value,
+                "display": clean_text(fact.get("display") or ""),
+                "sentence_number": fact.get("sentence_number"),
+                "date": clean_text(
+                    (fact.get("date") or {}).get("display") or ""),
+            })
+        for facts in grouped.values():
+            facts.sort(key=lambda f: f["sentence_number"] or 0)
+        return grouped
+
+    def _assemble_line_chart(target):
+        grouped = _fact_quantities()
+        for unit, facts in grouped.items():
+            if len(facts) >= 3:
+                return {
+                    "points": [
+                        {"label": f["date"] or f["display"],
+                         "value": f["value"], "display": f["display"]}
+                        for f in facts[:8]
+                    ],
+                    "title": shorten(target["text"], 60),
+                    "unit": unit,
+                }
+        points = _series_from_text(target["text"])
+        if points:
+            return {"points": points, "title": shorten(target["text"], 60)}
+        return None
+
+    def _assemble_pie_chart(target):
+        text = target["text"]
+        lowered = text.lower()
+        if any(cue in lowered for cue in
+               ("share", "accounted for", "made up", "% of", "percent of")):
+            items = extract_comparison(text) or _series_from_text(text)
+            if items and len(items) >= 2:
+                return {"items": items,
+                        "title": shorten(text, 60)}
+        grouped = _fact_quantities()
+        for _unit, facts in grouped.items():
+            if len(facts) >= 2:
+                return {
+                    "items": [
+                        {"label": f["date"] or f["display"],
+                         "value": f["value"], "display": f["display"]}
+                        for f in facts[:6]
+                    ],
+                    "title": shorten(text, 60),
+                }
+        return None
+
+    def _asset_file(asset):
+        for key in ("path", "file", "file_path", "local_path"):
+            value = asset.get(key)
+            if value:
+                return value
+        return None
+
+    def _map_variant(name):
+        def _assemble(target):
+            data = _assemble_territory_map(target)
+            if data is None:
+                return None
+            data = dict(data)
+            data["variant"] = name
+            # Recorded movement data rides on the scenario when
+            # the analysis recorded it (projected [lon, lat]
+            # points — the geography module's own contract).
+            scenario = target.get("scenario") or {}
+            if scenario.get("route_points"):
+                data["routes"] = [{
+                    "points": scenario["route_points"],
+                    "label": clean_text(scenario.get("event") or ""),
+                }]
+            if scenario.get("fronts"):
+                data["fronts"] = scenario["fronts"]
+            return data
+        return _assemble
+
+    def _section_variant(name):
+        def _assemble(target):
+            scenario = target.get("scenario") or {}
+            layers = scenario.get("layers")
+            if not isinstance(layers, list) or not layers:
+                return None
+            return {
+                "layers": layers,
+                "title": clean_text(
+                    scenario.get("event") or target["text"][:60]),
+                "variant": name,
+                "markers": scenario.get("markers") or [],
+            }
+        return _assemble
+
+    def _assemble_red_string_board(target):
+        data = _assemble_evidence_board(target)
+        if data is None:
+            return None
+        data = dict(data)
+        count = len(data.get("photos") or [])
+        if count < 2:
+            return None
+        data["strings"] = [[i, i + 1] for i in range(count - 1)]
+        return data
+
+    def _verified_scene_assets(target):
+        return _verified_by_scene_assets.get(target["scene_number"]) or []
+
+    def _assemble_newspaper_montage(target):
+        articles = []
+        for asset in _verified_scene_assets(target):
+            title = clean_text(
+                asset.get("title") or asset.get("asset_title") or "")
+            if not title:
+                continue
+            articles.append({
+                "headline": title,
+                "source": source_label(asset),
+                "dek": clean_text(asset.get("description") or "")[:90],
+            })
+            if len(articles) >= 3:
+                break
+        if len(articles) < 2:
+            return None
+        return {"articles": articles,
+                "title": shorten(target["text"], 60)}
+
+    def _identity_photo(target):
+        for asset in _verified_scene_assets(target):
+            if asset.get("evidence_type") == "identity" or asset.get(
+                    "asset_role") == "real_person_photo":
+                path = _asset_file(asset)
+                if path and os.path.exists(path):
+                    return asset, path
+        return None, None
+
+    def _assemble_profile_reveal(target):
+        asset, path = _identity_photo(target)
+        if path is None:
+            return None
+        sentence = _sentences_by_key.get(
+            (target["scene_number"], target["sentence_index"]), {})
+        fields = []
+        for date in (sentence.get("dates") or [])[:1]:
+            fields.append({"label": "Date", "value": clean_text(date)})
+        for place in (sentence.get("locations") or [])[:1]:
+            fields.append({"label": "Place", "value": clean_text(place)})
+        return {
+            "photo": path,
+            "title": clean_text(
+                asset.get("title") or detect_entity(target["text"]) or ""),
+            "subtitle": source_label(asset),
+            "fields": fields,
+        }
+
+    def _first_scene_photo(target):
+        for asset in _verified_scene_assets(target):
+            path = _asset_file(asset)
+            if path and os.path.exists(path):
+                return asset, path
+        return None, None
+
+    def _assemble_photo_parallax(target):
+        asset, path = _first_scene_photo(target)
+        if path is None:
+            return None
+        sentence = _sentences_by_key.get(
+            (target["scene_number"], target["sentence_index"]), {})
+        locations = sentence.get("locations") or []
+        return {
+            "photo": path,
+            "title": clean_text(
+                locations[0] if locations else asset.get("title") or ""),
+            "caption": source_label(asset),
+        }
+
+    def _assemble_text_overlay(target):
+        # Photo-backed only: a text overlay with no photo behind
+        # it is a text card, and text cards are not a visual
+        # answer (the chain's floor covers bare beats instead).
+        _asset, path = _first_scene_photo(target)
+        if path is None:
+            return None
+        return {
+            "text": target["text"],
+            "photo": path,
+            "position": "lower",
+        }
+
+    def _assemble_text_highlight(target):
+        # Quoted passages only: the highlight page presents the
+        # sentence as a document excerpt, so the sentence must
+        # actually carry quoted material — a bare document
+        # mention ("the report described...") is not an excerpt
+        # and keeps the chain's missing_document_source outcome.
+        text = target["text"]
+        quoted = re.search(r"[\"“]([^\"”]{3,60})[\"”]", text)
+        if quoted is None:
+            return None
+        return {
+            "text": text,
+            "highlight": quoted.group(1),
+            "source_label": clean_text(
+                detect_entity(text) or "Document"),
+        }
+
+    def _assemble_archival_title(target):
+        # A title sequence belongs to the film's opening beat
+        # only — first scene, first sentence.
+        _scene_numbers = [
+            s.get("scene_number") for s in scenes
+            if isinstance(s, dict) and s.get("scene_number") is not None
+        ]
+        if (
+            target["sentence_index"] != 0
+            or not _scene_numbers
+            or target["scene_number"] != min(_scene_numbers)
+        ):
+            return None
+        title = clean_text(
+            case_bible.get("title")
+            or (target.get("scenario") or {}).get("event")
+            or detect_entity(target["text"]) or "")
+        if not title:
+            return None
+        return {
+            "title": title,
+            "kicker": clean_text(
+                (target.get("scenario") or {}).get("era") or ""),
+            "date_label": clean_text(
+                detect_date(target["text"]) or ""),
+        }
+
+    def _assemble_document_presentation(target):
+        """The document-reveal unlock (plan §C F4): engine data
+        ONLY when the target's scene holds a verified asset the
+        evidence layer classified as a document, the file exists,
+        and its provenance is recorded. Anything less returns
+        None and the template keeps its recorded refusal."""
+        for asset in _verified_scene_assets(target):
+            if asset.get("evidence_type") != "document":
+                continue
+            path = _asset_file(asset)
+            provenance = clean_text(
+                asset.get("provider") or asset.get("source") or "")
+            url = clean_text(
+                asset.get("source_url") or asset.get("url") or "")
+            if not path or not os.path.exists(path):
+                continue
+            if not provenance and not url:
+                continue
+            sentence = _sentences_by_key.get(
+                (target["scene_number"], target["sentence_index"]), {})
+            dates = sentence.get("dates") or []
+            return {
+                "image": path,
+                "title": clean_text(
+                    asset.get("title") or "Document"),
+                "source_label": provenance or source_label(asset),
+                "date_label": clean_text(dates[0]) if dates else "",
+                "document_source": {
+                    "asset_id": asset.get("candidate_id")
+                    or asset.get("asset_id"),
+                    "source": provenance,
+                    "url": url,
+                    "path": path,
+                },
+            }
+        return None
+
+    #: Assemblers the undirected chain never appends on its own —
+    #: these templates are proposed by the Visual Director (or
+    #: not at all), never volunteered by the coverage chain.
+    _DIRECTOR_ONLY_ASSEMBLERS = {"archival_title"}
+
     #: Template name -> assembler. Templates NOT listed here have
     #: no production assembler (see the Phase 6 proposal's audit
     #: table for the per-template disposition).
@@ -2938,6 +3292,24 @@ def build_motion_graphics_assets(
         "territory_map": _assemble_territory_map,
         "evidence_board": _assemble_evidence_board,
         "outcome_path": _assemble_outcome_path,
+        # Wave 1 (Motion Graphics Engine plan §C).
+        "line_chart": _assemble_line_chart,
+        "pie_chart": _assemble_pie_chart,
+        "border_map": _map_variant("border"),
+        "route_map": _map_variant("route"),
+        "trade_route_map": _map_variant("trade"),
+        "military_map": _map_variant("military"),
+        "exploded_view": _section_variant("exploded"),
+        "mechanical_cutaway": _section_variant("cutaway"),
+        "blueprint_section": _section_variant("blueprint"),
+        "red_string_board": _assemble_red_string_board,
+        "newspaper_montage": _assemble_newspaper_montage,
+        "profile_reveal": _assemble_profile_reveal,
+        "photo_parallax": _assemble_photo_parallax,
+        "text_overlay": _assemble_text_overlay,
+        "text_highlight": _assemble_text_highlight,
+        "archival_title": _assemble_archival_title,
+        "document_presentation": _assemble_document_presentation,
     }
 
     def _make_engine_graphic(target, template_name, engine_data,
@@ -2958,19 +3330,23 @@ def build_motion_graphics_assets(
         from the script. Before this, only an input SUMMARY
         (engine_metadata) survived and the raw data was discarded.
         """
-        if template_name == "document_presentation":
-            # Phase 6: document_presentation stays DISABLED in
-            # production (founder rule: no genuine document source
-            # exists). The refusal is explicit and typed — the
-            # chain never feeds it fabricated document content, and
-            # a manifest entry naming it is refused the same way.
-            # The engine template itself is untouched and remains
-            # available to a future caller with a genuine document.
+        if template_name == "document_presentation" and not (
+            isinstance(engine_data, dict)
+            and engine_data.get("document_source")
+        ):
+            # Phase 6 founder rule, Wave 1 unlock: the template
+            # renders ONLY from a genuine retrieved document asset
+            # whose provenance the assembler recorded in
+            # engine_data["document_source"]. Every attempt without
+            # one is refused explicitly and typed — the chain never
+            # feeds it fabricated document content, and a manifest
+            # entry naming it without a source is refused the
+            # same way (AM-010 discipline unchanged).
             return (
                 False,
                 "document_presentation_disabled",
-                "document_presentation is disabled: no genuine "
-                "document source exists",
+                "document_presentation requires a genuine document "
+                "asset with recorded provenance",
             )
         try:
             from services.motion_engine import templates as _engine
@@ -3110,6 +3486,11 @@ def build_motion_graphics_assets(
         [e for e in timeline_events if clean_text(e.get("what", ""))]
     ) >= 3
     _last_family = None
+    # Wave 1 (§D.3): the no-same-family-twice rule extended to
+    # template level within the engine family — the last engine
+    # template that actually rendered, so the next target's
+    # chain-ordered candidates rotate away from repeating it.
+    _last_engine_template = None
 
     def _record_outcome(target, outcome, family, reason):
         target_outcomes.append({
@@ -3138,10 +3519,14 @@ def build_motion_graphics_assets(
         templates, the Phase 6 assemblers for the rest. None when
         the material does not support the template."""
         if name == "document_presentation":
-            # The attempt is made deliberately (with no data) so
-            # _make_engine_graphic's explicit disabled refusal is
-            # what gets recorded — never a fabricated document.
-            return {}
+            # Wave 1 unlock: a genuine retrieved document asset
+            # (verified, classified document, provenance recorded)
+            # assembles real data and the template renders. With
+            # no such asset the attempt is still made (with empty
+            # data) so _make_engine_graphic's explicit disabled
+            # refusal is what gets recorded — never a fabricated
+            # document (AM-010 discipline unchanged).
+            return _assemble_document_presentation(target) or {}
         if name == "bar_chart" and comparison:
             return {"items": comparison, "title": shorten(text, 60)}
         if name == "stat_comparison" and comparison:
@@ -3270,6 +3655,7 @@ def build_motion_graphics_assets(
             )[0]:
                 produced_family = "motion_engine"
                 produced_reason = f"variety_alternative:{_alt[0]}"
+                _last_engine_template = _alt[0]
 
         # 1) Stat (broadened extraction). A comparison sentence is
         # NOT reduced to a single-value stat card — it falls
@@ -3419,6 +3805,13 @@ def build_motion_graphics_assets(
                 # serves is served exactly as before; the assemblers
                 # only reach targets nothing else fitted.
                 for _name, _assemble in _ASSEMBLERS.items():
+                    if _name in _DIRECTOR_ONLY_ASSEMBLERS:
+                        # Reachable only through a Director
+                        # manifest entry (via _feature_data): a
+                        # title sequence is an editorial decision,
+                        # not a coverage answer — the undirected
+                        # chain's floor serves starved beats.
+                        continue
                     if any(c[0] == _name for c in _candidates):
                         continue
                     _data = _assemble(target)
@@ -3428,6 +3821,20 @@ def build_motion_graphics_assets(
                         ))
                 if _pack_id is not None:
                     _candidates = _order_by_motif(_candidates)
+            if (
+                not _manifest_restricted
+                and _last_engine_template is not None
+                and len(_candidates) > 1
+                and _candidates[0][0] == _last_engine_template
+            ):
+                # Template-level variety (§D.3): the previous
+                # target's engine template leads this list too —
+                # rotate so a different fitting template is tried
+                # first. The repeated template stays in the list
+                # as a later fallback; nothing is forbidden.
+                # Manifest mode is exempt: the Director's recorded
+                # order is authoritative there.
+                _candidates = _candidates[1:] + _candidates[:1]
             for _name, _data, _style in _candidates:
                 _engine_ok, _engine_reason, _engine_detail = (
                     _make_engine_graphic(
@@ -3437,6 +3844,7 @@ def build_motion_graphics_assets(
                 if _engine_ok:
                     produced_family = "motion_engine"
                     produced_reason = f"motion_engine:{_name}"
+                    _last_engine_template = _name
                     break
 
         # 6) T5 COVERAGE GUARANTEE (tier ladder T5; run-10 fix):
@@ -3500,6 +3908,133 @@ def build_motion_graphics_assets(
         # The one exception that remains is a target already
         # SERVED by a process-anchor graphic — coverage is met
         # there, so no floor is needed.
+        if produced_family is None and not _served_by_process_anchor:
+            # Wave 1 widening (§D.4 — exactly one step): where
+            # RECORDED facts exist, the guarantee may serve a
+            # content graphic instead of the closing card — a
+            # timeline recap when the bible records >= 3 events
+            # and this beat is dated or fact-backed, else an
+            # outcome path when the bible records a sequence and
+            # this beat is sequential or fact-backed. The honesty
+            # contract is unchanged: the asset is stamped
+            # coverage_guarantee with its real produced_reason,
+            # and the closing card remains the floor beneath both.
+            _fact_backed = target.get("fact_basis") in (
+                FACT_BASIS_ASSET, FACT_BASIS_RESEARCH)
+            _guarantee_served_reason = None
+            if (
+                len(timeline_events) >= 3
+                and (has_date or _fact_backed)
+                # The beat that already anchors the pre-loop
+                # chronology graphic never gets a second one from
+                # the guarantee — it falls to outcome_path / the
+                # closing card below instead.
+                and timeline_anchor is not target
+            ):
+                _recap_path = (
+                    output_dir
+                    / f"motion_graphic_timeline_recap_"
+                      f"{target['sentence_number']}.mp4"
+                )
+                try:
+                    _recap_spacing = _render_timeline_graphic(
+                        _recap_path, timeline_events, duration=6.0)
+                    _recap_record = register_asset(
+                        _recap_path, "timeline", "chronology", 6.0,
+                        "STORY TIMELINE",
+                        recipe=_recipe(
+                            "timeline", "ffmpeg_timeline",
+                            {"events": copy.deepcopy(timeline_events)},
+                            6.0, "chronology",
+                            scene_number=target["scene_number"],
+                            sentence_index=target["sentence_index"],
+                            sentence_number=target["sentence_number"],
+                            source_references=[
+                                {"type": "case_bible_timeline"}],
+                        ),
+                        fact_basis=_chronology_fact_basis(
+                            timeline_events),
+                    )
+                except Exception as _recap_error:
+                    print(
+                        "MOTION GRAPHIC SKIPPED "
+                        f"(timeline recap): {_recap_error}")
+                    _recap_record = None
+                if _recap_record is not None:
+                    _stamp_anchor(_recap_record, target)
+                    _recap_record["timeline_spacing"] = (
+                        _recap_spacing or "even_fallback")
+                    _recap_record["family"] = "timeline"
+                    _recap_record["delivered"] = True
+                    _recap_record["coverage_guarantee"] = True
+                    produced_family = "timeline"
+                    produced_reason = "coverage_guarantee:timeline_recap"
+                    _guarantee_served_reason = produced_reason
+            if produced_family is None:
+                _path_data = _assemble_outcome_path(target)
+                if _path_data is not None and (
+                    has_sequence or _fact_backed
+                ):
+                    _path_ok, _path_reason, _path_detail = (
+                        _make_engine_graphic(
+                            target, "outcome_path", _path_data,
+                            style=_style_for_target(
+                                target, _style_for("editorial")),
+                        )
+                    )
+                    if _path_ok:
+                        produced_family = "motion_engine"
+                        produced_reason = (
+                            "coverage_guarantee:outcome_path")
+                        _guarantee_served_reason = produced_reason
+                        for _record in reversed(assets):
+                            if (
+                                _record.get("template")
+                                == "outcome_path"
+                                and _record.get("scene_number")
+                                == target["scene_number"]
+                                and _record.get("sentence_index")
+                                == target["sentence_index"]
+                            ):
+                                _record["coverage_guarantee"] = True
+                                break
+                    else:
+                        _guarantee_reason = _path_reason
+                        _guarantee_detail = _path_detail
+            if _guarantee_served_reason is not None:
+                # Same preservation contract as the closing card:
+                # the guarantee covers the beat; it does not erase
+                # why the beat needed it.
+                _prior_reasons = [
+                    ("stat", _stat_reason, _stat_detail),
+                    ("event_schematic", _schematic_reason,
+                     _schematic_detail),
+                    ("motion_engine", _engine_reason, _engine_detail),
+                ]
+                _hard = {
+                    "rendering_failure", "validation_failed",
+                    "invalid_graphic_output",
+                }
+                _prior = next(
+                    (p for p in _prior_reasons if p[1] in _hard),
+                    None,
+                ) or next(
+                    (p for p in _prior_reasons if p[1] is not None),
+                    None,
+                )
+                if _prior is not None:
+                    graphic_failures.append({
+                        "graphic_type": _prior[0],
+                        "purpose": "targeted",
+                        "stage": "chain",
+                        "file_path": None,
+                        "reason": _prior[1],
+                        "detail": _prior[2],
+                        "superseded_by": _guarantee_served_reason,
+                        "scene_number": target["scene_number"],
+                        "sentence_index": target["sentence_index"],
+                        "sentence_number": target["sentence_number"],
+                    })
         if produced_family is None and not _served_by_process_anchor:
             _card_data = {"quote": text}
             _kicker = clean_text(
