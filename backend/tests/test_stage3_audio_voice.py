@@ -159,12 +159,16 @@ def test_measure_loudness_returns_none_on_missing_file(tmp_path):
 # ---------------------------------------------------------------
 
 def test_catalogue_contains_only_installed_voices():
-    # Exactly ONE real voice model is installed in backend/.
-    assert set(narration.VOICE_CATALOGUE) == {"default", "en_US-lessac-medium"}
-    for model, config in narration.VOICE_CATALOGUE.values():
+    # Exactly TWO real voice models are installed in backend/
+    # (Phase 2.4 added en_US-ryan-medium as the secondary voice).
+    assert set(narration.VOICE_CATALOGUE) == {
+        "default", "en_US-lessac-medium", "en_US-ryan-medium",
+    }
+    for voice_id, (model, config) in narration.VOICE_CATALOGUE.items():
         assert Path(model).exists()
         assert Path(config).exists()
-        assert Path(model).name == "en_US-lessac-medium.onnx"
+        if voice_id != "default":
+            assert Path(model).name == f"{voice_id}.onnx"
 
 
 def test_resolve_voice_known_and_unknown():

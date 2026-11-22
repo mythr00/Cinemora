@@ -191,9 +191,13 @@ def test_backward_compatible_signature_and_keyword_call(
         "output_path",
         "voice_id",
         "speed",
+        # Phase 2.4: optional per-sentence voices — appended with
+        # a default, so every historical call shape still works.
+        "sentence_voices",
     ]
     assert parameters[2].default is None
     assert parameters[3].default is None
+    assert parameters[4].default is None
 
     install_fake()
     output = tmp_path / "narration.wav"
