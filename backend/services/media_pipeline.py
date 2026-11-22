@@ -2,6 +2,7 @@ import copy
 import os
 import json
 import re
+import unicodedata
 import subprocess
 import sys
 from collections import Counter
@@ -852,6 +853,79 @@ _INTENT_QUERY_FIELD_BY_PRIMARY = {
 _MAX_NEED_QUERIES = 6
 
 
+def _bible_entities(bible):
+    """The bible's entity records, from whichever shape it carries
+    (an ``entities`` list, or the ``by_id`` map's values)."""
+    if not isinstance(bible, dict):
+        return []
+    entities = bible.get("entities")
+    if isinstance(entities, list) and entities:
+        return [e for e in entities if isinstance(e, dict)]
+    by_id = bible.get("by_id")
+    if isinstance(by_id, dict):
+        return [e for e in by_id.values() if isinstance(e, dict)]
+    return []
+
+
+def _entity_aliases(entity, canonical):
+    """An entity's recorded aliases, plus — for a person — the
+    surname when the bible did not already record it (parity with
+    verify_candidate, which adds the surname to its alias set).
+    The gate's discriminative-alias guard decides which of these
+    may satisfy a check on their own; this list is evidence, not a
+    verdict."""
+    aliases = [
+        str(a).strip()
+        for a in (entity.get("aliases") or [])
+        if str(a or "").strip()
+    ]
+    if str(entity.get("type") or "").strip().lower() == "person":
+        parts = _sig_name_tokens(canonical)
+        if len(parts) >= 2:
+            surname = parts[-1]
+            if all(_fold_name(a) != surname for a in aliases):
+                # Recorded in its bible surface form where possible:
+                # the canonical's last whitespace token.
+                surface = str(canonical or "").split()
+                aliases.append(surface[-1] if surface else surname)
+    return aliases
+
+
+def _resolve_need_aliases(bible, subject_entity, subject, place):
+    """(subject_aliases, place_aliases) for a shot need, resolved
+    from the case bible (Transformation Phase 5).
+
+    The subject's aliases come from its own entity record. The
+    place's aliases come from the bible entity the need's place
+    string identifies — by entity id (a place string that IS an id,
+    e.g. "boise_courtroom", resolves to its canonical "Boise
+    courtroom" + aliases) or by canonical name. The canonical name
+    itself heads the place alias list when it differs from the
+    need's place string, so an id-shaped place can match its real
+    name in metadata."""
+    subject_aliases = []
+    if isinstance(subject_entity, dict) and subject_entity:
+        subject_aliases = _entity_aliases(subject_entity, subject)
+    place_aliases = []
+    if place:
+        place_entity = None
+        for entity in _bible_entities(bible):
+            if str(entity.get("id") or "") == str(place):
+                place_entity = entity
+                break
+            if _fold_name(entity.get("canonical")) == _fold_name(place):
+                place_entity = entity
+                break
+        if place_entity is not None:
+            canonical = str(place_entity.get("canonical") or "").strip()
+            if canonical and _fold_name(canonical) != _fold_name(place):
+                place_aliases.append(canonical)
+            place_aliases.extend(
+                _entity_aliases(place_entity, canonical or place)
+            )
+    return subject_aliases, place_aliases
+
+
 def build_shot_needs(beat, bible=None):
     bible = bible or {}
 
@@ -1055,6 +1129,12 @@ def build_shot_needs(beat, bible=None):
                     )
                     _seen_queries.add(_iq_key)
 
+        # Transformation Phase 5: resolve this need's alias
+        # evidence once (subject entity + place entity).
+        _subject_aliases, _place_aliases = _resolve_need_aliases(
+            bible, entity, required_subject, place
+        )
+
         needs.append({
             "beat_id": beat.get("beat_id"),
             "shot_index": index,
@@ -1069,6 +1149,18 @@ def build_shot_needs(beat, bible=None):
             "required_subject_id": subject_id or None,
             "required_subject": required_subject,
             "required_type": required_type,
+            # Transformation Phase 5: the bible's recorded aliases
+            # for the subject and place entities — the metadata
+            # gate's alias-aware matching evidence (see
+            # _subject_match / _place_match). _uve_verify_all
+            # re-derives these (setdefault) for needs built by
+            # other paths.
+            "subject_aliases": _subject_aliases,
+            "place_aliases": _place_aliases,
+            "subject_entity_type": (
+                str(entity.get("type") or "").strip().lower()
+                if isinstance(entity, dict) else ""
+            ),
             "era": shot_era,
             "place": place,
             "event": event,
@@ -5663,6 +5755,37 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
             and e.get("canonical")
             and str(e.get("canonical")).strip().lower() != _place_norm
         ])
+        # Transformation Phase 5: alias evidence for the gate's
+        # subject/place matching, for needs that did not come
+        # through build_shot_needs (which stamps the same fields).
+        if (
+            "subject_aliases" not in gate_need
+            or "place_aliases" not in gate_need
+        ):
+            _subject_entity = None
+            _by_id = bible.get("by_id") or {}
+            if _req_id and isinstance(_by_id.get(_req_id), dict):
+                _subject_entity = _by_id[_req_id]
+            else:
+                for e in _entities:
+                    if _fold_name(e.get("canonical")) == _fold_name(
+                        shot_need.get("required_subject")
+                    ):
+                        _subject_entity = e
+                        break
+            _subj_aliases, _place_aliases = _resolve_need_aliases(
+                bible,
+                _subject_entity,
+                str(shot_need.get("required_subject") or ""),
+                str(shot_need.get("place") or ""),
+            )
+            gate_need.setdefault("subject_aliases", _subj_aliases)
+            gate_need.setdefault("place_aliases", _place_aliases)
+            if isinstance(_subject_entity, dict):
+                gate_need.setdefault(
+                    "subject_entity_type",
+                    str(_subject_entity.get("type") or "").strip().lower(),
+                )
 
     # Stage 7 / R7: ONE category per shot across gate, scorer and
     # events. The shot NEED is the authoritative shot record (it
@@ -5804,7 +5927,174 @@ def _title_blob(candidate):
     ]).lower()
 
 
-def _place_satisfied(place, blob):
+# ---------------------------------------------------------------------------
+# Transformation Phase 5 (Phase 4.3 follow-up): name matching for the
+# metadata gate. Phase 4.3's labelled calibration measured the gate's
+# absence checks (missing_subject / missing_place / missing_person)
+# rejecting candidates whose recorded metadata DOES name the required
+# subject/place in a non-literal form — the canonical case being the
+# place string "boise_courtroom" (an entity id that leaked into the
+# need's place field) never literally matching "Boise courtroom" in a
+# title. The helpers below keep the gate's historical semantics
+# (full-string or all-significant-parts substring presence) and add
+# exactly three conservative extensions, each recorded as a match
+# basis on the candidate record:
+#
+#   1. Unicode folding on BOTH sides (lowercase, ß -> ss, NFKD
+#      diacritic stripping): "Bernauer Strasse" now matches a title's
+#      "Bernauer Straße".
+#   2. Tokenisation on any non-alphanumeric run, not just whitespace:
+#      "boise_courtroom" yields the parts {boise, courtroom}.
+#   3. Bible aliases: the case bible's recorded aliases for the
+#      subject/place entity (stamped on the need as subject_aliases /
+#      place_aliases by build_shot_needs and _uve_verify_all) satisfy
+#      the same checks — parity with verify_candidate, which has
+#      always matched the subject's aliases. An alias that reduces to
+#      a single significant token is honoured only when it is
+#      discriminative: an all-caps acronym (FBI, WSU), a token of
+#      length >= 6, or a head token of the canonical name — for a
+#      person only the LAST token (the surname, "Kohberger"); for
+#      other entities the first or last (a place's proper-name head,
+#      "Boise" of "Boise courtroom"). A person's lone given name
+#      ("Bryan", "Madison") never satisfies a check on its own: that
+#      would admit on weaker evidence than the canonical name
+#      requires, the direction Phase 4.3's accepted-stratum
+#      false-admit rate (33.3%) warns against.
+#
+# Nothing here touches the similarity thresholds (0.55/0.34/0.22),
+# the reuse caps, or the category profiles: eligibility stays the
+# gate's, ranking stays the scorer's.
+# ---------------------------------------------------------------------------
+
+_NAME_STOPWORDS = frozenset({
+    "the", "a", "an", "of", "in", "on", "at", "to", "and", "or",
+    "with", "from", "by", "for",
+})
+
+
+def _fold_name(text):
+    """Fold a name or metadata blob for comparison: lowercase,
+    ß -> ss, NFKD-normalise and strip combining marks (diacritics)."""
+    folded = str(text or "").lower().replace("ß", "ss")
+    folded = unicodedata.normalize("NFKD", folded)
+    return "".join(c for c in folded if not unicodedata.combining(c))
+
+
+def _name_tokens(text):
+    """Folded alphanumeric tokens of a name/blob (any non-alphanumeric
+    run is a separator, so underscores and hyphens split compounds)."""
+    return re.findall(r"[a-z0-9]+", _fold_name(text))
+
+
+def _sig_name_tokens(text):
+    """The significant tokens of a name: folded tokens longer than
+    two characters that are not stopwords, order-preserving."""
+    tokens = []
+    for token in _name_tokens(text):
+        if len(token) > 2 and token not in _NAME_STOPWORDS:
+            tokens.append(token)
+    return tokens
+
+
+def _name_match(name, blob):
+    """Whether ``name`` is evidenced by the metadata blob, and how.
+
+    Returns a basis dict {"via": "full"|"tokens", "matched": name,
+    "tokens": [...]} or None. Semantics extend the historical check
+    (full string, else every significant part as a substring) with
+    Unicode folding and non-whitespace tokenisation only."""
+    folded_blob = _fold_name(blob)
+    folded_name = " ".join(_fold_name(name).split())
+    if folded_name and folded_name in folded_blob:
+        return {"via": "full", "matched": str(name), "tokens": _sig_name_tokens(name)}
+    parts = _sig_name_tokens(name)
+    if parts and all(part in folded_blob for part in parts):
+        return {"via": "tokens", "matched": str(name), "tokens": parts}
+    return None
+
+
+def _alias_match(aliases, canonical, blob, kind=""):
+    """Whether any bible alias for an entity is evidenced by the blob.
+
+    Multi-token aliases go through the ordinary name match. A
+    single-significant-token alias is honoured only when it is
+    discriminative (see the Phase 5 note above): an all-caps acronym
+    in its recorded form, a token of length >= 6, or one of the
+    canonical name's head tokens — for a PERSON only the LAST token
+    (the surname: "Kohberger"); for any other entity the FIRST or
+    LAST token (a place's proper-name head or head noun: "Boise" of
+    "Boise courtroom", "wall" of "Berlin Wall"). A person's lone
+    given name never qualifies. The basis records the alias that
+    satisfied the check."""
+    canonical_tokens = _sig_name_tokens(canonical)
+    if kind == "person":
+        head_tokens = set(canonical_tokens[-1:]) if canonical_tokens else set()
+    else:
+        head_tokens = set()
+        if canonical_tokens:
+            head_tokens.add(canonical_tokens[0])
+            head_tokens.add(canonical_tokens[-1])
+    for alias in aliases or []:
+        alias_text = str(alias or "").strip()
+        if not alias_text:
+            continue
+        if _fold_name(alias_text) == _fold_name(canonical):
+            continue
+        tokens = _sig_name_tokens(alias_text)
+        if len(tokens) == 1:
+            token = tokens[0]
+            recorded_tokens = [
+                t for t in re.findall(r"[A-Za-z0-9]+", alias_text)
+            ]
+            is_acronym = any(
+                len(t) >= 2 and t.isupper() for t in recorded_tokens
+            )
+            if not (is_acronym or token in head_tokens or len(token) >= 6):
+                continue
+            if token in _fold_name(blob):
+                return {
+                    "via": "alias",
+                    "matched": alias_text,
+                    "tokens": [token],
+                }
+            continue
+        basis = _name_match(alias_text, blob)
+        if basis:
+            basis = dict(basis)
+            basis["via"] = "alias"
+            basis["matched"] = alias_text
+            return basis
+    return None
+
+
+def _subject_match(subject, aliases, blob, kind=""):
+    """The subject check's verdict + basis: the canonical name's own
+    match, else a discriminative bible alias's match, else None.
+    ``kind`` is "person" when the subject entity is a person (the
+    need's required_type, or its stamped subject_entity_type)."""
+    basis = _name_match(subject, blob)
+    if basis:
+        return basis
+    return _alias_match(aliases, subject, blob, kind=kind)
+
+
+def _place_match(place, blob, aliases=None):
+    """The place check's verdict + basis (see _place_satisfied for
+    the component semantics), extended with the place entity's bible
+    aliases when no component matches."""
+    components = [c.strip() for c in str(place or "").split(",") if c.strip()]
+    for component in components or [str(place or "")]:
+        basis = _name_match(component, blob)
+        if basis:
+            basis = dict(basis)
+            basis["component"] = component
+            return basis
+    if aliases:
+        return _alias_match(aliases, place, blob)
+    return None
+
+
+def _place_satisfied(place, blob, aliases=None):
     """Whether a need's place requirement is met by the metadata blob.
 
     Stage 1 compound-place fix: a compound place string ("King Road
@@ -5814,15 +6104,12 @@ def _place_satisfied(place, blob):
     rejections in the stored Kohberger run). Each comma-separated
     component is now an alternative: the component's full string, or
     all of its significant parts, satisfies the requirement. A
-    single-component place behaves exactly as before."""
-    components = [c.strip() for c in str(place or "").split(",") if c.strip()]
-    for component in components or [str(place or "")]:
-        if component and component in blob:
-            return True
-        parts = [p for p in component.split() if len(p) > 2]
-        if parts and all(p in blob for p in parts):
-            return True
-    return False
+    single-component place behaves exactly as before.
+
+    Transformation Phase 5: matching goes through _place_match —
+    Unicode folding, non-whitespace tokenisation, and the place
+    entity's bible aliases (when the need carries them)."""
+    return _place_match(place, blob, aliases) is not None
 
 
 _TYPE_TOKEN_STOPWORDS = frozenset({
@@ -6010,6 +6297,38 @@ def gate_all_failures(candidate, shot_need):
         ):
             _fail("no_topical_evidence")
 
+    # Transformation Phase 5: subject/place satisfaction goes
+    # through the folded, tokenised, alias-aware matchers
+    # (_subject_match / _place_match); every satisfied check's basis
+    # (canonical full/tokens, or the bible alias that matched) is
+    # recorded on the candidate record below as _gate_match_basis.
+    match_basis = {}
+
+    def _subject_ok():
+        basis = _subject_match(
+            subject,
+            need.get("subject_aliases") or [],
+            blob,
+            kind=(
+                "person"
+                if kind == "person"
+                or str(need.get("subject_entity_type") or "").strip().lower()
+                == "person"
+                else ""
+            ),
+        )
+        if basis:
+            match_basis["subject"] = basis
+        return basis is not None
+
+    def _place_ok():
+        basis = _place_match(
+            place, blob, need.get("place_aliases") or []
+        )
+        if basis:
+            match_basis["place"] = basis
+        return basis is not None
+
     # Named-subject contracts require the requested subject to
     # appear in the searchable metadata — in the categories whose
     # profile requires a subject (evidence).
@@ -6018,21 +6337,8 @@ def gate_all_failures(candidate, shot_need):
         and kind == "person"
         and subject
     ):
-        subject_parts = [
-            part
-            for part in subject.split()
-            if len(part) > 2
-        ]
-
-        if subject not in blob:
-            if (
-                not subject_parts
-                or not all(
-                    part in blob
-                    for part in subject_parts
-                )
-            ):
-                _fail("missing_person")
+        if not _subject_ok():
+            _fail("missing_person")
 
     # Entity/location contracts require the subject (same profile
     # condition as the person contract above).
@@ -6046,51 +6352,28 @@ def gate_all_failures(candidate, shot_need):
         }
         and subject
     ):
-        subject_parts = [
-            part
-            for part in subject.split()
-            if len(part) > 2
-        ]
-
-        if subject not in blob:
-            if (
-                not subject_parts
-                or not all(
-                    part in blob
-                    for part in subject_parts
-                )
-            ):
-                _fail("missing_subject")
+        if not _subject_ok():
+            _fail("missing_subject")
 
     # If the category profile requires a place, it must appear in
     # the candidate metadata (compound places: any one component).
     if _profile["place_required"] and place:
-        if not _place_satisfied(place, blob):
+        if not _place_ok():
             _fail("missing_place")
 
     # Exact contracts require all explicit identity
     # information to survive the metadata gate.
     if specificity == "exact":
         if subject:
-            subject_parts = [
-                part
-                for part in subject.split()
-                if len(part) > 2
-            ]
-
-            if subject not in blob:
-                if (
-                    not subject_parts
-                    or not all(
-                        part in blob
-                        for part in subject_parts
-                    )
-                ):
-                    _fail("missing_subject")
+            if not _subject_ok():
+                _fail("missing_subject")
 
         if place:
-            if not _place_satisfied(place, blob):
+            if not _place_ok():
                 _fail("missing_place")
+
+    if isinstance(candidate, dict) and match_basis:
+        candidate["_gate_match_basis"] = match_basis
 
     return failures
 
