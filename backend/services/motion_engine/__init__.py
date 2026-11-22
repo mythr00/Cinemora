@@ -13,5 +13,6 @@ from services.motion_engine.styles import STYLES, resolve_style
 # which submodule a caller imports first (Stage 5).
 from services.motion_engine import templates as _templates  # noqa: E402,F401
 from services.motion_engine import templates_v2 as _templates_v2  # noqa: E402,F401
+from services.motion_engine import templates_v3 as _templates_v3  # noqa: E402,F401
 
 __all__ = ["STYLES", "resolve_style"]

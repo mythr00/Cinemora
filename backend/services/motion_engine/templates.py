@@ -87,6 +87,62 @@ def _footer(draw, tokens, label="CINEMORA / GENERATED GRAPHIC"):
     draw.text((90, HEIGHT - 52), label, font=font, fill=tokens["muted"])
 
 
+def _polyline_window(points, f0, f1):
+    """The sub-polyline of `points` between length fractions f0..f1
+    (Wave 1 map overlays: flow pulses and arrow placement ride on
+    it). Returns [] when the window is empty."""
+    if not points or f1 <= f0:
+        return []
+    lengths = []
+    total = 0.0
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        seg = math.hypot(x1 - x0, y1 - y0)
+        lengths.append(seg)
+        total += seg
+    if total <= 0:
+        return [points[0]]
+    lo, hi = total * clamp01(f0), total * clamp01(f1)
+    window = []
+    walked = 0.0
+    for idx, seg in enumerate(lengths):
+        x0, y0 = points[idx]
+        x1, y1 = points[idx + 1]
+        seg_lo, seg_hi = walked, walked + seg
+        if seg_hi < lo or seg_lo > hi:
+            walked += seg
+            continue
+        if seg > 0:
+            fa = max(0.0, (lo - seg_lo) / seg)
+            fb = min(1.0, (hi - seg_lo) / seg)
+        else:
+            fa, fb = 0.0, 1.0
+        start = (x0 + (x1 - x0) * fa, y0 + (y1 - y0) * fa)
+        end = (x0 + (x1 - x0) * fb, y0 + (y1 - y0) * fb)
+        if not window or window[-1] != start:
+            window.append(start)
+        window.append(end)
+        walked += seg
+    return window
+
+
+def _arrowhead(draw, tip, direction, size, fill):
+    """A filled arrowhead triangle at `tip`, pointing along the
+    unit vector `direction`."""
+    dx, dy = direction
+    norm = math.hypot(dx, dy) or 1.0
+    dx, dy = dx / norm, dy / norm
+    px, py = -dy, dx
+    base_x, base_y = tip[0] - dx * size, tip[1] - dy * size
+    draw.polygon(
+        [
+            tip,
+            (base_x + px * size * 0.45, base_y + py * size * 0.45),
+            (base_x - px * size * 0.45, base_y - py * size * 0.45),
+        ],
+        fill=fill,
+    )
+
+
 # ---------------------------------------------------------------------------
 # 1. Territory map
 # ---------------------------------------------------------------------------
@@ -145,6 +201,21 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
         if isinstance(m, dict) and isinstance(m.get("at"), (list, tuple)) and len(m.get("at")) >= 2
     ]
     title = _clean(data.get("title"))
+    # Wave 1 (F3): map overlay variants on the same geography —
+    # "border" (polygon draw-on), "route" (tracked route polish),
+    # "trade" (multi-origin flow routes), "military" (arrowed
+    # movement + front lines). The variant changes the DRAWING,
+    # never the data: regions/routes/markers/fronts are all
+    # caller-supplied exactly as for the base map.
+    variant = _clean(data.get("variant")).lower()
+    if variant not in ("border", "route", "trade", "military"):
+        variant = ""
+    fronts = [
+        f for f in (data.get("fronts") or [])
+        if isinstance(f, dict) and len(f.get("points") or []) >= 2
+    ]
+    if variant == "military" and not routes and not fronts:
+        return None, {"reason": "no_movement_data"}
 
     # IA-14 regional zoom (CF-02): when every region on the map is a
     # dataset region and the map carries >= 2 LABELLED places
@@ -254,18 +325,41 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
             reveal_x = max(0.0, min(float(WIDTH), reveal_x))
             region_img = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
             rd = ImageDraw.Draw(region_img)
+            if variant == "border":
+                # Border draw-on: the fill fades in over the
+                # second half while the outlines (below) trace
+                # themselves on; no left->right sweep mask.
+                fill_alpha = int(178 * clamp01((progress - 0.35) * 2.0))
+            else:
+                fill_alpha = 178
             for poly in polygons_px:
                 if poly:
-                    rd.polygon(poly[0], fill=fill_rgb + (178,))
-            mask = Image.new("L", (WIDTH, HEIGHT), 0)
-            ImageDraw.Draw(mask).rectangle([0, 0, reveal_x, HEIGHT], fill=255)
-            layer.image.paste(region_img, (0, 0), Image.composite(region_img, Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0)), mask))
-            # Glow outline + white outline (every ring).
+                    rd.polygon(poly[0], fill=fill_rgb + (fill_alpha,))
+            if variant == "border":
+                layer.image.alpha_composite(region_img)
+            else:
+                mask = Image.new("L", (WIDTH, HEIGHT), 0)
+                ImageDraw.Draw(mask).rectangle([0, 0, reveal_x, HEIGHT], fill=255)
+                layer.image.paste(region_img, (0, 0), Image.composite(region_img, Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0)), mask))
+            # Glow outline + white outline (every ring). Border
+            # variant: the outline is DRAWN ON progressively —
+            # each ring traces itself by length fraction.
+            border_frac = ease_in_out(clamp01(progress * 1.3))
             for poly in polygons_px:
                 for ring in poly:
-                    for wdt, alpha in ((10, 60), (4, 160)):
-                        d.line(ring + [ring[0]], fill=fill_rgb + (alpha,), width=wdt, joint="curve")
-                    d.line(ring + [ring[0]], fill=(255, 255, 255, 235), width=2, joint="curve")
+                    closed = ring + [ring[0]]
+                    if variant == "border":
+                        for wdt, alpha in ((10, 60), (4, 160)):
+                            progressive_polyline(
+                                d, closed, border_frac,
+                                fill=fill_rgb + (alpha,), width=wdt)
+                        progressive_polyline(
+                            d, closed, border_frac,
+                            fill=(255, 255, 255, 235), width=2)
+                    else:
+                        for wdt, alpha in ((10, 60), (4, 160)):
+                            d.line(closed, fill=fill_rgb + (alpha,), width=wdt, joint="curve")
+                        d.line(closed, fill=(255, 255, 255, 235), width=2, joint="curve")
             label = _clean(region.get("label"))
             if label and sweep > 0.55 and polygons_px and polygons_px[0]:
                 main_ring = polygons_px[0][0]
@@ -274,14 +368,55 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
                 tw = d.textlength(label.upper(), font=fonts["label"])
                 d.text((cx - tw / 2, cy - 20), label.upper(), font=fonts["label"], fill=(255, 255, 255, 255))
         route_frac = ease_in_out(clamp01(progress * 1.3 - 0.1))
-        for route in routes:
+        for route_index, route in enumerate(routes):
             pts = px(route["points"])
-            if route.get("dashed"):
+            if variant == "trade":
+                # Flow underlay: a soft wide bed under the route
+                # so converging trade routes read as currents.
+                progressive_polyline(
+                    d, pts, route_frac,
+                    fill=tokens["accent2"] + (70,), width=13)
+            if variant == "military":
+                endpoint = progressive_polyline(
+                    d, pts, route_frac,
+                    fill=tokens["accent"] + (255,), width=9)
+                if endpoint is not None and route_frac > 0.03:
+                    head = _polyline_window(
+                        pts, max(0.0, route_frac - 0.06), route_frac)
+                    if len(head) >= 2:
+                        _arrowhead(
+                            d, endpoint,
+                            (head[-1][0] - head[0][0],
+                             head[-1][1] - head[0][1]),
+                            34, tokens["accent"] + (255,))
+            elif route.get("dashed"):
                 core.dashed_polyline(d, pts, route_frac,
                                      fill=(255, 255, 255, 240), width=5, dash=30, gap=20)
             else:
-                progressive_polyline(d, pts, route_frac,
-                                     fill=tokens["accent2"] + (255,), width=6)
+                endpoint = progressive_polyline(
+                    d, pts, route_frac,
+                    fill=tokens["accent2"] + (255,), width=6)
+                # Route-tracking polish (Wave 1): a pulsing
+                # tracker rides the revealed head of the route.
+                if endpoint is not None and 0.02 < route_frac < 0.995:
+                    pulse = 13 + 5 * math.sin(t * 5.0)
+                    d.ellipse(
+                        [endpoint[0] - pulse, endpoint[1] - pulse,
+                         endpoint[0] + pulse, endpoint[1] + pulse],
+                        outline=(255, 255, 255, 190), width=3)
+                    d.ellipse(
+                        [endpoint[0] - 6, endpoint[1] - 6,
+                         endpoint[0] + 6, endpoint[1] + 6],
+                        fill=(255, 255, 255, 255))
+            if variant == "trade" and route_frac > 0.15:
+                # Flow pulses: bright slugs travelling the route.
+                for k in range(2):
+                    p = (progress * 1.15 + k * 0.41
+                         + route_index * 0.17) % 0.9
+                    slug = _polyline_window(pts, p, p + 0.09)
+                    if len(slug) >= 2:
+                        d.line(slug, fill=(255, 255, 255, 235), width=5,
+                               joint="curve")
             for (x, y) in pts:
                 d.ellipse([x - 8, y - 8, x + 8, y + 8], fill=(255, 255, 255, 255))
             rlabel = _clean(route.get("label"))
@@ -296,6 +431,21 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
                             fill=(0, 0, 0, 150))
                 d.text((mx - dw / 2, my + 24), dist_label, font=fonts["label"],
                        fill=(255, 255, 255, 255))
+        if variant == "military":
+            # Front lines: dashed curves that draw on after the
+            # movement arrows, in the theme accent at half weight.
+            front_frac = ease_in_out(clamp01(progress * 1.2 - 0.25))
+            for front in fronts:
+                fpts = px(front["points"])
+                core.dashed_polyline(
+                    d, fpts, front_frac,
+                    fill=tokens["accent"] + (200,), width=4,
+                    dash=26, gap=16)
+                flabel = _clean(front.get("label"))
+                if flabel and fpts and front_frac > 0.85:
+                    d.text((fpts[0][0] + 14, fpts[0][1] - 32),
+                           flabel, font=fonts["small"],
+                           fill=tokens["text"] + (255,))
         if sweep > 0.5:
             for marker in markers:
                 mx, my = marker["at"][0] * WIDTH, marker["at"][1] * HEIGHT
@@ -313,11 +463,46 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
         return canvas.composite()
 
     path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta("territory_map", style_name, duration, sentence_index, scene_number,
-                       {"regions": len(valid), "routes": len(routes), "title": bool(title),
-                        "outline_sources": outline_sources, "markers": len(markers),
-                        "dashed_routes": sum(1 for r in routes if r.get("dashed")),
-                        **framing_inputs})
+    _inputs = {"regions": len(valid), "routes": len(routes), "title": bool(title),
+               "outline_sources": outline_sources, "markers": len(markers),
+               "dashed_routes": sum(1 for r in routes if r.get("dashed")),
+               **framing_inputs}
+    if variant:
+        # Recorded only when a variant actually rendered — a base
+        # territory_map's recorded inputs keep their Phase 8 shape.
+        _inputs["variant"] = variant
+        _inputs["fronts"] = len(fronts)
+    return path, _meta(data.get("_template") or "territory_map",
+                       style_name, duration, sentence_index, scene_number,
+                       _inputs)
+
+
+# ---------------------------------------------------------------------------
+# 1b. Map overlay variants (Wave 1, F3) — thin named wrappers over
+# territory_map: each fixes the variant so the Director and the
+# packs can register/order them as distinct templates while the
+# geography, projection and honesty contract stay the base map's.
+# ---------------------------------------------------------------------------
+
+def _map_variant(variant, template_name):
+    def _render(data, style, out_path, duration=5.0,
+                sentence_index=None, scene_number=None):
+        data = dict(data or {})
+        data["variant"] = variant
+        data["_template"] = template_name
+        return territory_map(
+            data, style, out_path, duration=duration,
+            sentence_index=sentence_index, scene_number=scene_number,
+        )
+
+    _render.__name__ = template_name
+    return _render
+
+
+border_map = _map_variant("border", "border_map")
+route_map = _map_variant("route", "route_map")
+trade_route_map = _map_variant("trade", "trade_route_map")
+military_map = _map_variant("military", "military_map")
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +600,39 @@ def evidence_board(data, style, out_path, duration=5.0, sentence_index=None, sce
             cx, cy = x + card.size[0] // 2, y + 16
             d.ellipse([cx - 15, cy - 15, cx + 15, cy + 15], fill=tokens["brass"] + (255,), outline=(90, 70, 30, 255), width=3)
             d.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=(240, 220, 170, 255))
+        # Wave 1 (F4): red-string connectors — caller-supplied
+        # [i, j] index pairs joined pin-to-pin with a sagging
+        # string once the cards have settled. The string colour
+        # is the board's red (the theme accent for investigative
+        # themes; a fixed evidence red otherwise).
+        strings = [
+            s for s in (data.get("strings") or [])
+            if isinstance(s, (list, tuple)) and len(s) >= 2
+        ]
+        if strings and progress > 0.8:
+            sd = ImageDraw.Draw(layer.image, "RGBA")
+            string_fill = (198, 40, 40, 235)
+            pin_points = [
+                (positions[i][0] + built[i].size[0] // 2,
+                 positions[i][1] + 16)
+                for i in range(len(built))
+            ]
+            for pair in strings:
+                try:
+                    i, j = int(pair[0]), int(pair[1])
+                except (TypeError, ValueError):
+                    continue
+                if not (0 <= i < len(pin_points) and 0 <= j < len(pin_points)):
+                    continue
+                (x0, y0), (x1, y1) = pin_points[i], pin_points[j]
+                sag = 26.0
+                pts = []
+                for k in range(17):
+                    f = k / 16
+                    x = x0 + (x1 - x0) * f
+                    y = y0 + (y1 - y0) * f + math.sin(f * math.pi) * sag
+                    pts.append((x, y))
+                sd.line(pts, fill=string_fill, width=3, joint="curve")
         top = canvas.new_layer("banner")
         td = ImageDraw.Draw(top.image, "RGBA")
         _torn_banner(td, 90, 56, 1050, 92, fill=(250, 246, 236, 255))
@@ -424,8 +642,32 @@ def evidence_board(data, style, out_path, duration=5.0, sentence_index=None, sce
         return canvas.composite()
 
     path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta("evidence_board", style_name, duration, sentence_index, scene_number,
-                       {"photos": len(built), "title": bool(title), "labels": len(labels)})
+    return path, _meta(data.get("_template") or "evidence_board",
+                       style_name, duration, sentence_index, scene_number,
+                       {"photos": len(built), "title": bool(title), "labels": len(labels),
+                        "strings": len(data.get("strings") or [])})
+
+
+def red_string_board(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
+    """Evidence board with red-string connectors (Wave 1, F4).
+
+    Same data contract as evidence_board; when the caller does
+    not name the connections, consecutive pins are strung in
+    board order — a layout choice over the caller's own photos,
+    recorded in the metadata either way."""
+    data = dict(data or {})
+    photos = data.get("photos") or []
+    if not photos:
+        return None, {"reason": "no_valid_photos"}
+    if not data.get("strings"):
+        data["strings"] = [
+            [i, i + 1] for i in range(min(len(photos), 4) - 1)
+        ]
+    data["_template"] = "red_string_board"
+    return evidence_board(
+        data, style, out_path, duration=duration,
+        sentence_index=sentence_index, scene_number=scene_number,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -703,7 +945,24 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
     style_name, tokens = resolve_style(style)
     data = data or {}
     body = _clean(data.get("body"))
-    if not body:
+    # Wave 1 (F4 unlock): a genuine retrieved document IMAGE —
+    # a real document asset with recorded provenance, supplied
+    # by the caller in data["image"] — is presented as itself on
+    # the page (fitted, labelled with its recorded source). The
+    # image path never substitutes for provenance: the pipeline
+    # only assembles this data from verified document assets,
+    # and the template refuses a named-but-missing file rather
+    # than presenting anything else in its place.
+    image_path = data.get("image")
+    doc_image = None
+    if image_path:
+        if not Path(str(image_path)).exists():
+            return None, {"reason": "document_image_missing"}
+        try:
+            doc_image = Image.open(str(image_path)).convert("RGB")
+        except Exception:
+            return None, {"reason": "document_image_unreadable"}
+    if not body and doc_image is None:
         return None, {"reason": "no_document_text"}
     title = _clean(data.get("title")) or "DOCUMENT"
     source_label = _clean(data.get("source_label"))
@@ -737,6 +996,38 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
         if header:
             d.text((x0 + 52, y0 + 30), header[:80], font=fonts["small"], fill=tokens["accent"] + (255,))
         d.text((x0 + 52, y0 + 72), title.upper()[:56], font=fonts["title"], fill=(28, 26, 22, 255))
+        if doc_image is not None:
+            # The genuine document, fitted inside the page under
+            # its header; an accent frame sweeps around it as the
+            # reveal completes (the "unlock" beat).
+            area = (x0 + 52, y0 + 150, x1 - 52, y1 - 40)
+            fitted = fit_contain(
+                doc_image, (area[2] - area[0], area[3] - area[1]))
+            ix = area[0] + (area[2] - area[0] - fitted.size[0]) // 2
+            iy = area[1] + (area[3] - area[1] - fitted.size[1]) // 2
+            shown = fitted.copy()
+            reveal = ease_out(clamp01(progress * 1.6))
+            if reveal < 1.0:
+                a = shown.convert("RGBA")
+                alpha = a.getchannel("A").point(
+                    lambda v: int(v * reveal))
+                a.putalpha(alpha)
+                shown = a
+            layer.image.alpha_composite(
+                shown.convert("RGBA"), (ix, iy))
+            frame_frac = ease_in_out(clamp01((progress - 0.3) * 1.8))
+            if frame_frac > 0:
+                fx0, fy0 = ix - 10, iy - 10
+                fx1, fy1 = ix + fitted.size[0] + 10, iy + fitted.size[1] + 10
+                perimeter = [
+                    (fx0, fy0), (fx1, fy0), (fx1, fy1), (fx0, fy1),
+                    (fx0, fy0),
+                ]
+                progressive_polyline(
+                    d, perimeter, frame_frac,
+                    fill=tokens["accent"] + (255,), width=5)
+            _footer(d, tokens)
+            return canvas.composite()
         y = y0 + 156
         for line in lines:
             if highlight and highlight in line and progress > 0.35:
@@ -754,7 +1045,8 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
     return path, _meta("document_presentation", style_name, duration, sentence_index, scene_number,
                        {"title": True, "source_label": bool(source_label),
                         "date_label": bool(date_label), "highlight": bool(highlight),
-                        "body_chars": len(body)})
+                        "body_chars": len(body),
+                        "image": doc_image is not None})
 
 
 # ---------------------------------------------------------------------------
@@ -838,6 +1130,12 @@ TEMPLATES = {
     "stat_comparison": stat_comparison,
     "document_presentation": document_presentation,
     "closing_card": closing_card,
+    # Wave 1 (F3/F4): named variants over the base templates.
+    "border_map": border_map,
+    "route_map": route_map,
+    "trade_route_map": trade_route_map,
+    "military_map": military_map,
+    "red_string_board": red_string_board,
 }
 
 # Stage 5B: the v2 template family (reference set 2) registers into

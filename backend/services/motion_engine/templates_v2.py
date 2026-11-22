@@ -416,6 +416,15 @@ def cross_section(data, style, out_path, duration=5.0, sentence_index=None, scen
         })
     if not layers:
         return None, {"reason": "no_layer_data"}
+    # Wave 1 (F5): schematic variants on the same layer data —
+    # "exploded" (layers separate with leader-labelled gaps),
+    # "cutaway" (layers clipped inside a drawn machine housing),
+    # "blueprint" (line-work rendering: outlined, hatched bands
+    # on blueprint ground). The variant changes the DRAWING only;
+    # layers/markers/headline stay caller-supplied.
+    variant = _clean(data.get("variant")).lower()
+    if variant not in ("exploded", "cutaway", "blueprint"):
+        variant = ""
     markers = [m for m in (data.get("markers") or []) if isinstance(m, dict)]
     headline = data.get("headline") if isinstance(data.get("headline"), dict) else {}
     try:
@@ -456,36 +465,105 @@ def cross_section(data, style, out_path, duration=5.0, sentence_index=None, scen
         d.line([cx - 58 * scale, water_y - 52 * scale, cx - 58 * scale, water_y],
                fill=(196, 200, 208, 255), width=max(2, int(4 * scale)))
 
+    # Exploded view: bands drift apart from the stack centre.
+    n_bands = len(bands)
+    mid_band = (n_bands - 1) / 2.0
+
     def draw_frame(t, progress):
         canvas = core.Canvas(bg=tokens["bg"])
         base = canvas.new_layer("bg")
-        base.image = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=43).convert("RGBA")
+        if variant == "blueprint":
+            # Blueprint ground: the theme's own blue when the
+            # production theme IS technical_blueprint, else the
+            # canonical blueprint blue — line work on blue either
+            # way, never the caller's data restyled as fact.
+            bp_bg = tokens["bg"] if style_name == "technical_blueprint" else (10, 42, 84)
+            bg_img = Image.new("RGB", (WIDTH, HEIGHT), bp_bg)
+            gd = ImageDraw.Draw(bg_img)
+            grid_colour = tuple(min(255, c + 26) for c in bp_bg)
+            for gx in range(0, WIDTH, 80):
+                gd.line([gx, 0, gx, HEIGHT], fill=grid_colour, width=1)
+            for gy in range(0, HEIGHT, 80):
+                gd.line([0, gy, WIDTH, gy], fill=grid_colour, width=1)
+            base.image = bg_img.convert("RGBA")
+        else:
+            base.image = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=43).convert("RGBA")
         layer = canvas.new_layer("section")
         d = ImageDraw.Draw(layer.image, "RGBA")
+        explode_frac = ease_in_out(clamp01(progress * 1.5 - 0.25)) if variant == "exploded" else 0.0
+        band_offsets = [
+            (i - mid_band) * 54 * explode_frac for i in range(n_bands)
+        ]
+        if variant == "cutaway":
+            # Machine housing: a filled casing ring around the
+            # section window, drawn under the bands; the bands
+            # themselves are clipped to the window below.
+            d.rectangle([64, 196, WIDTH - 64, HEIGHT - 36],
+                        fill=tokens["surface"] + (255,))
+            d.rectangle([64, 196, WIDTH - 64, HEIGHT - 36],
+                        outline=(255, 255, 255, 200), width=4)
+            d.rectangle([150, 250, WIDTH - 150, HEIGHT - 90],
+                        fill=tokens["bg"] + (255,))
+            for bx, by in ((110, 232), (WIDTH - 110, 232),
+                           (110, HEIGHT - 72), (WIDTH - 110, HEIGHT - 72)):
+                d.ellipse([bx - 13, by - 13, bx + 13, by + 13],
+                          outline=(255, 255, 255, 220), width=3)
+                d.line([bx - 7, by, bx + 7, by], fill=(255, 255, 255, 220), width=3)
         for i, (y0, y1, layer_def, colour) in enumerate(bands):
             local = ease_out(clamp01(progress * 1.8 - i * 0.22))
             if local <= 0:
                 continue
-            x1 = 110 + (WIDTH - 220) * local
-            d.rectangle([110, y0, x1, y1], fill=colour + (255,))
+            y0d, y1d = y0 + band_offsets[i], y1 + band_offsets[i]
+            if variant == "cutaway":
+                x0d = 150
+                x1 = 150 + (WIDTH - 300) * local
+            else:
+                x0d = 110
+                x1 = 110 + (WIDTH - 220) * local
+            if variant == "blueprint":
+                d.rectangle([x0d, y0d, x1, y1d], outline=(240, 246, 255, 255), width=3)
+                # Hatch the band interior (clipped by construction:
+                # segments computed inside the band rect).
+                hatch = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+                hd = ImageDraw.Draw(hatch)
+                step = 30
+                band_h = y1d - y0d
+                for hx in range(int(x0d - band_h), int(x1), step):
+                    hd.line([hx, y1d, hx + band_h, y0d],
+                            fill=(180, 210, 245, 90), width=2)
+                band_mask = Image.new("L", (WIDTH, HEIGHT), 0)
+                ImageDraw.Draw(band_mask).rectangle(
+                    [x0d, y0d, x1, y1d], fill=255)
+                layer.image.paste(
+                    hatch, (0, 0),
+                    Image.composite(hatch, Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0)), band_mask))
+                d = ImageDraw.Draw(layer.image, "RGBA")
+            else:
+                d.rectangle([x0d, y0d, x1, y1d], fill=colour + (255,))
             if layer_def["kind"] == "water":
                 # Wavy surface line on the water band's top edge.
                 pts = []
-                for x in range(110, int(x1), 14):
-                    pts.append((x, y0 + math.sin(x / 46.0) * 4))
+                for x in range(int(x0d), int(x1), 14):
+                    pts.append((x, y0d + math.sin(x / 46.0) * 4))
                 if len(pts) >= 2:
                     d.line(pts, fill=(190, 220, 245, 220), width=3)
             if layer_def["label"] and local > 0.6 and (y1 - y0) > 44:
-                d.text((140, y0 + (y1 - y0) / 2 - 19), layer_def["label"][:44],
+                # The label rides its band (y0d already carries
+                # the exploded offset), so a separated band stays
+                # labelled in place — no leader lines: the bands
+                # span nearly the full width, leaving no margin
+                # for a leader to land in.
+                d.text((x0d + 30, y0d + (y1 - y0) / 2 - 19), layer_def["label"][:44],
                        font=fonts["layer"], fill=(255, 255, 255, 235))
         for marker in markers:
+            _mx0, _mx1 = (150, WIDTH - 150) if variant == "cutaway" else (110, WIDTH - 110)
             try:
-                mx = 110 + (WIDTH - 220) * float(marker.get("x") or 0.5)
+                mx = _mx0 + (_mx1 - _mx0) * float(marker.get("x") or 0.5)
             except (TypeError, ValueError):
                 mx = WIDTH / 2
             layer_idx = marker.get("layer")
             if isinstance(layer_idx, int) and 0 <= layer_idx < len(bands):
-                my = bands[layer_idx][0]
+                my = bands[layer_idx][0] + band_offsets[layer_idx]
             else:
                 try:
                     my = diag_top + (diag_bottom - diag_top) * float(marker.get("y") or 0.5)
@@ -531,9 +609,37 @@ def cross_section(data, style, out_path, duration=5.0, sentence_index=None, scen
         return canvas.composite()
 
     path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta("cross_section", style_name, duration, sentence_index, scene_number,
+    return path, _meta(data.get("_template") or "cross_section",
+                       style_name, duration, sentence_index, scene_number,
                        {"layers": len(layers), "markers": len(markers),
-                        "schematic": True, "headline": head_value is not None})
+                        "schematic": True, "headline": head_value is not None,
+                        "variant": variant or "base"})
+
+
+# ---------------------------------------------------------------------------
+# 12b. Schematic variants (Wave 1, F5) — named wrappers over
+# cross_section: each fixes the variant so the Director and the
+# packs can register/order them as distinct templates.
+# ---------------------------------------------------------------------------
+
+def _section_variant(variant, template_name):
+    def _render(data, style, out_path, duration=5.0,
+                sentence_index=None, scene_number=None):
+        data = dict(data or {})
+        data["variant"] = variant
+        data["_template"] = template_name
+        return cross_section(
+            data, style, out_path, duration=duration,
+            sentence_index=sentence_index, scene_number=scene_number,
+        )
+
+    _render.__name__ = template_name
+    return _render
+
+
+exploded_view = _section_variant("exploded", "exploded_view")
+mechanical_cutaway = _section_variant("cutaway", "mechanical_cutaway")
+blueprint_section = _section_variant("blueprint", "blueprint_section")
 
 
 # ---------------------------------------------------------------------------
@@ -744,6 +850,10 @@ V2_TEMPLATES = {
     "cross_section": cross_section,
     "bar_chart": bar_chart,
     "satellite_annotation": satellite_annotation,
+    # Wave 1 (F5): schematic variants over cross_section.
+    "exploded_view": exploded_view,
+    "mechanical_cutaway": mechanical_cutaway,
+    "blueprint_section": blueprint_section,
 }
 
 # Self-registration into the v1 registry: one lookup point for the
