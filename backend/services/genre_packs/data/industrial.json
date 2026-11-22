@@ -1,9 +1,9 @@
 {
   "description": "Documentaries about industry and manufacturing: how things are made, moved and assembled. Research leans on process records and trade sources; graphics lean on process sequences and statistics that explain how a line, a plant or a port actually works.",
   "entity_handling": [
-    "Never invent a throughput figure, a capacity, a production rate or a process step \u2014 if the script and retrieved sources do not state it, it does not appear.",
+    "Never invent a throughput figure, a capacity, a production rate or a process step — if the script and retrieved sources do not state it, it does not appear.",
     "A company's own claims about its process stay labelled as that company's claims; they are never upgraded to settled fact by narration.",
-    "Process steps are kept in the script's order and terminology \u2014 a stage is never merged, skipped or renamed silently.",
+    "Process steps are kept in the script's order and terminology — a stage is never merged, skipped or renamed silently.",
     "Figures from a single trade source stay labelled with that source; uncorroborated numbers are not presented as industry-wide fact."
   ],
   "expectations": {
@@ -101,10 +101,9 @@
     "fade_out_seconds": 2.5,
     "music_volume": 0.1
   },
-  "music_mood": "Driven, rhythmic underscore \u2014 muted percussion and low synth pulses (metadata only \u2014 no music library is integrated; the soundtrack remains user-supplied or absent).",
+  "music_mood": "Driven, rhythmic underscore — muted percussion and low synth pulses (metadata only — no music library is integrated; the soundtrack remains user-supplied or absent).",
   "pacing": {
-    "narration_speed": 0.94,
-    "notes": "Slightly slower narration for technical density (narration_speed, Phase 2.4); the sentence target stays informational.",
+    "notes": "The sentence target stays informational. Narration is synthesised at the voice provider's native rate — no speed adjustment exists (founder ruling, 2026-11-22).",
     "target_seconds_per_sentence": 4.5
   },
   "research_query_templates": [

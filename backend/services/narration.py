@@ -219,15 +219,16 @@ def _write_captions(text, audio_file):
     return caption_file
 
 
-def _run_piper(text, output_file, voice_id=None, speed=None):
+def _run_piper(text, output_file, voice_id=None):
     """Run Piper for a single piece of text.
 
     This is the ONLY place in this module that runs a subprocess.
     ``voice_id`` is resolved through the voice catalogue (Stage 3J):
     the resolved model's path is what reaches the Piper command.
-    When ``speed`` is provided, Piper's --length-scale is set to
-    1.0 / speed; with the default voice the command is identical to
-    the historical one.
+    Narration is always synthesised at the provider's native rate:
+    there is deliberately NO speed / length-scale parameter
+    anywhere in this call path (founder ruling, 2026-11-22 — the
+    voice model is third-party and speed control is unsupported).
     """
     output_file = Path(output_file)
     model, config, _resolved_id, _fell_back = resolve_voice(voice_id)
@@ -243,9 +244,6 @@ def _run_piper(text, output_file, voice_id=None, speed=None):
         "-f",
         str(output_file),
     ]
-
-    if speed is not None:
-        command.extend(["--length-scale", str(1.0 / speed)])
 
     print("Running Piper...")
     print()
@@ -280,17 +278,19 @@ def _run_piper(text, output_file, voice_id=None, speed=None):
         )
 
 
-def _part_hash(sentence, voice_id=None, speed=None):
+def _part_hash(sentence, voice_id=None):
     # Stage 3J: the hash keys on the RESOLVED voice (id + its model
     # files), so a request that falls back to the default voice and
     # a direct default request share the same parts — and a genuine
-    # voice change still re-synthesizes.
+    # voice change still re-synthesizes. (The Phase 2.4 speed input
+    # was removed from this payload by the 2026-11-22 founder
+    # ruling; parts synthesised under the old payload simply miss
+    # the cache once and are re-synthesised at the native rate.)
     model, config, resolved_id, _fell_back = resolve_voice(voice_id)
     payload = "|".join(
         [
             sentence,
             str(resolved_id),
-            str(speed),
             model.name,
             config.name,
         ]
@@ -417,7 +417,6 @@ def generate_narration(
     text: str,
     output_path: str,
     voice_id=None,
-    speed=None,
     sentence_voices=None,
 ):
     if not text or not text.strip():
@@ -497,7 +496,7 @@ def generate_narration(
             resolve_voice(part_voice_id)
         )
         voices_used.add(part_resolved_voice)
-        part_hash = _part_hash(sentence, voice_id=part_voice_id, speed=speed)
+        part_hash = _part_hash(sentence, voice_id=part_voice_id)
 
         entry = {
             "index": index,
@@ -534,7 +533,6 @@ def generate_narration(
                         sentence,
                         part_file,
                         voice_id=part_voice_id,
-                        speed=speed,
                     )
                     last_error = None
                     break

@@ -47,7 +47,7 @@ class FakePiper:
         self.calls = []
         self.fail_plan = dict(fail_plan or {})
 
-    def __call__(self, text, output_file, voice_id=None, speed=None):
+    def __call__(self, text, output_file, voice_id=None):
         output_file = Path(output_file)
         index = int(output_file.stem.split("_")[1])
         self.calls.append(
@@ -56,7 +56,6 @@ class FakePiper:
                 "text": text,
                 "output_file": output_file,
                 "voice_id": voice_id,
-                "speed": speed,
             }
         )
 
@@ -150,7 +149,14 @@ def test_hash_stability_and_selective_invalidation(tmp_path, install_fake):
     assert fake.calls[0]["text"] == "Echo foxtrot golf changed."
 
 
-def test_speed_change_resynthesizes_all_parts(tmp_path, install_fake):
+def test_no_speed_input_part_hashes_key_on_sentence_and_voice(
+    tmp_path, install_fake
+):
+    # Replaced (founder voice-speed ruling, 2026-11-22): this test
+    # used to assert that a speed change re-synthesises all parts.
+    # Speed no longer exists as an input — part hashes key on the
+    # sentence + resolved voice only, and a repeat call with the
+    # same text/voice reuses every part.
     output = tmp_path / "narration.wav"
     fake = install_fake()
 
@@ -158,10 +164,8 @@ def test_speed_change_resynthesizes_all_parts(tmp_path, install_fake):
     assert fake.called_indices() == [0, 1, 2, 3]
 
     fake.clear()
-    generate_narration(text=TEXT, output_path=str(output), speed=1.25)
-
-    assert fake.called_indices() == [0, 1, 2, 3]
-    assert all(call["speed"] == 1.25 for call in fake.calls)
+    generate_narration(text=TEXT, output_path=str(output))
+    assert fake.called_indices() == []  # all parts reused
 
 
 def test_retry_succeeds_within_three_attempts(tmp_path, install_fake):
@@ -190,14 +194,14 @@ def test_backward_compatible_signature_and_keyword_call(
         "text",
         "output_path",
         "voice_id",
-        "speed",
         # Phase 2.4: optional per-sentence voices — appended with
         # a default, so every historical call shape still works.
+        # (The Phase 2.4 "speed" parameter was removed by the
+        # founder's 2026-11-22 voice-speed ruling.)
         "sentence_voices",
     ]
     assert parameters[2].default is None
     assert parameters[3].default is None
-    assert parameters[4].default is None
 
     install_fake()
     output = tmp_path / "narration.wav"

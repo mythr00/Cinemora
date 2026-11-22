@@ -112,10 +112,8 @@ def _write_tiny_wav(path):
 def fake_piper(monkeypatch):
     calls = []
 
-    def fake_run_piper(text, output_file, voice_id=None, speed=None):
-        calls.append({
-            "text": text, "voice_id": voice_id, "speed": speed,
-        })
+    def fake_run_piper(text, output_file, voice_id=None):
+        calls.append({"text": text, "voice_id": voice_id})
         _write_tiny_wav(output_file)
 
     monkeypatch.setattr(narration, "_run_piper", fake_run_piper)
@@ -162,13 +160,25 @@ def test_single_voice_render_without_assignment(tmp_path, fake_piper):
     )
 
 
-def test_speed_reaches_synthesis(tmp_path, fake_piper):
-    output = tmp_path / "narration.wav"
-    narration.generate_narration(
-        "A technical sentence about load paths.", str(output),
-        speed=0.94,
-    )
-    assert fake_piper[0]["speed"] == 0.94
+def test_no_speed_parameter_exists_in_the_tts_path(tmp_path, fake_piper):
+    # Founder ruling (2026-11-22): voice speed adjustment is
+    # removed end to end — the synthesis entry points accept no
+    # speed/length-scale parameter at all, so a historical caller
+    # passing one fails loudly instead of silently retiming.
+    import inspect
+
+    assert "speed" not in inspect.signature(
+        narration.generate_narration
+    ).parameters
+    assert "speed" not in inspect.signature(
+        narration._run_piper
+    ).parameters
+    with pytest.raises(TypeError):
+        narration.generate_narration(
+            "A technical sentence about load paths.",
+            str(tmp_path / "narration.wav"),
+            speed=0.94,
+        )
 
 
 # ---------------------------------------------------------------------------

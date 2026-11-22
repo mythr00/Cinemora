@@ -1271,17 +1271,14 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 "manifest would not load — executing the stage."
             )
         print("Voice Actor")
-        # Transformation Phase 2.4 (§2.4): per-pack narration pace
-        # — an explicit "narration_speed" option wins over the
-        # resolved pack's declared pace (engineering/industrial
-        # declare 0.94, slightly slower for technical density);
-        # 1.0 keeps the historical Piper command untouched. The
+        # Narration is synthesised at the voice provider's native
+        # rate — there is no speed adjustment anywhere in the call
+        # path (founder ruling, 2026-11-22, retiring Phase 2.4's
+        # per-pack pace). A historical run option carrying a
+        # "narration_speed" key is ignored here, harmlessly. The
         # second voice is assigned to quoted/interview beats only
         # (narration.assign_sentence_voices returns None when no
         # beat qualifies, keeping the single-voice path exact).
-        _narration_speed = options.get("narration_speed")
-        if _narration_speed is None:
-            _narration_speed = genre_packs.narration_speed(_genre_pack)
         _sentence_voices = narration_service.assign_sentence_voices(
             script, primary_voice_id=options.get("voice_id")
         )
@@ -1289,11 +1286,6 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             text=script,
             output_path=str(narration_file),
             voice_id=options.get("voice_id"),
-            speed=(
-                float(_narration_speed)
-                if float(_narration_speed) != 1.0
-                else None
-            ),
             sentence_voices=_sentence_voices,
         )
         if isinstance(voice_meta, dict):

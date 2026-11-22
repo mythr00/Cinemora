@@ -217,31 +217,19 @@ def test_project_category_records_new_pack(project_ids, pack_id):
 
 
 # ---------------------------------------------------------------------------
-# Narration pace data (Phase 2.4)
+# Narration pace — REMOVED (founder ruling, 2026-11-22)
 # ---------------------------------------------------------------------------
+# Phase 2.4's per-pack narration_speed (0.94 for engineering /
+# industrial) was retired by the founder's voice-speed ruling:
+# the voice model is third-party and speed control is
+# unsupported, so narration runs at the provider's native rate
+# and NO speed adjustment exists anywhere in the system. These
+# tests pin the ruling so the control cannot silently return.
 
-def test_narration_speed_per_pack():
-    assert genre_packs.narration_speed(
-        genre_packs.load_pack("engineering")
-    ) == 0.94
-    assert genre_packs.narration_speed(
-        genre_packs.load_pack("industrial")
-    ) == 0.94
-    for pack_id in ("general", "history", "true_crime"):
-        assert genre_packs.narration_speed(
-            genre_packs.load_pack(pack_id)
-        ) == 1.0
-
-
-def test_narration_speed_rejects_bad_data():
-    assert genre_packs.narration_speed(None) == 1.0
-    assert genre_packs.narration_speed({}) == 1.0
-    assert genre_packs.narration_speed(
-        {"pacing": {"narration_speed": 9.0}}
-    ) == 1.0
-    assert genre_packs.narration_speed(
-        {"pacing": {"narration_speed": "fast"}}
-    ) == 1.0
-    assert genre_packs.narration_speed(
-        {"pacing": {"narration_speed": True}}
-    ) == 1.0
+def test_no_narration_speed_anywhere_in_packs():
+    assert not hasattr(genre_packs, "narration_speed")
+    for pack_id in (
+        "general", "history", "true_crime", "engineering", "industrial",
+    ):
+        pack = genre_packs.load_pack(pack_id)
+        assert "narration_speed" not in (pack.get("pacing") or {})
