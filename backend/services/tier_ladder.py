@@ -27,6 +27,7 @@ threshold, a reuse cap or the coverage gate.
 
 from __future__ import annotations
 
+import copy
 import time
 
 from services import genre_packs
@@ -117,6 +118,104 @@ STOP_PRODUCTION_DOWNLOAD_BUDGET = "production_download_budget"
 STOP_TIER_DOWNLOAD_BUDGET = "tier_download_budget"
 STOP_WALL_CLOCK = "wall_clock"
 
+# ---------------------------------------------------------------------------
+# Attempt idempotency (run-10 coverage fix, 2026-11-22)
+#
+# An escalation SEARCH BATCH is identified by its NEED SCOPE plus
+# its tier plus the normalised set of queries it executed. The
+# need scope is the beat (beat_id + first sentence number, from
+# the pipeline's need key — the scenario/shot index is excluded),
+# so sibling shots of one beat and the coverage recovery rounds
+# that re-walk the same beat share one scope, while distinct
+# beats never do. A batch's search is a pure function of that
+# identity — same need, same tier, same queries, same provider
+# results — so within one production a completed batch is
+# TERMINAL for its need: re-executing it can only re-spend the
+# shared D-B2 account on results that were already verified and
+# considered. Run 10 (a9a05467) drained the entire 40-search
+# account this way: the closing legal beat alone was walked FOUR
+# times (shot 1, shot 2, recovery round 1, recovery round 2),
+# each walk re-executing the identical related batch
+# "verdict forms 2021"; the phone/van beats' shots repeated the
+# same pattern — 47 of 61 tier attempts ended budget_exhausted
+# and the closing beats' deeper tiers never executed a query.
+#
+# The scope is deliberately the beat, not the whole production:
+# the breadth-first fairness contract (Phase 2, pinned) gives
+# every DISTINCT need its own protected first attempts, so an
+# identical batch derived by a different beat still executes
+# once for that beat — bounded, attributed deepening — while
+# the same beat can never pay for the same batch twice.
+#
+# The ledger therefore keeps a production-scoped registry of
+# completed batches. A later identical batch for the same need
+# NEVER re-spends search budget and NEVER re-searches; when the
+# recorded outcome was "verified", the recorded verified pool is
+# replayed into the later walk's pool (the draw may still fetch
+# a candidate that was never fetched — governed by the draw's
+# own budgets, and a candidate whose source already failed a
+# fetch stays dead by the Phase-2 failed-download guard, so no
+# download is ever re-spent either).
+# ---------------------------------------------------------------------------
+
+#: Terminal batch outcomes the registry records. Anything else
+#: (budget_exhausted with zero executed queries, wall_clock, a walk
+#: interrupted mid-tier) is NOT terminal: nothing was decided.
+ATTEMPT_TERMINAL_OUTCOMES = ("verified", "pool_exhausted")
+
+
+def normalise_query(query):
+    """Word-set signature of one query — the same normalisation
+    the pipeline's tried-query recognition uses (sorted unique
+    lowercase words of length >= 3), so word order and case never
+    disguise a repeat."""
+    return " ".join(
+        sorted(
+            {
+                word.lower()
+                for word in str(query or "").split()
+                if len(word) >= 3
+            }
+        )
+    )
+
+
+def attempt_scope(need_key):
+    """The need scope of a pipeline need key: the beat it belongs
+    to, without the shot/scenario index. The pipeline's need keys
+    are (beat_id, scenario_index, first_sentence_number) — sibling
+    shots of one beat differ only in the middle element, and a
+    beat's recovery rounds reuse the same key, so (beat_id,
+    first_sentence) is exactly the set of walks that must share
+    attempt records. Non-tuple keys pass through unchanged; None
+    stays None (unattributed legacy spends)."""
+    if need_key is None:
+        return None
+    if isinstance(need_key, (tuple, list)):
+        if len(need_key) >= 3:
+            return (need_key[0], need_key[2])
+        return tuple(need_key)
+    return need_key
+
+
+def attempt_key(need_key, tier, queries):
+    """The identity of one escalation search batch: its need
+    scope plus its tier plus the frozenset of its normalised
+    queries. ``None`` when the batch carries no usable query
+    (nothing executed, nothing to record or repeat)."""
+    normalised = frozenset(
+        signature
+        for signature in (normalise_query(q) for q in queries or [])
+        if signature
+    )
+    if not normalised:
+        return None
+    return (
+        attempt_scope(need_key),
+        str(tier or "").strip().lower(),
+        normalised,
+    )
+
 
 class EscalationLedger:
     """Per-production escalation accounts (D-B2).
@@ -166,6 +265,12 @@ class EscalationLedger:
         self._need_downloads = {}
         self.breadth_searches = 0
         self.deepening_searches = 0
+        # Attempt idempotency (run-10 fix): completed escalation
+        # search batches, keyed by attempt_key — see the section
+        # comment above ATTEMPT_TERMINAL_OUTCOMES. Records are
+        # production-scoped runtime state, like the accounts.
+        self._attempts = {}
+        self.attempt_repeats = 0
 
     # -- wall clock -------------------------------------------------
     def begin_escalation(self):
@@ -322,6 +427,63 @@ class EscalationLedger:
             self._need_downloads.get(need_key, 0) + 1
         )
 
+    # -- attempt idempotency (run-10 fix) ---------------------------
+    def completed_attempt(self, tier, queries, need_key=None):
+        """The recorded terminal record for this exact batch
+        (need scope + tier + normalised query set), or None when
+        the batch has not completed for this need in this
+        production. A hit is counted as a repeat on the record and
+        on the ledger. The returned record's ``pool_items`` are
+        the first execution's verified pool (deep copies — the
+        caller may mutate what it draws from them); an outcome of
+        "pool_exhausted" always carries an empty pool."""
+        key = attempt_key(need_key, tier, queries)
+        if key is None:
+            return None
+        record = self._attempts.get(key)
+        if record is None:
+            return None
+        record["repeats"] = record.get("repeats", 0) + 1
+        self.attempt_repeats += 1
+        return {
+            **record,
+            "pool_items": copy.deepcopy(record.get("pool_items") or []),
+        }
+
+    def record_attempt(self, tier, queries, *, outcome, verified=0,
+                       pool_items=None, need_key=None):
+        """Record a completed escalation search batch. Only
+        terminal outcomes (ATTEMPT_TERMINAL_OUTCOMES) are recorded;
+        anything else is ignored — a batch that never executed
+        decided nothing. The first completion wins: a record is
+        never overwritten. ``pool_items`` (the batch's verified
+        pool, for replay) is stored as a deep copy and is kept
+        only for a "verified" outcome."""
+        if outcome not in ATTEMPT_TERMINAL_OUTCOMES:
+            return None
+        key = attempt_key(need_key, tier, queries)
+        if key is None or key in self._attempts:
+            return self._attempts.get(key) if key is not None else None
+        record = {
+            "tier": key[1],
+            "need_scope": key[0],
+            "queries": sorted({str(q) for q in queries or []}),
+            "outcome": outcome,
+            "verified": int(verified or 0),
+            "pool_items": (
+                copy.deepcopy(list(pool_items))
+                if outcome == "verified" and pool_items
+                else []
+            ),
+            "need_key": need_key,
+            "repeats": 0,
+        }
+        self._attempts[key] = record
+        return record
+
+    def attempts_recorded(self):
+        return len(self._attempts)
+
     def summary(self):
         return {
             "extra_searches": self.searches,
@@ -336,6 +498,12 @@ class EscalationLedger:
             "needs_registered": self.needs_registered(),
             "needs_with_first_attempt": self.needs_with_first_attempt(),
             "fairness_reserve_searches": self.fairness_reserve(),
+            # Attempt idempotency accounting (additive, run-10 fix):
+            # distinct completed batches on record, and how many
+            # later identical batches were recognised as repeats
+            # (and therefore spent nothing).
+            "attempts_recorded": self.attempts_recorded(),
+            "attempt_repeats": self.attempt_repeats,
         }
 
 

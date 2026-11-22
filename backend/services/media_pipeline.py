@@ -1,3 +1,4 @@
+import copy
 import os
 import json
 import re
@@ -6909,6 +6910,7 @@ def _uve_search_and_pick(
                 continue
             _query_budget = tier_ladder.TIER_QUERY_BUDGETS.get(_tier, 0)
             _tier_pool = []
+            _repeated_batches = 0
             for _raw in _raw_scenarios:
                 if len(_attempt["queries"]) >= _query_budget:
                     break
@@ -6964,6 +6966,68 @@ def _uve_search_and_pick(
                 _remaining = _query_budget - len(_attempt["queries"])
                 _queries = list(_dneed.get("queries") or [])[:_remaining]
                 if not _queries:
+                    continue
+                # Attempt idempotency (run-10 fix): this exact
+                # batch — same need scope (this beat), same tier,
+                # same normalised query set — already completed in
+                # this production (a sibling shot's walk or an
+                # earlier recovery round's walk of THIS beat). Its
+                # results were already verified and considered;
+                # re-searching would only re-spend the shared D-B2
+                # account. The batch is NOT re-executed: a verified
+                # batch's recorded pool replays into this walk's
+                # pool (the draw below may still fetch a candidate
+                # that was never fetched — the draw's own budgets
+                # govern that), and an exhausted batch contributes
+                # nothing. Recovery rounds therefore spend only on
+                # NEW queries and tiers. A DIFFERENT beat deriving
+                # identical queries is a different batch: fairness
+                # gives every distinct need its own first attempts.
+                # Identity is the scenario's FULL composed query
+                # list: the slices above it (tier budget remaining,
+                # fairness allocation) vary with walk state — in
+                # particular a walk whose earlier batches were
+                # repeats has more tier budget left, so a sliced
+                # identity would drift between walks and the same
+                # batch would re-execute under a wider slice.
+                _batch_queries = list(_dneed.get("queries") or [])
+                _prior_attempt = _ledger.completed_attempt(
+                    _tier, _batch_queries,
+                    need_key=_escalation_need_key,
+                )
+                if _prior_attempt is not None:
+                    _repeated_batches += 1
+                    # Replay only what is still fetchable: a
+                    # candidate whose source (or segment) already
+                    # failed a fetch in this run is dead by the
+                    # Phase-2 guard inside _uve_fetch_first — it
+                    # would be skipped there while still burning
+                    # one of the draw's per-tier attempts, exactly
+                    # the waste this fix exists to remove. (Run
+                    # 10's pass 17 only reached its third verified
+                    # candidate because the fresh pool re-ordered;
+                    # a replay must not depend on ordering luck.)
+                    for _replay_item in (
+                        _prior_attempt.get("pool_items") or []
+                    ):
+                        _replay_url = str(
+                            _replay_item.get("url")
+                            or _replay_item.get("video_url")
+                            or _replay_item.get("image_url")
+                            or ""
+                        )
+                        if _replay_url and (
+                            canonical_source_key(_replay_url)
+                            in _FAILED_DOWNLOAD_URLS
+                        ):
+                            continue
+                        _replay_seg = _replay_item.get("segment_id")
+                        if _replay_seg and (
+                            f"seg:{_replay_seg}"
+                            in _FAILED_DOWNLOAD_URLS
+                        ):
+                            continue
+                        _tier_pool.append(_replay_item)
                     continue
                 # Breadth-first allocation: the ledger may grant
                 # fewer searches than the batch asks for — a need's
@@ -7023,9 +7087,36 @@ def _uve_search_and_pick(
                 _scored_by_kind["video"].extend(_scored_v)
                 _scored_by_kind["web"].extend(_scored_w)
                 _scored_by_kind["image"].extend(_scored_i)
+                _pool_before = len(_tier_pool)
                 _tier_pool.extend(_pool_annotate(_scored_v, "video"))
                 _tier_pool.extend(_pool_annotate(_scored_w, "web"))
                 _tier_pool.extend(_pool_annotate(_scored_i, "image"))
+                # Attempt idempotency (run-10 fix): record this
+                # executed batch as terminal — verified with its
+                # pool (for replay), or pool_exhausted — so no
+                # later walk in this production re-spends on it.
+                _batch_pool = _tier_pool[_pool_before:]
+                _batch_verified = sum(
+                    1
+                    for _item in _batch_pool
+                    if (_item.get("verification") or {}).get("accepted")
+                )
+                _ledger.record_attempt(
+                    _tier, _batch_queries,
+                    outcome=(
+                        "verified" if _batch_verified
+                        else "pool_exhausted"
+                    ),
+                    verified=_batch_verified,
+                    pool_items=[
+                        _item
+                        for _item in _batch_pool
+                        if (_item.get("verification") or {}).get(
+                            "accepted"
+                        )
+                    ],
+                    need_key=_escalation_need_key,
+                )
             # One copy per candidate within the tier (two derived
             # scenarios can surface the same source; cross-pool
             # duplicates with the T1 pool are the draw's business —
@@ -7064,6 +7155,18 @@ def _uve_search_and_pick(
                 _attempt["outcome"] = (
                     "verified" if _attempt["verified"] else "pool_exhausted"
                 )
+            if _repeated_batches:
+                # Attempt idempotency (run-10 fix): batches this
+                # walk recognised as repeats of an earlier completed
+                # batch — they executed nothing and spent nothing.
+                # A walk whose batches ALL repeated inherits the
+                # recorded outcome verbatim (the verified count
+                # above already reflects any replayed pool), and is
+                # stamped as a repeat so the report never mistakes
+                # it for a fresh walk.
+                _attempt["repeated_batches"] = _repeated_batches
+                if not _attempt["queries"]:
+                    _attempt["repeat"] = True
             # The walk continues until a tier yields a VERIFIED
             # candidate: a tier whose pool is all rejections (its
             # candidates' events are already recorded from the
@@ -8044,6 +8147,22 @@ def _uve_unsearched_ladder_entry(
             else tier_ladder.STOP_PRODUCTION_SEARCH_BUDGET
         )
         return [attempt]
+    # Attempt idempotency (run-10 fix): the identical entry batch
+    # (same need scope — this beat — same tier, same normalised
+    # query set) already completed in this production — its
+    # results were verified and considered by the earlier
+    # entry/walk. The entry does not re-spend; the
+    # beat stays uncovered by the ladder and flows to
+    # missing_visuals (and the T5 graphics route) exactly as an
+    # exhausted entry does, with the repeat recorded.
+    _prior_entry_attempt = ledger.completed_attempt(
+        entry_tier, queries, need_key=_entry_key
+    )
+    if _prior_entry_attempt is not None:
+        attempt["outcome"] = "pool_exhausted"
+        attempt["repeat"] = True
+        attempt["prior_outcome"] = _prior_entry_attempt.get("outcome")
+        return [attempt]
     if not ledger.can_spend_download():
         attempt["outcome"] = "budget_exhausted"
         attempt["stop_reason"] = (
@@ -8052,6 +8171,7 @@ def _uve_unsearched_ladder_entry(
             else tier_ladder.STOP_PRODUCTION_DOWNLOAD_BUDGET
         )
         return [attempt]
+    _entry_queries = list(queries)
     _allowed = ledger.allocate_searches(len(queries), need_key=_entry_key)
     queries = queries[:_allowed]
     if not queries:
@@ -8087,6 +8207,18 @@ def _uve_unsearched_ladder_entry(
         ledger.spend_download(need_key=_entry_key)
     attempt["accepted"] = gained
     attempt["outcome"] = "covered" if gained else "pool_exhausted"
+    # Attempt idempotency (run-10 fix): record the executed entry
+    # batch as terminal, so a later walk (or a sibling beat's
+    # entry) deriving the identical batch does not re-spend on it.
+    # The entry fetches directly and builds no replayable pool —
+    # the record's pool is empty by construction.
+    ledger.record_attempt(
+        entry_tier, _entry_queries,
+        outcome="verified" if gained else "pool_exhausted",
+        verified=gained,
+        pool_items=[],
+        need_key=_entry_key,
+    )
     return [attempt]
 
 
