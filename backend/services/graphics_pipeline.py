@@ -1936,7 +1936,10 @@ def build_motion_graphics_assets(
     restricting the chain to its recorded template/family
     candidates and carrying its theme, fact basis and any
     evidence_ref/verified_data (AM-009). No manifest entry, no
-    graphic.
+    DIRECTED graphic — and since run-11 fix 5a, a caller target
+    for an uncovered beat the manifest does not cover is appended
+    as an undirected target, so every uncovered beat reaches the
+    chain (and its closing-card floor) instead of vanishing.
 
     `max_stats` (legacy mode only) caps the number of stat-family
     graphics produced for manifest-less targets — a cap, never a
@@ -1963,6 +1966,7 @@ def build_motion_graphics_assets(
         elif isinstance(manifest, list):
             manifest_entries = manifest
     if manifest_entries is not None:
+        _caller_targets = list(targets or [])
         targets = []
         for entry in manifest_entries:
             if not isinstance(entry, dict):
@@ -1987,6 +1991,32 @@ def build_motion_graphics_assets(
                     "theme": entry.get("theme"),
                 }
             )
+        # Run-11 fix 5a: the manifest is the Director's direction,
+        # not the coverage boundary. The caller's targets derive
+        # from the Asset Manager's missing_visuals — EVERY beat
+        # still uncovered after the final coverage recovery round.
+        # A beat the Director did not manifest used to vanish from
+        # the graphics stage entirely (run 11 sentence 12: its
+        # missing_visuals record carried graphics_outcome null —
+        # it never entered the chain, so not even the T5 floor
+        # could serve it). Any caller target the manifest does not
+        # cover is appended as an undirected target: it walks the
+        # same chain, and the closing-card floor is its guarantee.
+        _manifest_keys = {
+            (t.get("scene_number"), t.get("sentence_number"))
+            for t in targets
+        }
+        for _caller_target in _caller_targets:
+            if not isinstance(_caller_target, dict):
+                continue
+            _key = (
+                _caller_target.get("scene_number"),
+                _caller_target.get("sentence_number"),
+            )
+            if _key[1] is None or _key in _manifest_keys:
+                continue
+            _manifest_keys.add(_key)
+            targets.append(_caller_target)
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -3393,27 +3423,24 @@ def build_motion_graphics_assets(
                 if clean_text(_event.get("what", ""))
             ) >= 3
         )
-        # Nor does the floor override an affirmative Director
-        # direction: a manifest entry whose template_candidates
-        # NON-EMPTY list names the templates for this beat has
-        # been deliberately directed (Phase 6 doctrine — its
-        # refusals, e.g. document_presentation_disabled, are the
-        # recorded outcome). Run 10's closing entries carried an
-        # EMPTY template list with purpose "coverage_fallback":
-        # undirected, so the floor serves them. A directed list
-        # that itself names closing_card also reaches the floor.
-        _directed_templates = target.get("template_candidates")
-        _manifest_directed = bool(
-            target.get("manifest_id")
-            and isinstance(_directed_templates, (list, tuple))
-            and len(_directed_templates) > 0
-            and "closing_card" not in _directed_templates
-        )
-        if (
-            produced_family is None
-            and not _served_by_process_anchor
-            and not _manifest_directed
-        ):
+        # Run-11 fix 5b: the floor no longer yields to an
+        # affirmative Director direction. Run 11's sentences 9 and
+        # 10 were Director-directed, every directed template
+        # refused (no_schematic_motif), and the run-10 floor —
+        # gated to undirected/coverage_fallback targets only —
+        # left them skipped, so the production failed coverage
+        # with a working floor unused. The Director's direction is
+        # a PREFERENCE ORDER, not a veto: the chain above already
+        # tried the directed templates first, in the Director's
+        # order, and their refusals stand in the target's recorded
+        # stage outcomes. When every one of them refused, the
+        # closing card serves the beat and each directed refusal is
+        # recorded in graphic_failures with superseded_by naming
+        # this guarantee (the same pattern as every earlier stage).
+        # The one exception that remains is a target already
+        # SERVED by a process-anchor graphic — coverage is met
+        # there, so no floor is needed.
+        if produced_family is None and not _served_by_process_anchor:
             _card_data = {"quote": text}
             _kicker = clean_text(
                 (case_bible or {}).get("title") or ""

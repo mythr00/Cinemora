@@ -250,7 +250,33 @@ def test_verified_data_without_evidence_ref_is_not_promoted(tmp_path, monkeypatc
 # ---------------------------------------------------------------------------
 
 def test_document_presentation_manifest_entry_refused(tmp_path, monkeypatch):
+    """AM-010 stands: document_presentation is never produced —
+    the directed template refuses with
+    document_presentation_disabled. Run-11 fix 5b supersedes the
+    OLD second half of this test (the refusal used to be the
+    beat's final outcome): the Director's direction is a
+    preference order, not a veto over the T5 closing-card floor,
+    so a directed entry whose templates all refuse is served by
+    the floor and the refusal is recorded in graphic_failures,
+    superseded by the guarantee — exactly the run-11 sentences
+    9/10 pattern."""
     _fake_renders(monkeypatch)
+
+    from services.motion_engine import templates as engine_templates
+
+    def fake_card(data, style, out_path, duration=5.0,
+                  sentence_index=None, scene_number=None):
+        path = Path(out_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\x00" * 4096)
+        return str(path), {
+            "generator": "motion_engine", "template": "closing_card",
+            "generated": True,
+        }
+
+    monkeypatch.setitem(
+        engine_templates.TEMPLATES, "closing_card", fake_card
+    )
     entry = _entry(
         "gm_0001", 1, 0, 1,
         "The report documented the findings in detail.",
@@ -259,11 +285,21 @@ def test_document_presentation_manifest_entry_refused(tmp_path, monkeypatch):
     assets = graphics_pipeline.build_motion_graphics_assets(
         _data(), tmp_path, mode="balanced", manifest=_manifest([entry]),
     )
-    assert assets == []
+    # The disabled template itself is never produced...
+    assert [a["template"] for a in assets] == ["closing_card"]
+    assert assets[0]["coverage_guarantee"] is True
+    assert assets[0]["manifest_id"] == "gm_0001"
     manifest = json.loads((tmp_path / "motion_graphics.json").read_text())
-    skips = manifest["targets"]["skipped"]
-    assert len(skips) == 1
-    assert skips[0]["reason"] == "document_presentation_disabled"
+    # ...the beat is not skipped...
+    assert manifest["targets"]["skipped"] == []
+    # ...and the directed refusal stands recorded, superseded by
+    # the floor that served the beat.
+    refusals = [
+        f for f in manifest["graphic_failures"]
+        if f["reason"] == "document_presentation_disabled"
+    ]
+    assert len(refusals) == 1
+    assert refusals[0]["superseded_by"] == "coverage_guarantee:closing_card"
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +326,23 @@ def test_territory_map_assembler_renders(tmp_path):
     assert asset["manifest_id"] == "gm_0001"
 
 
-def test_territory_map_unresolved_place_assembles_nothing(tmp_path):
+def _refuse_closing_card(monkeypatch):
+    """Keep the T5 floor out of an assembler test: the floor is
+    the final stage for any unserved target (run-11 fix 5b), so a
+    test pinning an ASSEMBLER's refusal stubs the card to refuse
+    too — the beat then stays unserved, as the test asserts."""
+    from services.motion_engine import templates as engine_templates
+
+    monkeypatch.setitem(
+        engine_templates.TEMPLATES, "closing_card",
+        lambda data, style, out_path, **kwargs: (
+            None, {"reason": "no_text"}
+        ),
+    )
+
+
+def test_territory_map_unresolved_place_assembles_nothing(tmp_path, monkeypatch):
+    _refuse_closing_card(monkeypatch)
     entry = _entry(
         "gm_0001", 1, 0, 1, "They gathered in a nameless valley.",
         templates=["territory_map"], families=[],
@@ -436,7 +488,10 @@ def test_engine_record_style_is_json_safe_with_theme_tokens(tmp_path):
     assert manifest["count"] == 1
 
 
-def test_evidence_board_without_verified_photos_assembles_nothing(tmp_path):
+def test_evidence_board_without_verified_photos_assembles_nothing(
+    tmp_path, monkeypatch
+):
+    _refuse_closing_card(monkeypatch)
     entry = _entry(
         "gm_0001", 2, 1, 4,
         "Crowds gathered at the crossing in silence.",
