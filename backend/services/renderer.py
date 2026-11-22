@@ -351,6 +351,43 @@ def build_video_filter():
     )
 
 
+def is_motion_graphic_item(item):
+    """True when a timeline item is a generated motion graphic
+    (its asset record / editor assignment says so)."""
+    if not isinstance(item, dict):
+        return False
+    return bool(
+        item.get("motion_graphic")
+        or item.get("assignment") == "motion_graphic"
+        or item.get("source") == "cinemora_motion_graphics"
+    )
+
+
+def retime_factor_for_slot(source_duration, slot_duration):
+    """The setpts factor that fits a WHOLE source into a shorter
+    slot, or None when no retime applies (run-9 fix 4).
+
+    Motion graphics are authored as complete sequences — the
+    chronology graphic reveals its events across its full rendered
+    duration — so trimming one to its timeline slot silently
+    amputates the content (run e95ac155: a 6.0s chronology placed
+    in a 2.76s sentence window showed one of six events). Footage
+    trims; graphics retime. Returns slot/source when the source is
+    meaningfully longer than the slot and the speedup stays within
+    5x; otherwise None (historical trim behaviour)."""
+    try:
+        source = float(source_duration)
+        slot = float(slot_duration)
+    except (TypeError, ValueError):
+        return None
+    if source <= 0 or slot <= 0 or source <= slot * 1.05:
+        return None
+    factor = slot / source
+    if factor < 0.2:
+        return None
+    return factor
+
+
 def build_image_motion_filter(frame_count, motion=None):
     """Stage 3F (MA-16): real motion for stills via zoompan.
 
@@ -436,7 +473,7 @@ def create_image_clip(image_path, duration, output_path, frame_count=None, motio
     return True
 
 
-def create_video_clip(video_path, duration, output_path, frame_count=None, start_offset=0.0):
+def create_video_clip(video_path, duration, output_path, frame_count=None, start_offset=0.0, retime_factor=None):
     if not valid_media(video_path):
         print(f"Skipping invalid video: {video_path}")
         return False
@@ -455,6 +492,13 @@ def create_video_clip(video_path, duration, output_path, frame_count=None, start
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    video_filter = build_video_filter()
+    if retime_factor:
+        # Run-9 fix 4: compress the source's presentation timestamps
+        # so the whole sequence fits the slot instead of being
+        # trimmed at the slot boundary.
+        video_filter = f"setpts=PTS*{float(retime_factor):.6f}," + video_filter
+
     command = [
         "ffmpeg", "-y",
         "-stream_loop", "-1",
@@ -467,7 +511,7 @@ def create_video_clip(video_path, duration, output_path, frame_count=None, start
         command.extend(["-ss", str(start_offset)])
     command.extend([
         "-i", str(video_path),
-        "-vf", build_video_filter(),
+        "-vf", video_filter,
         "-frames:v", str(frame_count),
         "-fps_mode", "cfr",
         "-c:v", VIDEO_CODEC,
@@ -650,12 +694,28 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
             item_clip_start = 0.0
         if media_ok:
             if media_type == "video":
+                # Run-9 fix 4: a motion graphic longer than its
+                # slot is retimed to fit whole, never trimmed —
+                # trimming a chronology/stat graphic amputates the
+                # content its choreography reveals last.
+                _retime = None
+                if is_motion_graphic_item(item):
+                    _probe = probe_media(media_path)
+                    _retime = retime_factor_for_slot(
+                        (_probe or {}).get("duration"), duration
+                    )
+                    if _retime:
+                        print(
+                            "Motion graphic retimed to fit slot: "
+                            f"factor={_retime:.3f}"
+                        )
                 success = create_video_clip(
                     media_path,
                     duration,
                     output_path,
                     frame_count=frame_count,
                     start_offset=item_clip_start,
+                    retime_factor=_retime,
                 )
             else:
                 success = create_image_clip(

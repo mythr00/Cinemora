@@ -1331,7 +1331,14 @@ def _render_timeline_graphic(
     positions, spacing_mode, reveals = _timeline_node_positions(
         usable, duration
     )
-    label_rows = _timeline_label_rows(positions)
+    # Run-9 fix 4 (label legibility): the historical 220px close
+    # distance let nodes ~340px apart share a label row while their
+    # labels are up to ~400px wide — clustered chronologies rendered
+    # with the event texts overprinting each other, and the final
+    # node's labels ran off the right edge. Rows now separate until
+    # labels have real room, and every label's x is clamped so its
+    # estimated text width stays on screen.
+    label_rows = _timeline_label_rows(positions, close_distance=400.0)
 
     for index, event in enumerate(usable):
         x = int(positions[index])
@@ -1347,6 +1354,13 @@ def _render_timeline_graphic(
         what = shorten(
             event.get("what", ""),
             34,
+        )
+
+        when_x = min(
+            max(80, x - 20), max(80, 1900 - len(when) * 15)
+        )
+        what_x = min(
+            max(80, x - 45), max(80, 1900 - len(what) * 13)
         )
 
         # Stage B: the node and its labels appear when the scan line
@@ -1375,7 +1389,7 @@ def _render_timeline_graphic(
 
             _ffmpeg_text_filter(
                 when,
-                str(x - 20),
+                str(when_x),
                 str(when_y),
                 27,
                 GRAPHIC_TEXT,
@@ -1385,7 +1399,7 @@ def _render_timeline_graphic(
 
             _ffmpeg_text_filter(
                 what,
-                str(max(80, x - 45)),
+                str(what_x),
                 str(what_y),
                 22,
                 GRAPHIC_TEXT,

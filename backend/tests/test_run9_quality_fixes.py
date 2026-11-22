@@ -17,7 +17,9 @@ import subprocess
 import pytest
 
 from services import genre_packs
+from services import graphics_pipeline as gp
 from services import media_pipeline as mp
+from services import renderer
 from services import story_understanding as story
 
 
@@ -322,6 +324,95 @@ def _frame_pixel(video, xy):
     image = Image.open(io.BytesIO(result.stdout)).convert("RGB")
     assert image.size == (1920, 1080)
     return image.getpixel(xy)
+
+
+# ------------------------------------------------------------- fix 4
+
+def test_retime_factor_for_slot():
+    # Run 9's exact shape: a 6.0s chronology in a 2.76s window.
+    factor = renderer.retime_factor_for_slot(6.0, 2.763)
+    assert factor is not None and abs(factor - 2.763 / 6.0) < 1e-9
+    # Source fits the slot: no retime.
+    assert renderer.retime_factor_for_slot(3.0, 6.0) is None
+    assert renderer.retime_factor_for_slot(6.0, 6.0) is None
+    # Absurd speedup (>5x) keeps the historical trim behaviour.
+    assert renderer.retime_factor_for_slot(30.0, 3.0) is None
+    # Garbage in, None out.
+    assert renderer.retime_factor_for_slot(None, 3.0) is None
+    assert renderer.retime_factor_for_slot(6.0, 0) is None
+
+
+def test_motion_graphic_item_detection():
+    assert renderer.is_motion_graphic_item({"assignment": "motion_graphic"})
+    assert renderer.is_motion_graphic_item({"motion_graphic": True})
+    assert renderer.is_motion_graphic_item({"source": "cinemora_motion_graphics"})
+    assert not renderer.is_motion_graphic_item({"assignment": "editor", "type": "video"})
+
+
+def _make_two_colour_source(path):
+    """6s source: red for 3s, then blue for 3s."""
+    result = subprocess.run(
+        ["ffmpeg", "-y",
+         "-f", "lavfi", "-i", "color=c=red:size=640x360:duration=3:rate=30",
+         "-f", "lavfi", "-i", "color=c=blue:size=640x360:duration=3:rate=30",
+         "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+         "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr[-1000:]
+
+
+def _pixel_at(video, t, xy=(320, 180)):
+    from PIL import Image
+    import io
+
+    result = subprocess.run(
+        ["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(video),
+         "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-"],
+        capture_output=True, timeout=60,
+    )
+    assert result.returncode == 0
+    return Image.open(io.BytesIO(result.stdout)).convert("RGB").getpixel(xy)
+
+
+def test_retimed_graphic_shows_its_whole_sequence(tmp_path):
+    """Without retime a 3s clip of the 6s source is all red (the
+    blue half is trimmed away — the chronology defect). With the
+    slot retime, the clip's tail shows the source's end."""
+    src = tmp_path / "graphic.mp4"
+    _make_two_colour_source(src)
+    out = tmp_path / "clip.mp4"
+    frames = renderer.duration_to_frames(3.0)
+    assert renderer.create_video_clip(
+        str(src), 3.0, str(out), frame_count=frames, retime_factor=0.5
+    )
+    info = renderer.probe_media(str(out))
+    assert info["duration"] == pytest.approx(3.0, abs=0.2)
+    tail = _pixel_at(out, 2.9, xy=(960, 540))
+    assert tail[2] > 150 and tail[0] < 100  # blue, not red
+
+
+def test_timeline_label_rows_separate_clustered_nodes():
+    positions = [190.0, 360.0, 530.0, 700.0, 870.0, 1040.0]
+    rows = gp._timeline_label_rows(positions, close_distance=400.0)
+    for a, b in zip(rows, rows[1:]):
+        assert a != b
+
+
+def test_timeline_graphic_renders_all_events(tmp_path):
+    events = [
+        {"when": "summer 2021", "what": "Gabby Petito and Brian Laundrie traveled across America in a white van."},
+        {"when": "July 2021", "what": "Gabby Petito set out from Blue Point on a four-month journey."},
+        {"when": "August 12, 2021", "what": "Police in Moab, Utah, stopped the van and separated the couple."},
+        {"when": "late August 2021", "what": "The van was seen at the Spread Creek camping area."},
+        {"when": "August 30, 2021", "what": "The last text was sent from Gabby's phone."},
+        {"when": "September 1, 2021", "what": "Brian Laundrie arrived home in Florida without Gabby."},
+    ]
+    out = tmp_path / "timeline.mp4"
+    mode = gp._render_timeline_graphic(out, events, duration=6.0)
+    assert mode in ("proportional", "even_fallback")
+    info = renderer.probe_media(str(out))
+    assert info is not None and info["duration"] == pytest.approx(6.0, abs=0.3)
 
 
 @pytest.mark.parametrize("size", ["720x1280", "960x720"])
