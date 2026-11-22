@@ -254,7 +254,12 @@ def test_ass_from_word_segments_still_works(tmp_path):
         l for l in ass.read_text(encoding="utf-8-sig").splitlines()
         if l.startswith("Dialogue:")
     ]
-    assert len(dialogues) == 6  # one per word
+    # Wave 1 karaoke contract (plan E.2): ONE event per readable
+    # chunk, NOT one per word -- the old per-word event flood (6
+    # events for 6 words) is replaced by 2 chunk events carrying
+    # \kf sweep tags.
+    assert len(dialogues) == 2
+    assert r"\kf" in dialogues[0]
 
 
 # ---------------------------------------------------------------

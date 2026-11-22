@@ -1029,6 +1029,12 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     captions_mode = str(options.get("captions") or "burn").lower()
     if captions_mode not in ("burn", "sidecar", "off"):
         captions_mode = "burn"
+    # Wave 1 captions (plan E.2): karaoke sync level for the ASS
+    # renderer -- "word" (default) / "syllable" (derived timing,
+    # stamped as such) / "off" (plain).
+    caption_sync = str(options.get("caption_sync") or "word").lower()
+    if caption_sync not in ("word", "syllable", "off"):
+        caption_sync = "word"
 
     # Stage 5A: resolve the genre pack (explicit "genre" option,
     # else the project's stored category, else the conservative
@@ -1241,6 +1247,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             state["captions_alignment"] = captions_data[
                 "captions_alignment"
             ]
+        state["caption_sync"] = caption_sync
+        if caption_sync == "syllable":
+            # Plan E.3 honesty stamp: syllable timing is derived
+            # from measured word spans, never measured.
+            state["syllable_timing"] = "derived"
         # Annex D2.2.3: Σ parts vs the concatenated narration file.
         # Divergence beyond tolerance is recorded (state -> asset
         # report) and printed — never silently absorbed.
@@ -1903,10 +1914,18 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
 
         if captions_mode == "burn":
             from services.caption_renderer import create_ass_file
+            from services.motion_engine.themes import theme_for_pack
+
+            # Production theme for caption colours; None when the
+            # pack selects no theme -- the renderer then falls back
+            # to its editorial_dark tokens.
+            _caption_theme = theme_for_pack(_genre_pack)
 
             create_ass_file(
                 str(captions_json),
                 str(captions_ass),
+                sync=caption_sync,
+                theme=_caption_theme,
             )
 
             if not captions_ass.exists():
