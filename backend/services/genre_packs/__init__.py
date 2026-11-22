@@ -83,7 +83,7 @@ from pathlib import Path
 
 _DATA_DIR = Path(__file__).resolve().parent / "data"
 
-PACK_IDS = ("general", "history", "true_crime", "engineering")
+PACK_IDS = ("general", "history", "true_crime", "engineering", "industrial")
 
 
 @lru_cache(maxsize=None)
