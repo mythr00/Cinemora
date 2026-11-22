@@ -211,22 +211,6 @@ class Project(Base):
         primary_key=True,
     )
 
-    # Phase 8.1 ownership (design 02 §3.1): added nullable by
-    # migration 0006, backfilled to the founder, enforced NOT NULL
-    # by migration 0007 on migrated databases. The ORM deliberately
-    # keeps the column nullable: legacy test fixtures build schemas
-    # with create_all and insert ownerless projects directly, and
-    # the enforcement that matters lives in the migrated schema +
-    # the API layer, which never creates an ownerless project
-    # (Phase 8.2 owner choke point). Runs carry a denormalised copy
-    # so queue/fairness queries never join (02 §4.1).
-    owner_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("users.id"),
-        nullable=True,
-        index=True,
-    )
-
     script: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -264,6 +248,25 @@ class Project(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
+    # Phase 8.1 ownership (design 02 §3.1): added nullable by
+    # migration 0006, backfilled to the founder, enforced NOT NULL
+    # by migration 0007 on migrated databases. The ORM deliberately
+    # keeps the column nullable: legacy test fixtures build schemas
+    # with create_all and insert ownerless projects directly, and
+    # the enforcement that matters lives in the migrated schema +
+    # the API layer, which never creates an ownerless project
+    # (Phase 8.2 owner choke point). Runs carry a denormalised copy
+    # so queue/fairness queries never join (02 §4.1). Declared LAST
+    # so the ORM column order matches the migrated schema exactly
+    # (0006 appends the column; the schema-authority tests compare
+    # column lists, AUD-09).
+    owner_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+
 
 class ProductionRun(Base):
     """One production run of one project (Stage 2 ledger, AUD-07/10).
@@ -283,15 +286,6 @@ class ProductionRun(Base):
         String(36),
         ForeignKey("projects.id"),
         nullable=False,
-    )
-
-    # Phase 8.1: denormalised owner copy (the project's owner at
-    # submission time) — see Project.owner_id for the enforcement
-    # note. Indexed with status for dispatcher fairness queries.
-    owner_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("users.id"),
-        nullable=True,
     )
 
     # queued -> running -> completed / failed / cancelled, plus
@@ -341,6 +335,16 @@ class ProductionRun(Base):
 
     finished_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+    # Phase 8.1: denormalised owner copy (the project's owner at
+    # submission time) — see Project.owner_id for the enforcement
+    # note. Indexed with status for dispatcher fairness queries.
+    # Declared last to match the migrated column order (AUD-09).
+    owner_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id"),
+        nullable=True,
     )
 
     __table_args__ = (

@@ -87,16 +87,32 @@ def test_upgrade_from_0001_preserves_projects_rows(migration_db):
     finally:
         conn.close()
 
+    # Phase 8 path (0006 -> backfill -> 0007), as operated on the
+    # real databases: 0007 refuses an un-backfilled database by
+    # design, so walk the designed steps — additive 0006, seed a
+    # founder, backfill ownership — then head.
+    command.upgrade(cfg, "0006_users_and_ownership")
+    conn = sqlite3.connect(str(migration_db))
+    try:
+        conn.execute(
+            "INSERT INTO users (id, email, password_hash, role, status,"
+            " created_at) VALUES ('founder-1', 'founder@example.com',"
+            " 'hash', 'super_admin', 'active', '2026-11-22 00:00:00')"
+        )
+        conn.execute("UPDATE projects SET owner_id = 'founder-1'")
+        conn.commit()
+    finally:
+        conn.close()
     command.upgrade(cfg, "head")
 
     conn = sqlite3.connect(str(migration_db))
     try:
         rows = conn.execute(
-            "SELECT id, script, status FROM projects"
+            "SELECT id, script, status, owner_id FROM projects"
         ).fetchall()
     finally:
         conn.close()
-    assert rows == [(project_id, "A script.", "created")]
+    assert rows == [(project_id, "A script.", "created", "founder-1")]
     assert "production_runs" in _tables(migration_db)
 
 
