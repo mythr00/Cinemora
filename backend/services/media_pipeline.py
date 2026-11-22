@@ -874,6 +874,28 @@ def build_shot_needs(beat, bible=None):
         or ""
     ).strip()
 
+    # Transformation Phase 4.2: the bible's genre pack may carry
+    # institutional source hints (services.genre_packs). Resolved
+    # ONCE per beat here; each need below formats the templates
+    # against its own anchors and carries the formatted hint
+    # queries for _uve_scenario_search to execute. A bible that
+    # names no pack (or a pack without a valid hints block) means
+    # no hints — discovery proceeds exactly as before.
+    _source_hints = {}
+    _pack_id = str(
+        (bible.get("research_meta") or {}).get("genre_pack") or ""
+    ).strip()
+    if _pack_id:
+        try:
+            from services import genre_packs as _genre_packs
+
+            _resolved_hints = _genre_packs.resolve_source_hints(
+                _genre_packs.load_pack(_pack_id)
+            )
+            _source_hints = _resolved_hints.get("hints") or {}
+        except Exception:
+            _source_hints = {}
+
     needs = []
 
     for index, scenario in enumerate(
@@ -1079,6 +1101,24 @@ def build_shot_needs(beat, bible=None):
             # "queries" (same order): scenario / composed /
             # intent_queries.
             "query_sources": query_sources,
+            # Transformation Phase 4.2: institutional source-hint
+            # queries for this need, formatted from the genre
+            # pack's templates against the need's own anchors
+            # ({query} = the need's first query). Executed by
+            # _uve_scenario_search on its channel, accounted in
+            # the AM-021 diagnostics under source "source_hint".
+            # Empty when the pack carries no hints.
+            "source_hint_queries": (
+                _genre_packs.format_source_hint_queries(
+                    _source_hints,
+                    subject=required_subject,
+                    place=place,
+                    era=shot_era,
+                    query=queries[0] if queries else "",
+                )
+                if _source_hints
+                else []
+            ),
         })
 
     return needs
@@ -5410,6 +5450,126 @@ def _uve_scenario_search(
             except Exception as error:
                 _record_discovery_failure("serper-videos-targeted", primary_query, error)
                 print(f"Targeted search failed for '{primary_query}': {error}")
+
+    # Transformation Phase 4.2: institutional source hints. The
+    # need's pack-derived hint queries (stamped by build_shot_needs
+    # from the genre pack's source_hints templates) run on their
+    # own channels — Commons category / free-text searches,
+    # Archive.org advanced-search fragments, Serper site-scoped
+    # searches — and merge into the same pools under the same
+    # dedupe. Direct (T1) passes only: tier-ladder derived needs
+    # may inherit the stamp but must not re-spend the hints at
+    # every tier. Each hint is failure-isolated and logged under
+    # source "source_hint", so the AM-021 per-query diagnostics
+    # attribute its hits / candidates / verified to the hint
+    # rather than to the baseline queries.
+    if str(need.get("tier") or "direct") == "direct":
+        for _hint in need.get("source_hint_queries") or []:
+            if not isinstance(_hint, dict):
+                continue
+            _hint_query = " ".join(
+                str(_hint.get("query") or "").split()
+            ).strip()
+            _hint_channel = str(_hint.get("channel") or "")
+            if not _hint_query:
+                continue
+            try:
+                _hint_hits = 0
+                if _hint_channel in (
+                    "wikimedia_category", "wikimedia_query",
+                ):
+                    _found = search_wikimedia_images(
+                        _hint_query, limit=3
+                    )
+                    _hint_hits += len(_found or [])
+                    for image in _found or []:
+                        image_url = str(
+                            image.get("image_url") or ""
+                        ).strip()
+                        if not image_url or image_url in seen_image_urls:
+                            continue
+                        seen_image_urls.add(image_url)
+                        images.append(image)
+                    _found = search_wikimedia_videos(
+                        _hint_query, limit=3
+                    )
+                    _hint_hits += len(_found or [])
+                    for video in _found or []:
+                        url = str(
+                            video.get("video_url")
+                            or video.get("url")
+                            or ""
+                        ).strip()
+                        if not url or url in seen_video_urls:
+                            continue
+                        seen_video_urls.add(url)
+                        videos.append(video)
+                elif _hint_channel == "archive":
+                    _found = search_archive_org_videos(
+                        _hint_query, limit=3
+                    )
+                    _hint_hits += len(_found or [])
+                    for video in _found or []:
+                        url = str(
+                            video.get("video_url")
+                            or video.get("url")
+                            or ""
+                        ).strip()
+                        if not url or url in seen_video_urls:
+                            continue
+                        seen_video_urls.add(url)
+                        videos.append(video)
+                elif _hint_channel == "web":
+                    _found = search_videos_multi(
+                        _hint_query, limit=5
+                    )
+                    _hint_hits += len(_found or [])
+                    for video in _found or []:
+                        url = str(
+                            video.get("video_url")
+                            or video.get("url")
+                            or video.get("link")
+                            or ""
+                        ).strip()
+                        if not url or url in seen_video_urls:
+                            continue
+                        seen_video_urls.add(url)
+                        videos.append(video)
+                    _found = search_web_sources(
+                        _hint_query, limit=5
+                    )
+                    _hint_hits += len(_found or [])
+                    for source in _found or []:
+                        url = str(
+                            source.get("url")
+                            or source.get("link")
+                            or ""
+                        ).strip()
+                        if not url or url in seen_web_urls:
+                            continue
+                        seen_web_urls.add(url)
+                        web_sources.append(source)
+                    _found = search_image_sources(
+                        _hint_query, limit=5
+                    )
+                    _hint_hits += len(_found or [])
+                    for image in _found or []:
+                        image_url = str(
+                            image.get("image_url") or ""
+                        ).strip()
+                        if not image_url or image_url in seen_image_urls:
+                            continue
+                        seen_image_urls.add(image_url)
+                        images.append(image)
+                _log_query(_hint_query, "source_hint", _hint_hits)
+            except Exception as error:
+                _record_discovery_failure(
+                    "source_hint", _hint_query, error
+                )
+                print(
+                    f"Source hint search failed "
+                    f"for '{_hint_query}': {error}"
+                )
 
     return videos, web_sources, images
 

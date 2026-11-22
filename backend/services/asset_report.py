@@ -825,6 +825,40 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         if _frame_ocr_engines else None
     )
 
+    # Transformation Phase 4.2: the source-hint funnel, aggregated
+    # FROM the AM-021 query diagnostics (the records of record —
+    # never a parallel counter): every query issued under source
+    # "source_hint" vs every baseline query, with hits /
+    # candidates / verified summed per side. A production whose
+    # pack carried no hints reports state "no_hints" with zeroed
+    # hint counts — the absence is stated, not implied.
+    def _query_side_totals(want_hint):
+        totals = {"queries": 0, "hits": 0, "candidates": 0, "verified": 0}
+        for _diag in query_diagnostics:
+            for _q in _diag.get("queries") or []:
+                if not isinstance(_q, dict):
+                    continue
+                if (_q.get("source") == "source_hint") != want_hint:
+                    continue
+                totals["queries"] += 1
+                for _field in ("hits", "candidates", "verified"):
+                    try:
+                        totals[_field] += int(_q.get(_field) or 0)
+                    except (TypeError, ValueError):
+                        pass
+        return totals
+
+    _hint_totals = _query_side_totals(True)
+    source_hints_summary = {
+        "state": "recorded" if _hint_totals["queries"] else "no_hints",
+        "genre_pack": (
+            genre_pack.get("id")
+            if isinstance(genre_pack, dict) else None
+        ),
+        "hints": _hint_totals,
+        "baseline": _query_side_totals(False),
+    }
+
     return {
         "analysis_mode": analysis_mode,
         # Master Directive Phase 7 / P0 (DM-1): the planner
@@ -1149,6 +1183,18 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 "were scored and verifier-accepted. Tier-ladder "
                 "searches are accounted in tier_attempts instead."
             ),
+            "source_hints": (
+                "Transformation Phase 4.2 — the institutional "
+                "source-hint funnel, aggregated from the AM-021 "
+                "query diagnostics: queries issued under source "
+                "source_hint (the genre pack's Commons category / "
+                "Archive advanced-search / site-scoped templates, "
+                "formatted per shot need) vs all baseline queries, "
+                "each side summed over hits / candidates / "
+                "verified. state is no_hints when the run's pack "
+                "carried no hints — an absence, stated, not a zero "
+                "measured against hints that never ran."
+            ),
             "beat_sufficiency": (
                 "Phase 3 / FP-4 (measure only) — per beat: its "
                 "sentence count, the distinct assets fetched for "
@@ -1260,6 +1306,12 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         # supplied each) and their hits / candidates / verified
         # counts, aggregated from the scenes' stats.
         "query_diagnostics": query_diagnostics,
+        # Transformation Phase 4.2: the institutional source-hint
+        # funnel — hint-sourced queries vs baseline queries (hits /
+        # candidates / verified each), aggregated from the AM-021
+        # diagnostics above. state "no_hints" when the run's genre
+        # pack carried no hints or none were issued.
+        "source_hints": source_hints_summary,
         # Phase 3 / FP-4: per-beat sufficiency (distinct fetched
         # assets vs the beat's sentences) with the below-half count.
         "beat_sufficiency": beat_sufficiency,
