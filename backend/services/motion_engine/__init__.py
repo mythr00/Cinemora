@@ -14,5 +14,6 @@ from services.motion_engine.styles import STYLES, resolve_style
 from services.motion_engine import templates as _templates  # noqa: E402,F401
 from services.motion_engine import templates_v2 as _templates_v2  # noqa: E402,F401
 from services.motion_engine import templates_v3 as _templates_v3  # noqa: E402,F401
+from services.motion_engine import templates_v4 as _templates_v4  # noqa: E402,F401
 
 __all__ = ["STYLES", "resolve_style"]

@@ -941,6 +941,25 @@ def stat_comparison(data, style, out_path, duration=5.0, sentence_index=None, sc
 # 7. Document presentation
 # ---------------------------------------------------------------------------
 
+def _stamp(draw, layer, stamp_img, progress, page):
+    """Composite the CLASSIFIED stamp onto the page (Wave 2):
+    it lands at progress 0.35 with a stamp-in settle (oversized
+    and faint, then full weight at its recorded angle)."""
+    if stamp_img is None or progress <= 0.35:
+        return
+    land = clamp01((progress - 0.35) * 4.0)
+    scale = 1.28 - 0.28 * ease_out(land)
+    shown = stamp_img.resize(
+        (int(stamp_img.size[0] * scale), int(stamp_img.size[1] * scale)),
+        Image.BICUBIC)
+    if land < 1.0:
+        a = shown.getchannel("A").point(lambda v: int(v * land))
+        shown.putalpha(a)
+    cx = (page[0] + page[2]) // 2 - shown.size[0] // 2
+    cy = (page[1] + page[3]) // 2 - shown.size[1] // 2
+    layer.image.alpha_composite(shown, (cx, cy))
+
+
 def document_presentation(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
     style_name, tokens = resolve_style(style)
     data = data or {}
@@ -968,6 +987,25 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
     source_label = _clean(data.get("source_label"))
     date_label = _clean(data.get("date_label"))
     highlight = _clean(data.get("highlight"))
+    # Wave 2 (F4): the classified-file variant — the same genuine
+    # document, presented under redaction bars and a CLASSIFIED
+    # stamp. The variant changes the PRESENTATION only: the
+    # document source requirement is the pipeline's, unchanged,
+    # and the bars lift only part-way (the file stays redacted).
+    variant = _clean(data.get("variant")).lower()
+    if variant != "classified":
+        variant = ""
+    stamp = None
+    if variant:
+        stamp = Image.new("RGBA", (620, 150), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(stamp)
+        sd.rectangle([6, 6, 614, 144], outline=(176, 32, 32, 255), width=7)
+        stamp_font = load_font(tokens["font_bold"], 72)
+        stamp_text = "CLASSIFIED"
+        sw = sd.textlength(stamp_text, font=stamp_font)
+        sd.text(((620 - sw) / 2, 34), stamp_text, font=stamp_font,
+                fill=(176, 32, 32, 255))
+        stamp = stamp.rotate(-12, expand=True, resample=Image.BICUBIC)
     bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=23)
     fonts = {
         "title": load_font(tokens["font_bold"], 40),
@@ -1026,10 +1064,23 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
                 progressive_polyline(
                     d, perimeter, frame_frac,
                     fill=tokens["accent"] + (255,), width=5)
+            if variant:
+                # Redaction bars over the genuine page: they
+                # thin as the "declassification" beat plays but
+                # never lift entirely — the file stays redacted.
+                lift = ease_in_out(clamp01((progress - 0.45) * 1.8))
+                fw, fh = fitted.size
+                for k in range(5):
+                    by = iy + int(fh * (0.10 + 0.17 * k))
+                    bh = max(6, int(fh * 0.075 * (1.0 - 0.4 * lift)))
+                    bx1 = ix + int(fw * (0.55 + 0.09 * ((k * 37) % 4)))
+                    d.rectangle([ix + 8, by, bx1, by + bh],
+                                fill=(12, 12, 12, 255))
+                _stamp(d, layer, stamp, progress, (x0, y0, x1, y1))
             _footer(d, tokens)
             return canvas.composite()
         y = y0 + 156
-        for line in lines:
+        for li, line in enumerate(lines):
             if highlight and highlight in line and progress > 0.35:
                 start = line.find(highlight)
                 prefix = line[:start]
@@ -1037,16 +1088,53 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
                 hw = d.textlength(highlight, font=fonts["body"]) * ease_in_out(clamp01((progress - 0.35) * 2.2))
                 d.rectangle([hx - 4, y + 2, hx + hw + 4, y + 40], fill=(250, 214, 90, 190))
             d.text((x0 + 52, y), line, font=fonts["body"], fill=(36, 34, 30, 255))
+            if variant and li % 2 == 0:
+                # Redaction bar over the middle of alternating
+                # body lines (deterministic by line index).
+                lift = ease_in_out(clamp01((progress - 0.45) * 1.8))
+                bx0 = x0 + 52 + int(140 + 60 * ((li * 29) % 3))
+                bx1 = bx0 + int(560 * (1.0 - 0.3 * lift))
+                d.rectangle([bx0, y + 4, bx1, y + 34],
+                            fill=(12, 12, 12, 255))
             y += 48
+        if variant:
+            _stamp(d, layer, stamp, progress, (x0, y0, x1, y1))
         _footer(d, tokens)
         return canvas.composite()
 
     path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta("document_presentation", style_name, duration, sentence_index, scene_number,
-                       {"title": True, "source_label": bool(source_label),
-                        "date_label": bool(date_label), "highlight": bool(highlight),
-                        "body_chars": len(body),
-                        "image": doc_image is not None})
+    _doc_inputs = {"title": True, "source_label": bool(source_label),
+                   "date_label": bool(date_label), "highlight": bool(highlight),
+                   "body_chars": len(body),
+                   "image": doc_image is not None}
+    if variant:
+        # Recorded only when a variant actually rendered — a base
+        # document_presentation's recorded inputs keep their
+        # Wave 1 shape (the territory_map variant precedent).
+        _doc_inputs["variant"] = variant
+    return path, _meta(data.get("_template") or "document_presentation",
+                       style_name, duration, sentence_index, scene_number,
+                       _doc_inputs)
+
+
+# ---------------------------------------------------------------------------
+# 7b. Classified file (Wave 2, F4) — a thin named wrapper over
+# document_presentation: it fixes the "classified" variant so the
+# Director and the packs can register/order it as its own
+# template while the genuine-document requirement, provenance and
+# honesty contract stay the base template's. The pipeline's
+# document gate covers it exactly as it covers the base.
+# ---------------------------------------------------------------------------
+
+def classified_file(data, style, out_path, duration=5.0,
+                    sentence_index=None, scene_number=None):
+    data = dict(data or {})
+    data["variant"] = "classified"
+    data["_template"] = "classified_file"
+    return document_presentation(
+        data, style, out_path, duration=duration,
+        sentence_index=sentence_index, scene_number=scene_number,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1129,6 +1217,9 @@ TEMPLATES = {
     "outcome_path": outcome_path,
     "stat_comparison": stat_comparison,
     "document_presentation": document_presentation,
+    # Wave 2 (F4): the classified-file variant of the document
+    # presentation, registered under its own name.
+    "classified_file": classified_file,
     "closing_card": closing_card,
     # Wave 1 (F3/F4): named variants over the base templates.
     "border_map": border_map,
