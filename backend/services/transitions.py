@@ -23,6 +23,28 @@ applied on a whim (plan §D.5): a non-cut transition is honoured only
 when the timeline item names a valid type AND records a valid
 reason; anything else is downgraded to ``cut`` with the cause
 recorded.
+
+Wave 2 (F9 completion) adds three segment kinds — ``split_screen``
+(the incoming clip slides in over the outgoing one behind a hard
+divider), ``parallax_depth`` (the outgoing clip drifts slower and
+dims behind the incoming one — a depth cue, not a blend) and
+``film_strip`` (a sprocketed strip band rides the wipe seam) — all
+built on the same freeze-handle 2W contract, so the frame audit is
+untouched.
+
+``match_cut`` is NOT a segment kind: it is a recorded edit RULE
+(plan F9: "a Director/editor rule — planning logic, zero
+rendering"). An item requests it with ``transition: "match_cut"``
+and ``transition_reason: "continuity"``, and BOTH adjacent items
+must carry a matching continuity record —
+``match_cut: {"basis": "subject"|"shape"|"place"|"object",
+"key": <recorded continuity key>}`` — with equal basis and key.
+When the rule applies, the edit stays a plain cut (zero frames
+consumed, nothing rendered) and the plan record carries the
+``match_cut`` evidence; when the continuity record is absent or
+mismatched, the request is downgraded to a plain cut with the
+cause recorded. Nothing here detects continuity — the rule only
+honours continuity that was recorded upstream.
 """
 
 import subprocess
@@ -38,8 +60,17 @@ VIDEO_CODEC = "libx264"
 PRESET = "ultrafast"
 CRF = "23"
 
-VALID_TRANSITIONS = {"cut", "fade", "dissolve", "whip_pan", "film_burn"}
+VALID_TRANSITIONS = {
+    "cut", "fade", "dissolve", "whip_pan", "film_burn",
+    # Wave 2 (F9 completion).
+    "split_screen", "parallax_depth", "film_strip",
+    # A recorded rule, not a segment kind (see module docstring).
+    "match_cut",
+}
 VALID_REASONS = {"scene_boundary", "time_passage", "continuity"}
+
+#: Bases a match-cut continuity record may claim.
+MATCH_CUT_BASES = {"subject", "shape", "place", "object"}
 
 # Default transition windows, in frames at the project FPS.
 DEFAULT_WINDOW_FRAMES = {
@@ -47,9 +78,14 @@ DEFAULT_WINDOW_FRAMES = {
     "dissolve": 12,
     "film_burn": 12,
     "whip_pan": 8,
+    "split_screen": 12,
+    "parallax_depth": 12,
+    "film_strip": 16,
 }
 
-NON_CUT_TRANSITIONS = VALID_TRANSITIONS - {"cut"}
+#: Kinds that consume a 2W segment. match_cut is deliberately
+#: absent: it is a cut with a rule record, never a segment.
+NON_CUT_TRANSITIONS = VALID_TRANSITIONS - {"cut", "match_cut"}
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +94,32 @@ NON_CUT_TRANSITIONS = VALID_TRANSITIONS - {"cut"}
 
 def _default_window(kind):
     return DEFAULT_WINDOW_FRAMES.get(kind, 12)
+
+
+def _match_cut_evidence(previous_item, item):
+    """The continuity evidence for a match cut between two
+    adjacent items, or None. Both items must carry a ``match_cut``
+    record with a known basis and the SAME non-empty key — the
+    rule honours recorded continuity only; it detects nothing."""
+    def _record(candidate):
+        if not isinstance(candidate, dict):
+            return None
+        record = candidate.get("match_cut")
+        if not isinstance(record, dict):
+            return None
+        basis = str(record.get("basis") or "").strip().lower()
+        key = str(record.get("key") or "").strip()
+        if basis not in MATCH_CUT_BASES or not key:
+            return None
+        return {"basis": basis, "key": key}
+
+    before = _record(previous_item)
+    after = _record(item)
+    if before is None or after is None:
+        return None
+    if before["basis"] != after["basis"] or before["key"] != after["key"]:
+        return None
+    return before
 
 
 def _requested_window(item, kind):
@@ -83,7 +145,8 @@ def plan_transitions(items):
     the downgrade + cause are recorded on the record.
     """
     records = []
-    for index, item in enumerate(items or []):
+    sequence = list(items or [])
+    for index, item in enumerate(sequence):
         if index == 0:
             continue
         if not isinstance(item, dict):
@@ -103,9 +166,36 @@ def plan_transitions(items):
             "downgraded": False,
             "downgrade_cause": None,
             "window_frames": 0,
+            # Wave 2: the match-cut rule's evidence, when it
+            # applied at this edit point (else None).
+            "match_cut": None,
         }
 
         if requested == "cut":
+            records.append(record)
+            continue
+
+        if requested == "match_cut":
+            # The match-cut RULE (zero rendering): the edit stays
+            # a cut; the rule only records whether recorded
+            # continuity justifies calling it one.
+            if reason not in VALID_REASONS:
+                record["downgraded"] = True
+                record["downgrade_cause"] = (
+                    "missing_or_invalid_transition_reason")
+                records.append(record)
+                continue
+            previous = sequence[index - 1]
+            if not isinstance(previous, dict):
+                previous = {}
+            evidence = _match_cut_evidence(previous, item)
+            if reason != "continuity" or evidence is None:
+                record["downgraded"] = True
+                record["downgrade_cause"] = (
+                    "match_cut_continuity_unrecorded")
+                records.append(record)
+                continue
+            record["match_cut"] = evidence
             records.append(record)
             continue
 
@@ -405,6 +495,7 @@ def build_transition_segment(clip_a, clip_b, kind, window_frames, out_path):
 
     input_args = ["-i", str(clip_a), "-i", str(clip_b)]
     extra = []
+    duration = f"{total_out / FPS:.6f}"
 
     if kind == "dissolve":
         graph = (
@@ -428,7 +519,6 @@ def build_transition_segment(clip_a, clip_b, kind, window_frames, out_path):
             f"b='b(X,Y)*{factor}',format=yuv420p[out]"
         )
     elif kind == "whip_pan":
-        duration = f"{total_out / FPS:.6f}"
         graph = (
             f"{a_layer};{b_layer};"
             f"color=c=black:s={WIDTH}x{HEIGHT}:r={FPS}:d={duration}[base];"
@@ -450,6 +540,61 @@ def build_transition_segment(clip_a, clip_b, kind, window_frames, out_path):
             "[mix][burn]blend=all_mode=screen,format=yuv420p[out]"
         )
         extra.append(str(burn_path))
+    elif kind == "split_screen":
+        # The incoming clip slides in from the right over the
+        # outgoing one; mid-window the frame is a true split
+        # screen. A white divider rides the incoming clip's left
+        # edge (drawn onto B before the overlay, so it tracks).
+        graph = (
+            f"{a_layer};{b_layer};"
+            f"color=c=black:s={WIDTH}x{HEIGHT}:r={FPS}:d={duration}[base];"
+            f"[base][a]overlay=x=0:y=0[tmp];"
+            f"[b]drawbox=x=0:y=0:w=6:h={HEIGHT}:"
+            "color=white:t=fill[bb];"
+            f"[tmp][bb]overlay=x='{WIDTH}-{WIDTH}*n/{denom}':y=0:"
+            "eval=frame,format=yuv420p[out]"
+        )
+    elif kind == "parallax_depth":
+        # Depth cue, not a blend: A drifts left at half rate and
+        # dims while B slides in at full rate over it — the two
+        # planes move at different speeds, which is what reads as
+        # parallax at an edit point.
+        graph = (
+            f"{a_layer};{b_layer};"
+            f"color=c=black:s={WIDTH}x{HEIGHT}:r={FPS}:d={duration}[base];"
+            f"[a]eq=brightness='-0.16*n/{denom}':eval=frame[adim];"
+            f"[base][adim]overlay=x='-{WIDTH // 2}*n/{denom}':y=0:"
+            "eval=frame[tmp];"
+            f"[tmp][b]overlay=x='{WIDTH}-{WIDTH}*n/{denom}':y=0:"
+            "eval=frame,format=yuv420p[out]"
+        )
+    elif kind == "film_strip":
+        # A sprocketed film-strip band rides the wipe seam: left
+        # of the seam the incoming clip, right of it the outgoing.
+        # The blend runs in RGB so the seam's X is full-resolution
+        # in every channel; the strip itself (dark band, bright
+        # sprocket holes, cell dividers) is drawn by geq over the
+        # seam position sx = WIDTH * N / denom.
+        sx = f"({WIDTH}*N/{denom})"
+        band = f"abs(X-{sx})"
+
+        def _strip_expr(channel, cell_colour):
+            return (
+                f"if(gt({band},84),{channel}(X,Y),"
+                f"if(gt({band},52),if(lt(mod(Y,96),44),235,16),"
+                f"if(lt(mod(Y,288),10),{cell_colour},"
+                f"{channel}(X,Y)*0.5)))"
+            )
+
+        graph = (
+            f"{a_layer};{b_layer};"
+            "[a]format=rgb24[ar];[b]format=rgb24[br];"
+            f"[ar][br]blend=all_mode=normal:"
+            f"all_expr='if(lt(X,{sx}),B,A)'[mix];"
+            f"[mix]geq=r='{_strip_expr('r', 200)}':"
+            f"g='{_strip_expr('g', 170)}':b='{_strip_expr('b', 60)}',"
+            "format=yuv420p[out]"
+        )
     else:  # pragma: no cover - guarded above
         return None
 
