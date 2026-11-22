@@ -210,6 +210,71 @@ class VisualRegistry:
             "used_segments": sum(len(v) for v in self.used_segments.values()),
         }
 
+    # ------------------------------------------------------------ persistence
+
+    def export_state(self):
+        """The registry's usage state as a JSON-safe dict (AM-020,
+        folded into Transformation Phase 5.1): everything can_use /
+        register consult, so a restored registry enforces reuse
+        exactly as the exporting one did. ``created_at`` is a
+        monotonic clock reading and is NOT exported — a restored
+        registry starts its own clock (the tier ladder's wall-clock
+        guard measures the CURRENT run's asset stage)."""
+        return {
+            "project_id": self.project_id,
+            "used_files": sorted(self.used_files),
+            "used_sources": sorted(self.used_sources),
+            "used_clips": sorted(self.used_clips),
+            "used_titles": sorted(self.used_titles),
+            "recent_sources": list(self.recent_sources),
+            "usage_counts": dict(self.usage_counts),
+            "used_segments": {
+                key: [list(pair) for pair in pairs]
+                for key, pairs in self.used_segments.items()
+            },
+            "max_recent": self.max_recent,
+            "max_source_uses": self.max_source_uses,
+            "segment_pad": self.segment_pad,
+            "long_source_cap": self.long_source_cap,
+            "long_source_min_duration": self.long_source_min_duration,
+        }
+
+    def restore_state(self, data):
+        """Replace this registry's usage state with an exported one
+        (see export_state). Malformed pieces fall back to empty —
+        a partial restore must never invent usage that blocks a
+        candidate, and the caller's artefact hashes have already
+        vouched for the payload this state rode in on."""
+        if not isinstance(data, dict):
+            return self
+        self.used_files = set(data.get("used_files") or [])
+        self.used_sources = set(data.get("used_sources") or [])
+        self.used_clips = set(data.get("used_clips") or [])
+        self.used_titles = set(data.get("used_titles") or [])
+        self.recent_sources = list(data.get("recent_sources") or [])
+        self.usage_counts = {
+            str(key): int(value)
+            for key, value in (data.get("usage_counts") or {}).items()
+        }
+        self.used_segments = {
+            str(key): [
+                (float(pair[0]), float(pair[1]))
+                for pair in pairs
+                if isinstance(pair, (list, tuple)) and len(pair) == 2
+            ]
+            for key, pairs in (data.get("used_segments") or {}).items()
+        }
+        if data.get("max_recent"):
+            self.max_recent = int(data["max_recent"])
+        if data.get("max_source_uses"):
+            self.max_source_uses = int(data["max_source_uses"])
+        if data.get("segment_pad") is not None:
+            self.segment_pad = float(data["segment_pad"])
+        self.long_source_cap = data.get("long_source_cap")
+        if data.get("long_source_min_duration"):
+            self.long_source_min_duration = data["long_source_min_duration"]
+        return self
+
 
 _registries = {}
 

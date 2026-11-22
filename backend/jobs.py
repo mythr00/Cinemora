@@ -1,6 +1,7 @@
 ﻿import hashlib
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from services.asset_report import (
 from services.visual_registry import reset_registry
 from services import production_report as production_report_service
 from services import visual_quality as visual_quality_service
+from services import stage_resume
 
 from services import genre_packs
 from services import media_paths
@@ -192,6 +194,41 @@ def _options_with_project_category(options, project_id):
     if category:
         merged.setdefault("project_category", category)
     return merged
+
+
+class _StageAdopted(Exception):
+    """Internal control flow (Transformation Phase 5.1): the stage
+    was adopted from a prior run's validated artefacts, so its body
+    is skipped. Raised only at the top of a stage's try block, after
+    the adoption restore + finish have completed; caught by the
+    stage's own ``except _StageAdopted`` clause. Never a failure."""
+
+
+def _finish_executed_stage(state, stage, project_dir, artefact_dir, payload=None):
+    """finish_stage + Phase 5.1 resume bookkeeping for a stage that
+    EXECUTED in this run: record its artefact hashes + resume
+    payload (services.stage_resume) before the state is saved, and
+    mark it executed in the run's resume record."""
+    stage_resume.record_stage_completion(
+        state, stage, project_dir, artefact_dir, payload
+    )
+    stage_resume.mark_stage_executed(state, stage)
+    finish_stage(state, stage, project_dir)
+
+
+def _adopt_stage(state, stage, project_dir, plan):
+    """Complete a stage by ADOPTION (Phase 5.1): the stage finishes
+    normally in the ledger/state, then the adoption is stamped
+    (adopted flag, source run, inherited artefact manifest) and the
+    state saved again so the record on disk carries both."""
+    finish_stage(state, stage, project_dir)
+    stage_resume.mark_stage_adopted(state, plan, stage)
+    save_production_state(project_dir, state)
+    print(
+        f"RESUME: stage '{stage}' adopted from run "
+        f"{plan.get('source_run_id')} — validated artefacts reused, "
+        "stage body skipped."
+    )
 
 
 def run_stage(state: dict, stage: str, project_dir: Path):
@@ -1149,6 +1186,36 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     state["_manifest"] = _manifest
     run_ledger.write_manifest(artefact_dir, _manifest)
 
+    # Transformation Phase 5.1 (PERF-001): stage-level resume. A
+    # prior run of this project with the identical script + options
+    # may donate its completed stages; the plan validates each
+    # stage's recorded artefacts (existence + sha256) in order and
+    # stops at the first failure. The plan's record rides on the
+    # state (production_state.json) and the manifest — adopted vs
+    # executed stages stay visible in the run's ledger artefacts.
+    _resume_plan = stage_resume.plan_resume(
+        project_dir,
+        _run_id,
+        _manifest.get("script_hash"),
+        _manifest.get("options"),
+    )
+    state["resume"] = _resume_plan["record"]
+    _manifest["resume"] = _resume_plan["record"]
+    if _resume_plan.get("source_run_id"):
+        print(
+            "RESUME: prior run "
+            f"{_resume_plan['source_run_id']} can donate stages: "
+            f"{sorted(_resume_plan['stages'])}"
+            + (
+                f" (chain stops: {_resume_plan['fallback']})"
+                if _resume_plan.get("fallback")
+                else ""
+            )
+        )
+    elif _resume_plan.get("fallback"):
+        print(f"RESUME: no adoption ({_resume_plan['fallback']}).")
+    save_production_state(project_dir, state)
+
     processed_scenes = []
     scenes = []
     sentences = []
@@ -1183,6 +1250,26 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
 
     try:
         run_stage(state, "voice_actor", project_dir)
+        _voice_payload = stage_resume.load_stage_payload(
+            _resume_plan, "voice_actor"
+        )
+        if _voice_payload is not None:
+            parts_manifest_data = (
+                narration_service.load_parts_manifest_data(
+                    project_dir / "narration_parts" / "parts_manifest.json"
+                )
+            )
+            if parts_manifest_data is not None:
+                for _key, _value in (
+                    _voice_payload.get("state") or {}
+                ).items():
+                    state[_key] = _value
+                _adopt_stage(state, "voice_actor", project_dir, _resume_plan)
+                raise _StageAdopted("voice_actor")
+            print(
+                "RESUME: voice_actor payload present but the parts "
+                "manifest would not load — executing the stage."
+            )
         print("Voice Actor")
         # Transformation Phase 2.4 (§2.4): per-pack narration pace
         # — an explicit "narration_speed" option wins over the
@@ -1289,12 +1376,53 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 "WARNING: caption validation found uncovered segments: "
                 f"{caption_validation}"
             )
-        finish_stage(state, "voice_actor", project_dir)
+        _finish_executed_stage(
+            state,
+            "voice_actor",
+            project_dir,
+            artefact_dir,
+            payload={
+                "state": {
+                    _key: state[_key]
+                    for _key in (
+                        "voice",
+                        "captions_alignment",
+                        "caption_sync",
+                        "syllable_timing",
+                        "timing_consistency",
+                        "captions_validation",
+                    )
+                    if _key in state
+                }
+            },
+        )
+    except _StageAdopted:
+        pass
     except Exception as error:
         fail_pipeline(state, "voice_actor", error, project_dir)
 
     try:
         run_stage(state, "script_analysis", project_dir)
+        _analysis_payload = stage_resume.load_stage_payload(
+            _resume_plan, "script_analysis"
+        )
+        if _analysis_payload is not None and isinstance(
+            _analysis_payload.get("production_data"), dict
+        ):
+            production_data = _analysis_payload["production_data"]
+            analysis = production_data["analysis"]
+            state["_partial"] = {
+                "processed_scenes": processed_scenes,
+                "analysis": analysis,
+                "timeline_result": None,
+            }
+            sentences = production_data["sentences"]
+            scenes = production_data["scenes"]
+            script_hash = production_data.get("script_hash") or script_hash
+            _adopt_stage(
+                state, "script_analysis", project_dir, _resume_plan
+            )
+            raise _StageAdopted("script_analysis")
         print("Analyzing documentary script...")
         production_data = build_production_scenes(
             script,
@@ -1337,12 +1465,36 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             project_id,
             scene_governor=production_data.get("scene_governor"),
         )
-        finish_stage(state, "script_analysis", project_dir)
+        _finish_executed_stage(
+            state,
+            "script_analysis",
+            project_dir,
+            artefact_dir,
+            payload={"production_data": production_data},
+        )
+    except _StageAdopted:
+        pass
     except Exception as error:
         fail_pipeline(state, "script_analysis", error, project_dir)
 
     try:
         run_stage(state, "asset_manager", project_dir)
+        _assets_payload = stage_resume.load_stage_payload(
+            _resume_plan, "asset_manager"
+        )
+        if _assets_payload is not None and isinstance(
+            _assets_payload.get("processed_scenes"), list
+        ):
+            from services.visual_registry import get_registry as _adopt_registry
+
+            processed_scenes.extend(_assets_payload["processed_scenes"])
+            # AM-020: restore the visual registry's usage state so
+            # reuse enforcement sees the adopted stage's usage.
+            _adopt_registry(project_id).restore_state(
+                _assets_payload.get("registry") or {}
+            )
+            _adopt_stage(state, "asset_manager", project_dir, _resume_plan)
+            raise _StageAdopted("asset_manager")
         print("Asset Manager")
         import json as _json
         import time as _time
@@ -1407,7 +1559,18 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         print(f"ASSET MANAGER METRICS: {_am_report['asset_manager_minutes']} min")
         print(_json.dumps(_am_final))
         print("=" * 60)
-        finish_stage(state, "asset_manager", project_dir)
+        _finish_executed_stage(
+            state,
+            "asset_manager",
+            project_dir,
+            artefact_dir,
+            payload={
+                "processed_scenes": processed_scenes,
+                "registry": _get_registry(project_id).export_state(),
+            },
+        )
+    except _StageAdopted:
+        pass
     except Exception as error:
         fail_pipeline(state, "asset_manager", error, project_dir)
 
@@ -1418,6 +1581,18 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         # finish_stage — it never recorded a start. Run it through
         # the same stage lifecycle as every other stage.
         run_stage(state, "motion_designer", project_dir)
+        _motion_payload = stage_resume.load_stage_payload(
+            _resume_plan, "motion_designer"
+        )
+        if _motion_payload is not None and isinstance(
+            _motion_payload.get("processed_scenes"), list
+        ):
+            # The motion stage's payload SUPERSEDES the asset
+            # stage's: it is the same scenes with graphics attached.
+            processed_scenes.clear()
+            processed_scenes.extend(_motion_payload["processed_scenes"])
+            _adopt_stage(state, "motion_designer", project_dir, _resume_plan)
+            raise _StageAdopted("motion_designer")
 
         motion_data = {
             "case_bible": analysis.get("bible") or {},
@@ -1594,7 +1769,15 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 "Graphics outcome annotation failed (continuing): "
                 f"{_annotation_error}"
             )
-        finish_stage(state, "motion_designer", project_dir)
+        _finish_executed_stage(
+            state,
+            "motion_designer",
+            project_dir,
+            artefact_dir,
+            payload={"processed_scenes": processed_scenes},
+        )
+    except _StageAdopted:
+        pass
     except Exception as error:
         fail_pipeline(state, "motion_designer", error, project_dir)
 
@@ -1604,6 +1787,24 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
 
     try:
         run_stage(state, "sound_designer", project_dir)
+        _sound_payload = stage_resume.load_stage_payload(
+            _resume_plan, "sound_designer"
+        )
+        if _sound_payload is not None and isinstance(
+            _sound_payload.get("soundtrack_record"), dict
+        ):
+            soundtrack_record = _sound_payload["soundtrack_record"]
+            state["soundtrack"] = soundtrack_record
+            _reference_name = str(
+                _sound_payload.get("soundtrack_reference_name") or ""
+            )
+            soundtrack_reference = (
+                project_dir / _reference_name
+                if _reference_name
+                else narration_file
+            )
+            _adopt_stage(state, "sound_designer", project_dir, _resume_plan)
+            raise _StageAdopted("sound_designer")
         print("Sound Designer")
 
         # Stage H (M1/M3): ONE explicit music contract, resolved by
@@ -1692,12 +1893,21 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
 
         print(f"Soundtrack created: {soundtrack_file}")
 
-        finish_stage(
+        _finish_executed_stage(
             state,
             "sound_designer",
             project_dir,
+            artefact_dir,
+            payload={
+                "soundtrack_record": soundtrack_record,
+                "soundtrack_reference_name": Path(
+                    soundtrack_reference
+                ).name,
+            },
         )
 
+    except _StageAdopted:
+        pass
     except Exception as error:
         fail_pipeline(
             state,
@@ -1713,6 +1923,53 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
 
     try:
         run_stage(state, "video_editor", project_dir)
+        _editor_payload = stage_resume.load_stage_payload(
+            _resume_plan, "video_editor"
+        )
+        if _editor_payload is not None and isinstance(
+            _editor_payload.get("timeline_result"), dict
+        ):
+            # Copy the source run's run-scoped outputs into THIS
+            # run's artefact directory (their hashes were validated
+            # by the plan), then restore the locals the completion
+            # path consumes. The film itself is byte-identical —
+            # same script, same options, validated artefacts.
+            _source_dir = media_paths.run_subdir(
+                project_dir, _resume_plan["source_run_id"]
+            )
+            for _name in (
+                "documentary_final_output.mp4",
+                "documentary_delivery.mp4",
+                "timeline.json",
+                "asset_report.json",
+                "rights_manifest.json",
+                "visual_quality.json",
+                "production_report.json",
+                "delivery.json",
+            ):
+                _source_file = _source_dir / _name
+                if _source_file.is_file():
+                    shutil.copyfile(_source_file, artefact_dir / _name)
+            timeline_result = _editor_payload["timeline_result"]
+            timeline_file = artefact_dir / "timeline.json"
+            expected_duration = float(
+                _editor_payload.get("expected_duration") or 0
+            )
+            _report_path = artefact_dir / "asset_report.json"
+            if _report_path.is_file():
+                try:
+                    asset_report = json.loads(
+                        _report_path.read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError):
+                    asset_report = None
+            state["captions_mode"] = _editor_payload.get("captions_mode")
+            if isinstance(_editor_payload.get("delivery"), dict):
+                state["delivery"] = _editor_payload["delivery"]
+            if isinstance(state.get("_partial"), dict):
+                state["_partial"]["timeline_result"] = timeline_result
+            _adopt_stage(state, "video_editor", project_dir, _resume_plan)
+            raise _StageAdopted("video_editor")
         print("Video Editor")
 
         # ----------------------------------------------
@@ -2229,12 +2486,21 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             f"{final_audit['duration_seconds']:.3f}s"
         )
 
-        finish_stage(
+        _finish_executed_stage(
             state,
             "video_editor",
             project_dir,
+            artefact_dir,
+            payload={
+                "expected_duration": expected_duration,
+                "timeline_result": timeline_result,
+                "captions_mode": captions_mode,
+                "delivery": state.get("delivery"),
+            },
         )
 
+    except _StageAdopted:
+        pass
     except Exception as error:
         fail_pipeline(
             state,
