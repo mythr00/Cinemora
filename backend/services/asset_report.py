@@ -806,6 +806,25 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         "download_budget": _tier_ladder.PRODUCTION_MAX_EXTRA_DOWNLOADS,
     }
 
+    # Transformation Phase 1.1 (OCR wiring): the engine that read
+    # frame text for this run's geography sub-check, derived from
+    # the frame-check records themselves (accepted assets and
+    # candidate records alike) — the most frequent recorded
+    # engine, or None when no OCR ran on any checked frame.
+    _frame_ocr_engines = Counter(
+        str(_check["ocr_engine"])
+        for _check in [
+            (a.get("frame_check") or {}) for a in real_assets
+        ] + [
+            (r.get("frame_check") or {}) for r in candidate_records
+        ]
+        if (_check or {}).get("ocr_engine")
+    )
+    _visual_frame_ocr_engine = (
+        _frame_ocr_engines.most_common(1)[0][0]
+        if _frame_ocr_engines else None
+    )
+
     return {
         "analysis_mode": analysis_mode,
         # Master Directive Phase 7 / P0 (DM-1): the planner
@@ -909,6 +928,11 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                         "watermarked_preview"
                     )
                 ),
+                # The OCR engine behind the geography sub-check
+                # (frame_verification's provider chain; RapidOCR
+                # is the installed primary). None when no frame
+                # text was read this run.
+                "ocr_engine": _visual_frame_ocr_engine,
             },
         },
         # VA-09: rights honesty. RIGHTS_POLICY=allow_all is the

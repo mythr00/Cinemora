@@ -53,13 +53,21 @@ detector's evidence is recorded regardless):
    route in the render path (the renderer centre-crops them), so
    below-threshold sources of those kinds are rejected.
 6. Geography contradiction — frame-visible signage text, read by
-   an OCR provider when one exists, fed through the SAME
-   gazetteer rule as metadata (story_understanding.
-   detect_contradiction's geography class): the production
-   establishes exactly one country and the frames positively name
-   exactly one different country. No OCR engine is installed on
-   this machine, so in practice this records ``not_evaluated``
-   with ``ocr_engine_unavailable`` — never inferred, never guessed.
+   the OCR provider chain, fed through the SAME gazetteer rule as
+   metadata (story_understanding. detect_contradiction's
+   geography class): the production establishes exactly one
+   country and the frames positively name exactly one different
+   country. The chain's primary engine is RapidOCR
+   (rapidocr-onnxruntime, installed in the project venv — the
+   founder delegated the OCR choice, 2026-11-22); pytesseract
+   and a tesseract binary remain as fallbacks. The engine that
+   produced the text is recorded on every frame-check record
+   (``ocr_engine``) and in the geography sub-record. Only when
+   NO engine in the chain is usable does the sub-check record
+   ``not_evaluated`` with ``ocr_engine_unavailable`` — never
+   inferred, never guessed. OCR is bounded to the frames this
+   stage already samples, downscaled to ``OCR_MAX_WIDTH`` (see
+   the provider seam below for the measured costs).
 
 Watermark detection is RECORD ONLY (founder ruling 2026-11-22,
 commit 6d408d6): watermarked stock is ALLOWED. A frame-level
@@ -84,6 +92,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -128,6 +137,15 @@ AUTHORITY = (
 # ---------------------------------------------------------------------------
 
 ANALYSIS_WIDTH = 640
+
+# OCR cost bound: frames wider than this are downscaled before
+# OCR (the geography sub-check reads signage, not fine print).
+# Measured on this machine: a 2400px still costs 2.2-3.5s of
+# RapidOCR time native vs ~1.2s at 1280px, with identical text;
+# the sampled video frames are already 640px and pass through
+# untouched. OCR never sees more than the frames this stage
+# already sampled (3 per video, 1 per image).
+OCR_MAX_WIDTH = 1280
 
 # Stroke detection: |pixel - local blur| above this marks a hard
 # stroke (text edge/fill against its immediate background).
@@ -251,6 +269,7 @@ def thresholds_snapshot():
         ],
         "watermark_glyph_range": [WATERMARK_GLYPH_MIN, WATERMARK_GLYPH_MAX],
         "watermark_backing_std_max": WATERMARK_BACKING_STD_MAX,
+        "ocr_max_width": OCR_MAX_WIDTH,
     }
 
 
@@ -805,17 +824,29 @@ def _fill_decision(analyses, kind, native_size):
     }
 
 
-def _geography_record(ocr_text, scenario, bible):
+def _geography_record(ocr_text, scenario, bible, ocr_engine=None):
     """The geography sub-check. OCR text, when a provider produced
-    any, goes through the metadata gazetteer rule verbatim."""
+    any, goes through the metadata gazetteer rule verbatim. The
+    producing engine is recorded with the verdict; ``engine`` is
+    None exactly when no engine produced text (the
+    ``ocr_engine_unavailable`` case)."""
     if ocr_text is None:
-        return {"outcome": "not_evaluated", "detail": "ocr_engine_unavailable"}
+        return {
+            "outcome": "not_evaluated",
+            "detail": "ocr_engine_unavailable",
+            "engine": None,
+        }
     if not scenario or not bible:
-        return {"outcome": "not_evaluated", "detail": "no_scenario_or_bible"}
+        return {
+            "outcome": "not_evaluated",
+            "detail": "no_scenario_or_bible",
+            "engine": ocr_engine,
+        }
     frame_countries = _story._countries_in_text(_story._norm(ocr_text))
     home = _story._scenario_countries(bible, scenario)
     record = {
         "outcome": "pass",
+        "engine": ocr_engine,
         "frame_countries": sorted(frame_countries),
         "home_countries": sorted(home),
     }
@@ -833,7 +864,7 @@ def _geography_record(ocr_text, scenario, bible):
 
 
 def verify_frames(images, *, kind="video", scenario=None, bible=None,
-                  ocr_text=None, native_size=None):
+                  ocr_text=None, ocr_engine=None, native_size=None):
     """Judge sampled frames (PIL images) — the pure core.
 
     Returns the frame-check record: outcome pass / reject /
@@ -849,6 +880,7 @@ def verify_frames(images, *, kind="video", scenario=None, bible=None,
         "reason": "",
         "frames_sampled": len(images),
         "kind": kind,
+        "ocr_engine": ocr_engine,
         "thresholds": thresholds_snapshot(),
         "detectors": {},
         "watermarked_preview": False,
@@ -928,7 +960,7 @@ def verify_frames(images, *, kind="video", scenario=None, bible=None,
     record["watermarked_preview"] = bool(watermark.get("detected"))
 
     # 6. Geography (OCR-dependent).
-    geography = _geography_record(ocr_text, scenario, bible)
+    geography = _geography_record(ocr_text, scenario, bible, ocr_engine)
     record["detectors"]["geography"] = geography
 
     # First rejection wins, in the documented order.
@@ -956,29 +988,127 @@ def verify_frames(images, *, kind="video", scenario=None, bible=None,
 
 
 # ---------------------------------------------------------------------------
-# OCR provider seam (geography). No OCR engine is installed on this
-# machine; the default provider honestly reports that by returning
-# None, and the geography sub-check records not_evaluated. A real
-# engine (pytesseract / a tesseract binary) is picked up
-# automatically if one ever appears.
+# OCR provider seam (geography). A chain, tried in order:
+#
+# 1. RapidOCR (rapidocr-onnxruntime) — the engine installed in the
+#    project venv (founder delegated the OCR choice, 2026-11-22;
+#    smoke-tested on the run-9 film frames and the founder's
+#    reference screenshots before wiring). Lazy-loaded as a
+#    process-wide singleton: building it loads three ONNX models
+#    (~1.3s measured on this machine), so importing this module —
+#    and every metadata-only or stubbed path — pays nothing.
+# 2. pytesseract, when the package is importable.
+# 3. A ``tesseract`` binary on PATH.
+#
+# A provider that runs and finds no text returns "" (OCR ran; the
+# frames carry no words). A provider that is unavailable or fails
+# returns None and the chain falls through; when every provider
+# returns None the geography sub-check records not_evaluated /
+# ocr_engine_unavailable. Every step is fail-soft, like the rest
+# of this module: an OCR failure must never wedge a production.
+#
+# Cost (measured on this VM, 1.5 shared CPUs): engine build ~1.3s
+# once per process; per frame ~1.1s for sparse frames and ~2-3s
+# for text-dense frames at the sampled 640px width; stills are
+# downscaled to OCR_MAX_WIDTH first (a 2400px still: 2.2-3.5s
+# native vs ~1.2s at 1280px, identical text). A video candidate
+# therefore pays roughly 3.5-9s across its 3 sampled frames,
+# inside the production's existing D-B2 wall-clock guard — the
+# budgets themselves are unchanged.
 # ---------------------------------------------------------------------------
 
-def _default_ocr_provider(frame_paths):
+OCR_ENGINE_RAPIDOCR = "rapidocr"
+OCR_ENGINE_PYTESSERACT = "pytesseract"
+OCR_ENGINE_TESSERACT = "tesseract"
+
+_RAPIDOCR_ENGINE = None
+_RAPIDOCR_UNAVAILABLE = False
+_RAPIDOCR_LOCK = threading.Lock()
+
+
+def _rapidocr_engine():
+    """The shared RapidOCR engine, built on first use. A failed
+    build is cached: a broken install is not retried per
+    candidate."""
+    global _RAPIDOCR_ENGINE, _RAPIDOCR_UNAVAILABLE
+    if _RAPIDOCR_ENGINE is not None or _RAPIDOCR_UNAVAILABLE:
+        return _RAPIDOCR_ENGINE
+    with _RAPIDOCR_LOCK:
+        if _RAPIDOCR_ENGINE is None and not _RAPIDOCR_UNAVAILABLE:
+            try:
+                from rapidocr_onnxruntime import RapidOCR
+
+                _RAPIDOCR_ENGINE = RapidOCR()
+            except Exception:
+                _RAPIDOCR_UNAVAILABLE = True
+    return _RAPIDOCR_ENGINE
+
+
+def _rapidocr_frame_lines(engine, frame_path):
+    """The text lines RapidOCR reads in one frame, in reading
+    order. Its raw result rows are [box, text, confidence]; only
+    the text is kept (the engine's own score threshold has
+    already dropped weak rows). Frames wider than OCR_MAX_WIDTH
+    are downscaled first — see the cost note above."""
+    with Image.open(frame_path) as img:
+        if img.width > OCR_MAX_WIDTH:
+            height = max(
+                1, round(img.height * OCR_MAX_WIDTH / img.width)
+            )
+            array = np.asarray(
+                img.convert("RGB").resize(
+                    (OCR_MAX_WIDTH, height), Image.BILINEAR
+                )
+            )
+            result, _elapse = engine(array)
+        else:
+            result, _elapse = engine(str(frame_path))
+    if not result:
+        return []
+    return [
+        str(item[1]) for item in result
+        if isinstance(item, (list, tuple)) and len(item) >= 2 and item[1]
+    ]
+
+
+def _rapidocr_text(frame_paths):
+    """Joined RapidOCR text for the frames (one detected line per
+    line), or None when the engine is unavailable or fails — the
+    chain then falls through to the legacy providers."""
+    if not frame_paths:
+        return None
+    engine = _rapidocr_engine()
+    if engine is None:
+        return None
     try:
-        import pytesseract  # noqa: F401
+        lines = []
+        for frame_path in frame_paths:
+            lines.extend(_rapidocr_frame_lines(engine, frame_path))
+        return "\n".join(lines)
+    except Exception:
+        return None
+
+
+def _fallback_ocr_text(frame_paths):
+    """(text, engine) from the legacy providers — pytesseract,
+    then a tesseract binary — with the seam's original semantics:
+    a pytesseract failure ends the chain (None), a missing
+    pytesseract falls through to the binary."""
+    try:
+        import pytesseract
 
         texts = []
         for frame_path in frame_paths:
             with Image.open(frame_path) as img:
                 texts.append(pytesseract.image_to_string(img))
-        return "\n".join(texts)
+        return "\n".join(texts), OCR_ENGINE_PYTESSERACT
     except ImportError:
         pass
     except Exception:
-        return None
+        return None, None
     binary = shutil.which("tesseract")
     if not binary:
-        return None
+        return None, None
     texts = []
     for frame_path in frame_paths:
         try:
@@ -987,11 +1117,38 @@ def _default_ocr_provider(frame_paths):
                 capture_output=True, text=True, timeout=60,
             )
         except (OSError, subprocess.SubprocessError):
-            return None
+            return None, None
         if result.returncode != 0:
-            return None
+            return None, None
         texts.append(result.stdout or "")
-    return "\n".join(texts)
+    return "\n".join(texts), OCR_ENGINE_TESSERACT
+
+
+def _ocr_chain(frame_paths):
+    """(text, engine_name) from the first provider that produces
+    text; (None, None) when no provider does."""
+    if not frame_paths:
+        return None, None
+    text = _rapidocr_text(frame_paths)
+    if text is not None:
+        return text, OCR_ENGINE_RAPIDOCR
+    return _fallback_ocr_text(frame_paths)
+
+
+def _default_ocr_provider(frame_paths):
+    """The seam's original text-only contract (kept for callers
+    that do not record the engine): the chain's text, or None."""
+    return _ocr_chain(frame_paths)[0]
+
+
+def _ocr_for_frames(provider, frame_paths):
+    """(text, engine) for one asset's frames. A caller-supplied
+    provider keeps the text-only contract and its engine is
+    unrecorded (None); the default path runs the chain and
+    reports which engine produced the text."""
+    if provider is not None:
+        return provider(frame_paths), None
+    return _ocr_chain(frame_paths)
 
 
 # ---------------------------------------------------------------------------
@@ -1022,6 +1179,7 @@ def verify_asset_frames(asset, scenario=None, bible=None, *,
         "outcome": "not_evaluated",
         "reason": "",
         "frames_sampled": 0,
+        "ocr_engine": None,
         "thresholds": thresholds_snapshot(),
         "detectors": {},
         "watermarked_preview": False,
@@ -1032,18 +1190,20 @@ def verify_asset_frames(asset, scenario=None, bible=None, *,
             base["detail"] = "asset_file_missing"
             return base
         kind = _asset_kind(asset, path)
-        provider = ocr_text_provider or _default_ocr_provider
         if kind == "image":
             with Image.open(path) as img:
                 img.load()
                 images = [img.copy()]
-            ocr_text = provider([Path(path)])
+            ocr_text, ocr_engine = _ocr_for_frames(
+                ocr_text_provider, [Path(path)]
+            )
             native_size = None
             if asset.get("width") and asset.get("height"):
                 native_size = (int(asset["width"]), int(asset["height"]))
             return verify_frames(
                 images, kind="image", scenario=scenario, bible=bible,
-                ocr_text=ocr_text, native_size=native_size,
+                ocr_text=ocr_text, ocr_engine=ocr_engine,
+                native_size=native_size,
             )
         work_dir = Path(tempfile.mkdtemp(prefix="cinemora-frames-"))
         try:
@@ -1057,10 +1217,12 @@ def verify_asset_frames(asset, scenario=None, bible=None, *,
                 with Image.open(frame_path) as img:
                     img.load()
                     images.append(img.copy())
-            ocr_text = provider(frame_paths)
+            ocr_text, ocr_engine = _ocr_for_frames(
+                ocr_text_provider, frame_paths
+            )
             return verify_frames(
                 images, kind="video", scenario=scenario, bible=bible,
-                ocr_text=ocr_text,
+                ocr_text=ocr_text, ocr_engine=ocr_engine,
             )
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
