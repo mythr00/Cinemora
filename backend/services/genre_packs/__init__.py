@@ -66,10 +66,11 @@ in pipeline code. Each pack declares:
   never a simulated crime).
 
 Resolution order in resolve_genre_pack: an explicit known genre in
-the run options wins; otherwise a conservative script detector;
-otherwise the "general" pack. The detector needs a clear margin —
-an ambiguous script stays general rather than being forced into a
-genre.
+the run options wins; otherwise the owning project's stored
+category when it names a known pack; otherwise a conservative
+script detector; otherwise the "general" pack. The detector needs
+a clear margin — an ambiguous script stays general rather than
+being forced into a genre.
 """
 
 import copy
@@ -490,10 +491,15 @@ def resolve_genre_pack(options=None, script_text=""):
 
     Returns {"pack", "pack_id", "source", "requested", "detection"}
     where source is "option" (explicit known genre in options),
-    "detected" (the script detector picked a non-general genre) or
-    "default" (the general pack — no option, or an unknown option
-    string with an undetectable script; the requested value is
-    still recorded verbatim in "requested").
+    "project_category" (the owning project's stored category —
+    run-9 fix: jobs.py injects it as options["project_category"];
+    a category that names a known pack outranks script detection,
+    because the category is a deliberate classification while the
+    detector is a heuristic), "detected" (the script detector
+    picked a non-general genre) or "default" (the general pack —
+    no option, or an unknown option string with an undetectable
+    script; the requested value is still recorded verbatim in
+    "requested").
     """
     requested = None
     if isinstance(options, dict):
@@ -508,6 +514,18 @@ def resolve_genre_pack(options=None, script_text=""):
                 "requested": str(requested),
                 "detection": None,
             })
+    if isinstance(options, dict):
+        category = options.get("project_category")
+        if category:
+            pack = load_pack(str(category).strip())
+            if pack is not None:
+                return _with_visual_profile({
+                    "pack": pack,
+                    "pack_id": pack["id"],
+                    "source": "project_category",
+                    "requested": str(category),
+                    "detection": None,
+                })
     detection = detect_genre(script_text)
     if detection["pack_id"] != "general":
         pack = load_pack(detection["pack_id"])

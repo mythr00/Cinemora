@@ -152,6 +152,48 @@ def _set_project_status(project_id, status: str):
         )
 
 
+def _project_category(project_id):
+    """The owning project's stored category, or None.
+
+    Run-9 fix (genre-pack wiring): a project created with category
+    "true_crime" produced a run whose pack resolved to "general"
+    because the category never reached resolve_genre_pack — the run
+    options carried no genre and the conservative script detector
+    did not fire. Best-effort like _set_project_status: any failure
+    returns None and resolution falls back to detection/default.
+    """
+    try:
+        from database import SessionLocal
+        from models import Project
+
+        db = SessionLocal()
+        try:
+            project = db.get(Project, str(project_id))
+            if project is None:
+                return None
+            category = str(project.category or "").strip()
+            return category or None
+        finally:
+            db.close()
+    except Exception as error:
+        print(
+            f"WARNING: could not read project category "
+            f"for {project_id}: {error}"
+        )
+        return None
+
+
+def _options_with_project_category(options, project_id):
+    """A COPY of the run options carrying the project's category
+    for genre-pack resolution (explicit run genre always wins —
+    resolve_genre_pack checks "genre"/"genre_pack" first)."""
+    merged = dict(options) if isinstance(options, dict) else {}
+    category = _project_category(project_id)
+    if category:
+        merged.setdefault("project_category", category)
+    return merged
+
+
 def run_stage(state: dict, stage: str, project_dir: Path):
     # Stage 2B: cooperative cancellation + ledger stage tracking.
     # Both are fail-soft (a ledger problem never wedges a run); only
@@ -692,7 +734,9 @@ def run_analysis_phase(project_id: str, script: str, run_id: str = None, options
         # Stage 5A: the analysis phase resolves the genre pack the
         # same way the full pipeline does, so a gated run's research
         # is shaped by the same pack its production will record.
-        _genre_info = genre_packs.resolve_genre_pack(options, script)
+        _genre_info = genre_packs.resolve_genre_pack(
+            _options_with_project_category(options, project_id), script
+        )
         production_data = build_production_scenes(
             script,
             project_id=project_id,
@@ -928,10 +972,13 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         captions_mode = "burn"
 
     # Stage 5A: resolve the genre pack (explicit "genre" option,
-    # else the conservative script detector, else "general") BEFORE
-    # the ledger run begins, so the resolved pack id lands in the
-    # run's options snapshot and therefore in the run manifest.
-    _genre_info = genre_packs.resolve_genre_pack(options, script)
+    # else the project's stored category, else the conservative
+    # script detector, else "general") BEFORE the ledger run
+    # begins, so the resolved pack id lands in the run's options
+    # snapshot and therefore in the run manifest.
+    _genre_info = genre_packs.resolve_genre_pack(
+        _options_with_project_category(options, project_id), script
+    )
     _genre_pack = _genre_info["pack"]
     options["genre_pack"] = _genre_info["pack_id"]
     options["genre_source"] = _genre_info["source"]

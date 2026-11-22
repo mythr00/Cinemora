@@ -12,6 +12,7 @@ pins one defect class to the machinery that now prevents it:
 6. Project category never reaching genre-pack selection.
 """
 
+from services import genre_packs
 from services import story_understanding as story
 
 
@@ -225,3 +226,56 @@ def test_news_title_mentioning_pov_mid_title_not_flagged():
     assert not story.has_meme_format_title(
         {"title": "Police release POV bodycam video of the traffic stop"}
     )
+
+
+# ------------------------------------------------------------- fix 6
+
+_PETITO_SCRIPT = (
+    "In the summer of 2021, Gabby Petito and Brian Laundrie traveled "
+    "across America in a white van. Police in Moab stopped the van. "
+    "Her remains were found in October."
+)
+
+
+def test_project_category_true_crime_resolves_true_crime_pack():
+    """Run 9's exact failure: category 'true_crime' on the project,
+    no genre in the run options -> the pack must be true_crime, not
+    the 'general' default."""
+    info = genre_packs.resolve_genre_pack(
+        {"project_category": "true_crime"}, _PETITO_SCRIPT
+    )
+    assert info["pack_id"] == "true_crime"
+    assert info["source"] == "project_category"
+
+
+def test_project_category_beats_script_detection():
+    info = genre_packs.resolve_genre_pack(
+        {"project_category": "history"}, _PETITO_SCRIPT
+    )
+    assert info["pack_id"] == "history"
+    assert info["source"] == "project_category"
+
+
+def test_explicit_genre_option_still_beats_project_category():
+    info = genre_packs.resolve_genre_pack(
+        {"genre": "history", "project_category": "true_crime"},
+        _PETITO_SCRIPT,
+    )
+    assert info["pack_id"] == "history"
+    assert info["source"] == "option"
+
+
+def test_unknown_project_category_falls_through_to_default():
+    info = genre_packs.resolve_genre_pack(
+        {"project_category": "General documentary"},
+        "A quiet film about bread making and village life.",
+    )
+    assert info["pack_id"] == "general"
+    assert info["source"] == "default"
+
+
+def test_true_crime_pack_broll_band_is_the_founder_band():
+    pack = genre_packs.load_pack("true_crime")
+    band = genre_packs.broll_share_band(pack)
+    assert band["max"] == 0.4
+    assert band["basis"] == "founder_band"
