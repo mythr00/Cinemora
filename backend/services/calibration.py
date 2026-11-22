@@ -8,10 +8,15 @@ workspace data honestly supports:
   productions: per-shot rejected candidates (review files joined
   to their shot needs) and picked titles, each row carrying the
   pipeline's recorded outcome and the two C.B.5 category questions
-  as EMPTY label slots. Labels are human judgements; this module
-  never fills them. A corpus with no labels is an unlabelled
-  corpus, and every downstream number that would need labels is
-  reported as not measurable rather than estimated.
+  as EMPTY label slots. Labels are judgements; this module never
+  fills them. A corpus with no labels is an unlabelled corpus,
+  and every downstream number that would need labels is reported
+  as not measurable rather than estimated. When labels exist they
+  carry their labeller's identity as provenance: the Phase 4.3
+  batch (Transformation Plan §4.3, 2026-11-22) is AGENT labels,
+  recorded honestly as agent labels under the takeover mandate —
+  which superseded the previous era's founder-gate on labelling —
+  and never as founder or human labels.
 - ``stratified_sample`` flags a deterministic, reproducible
   labelling worklist (stratified by genre x primary reason x shot
   type x specificity, plus the accepted exemplars).
@@ -19,8 +24,11 @@ workspace data honestly supports:
   support: labelled coverage, inter-rater agreement (Cohen's
   kappa) when two or more independent labellers labelled the same
   entries, and pipeline false-admit / false-reject rates against
-  the labels per category question. With no labels it reports the
-  corpus state and the gaps — it invents nothing.
+  the labels per category question — overall and per stratum
+  (``rates_by_stratum``: a rejected entry's stratum is its
+  primary rejection reason; accepted entries form the "accepted"
+  stratum, the false-admit direction). With no labels it reports
+  the corpus state and the gaps — it invents nothing.
 - ``evaluate_expectations`` reads a genre pack's ``expectations``
   data (C.G.2) the way quality_verdict reads its THRESHOLDS
   registry: every evaluation carries its basis label, and an
@@ -28,7 +36,9 @@ workspace data honestly supports:
 
 Thresholds and category-profile floors are NEVER written by this
 module. Calibration output is evidence and report text; applying
-any number it suggests is a founder decision (VA-02 exclusion).
+any number it suggests is decided outside this module on the
+reported evidence (Transformation Phase 4.3: the default is no
+change, and a change is reported with its numbers first).
 """
 
 from __future__ import annotations
@@ -361,6 +371,101 @@ def stratified_sample(corpus, per_stratum_cap=DEFAULT_STRATUM_CAP, seed=0):
 
 
 # ---------------------------------------------------------------------------
+# Per-stratum rates (Transformation Phase 4.3)
+# ---------------------------------------------------------------------------
+
+def stratum_key_for(entry):
+    """The labelling stratum an entry belongs to: a rejected
+    entry's stratum is its primary rejection reason; accepted
+    entries form the single "accepted" stratum (the false-admit
+    direction — the only stratum where a false admit can occur).
+    """
+    if (entry or {}).get("pipeline_outcome") == "accepted":
+        return "accepted"
+    return str((entry or {}).get("primary_reason") or "unknown_reason")
+
+
+def _confusion_key(admitted, truth):
+    return (
+        "false_admit" if admitted and not truth
+        else "false_reject" if not admitted and truth
+        else "agree_admit" if admitted
+        else "agree_reject"
+    )
+
+
+def _rates_from_confusion(confusion_counts):
+    """Labelled counts + rates for one confusion counter.
+
+    A rate's base is the entries LABELLED on that question in
+    that population — false_admit_rate is the share of labelled
+    decisions that were false admits, false_reject_rate the
+    share that were false rejects. Rates are None (not 0.0) when
+    nothing was labelled: unmeasured is not zero."""
+    labelled = sum(confusion_counts.values())
+    return {
+        "labelled": labelled,
+        "false_admit": confusion_counts.get("false_admit", 0),
+        "false_reject": confusion_counts.get("false_reject", 0),
+        "agree_admit": confusion_counts.get("agree_admit", 0),
+        "agree_reject": confusion_counts.get("agree_reject", 0),
+        "false_admit_rate": (
+            round(confusion_counts.get("false_admit", 0) / labelled, 4)
+            if labelled else None
+        ),
+        "false_reject_rate": (
+            round(confusion_counts.get("false_reject", 0) / labelled, 4)
+            if labelled else None
+        ),
+    }
+
+
+def rates_by_stratum(corpus, labels=None):
+    """False-admit / false-reject rates per stratum, per question.
+
+    ``labels`` has calibration_report's shape (entry_id ->
+    {question: bool, "labeller": str} or a list of such dicts);
+    with several labellers the FIRST labeller's value is the
+    entry's truth, exactly as calibration_report's confusion
+    counts resolve it. Strata with no labelled entries report
+    labelled 0 and null rates — present, never silently dropped,
+    so the labelled coverage of every stratum is visible.
+    """
+    corpus = corpus or {}
+    labels = labels or {}
+    strata = {}
+    for entry in corpus.get("entries") or []:
+        key = stratum_key_for(entry)
+        bucket = strata.setdefault(
+            key, {q: Counter() for q in LABEL_QUESTIONS}
+        )
+        raw = labels.get(entry.get("entry_id")) or []
+        entry_labels = [
+            lab for lab in (raw if isinstance(raw, list) else [raw])
+            if isinstance(lab, dict) and lab.get("labeller")
+        ]
+        if not entry_labels:
+            continue
+        admitted = entry.get("pipeline_outcome") in ("accepted", "verified")
+        for question in LABEL_QUESTIONS:
+            values = [
+                lab.get(question) for lab in entry_labels
+                if isinstance(lab.get(question), bool)
+            ]
+            if values:
+                bucket[question][
+                    _confusion_key(admitted, values[0])
+                ] += 1
+    return {
+        key: {
+            question: _rates_from_confusion(bucket[question])
+            for question in LABEL_QUESTIONS
+        }
+        for key, bucket in sorted(strata.items())
+    }
+
+
+# ---------------------------------------------------------------------------
 # Calibration report (C.B.5 steps 2-3, C.G.3)
 # ---------------------------------------------------------------------------
 
@@ -470,6 +575,70 @@ def calibration_report(corpus, labels=None, measurements_by_genre=None):
         )
 
     fully_labelled = labelled_entries == len(entries) and entries
+
+    # Transformation Phase 4.3: measured rates — overall per
+    # question and per stratum — from the same confusion counts.
+    label_rates = {
+        question: _rates_from_confusion(confusion[question])
+        for question in LABEL_QUESTIONS
+    }
+
+    if labelled_entries:
+        agent_only = all(
+            str(labeller).startswith("agent:")
+            for labeller in labellers
+        )
+        gaps = [
+            (
+                "labels: "
+                f"{labelled_entries} of {len(entries)} entries carry "
+                f"labels from {sorted(labellers)}; the false-admit / "
+                "false-reject rates are measured against those labels "
+                "only — unlabelled entries contribute nothing. "
+                + (
+                    "The labeller is an agent acting under the "
+                    "takeover mandate (Transformation Phase 4.3): "
+                    "these are agent labels, recorded as such, not "
+                    "founder or human labels. "
+                    if agent_only else ""
+                )
+                + "A single labeller means inter-rater agreement "
+                "stays not_measurable."
+            ),
+            "third genre / unseen subject: the stored workspace "
+            "productions cover history and true_crime only; a "
+            "third-genre corpus arm requires a fresh production "
+            "(Stage 15, founder keys) and cannot be reconstructed "
+            "from stored artefacts",
+            "verified-but-not-picked candidates are not attributable "
+            "to shots in the stored artefacts (stored records carry "
+            "no shot linkage), so the corpus's per-shot population "
+            "is rejected candidates + picked exemplars",
+            "no threshold or category-profile floor is changed by "
+            "this report; under Transformation Phase 4.3 a change "
+            "is decided at coordination level on this evidence, "
+            "defaulting to no change",
+        ]
+    else:
+        gaps = [
+            "human labels: the corpus ships with empty label slots; "
+            "false-admit/false-reject rates and inter-rater agreement "
+            "are measurable only after independent human labelling "
+            "of the stratified sample",
+            "third genre / unseen subject: the stored workspace "
+            "productions cover history and true_crime only; a "
+            "third-genre corpus arm requires a fresh production "
+            "(Stage 15, founder keys) and cannot be reconstructed "
+            "from stored artefacts",
+            "verified-but-not-picked candidates are not attributable "
+            "to shots in the stored artefacts (stored records carry "
+            "no shot linkage), so the corpus's per-shot population "
+            "is rejected candidates + picked exemplars",
+            "no threshold or category-profile floor is changed by "
+            "this report; any calibration-derived number is a "
+            "founder decision (VA-02 exclusion)",
+        ]
+
     return {
         "corpus_version": corpus.get("corpus_version"),
         "entries_total": len(entries),
@@ -494,29 +663,17 @@ def calibration_report(corpus, labels=None, measurements_by_genre=None):
             question: dict(confusion[question])
             for question in LABEL_QUESTIONS
         },
+        # Transformation Phase 4.3: the measured rates — overall
+        # per question, and per stratum (rejection reason, plus
+        # the accepted stratum for the false-admit direction).
+        "label_rates": label_rates,
+        "rates_by_stratum": rates_by_stratum(corpus, labels),
         "expectations_by_genre": expectations_status,
         "calibration_state": (
             "calibrated" if fully_labelled and len(labellers) >= 2
             else "uncalibrated"
         ),
-        "gaps": [
-            "human labels: the corpus ships with empty label slots; "
-            "false-admit/false-reject rates and inter-rater agreement "
-            "are measurable only after independent human labelling "
-            "of the stratified sample",
-            "third genre / unseen subject: the stored workspace "
-            "productions cover history and true_crime only; a "
-            "third-genre corpus arm requires a fresh production "
-            "(Stage 15, founder keys) and cannot be reconstructed "
-            "from stored artefacts",
-            "verified-but-not-picked candidates are not attributable "
-            "to shots in the stored artefacts (stored records carry "
-            "no shot linkage), so the corpus's per-shot population "
-            "is rejected candidates + picked exemplars",
-            "no threshold or category-profile floor is changed by "
-            "this report; any calibration-derived number is a "
-            "founder decision (VA-02 exclusion)",
-        ],
+        "gaps": gaps,
     }
 
 
