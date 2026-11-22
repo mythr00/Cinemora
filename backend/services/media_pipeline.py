@@ -2171,6 +2171,27 @@ def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, star
         return False
 
 
+def blurred_fill_filter_complex():
+    """The 1080p normalization filtergraph for downloaded clips
+    (run-9 fix 5).
+
+    The historical filter scaled the source down to fit 1920x1080
+    and padded the remainder with PLAIN BLACK — every portrait or
+    4:3 source reached the film centred on black bars (pillarboxed
+    interview clips and posters in run e95ac155). The standard
+    documentary treatment instead fills the frame with a blurred,
+    slightly darkened copy of the source itself behind the intact
+    foreground: no information is cropped, no black bars appear,
+    and a 16:9 source is pixel-identical to the old behaviour (the
+    foreground covers the whole frame)."""
+    return (
+        "[0:v]scale=1920:1080:force_original_aspect_ratio=increase,"
+        "crop=1920:1080,boxblur=20:5,eq=brightness=-0.12[bg];"
+        "[0:v]scale=1920:1080:force_original_aspect_ratio=decrease[fg];"
+        "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
+    )
+
+
 def download_video_clip(
     video_url,
     output_path,
@@ -2306,10 +2327,10 @@ def download_video_clip(
         "-t",
         str(duration),
         "-an",
-        "-vf",
-        "scale=1920:1080:"
-        "force_original_aspect_ratio=decrease,"
-        "pad=1920:1080:(ow-iw)/2:(oh-ih)",
+        "-filter_complex",
+        blurred_fill_filter_complex(),
+        "-map",
+        "[v]",
         "-r",
         "30",
         "-c:v",

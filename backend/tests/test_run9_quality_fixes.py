@@ -12,7 +12,12 @@ pins one defect class to the machinery that now prevents it:
 6. Project category never reaching genre-pack selection.
 """
 
+import subprocess
+
+import pytest
+
 from services import genre_packs
+from services import media_pipeline as mp
 from services import story_understanding as story
 
 
@@ -279,3 +284,64 @@ def test_true_crime_pack_broll_band_is_the_founder_band():
     band = genre_packs.broll_share_band(pack)
     assert band["max"] == 0.4
     assert band["basis"] == "founder_band"
+
+
+# ------------------------------------------------------------- fix 5
+
+def test_blurred_fill_filter_has_no_black_pad():
+    graph = mp.blurred_fill_filter_complex()
+    assert "pad=" not in graph
+    assert "boxblur" in graph
+    assert "overlay" in graph
+
+
+def _normalize_with_pipeline_filter(src, dst):
+    """Run the exact filtergraph download_video_clip builds."""
+    result = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", str(src), "-t", "1", "-an",
+            "-filter_complex", mp.blurred_fill_filter_complex(),
+            "-map", "[v]", "-r", "30", "-c:v", "libx264",
+            "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(dst),
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr[-1500:]
+
+
+def _frame_pixel(video, xy):
+    from PIL import Image
+    import io
+
+    result = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(video), "-frames:v", "1",
+         "-f", "image2pipe", "-vcodec", "png", "-"],
+        capture_output=True, timeout=60,
+    )
+    assert result.returncode == 0
+    image = Image.open(io.BytesIO(result.stdout)).convert("RGB")
+    assert image.size == (1920, 1080)
+    return image.getpixel(xy)
+
+
+@pytest.mark.parametrize("size", ["720x1280", "960x720"])
+def test_aspect_mismatch_sources_get_blurred_fill_not_black_bars(tmp_path, size):
+    """Portrait (720x1280) and 4:3 (960x720) red sources: the frame
+    edges must carry the blurred source colour, not black bars,
+    while the centre keeps the untouched foreground colour."""
+    src = tmp_path / "src.mp4"
+    made = subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i",
+         f"color=c=red:size={size}:duration=2:rate=30",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", str(src)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert made.returncode == 0, made.stderr[-1000:]
+    dst = tmp_path / "out.mp4"
+    _normalize_with_pipeline_filter(src, dst)
+    corner = _frame_pixel(dst, (30, 30))
+    centre = _frame_pixel(dst, (960, 540))
+    # Blurred + darkened red fill: clearly red, clearly not black.
+    assert corner[0] > 120 and corner[1] < 110 and corner[2] < 110
+    # Foreground intact.
+    assert centre[0] > 200 and centre[1] < 80 and centre[2] < 80
