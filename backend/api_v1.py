@@ -5,11 +5,16 @@ main.py are untouched and keep their original shapes; everything in
 this module follows the v1 contract documented in
 ~/workspace/cinemora-audit/API_CONTRACT.md:
 
-- Single-operator token auth (AUD-11): every route except
-  GET /api/v1/health requires the X-API-Key header to match the
-  CINEMORA_API_TOKEN environment variable (constant-time compare).
-  When the variable is unset the API fails CLOSED: 503
-  "api_not_configured", never open.
+- Account auth (AUD-11, Phase 8.2): every route except
+  GET /api/v1/health requires an authenticated principal —
+  a server-side session (cookie or Bearer, services/auth.py) or,
+  during the dual-auth window, the legacy X-API-Key operator token
+  (constant-time compare), which resolves to the founder principal
+  and is retired by setting CINEMORA_ALLOW_OPERATOR_TOKEN=0. When
+  neither is available the API fails CLOSED: 503
+  "api_not_configured" when the token is unconfigured, 401
+  otherwise, never open. Project/run routes are owner-scoped:
+  another user's resource is a 404, never a 403 (design 02 §4.1).
 - Consistent error shape: {"error": {"code", "message"}} for every
   error raised under /api/v1 (auth, validation, domain errors).
 - Script payloads are capped at 60,000 characters (422 beyond).
@@ -40,7 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -48,7 +53,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import jobs
 from database import SessionLocal
-from models import Project
+from models import Plan, Project, User, UserPreference, UserSubscription
+from services import auth as auth_service
+from services import plans as plans_service
 from services import (
     editor,
     genre_packs,
@@ -136,9 +143,108 @@ def register_error_handlers(app):
 # ---------------------------------------------------------------------
 
 
-def require_api_token(request: Request) -> str:
-    """Single-operator auth. Fails closed when unconfigured."""
+def _operator_token_open() -> bool:
+    """The dual-auth window (design 02 §1.4): the legacy operator
+    token keeps working until CINEMORA_ALLOW_OPERATOR_TOKEN=0
+    retires it (the preview launcher keeps the window open; the
+    SaaS deployment closes it once session login is in use)."""
+    return os.environ.get("CINEMORA_ALLOW_OPERATOR_TOKEN", "1") != "0"
+
+
+def _bearer_token(request: Request) -> str | None:
+    header = request.headers.get("Authorization") or ""
+    if header.startswith("Bearer "):
+        return header[len("Bearer "):].strip() or None
+    return None
+
+
+def _session_token_from(request: Request) -> str | None:
+    # Deliberate credentials win over ambient ones: an explicit
+    # Authorization header first, the session cookie second. A
+    # client holding both (a browser that also runs API tooling, a
+    # test client with a populated cookie jar) must get the
+    # identity it asked for, not whichever cookie is ambient.
+    return _bearer_token(request) or request.cookies.get(
+        auth_service.SESSION_COOKIE
+    )
+
+
+def _principal_for_session_token(token: str):
+    """Resolve a session token to its Principal, or None (unknown /
+    expired / revoked token, disabled account, or the accounts
+    tables unavailable in a legacy fixture DB)."""
+    user_id = auth_service.resolve_session(token)
+    if not user_id:
+        return None
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        if user is not None and user.status == "active":
+            return auth_service.principal_for_user(user, "session")
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+    return None
+
+
+def require_user(request: Request) -> auth_service.Principal:
+    """Resolve the request's principal (Phase 8.2).
+
+    Order: (1) Bearer session token, (2) the legacy operator token
+    while the dual-auth window is open -> the founder principal,
+    (3) session cookie. Disabled accounts are rejected on every
+    path. Fails closed with the pre-8.2 contract: 503
+    api_not_configured when the operator token is unconfigured and
+    no session resolves, 401 otherwise.
+    """
+    # Credential precedence: deliberate credentials before ambient
+    # ones — (1) Bearer session token, (2) the operator X-API-Key
+    # while the dual-auth window is open, (3) the session cookie.
+    # A request presenting a valid deliberate credential gets that
+    # identity even when an ambient cookie for someone else rides
+    # along (shared browsers, test cookie jars). A deliberate
+    # credential that is PRESENT but invalid (revoked session,
+    # disabled account, retired/wrong operator token) fails the
+    # request: silently downgrading it to the ambient cookie's
+    # identity would turn "your session was revoked" into "you are
+    # suddenly someone else", which is never the caller's intent.
+    bearer = _bearer_token(request)
+    if bearer:
+        principal = _principal_for_session_token(bearer)
+        if principal is not None:
+            return principal
+        raise ApiError(
+            401,
+            "unauthorized",
+            "The presented session is invalid, expired or revoked.",
+        )
+
     configured = os.environ.get("CINEMORA_API_TOKEN") or ""
+    provided = request.headers.get("X-API-Key") or ""
+    if provided and configured:
+        if _operator_token_open() and hmac.compare_digest(
+            provided, configured
+        ):
+            db = SessionLocal()
+            try:
+                return auth_service.resolve_operator_principal(db)
+            finally:
+                db.close()
+        raise ApiError(
+            401,
+            "unauthorized",
+            "The presented X-API-Key is invalid or retired.",
+        )
+    # An unconfigured server answers 503 to everything (the
+    # pre-8.2 fail-closed contract), whatever was presented.
+
+    cookie = request.cookies.get(auth_service.SESSION_COOKIE)
+    if cookie:
+        principal = _principal_for_session_token(cookie)
+        if principal is not None:
+            return principal
+
     if not configured:
         raise ApiError(
             503,
@@ -146,12 +252,32 @@ def require_api_token(request: Request) -> str:
             "The API is not configured: CINEMORA_API_TOKEN is not set "
             "on the server, so /api/v1 is closed.",
         )
-    provided = request.headers.get("X-API-Key") or ""
-    if not provided or not hmac.compare_digest(provided, configured):
+    raise ApiError(
+        401,
+        "unauthorized",
+        "Sign in (session) or provide a valid X-API-Key header.",
+    )
+
+
+def require_admin(
+    principal: auth_service.Principal = Depends(require_user),
+) -> auth_service.Principal:
+    """require_user + the Phase 7 role ladder. Admin routes are the
+    one place a non-owner may see across tenants, so they answer
+    403 (not 404) to authenticated non-admins."""
+    if not principal.is_admin:
         raise ApiError(
-            401, "unauthorized", "A valid X-API-Key header is required."
+            403, "forbidden", "This endpoint requires an administrator."
         )
-    return "operator"
+    return principal
+
+
+def require_api_token(request: Request) -> str:
+    """Back-compat shim for the legacy routes in main.py (IA-08):
+    same resolution as require_user, returning the identity string
+    those routes have always ignored."""
+    principal = require_user(request)
+    return principal.email
 
 
 class _RateLimiter:
@@ -167,13 +293,14 @@ class _RateLimiter:
         except ValueError:
             return 30
 
-    def check(self, identity: str) -> None:
+    def check(self, identity: str, limit: int | None = None) -> None:
+        effective = self._limit() if limit is None else limit
         now = time.monotonic()
         with self._lock:
             hits = self._hits[identity]
             while hits and now - hits[0] > 60.0:
                 hits.popleft()
-            if len(hits) >= self._limit():
+            if len(hits) >= effective:
                 raise ApiError(
                     429,
                     "rate_limited",
@@ -188,12 +315,363 @@ class _RateLimiter:
 
 
 rate_limiter = _RateLimiter()
+auth_rate_limiter = _RateLimiter()
 
 
-def post_guard(identity: str = Depends(require_api_token)) -> str:
-    """Auth + rate limit, for POST routes."""
-    rate_limiter.check(identity)
-    return identity
+def _auth_rate_limit(request: Request, email: str) -> None:
+    """Stricter limiter for the anonymous auth endpoints, keyed by
+    account + IP (design 02 §1.2)."""
+    try:
+        limit = max(
+            1, int(os.environ.get("CINEMORA_AUTH_RATE_LIMIT", "10"))
+        )
+    except ValueError:
+        limit = 10
+    client = request.client.host if request.client else "unknown"
+    auth_rate_limiter.check(f"auth:{client}:{email}", limit=limit)
+
+
+def post_guard(
+    principal: auth_service.Principal = Depends(require_user),
+) -> auth_service.Principal:
+    """Auth + rate limit, for POST routes. The limiter is keyed by
+    user id now that principals are people (01 §1.3)."""
+    rate_limiter.check(principal.user_id)
+    return principal
+
+
+# ---------------------------------------------------------------------
+# Accounts (Phase 8.2): registration, login, sessions, reset, admin
+# ---------------------------------------------------------------------
+
+
+class RegisterIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=1024)
+    display_name: str | None = Field(default=None, max_length=200)
+    invite_code: str | None = None
+
+
+class LoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class ResetRequestIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+class ResetConfirmIn(BaseModel):
+    token: str = Field(min_length=1)
+    new_password: str = Field(min_length=1, max_length=1024)
+
+
+def _user_view(user: User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "role": user.role,
+        "status": user.status,
+        "email_verified_at": user.email_verified_at,
+        "created_at": user.created_at,
+        "last_login_at": user.last_login_at,
+    }
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=auth_service.SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=os.environ.get("CINEMORA_COOKIE_SECURE") == "1",
+        path="/",
+        max_age=auth_service.SESSION_TTL_SECONDS,
+    )
+
+
+def _registration_gate(body: RegisterIn) -> None:
+    mode = os.environ.get("CINEMORA_REGISTRATION", "open").strip().lower()
+    if mode == "closed":
+        raise ApiError(
+            403,
+            "registration_closed",
+            "Registration is closed on this deployment.",
+        )
+    if mode == "invite":
+        expected = os.environ.get("CINEMORA_INVITE_CODE") or ""
+        provided = body.invite_code or ""
+        if not expected or not hmac.compare_digest(provided, expected):
+            raise ApiError(
+                403,
+                "invalid_invite_code",
+                "An invite code is required to register.",
+            )
+
+
+def _assign_default_plan(db, user: User) -> None:
+    """New accounts land on the default plan (02 §1.3) with an empty
+    preferences document. Tolerant of unseeded databases (tests):
+    no default plan -> no subscription row; plan resolution in
+    services/plans.py defines what that means at enforcement time."""
+    plan = db.query(Plan).filter(Plan.is_default.is_(True)).first()
+    if plan is not None:
+        db.add(
+            UserSubscription(
+                id=str(uuid4()),
+                user_id=user.id,
+                plan_id=plan.id,
+                status="active",
+                current_period_start=datetime.now(timezone.utc),
+            )
+        )
+    db.add(
+        UserPreference(
+            user_id=user.id,
+            document={"studio": {}, "assistant": {}, "notifications": {}},
+        )
+    )
+
+
+@router.post("/auth/register", status_code=201)
+def register(body: RegisterIn, request: Request, response: Response):
+    email = auth_service.normalize_email(body.email)
+    _auth_rate_limit(request, email)
+    _registration_gate(body)
+    if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+        raise ApiError(422, "invalid_email", "That email address looks invalid.")
+    policy_error = auth_service.password_policy_error(body.password)
+    if policy_error:
+        raise ApiError(422, "weak_password", policy_error)
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.email == email).one_or_none()
+        if existing is not None:
+            raise ApiError(
+                409, "email_taken", "An account with that email already exists."
+            )
+        user = User(
+            id=str(uuid4()),
+            email=email,
+            password_hash=auth_service.hash_password(body.password),
+            display_name=body.display_name,
+            role="user",
+            status="active",
+        )
+        db.add(user)
+        db.flush()
+        _assign_default_plan(db, user)
+        db.commit()
+        db.refresh(user)
+        token = auth_service.create_session(user.id)
+        _set_session_cookie(response, token)
+        return {"user": _user_view(user), "session_token": token}
+    finally:
+        db.close()
+
+
+# A real Argon2id hash of a throwaway password, computed once at
+# import: login verifies against it when the account doesn't exist,
+# so response timing doesn't enumerate registered emails.
+_DUMMY_HASH = auth_service.hash_password("timing-equalisation-dummy")
+
+
+@router.post("/auth/login")
+def login(body: LoginIn, request: Request, response: Response):
+    email = auth_service.normalize_email(body.email)
+    _auth_rate_limit(request, email)
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).one_or_none()
+        password_ok = auth_service.verify_password(
+            user.password_hash if user is not None else _DUMMY_HASH,
+            body.password,
+        )
+        if user is None or not password_ok:
+            raise ApiError(
+                401, "invalid_credentials", "Email or password is incorrect."
+            )
+        if user.status != "active":
+            raise ApiError(
+                403,
+                "account_disabled",
+                "This account is disabled; contact the operator.",
+            )
+        user.last_login_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(user)
+        token = auth_service.create_session(user.id)
+        _set_session_cookie(response, token)
+        return {"user": _user_view(user), "session_token": token}
+    finally:
+        db.close()
+
+
+@router.post("/auth/logout")
+def logout(request: Request, response: Response):
+    token = _session_token_from(request)
+    if token:
+        auth_service.revoke_session(token)
+    response.delete_cookie(key=auth_service.SESSION_COOKIE, path="/")
+    return {"logged_out": True}
+
+
+@router.get("/auth/me")
+def me(principal: auth_service.Principal = Depends(require_user)):
+    db = SessionLocal()
+    try:
+        user = db.get(User, principal.user_id)
+        if user is None:
+            raise ApiError(401, "unauthorized", "Account no longer exists.")
+        return {"user": _user_view(user)}
+    finally:
+        db.close()
+
+
+@router.post("/auth/password-reset/request", status_code=202)
+def password_reset_request(body: ResetRequestIn, request: Request):
+    import logging
+
+    from services import mailer
+
+    email = auth_service.normalize_email(body.email)
+    _auth_rate_limit(request, email)
+    # The reported mode reflects the deployment's mailer
+    # configuration only — identical for known and unknown accounts,
+    # so the response cannot enumerate registered emails.
+    mode = "smtp" if mailer.smtp_configured() else "manual"
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).one_or_none()
+        if user is not None:
+            token = auth_service.issue_reset_token(db, user)
+            base = os.environ.get("CINEMORA_PUBLIC_BASE_URL", "")
+            link = f"{base}/reset-password?token={token}"
+            mailer.send_email(
+                user.email,
+                "Cinemora password reset",
+                "Reset your Cinemora password within 1 hour:\n\n"
+                f"{link}\n\nIf you did not request this, ignore this email.",
+            )
+            if mode == "manual":
+                # No SMTP on this deployment: the operator's host
+                # log is the delivery channel (02 §1.3) — stated
+                # plainly, never dressed up as an email.
+                logging.getLogger(__name__).warning(
+                    "password reset link for %s (manual delivery): %s",
+                    user.email,
+                    link,
+                )
+    finally:
+        db.close()
+    return {"delivery": mode}
+
+
+@router.post("/auth/password-reset/confirm")
+def password_reset_confirm(body: ResetConfirmIn):
+    policy_error = auth_service.password_policy_error(body.new_password)
+    if policy_error:
+        raise ApiError(422, "weak_password", policy_error)
+    db = SessionLocal()
+    try:
+        user = auth_service.consume_reset_token(db, body.token, body.new_password)
+        if user is None:
+            raise ApiError(
+                400,
+                "invalid_or_expired_token",
+                "That reset link is invalid or has expired.",
+            )
+        return {"reset": True}
+    finally:
+        db.close()
+
+
+@router.get("/account/usage")
+def account_usage(
+    principal: auth_service.Principal = Depends(require_user),
+):
+    """The caller's plan + derived usage (Phase 8.3; the frontend
+    account surface in 8.5 reads exactly this)."""
+    db = SessionLocal()
+    try:
+        return plans_service.usage_summary(db, principal.user_id)
+    finally:
+        db.close()
+
+
+class PlanAssignIn(BaseModel):
+    plan_name: str = Field(min_length=1, max_length=50)
+
+
+@router.post("/admin/users/{user_id}/plan")
+def admin_assign_plan(
+    user_id: str,
+    body: PlanAssignIn,
+    principal: auth_service.Principal = Depends(require_admin),
+):
+    """Founder operation: move a user onto another plan (02 §5.3).
+    The previous active subscription is cancelled, a new one starts
+    now. (The Phase 7 admin audit log will record these; until it
+    lands, the subscription history itself is the record.)"""
+    db = SessionLocal()
+    try:
+        user = db.get(User, str(user_id))
+        if user is None:
+            raise ApiError(404, "user_not_found", f"No user {user_id}.")
+        plan = (
+            db.query(Plan).filter(Plan.name == body.plan_name).one_or_none()
+        )
+        if plan is None:
+            raise ApiError(
+                404, "plan_not_found", f"No plan named {body.plan_name}."
+            )
+        current = plans_service.get_active_subscription(db, user.id)
+        if current is not None:
+            current.status = "cancelled"
+        subscription = UserSubscription(
+            id=str(uuid4()),
+            user_id=user.id,
+            plan_id=plan.id,
+            status="active",
+            current_period_start=datetime.now(timezone.utc),
+        )
+        db.add(subscription)
+        db.commit()
+        return {"user": _user_view(user), "plan": plan.name}
+    finally:
+        db.close()
+
+
+@router.get("/admin/users")
+def admin_list_users(
+    principal: auth_service.Principal = Depends(require_admin),
+):
+    """Minimal admin surface (Phase 7 builds the full console on
+    this dependency): every account with its active plan name."""
+    db = SessionLocal()
+    try:
+        users = db.query(User).order_by(User.created_at).all()
+        subs = {
+            s.user_id: s
+            for s in db.query(UserSubscription)
+            .filter(UserSubscription.status == "active")
+            .all()
+        }
+        plans = {p.id: p.name for p in db.query(Plan).all()}
+        return {
+            "users": [
+                {
+                    **_user_view(u),
+                    "plan": plans.get(subs[u.id].plan_id)
+                    if u.id in subs
+                    else None,
+                }
+                for u in users
+            ]
+        }
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------
@@ -270,11 +748,42 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _get_project_or_404(db, project_id: str) -> Project:
+def _get_owned_project_or_404(
+    db, project_id: str, principal: auth_service.Principal
+) -> Project:
+    """The owner-scoped load choke point (design 02 §4.1): every
+    project-scoped route loads through here. Another user's project
+    is indistinguishable from a nonexistent one — 404, never 403 —
+    so existence itself stays tenant-private. Legacy rows with a
+    NULL owner (pre-8.1 databases that never ran the backfill) are
+    visible only to the founder principal who would own them."""
     project = db.get(Project, str(project_id))
     if project is None:
         raise ApiError(404, "project_not_found", f"No project {project_id}.")
+    owner = project.owner_id
+    if owner is None:
+        if principal.auth_method != "operator_token":
+            raise ApiError(
+                404, "project_not_found", f"No project {project_id}."
+            )
+    elif owner != principal.user_id:
+        raise ApiError(404, "project_not_found", f"No project {project_id}.")
     return project
+
+
+def _get_owned_run_or_404(run_id: str, principal: auth_service.Principal):
+    """Run-level equivalent: the run dict (run_ledger) with the
+    same 404 cross-tenant semantics."""
+    run = run_ledger.get_run(run_id)
+    if run is None:
+        raise ApiError(404, "run_not_found", f"No run {run_id}.")
+    owner = run.get("owner_id")
+    if owner is None:
+        if principal.auth_method != "operator_token":
+            raise ApiError(404, "run_not_found", f"No run {run_id}.")
+    elif owner != principal.user_id:
+        raise ApiError(404, "run_not_found", f"No run {run_id}.")
+    return run
 
 
 def _options_dict(options) -> dict:
@@ -390,7 +899,7 @@ def _genre_view(pack: dict) -> dict:
 
 
 @router.get("/catalogues/genres")
-def list_genre_catalogue(_=Depends(require_api_token)):
+def list_genre_catalogue(principal=Depends(require_user)):
     packs = [p for p in genre_packs.available_packs() if p is not None]
     return {"genres": [_genre_view(pack) for pack in packs]}
 
@@ -421,7 +930,7 @@ def _voice_view(voice_id: str, model, config) -> dict:
 
 
 @router.get("/catalogues/voices")
-def list_voice_catalogue(_=Depends(require_api_token)):
+def list_voice_catalogue(principal=Depends(require_user)):
     voices = [
         _voice_view(voice_id, model, config)
         for voice_id, (model, config) in narration.VOICE_CATALOGUE.items()
@@ -438,11 +947,13 @@ def list_voice_catalogue(_=Depends(require_api_token)):
 
 
 @router.post("/projects", status_code=201)
-def create_project(body: ProjectCreateIn, _=Depends(post_guard)):
+def create_project(body: ProjectCreateIn, principal=Depends(post_guard)):
     db = SessionLocal()
     try:
+        plans_service.enforce_script_length(db, principal.user_id, body.script)
         project = Project(
             id=str(uuid4()),
+            owner_id=principal.user_id,
             title=body.title,
             script=body.script,
             category=body.category or "Documentary",
@@ -458,11 +969,16 @@ def create_project(body: ProjectCreateIn, _=Depends(post_guard)):
 
 
 @router.get("/projects")
-def list_projects(_=Depends(require_api_token)):
+def list_projects(principal=Depends(require_user)):
     db = SessionLocal()
     try:
+        # Owner-filtered in SQL, never in Python after the fact
+        # (design 02 §4.1).
         projects = (
-            db.query(Project).order_by(Project.created_at.desc()).all()
+            db.query(Project)
+            .filter(Project.owner_id == principal.user_id)
+            .order_by(Project.created_at.desc())
+            .all()
         )
         return {"projects": [_project_view(db, p) for p in projects]}
     finally:
@@ -470,20 +986,20 @@ def list_projects(_=Depends(require_api_token)):
 
 
 @router.get("/projects/{project_id}")
-def get_project(project_id: str, _=Depends(require_api_token)):
+def get_project(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        project = _get_project_or_404(db, project_id)
+        project = _get_owned_project_or_404(db, project_id, principal)
         return _project_view(db, project, detail=True)
     finally:
         db.close()
 
 
 @router.get("/projects/{project_id}/status")
-def get_project_status(project_id: str, _=Depends(require_api_token)):
+def get_project_status(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        project = _get_project_or_404(db, project_id)
+        project = _get_owned_project_or_404(db, project_id, principal)
         project_dir = media_paths.project_dir(project.id)
         state = _production_state(project_dir)
         latest = run_ledger.latest_run_for(project.id)
@@ -513,10 +1029,10 @@ def get_project_status(project_id: str, _=Depends(require_api_token)):
 
 
 @router.post("/projects/{project_id}/runs", status_code=202)
-def submit_run(project_id: str, body: RunSubmitIn | None = None, _=Depends(post_guard)):
+def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depends(post_guard)):
     db = SessionLocal()
     try:
-        project = _get_project_or_404(db, project_id)
+        project = _get_owned_project_or_404(db, project_id, principal)
         script = project.script
         project_options = dict(project.options or {})
     finally:
@@ -538,6 +1054,12 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, _=Depends(post_
                 "job_id": None,
                 "phase": "analysis",
             }
+        # A genuinely new run: plan admission applies (Phase 8.3).
+        db = SessionLocal()
+        try:
+            plans_service.enforce_run_admission(db, principal.user_id)
+        finally:
+            db.close()
         submission = run_ledger.submit_production(
             project_id, script, options=merged
         )
@@ -570,6 +1092,14 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, _=Depends(post_
     already_active = bool(
         existing and existing["status"] in run_ledger.ACTIVE_STATUSES
     )
+    if not already_active:
+        # A genuinely new run: plan admission applies (Phase 8.3).
+        # Deduplicated submissions create nothing and skip it.
+        db = SessionLocal()
+        try:
+            plans_service.enforce_run_admission(db, principal.user_id)
+        finally:
+            db.close()
     job_id = jobs.enqueue_full_pipeline(
         project_id, script, options=merged or None
     )
@@ -587,10 +1117,10 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, _=Depends(post_
 
 
 @router.get("/projects/{project_id}/runs")
-def list_project_runs(project_id: str, _=Depends(require_api_token)):
+def list_project_runs(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     runs = run_ledger.list_runs_for(project_id)
@@ -598,18 +1128,16 @@ def list_project_runs(project_id: str, _=Depends(require_api_token)):
 
 
 @router.get("/runs/{run_id}")
-def get_run(run_id: str, _=Depends(require_api_token)):
-    run = run_ledger.get_run(run_id)
-    if run is None:
-        raise ApiError(404, "run_not_found", f"No run {run_id}.")
+def get_run(run_id: str, principal=Depends(require_user)):
+    run = _get_owned_run_or_404(run_id, principal)
     return _run_view(run)
 
 
 @router.post("/runs/{run_id}/cancel")
-def cancel_run(run_id: str, _=Depends(post_guard)):
-    run = run_ledger.get_run(run_id)
-    if run is None:
-        raise ApiError(404, "run_not_found", f"No run {run_id}.")
+def cancel_run(run_id: str, principal=Depends(post_guard)):
+    # Owner check FIRST: a cross-tenant cancel attempt is a 404 and
+    # verifiably changes nothing (isolation battery case 3).
+    _get_owned_run_or_404(run_id, principal)
     accepted = run_ledger.request_cancel(run_id)
     return {
         "run_id": run_id,
@@ -624,10 +1152,10 @@ def cancel_run(run_id: str, _=Depends(post_guard)):
 
 
 @router.get("/projects/{project_id}/plan")
-def get_plan(project_id: str, _=Depends(require_api_token)):
+def get_plan(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        project = _get_project_or_404(db, project_id)
+        project = _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     plan = plan_document.build_plan(
@@ -645,10 +1173,10 @@ def get_plan(project_id: str, _=Depends(require_api_token)):
 
 
 @router.post("/projects/{project_id}/plan/generate")
-def generate_plan(project_id: str, _=Depends(post_guard)):
+def generate_plan(project_id: str, principal=Depends(post_guard)):
     db = SessionLocal()
     try:
-        project = _get_project_or_404(db, project_id)
+        project = _get_owned_project_or_404(db, project_id, principal)
         script = project.script
     finally:
         db.close()
@@ -908,7 +1436,7 @@ def _sentence_swap(project, project_dir: Path, body: PlanDecisionIn, record: dic
 
 
 @router.post("/projects/{project_id}/plan/decisions", status_code=201)
-def post_plan_decision(project_id: str, body: PlanDecisionIn, _=Depends(post_guard)):
+def post_plan_decision(project_id: str, body: PlanDecisionIn, principal=Depends(post_guard)):
     if body.action not in ("approve", "replace", "regenerate"):
         raise ApiError(
             422,
@@ -928,7 +1456,7 @@ def post_plan_decision(project_id: str, body: PlanDecisionIn, _=Depends(post_gua
         )
     db = SessionLocal()
     try:
-        project = _get_project_or_404(db, project_id)
+        project = _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     project_dir = media_paths.project_dir(project.id)
@@ -953,10 +1481,10 @@ def post_plan_decision(project_id: str, body: PlanDecisionIn, _=Depends(post_gua
 
 
 @router.post("/projects/{project_id}/plan/approve")
-def approve_plan(project_id: str, _=Depends(post_guard)):
+def approve_plan(project_id: str, principal=Depends(post_guard)):
     db = SessionLocal()
     try:
-        project = _get_project_or_404(db, project_id)
+        project = _get_owned_project_or_404(db, project_id, principal)
         script = project.script
     finally:
         db.close()
@@ -1004,11 +1532,11 @@ def list_assets(
     project_id: str,
     limit: int = 100,
     offset: int = 0,
-    _=Depends(require_api_token),
+    principal=Depends(require_user),
 ):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     limit = min(max(1, limit), 500)
@@ -1050,10 +1578,10 @@ def _output_entry(project_id: str, project_dir: Path, index: dict, filename: str
 
 
 @router.get("/projects/{project_id}/outputs")
-def get_outputs(project_id: str, _=Depends(require_api_token)):
+def get_outputs(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     project_dir = media_paths.project_dir(project_id)
@@ -1076,10 +1604,10 @@ def get_outputs(project_id: str, _=Depends(require_api_token)):
 
 
 @router.get("/projects/{project_id}/media/{asset_key}")
-def serve_media(project_id: str, asset_key: str, _=Depends(require_api_token)):
+def serve_media(project_id: str, asset_key: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     project_dir = media_paths.project_dir(project_id)
@@ -1212,10 +1740,10 @@ def _quality_section(project_id: str, run_id=None) -> dict:
 
 
 @router.get("/projects/{project_id}/certificate")
-def get_certificate(project_id: str, _=Depends(require_api_token)):
+def get_certificate(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        project = _get_project_or_404(db, project_id)
+        project = _get_owned_project_or_404(db, project_id, principal)
         project_view = {
             "id": project.id,
             "title": project.title,
@@ -1306,10 +1834,10 @@ class RenderBody(BaseModel):
 
 
 @router.get("/projects/{project_id}/editor")
-def get_editor(project_id: str, _=Depends(require_api_token)):
+def get_editor(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     view, doc = _editor_call(editor.get_editor, project_id)
@@ -1320,11 +1848,11 @@ def get_editor(project_id: str, _=Depends(require_api_token)):
 def create_revision(
     project_id: str,
     body: CreateRevisionBody,
-    _=Depends(post_guard),
+    principal=Depends(post_guard),
 ):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     view, _doc = _editor_call(
@@ -1337,20 +1865,20 @@ def create_revision(
 
 
 @router.get("/projects/{project_id}/revisions")
-def list_revisions(project_id: str, _=Depends(require_api_token)):
+def list_revisions(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     return {"revisions": _editor_call(editor.list_revisions, project_id)}
 
 
 @router.get("/projects/{project_id}/revisions/{revision_id}")
-def get_revision(project_id: str, revision_id: str, _=Depends(require_api_token)):
+def get_revision(project_id: str, revision_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     view, doc = _editor_call(editor.get_revision, project_id, revision_id)
@@ -1365,11 +1893,11 @@ def apply_operations(
     project_id: str,
     revision_id: str,
     body: OperationsBody,
-    _=Depends(post_guard),
+    principal=Depends(post_guard),
 ):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     view, _doc = _editor_call(
@@ -1390,11 +1918,11 @@ def render_revision(
     project_id: str,
     revision_id: str,
     body: RenderBody,
-    _=Depends(post_guard),
+    principal=Depends(post_guard),
 ):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     return _editor_call(
@@ -1406,10 +1934,10 @@ def render_revision(
 
 
 @router.get("/projects/{project_id}/revisions/{revision_id}/exports")
-def list_exports(project_id: str, revision_id: str, _=Depends(require_api_token)):
+def list_exports(project_id: str, revision_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
     _view, doc = _editor_call(editor.get_revision, project_id, revision_id)
@@ -1420,11 +1948,20 @@ def list_exports(project_id: str, revision_id: str, _=Depends(require_api_token)
 def upload_file(
     project_id: str,
     file: UploadFile = File(...),
-    _=Depends(post_guard),
+    principal=Depends(post_guard),
 ):
     db = SessionLocal()
     try:
-        _get_project_or_404(db, project_id)
+        _get_owned_project_or_404(db, project_id, principal)
+        # Per-plan upload cap replaces the global one where a plan
+        # resolves (02 §5.3); editor.store_upload's global cap
+        # remains as the second enforcement point downstream.
+        file.file.seek(0, 2)
+        upload_size = file.file.tell()
+        file.file.seek(0)
+        plans_service.enforce_upload_size(
+            db, principal.user_id, upload_size
+        )
     finally:
         db.close()
     return _editor_call(
@@ -1434,11 +1971,11 @@ def upload_file(
 
 @router.get("/projects/{project_id}/revisions/{revision_id}/certificate")
 def get_revision_certificate(
-    project_id: str, revision_id: str, _=Depends(require_api_token)
+    project_id: str, revision_id: str, principal=Depends(require_user)
 ):
     db = SessionLocal()
     try:
-        project = _get_project_or_404(db, project_id)
+        project = _get_owned_project_or_404(db, project_id, principal)
         project_view = {
             "id": project.id,
             "title": project.title,
