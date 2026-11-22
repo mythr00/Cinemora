@@ -143,6 +143,72 @@ def test_failed_layer_keeps_base_and_records(tmp_path):
     assert base.exists()
 
 
+def test_timed_out_overlay_step_keeps_base(tmp_path, monkeypatch):
+    """Regression (live failure, Petito run 6091b411, 2026-11-22):
+    run_ffmpeg returns False on timeout — never None — and a killed
+    ffmpeg still leaves a partial step file behind. The step verdict
+    checked `result is None or not step_out.exists()`, so a timed-out
+    composition was recorded as applied and its corrupt partial
+    output replaced the good base clip; the renderer's frame lock
+    then failed on the moov-less file. A failed step must fail the
+    composition and keep the base."""
+    from services import renderer
+
+    base = _make_base_clip(tmp_path / "base.mp4", seconds=2)
+    base_bytes = base.read_bytes()
+
+    def fake_run_ffmpeg(command, timeout=None):
+        Path(command[-1]).write_bytes(b"partial-mdat-no-moov")
+        return False
+
+    monkeypatch.setattr(renderer, "run_ffmpeg", fake_run_ffmpeg)
+    layer = composition.lower_third_layer(
+        "Ocean Parkway", "Long Island, New York",
+        start=0.0, duration=2.0, theme="investigative",
+    )
+    plan = {"pattern": "lower_third_card", "layers": [layer]}
+    composition.validate_composition(plan, 2.0)
+    out = tmp_path / "composed.mp4"
+    ok, record = composition.apply_composition(
+        base, plan, out, tmp_path / "work",
+    )
+    assert ok is False
+    assert record["failed"][0]["reason"] == "overlay_render_failed"
+    assert not out.exists()
+    assert base.read_bytes() == base_bytes
+
+
+def test_lower_third_overlay_input_is_bounded(tmp_path, monkeypatch):
+    """The lower-third PNG input must be a BOUNDED loop (-t): an
+    unbounded -loop 1 stream never EOFs and -shortest does not
+    reliably end the overlay filtergraph — the step hung to the
+    ffmpeg timeout in production."""
+    from services import renderer
+
+    base = _make_base_clip(tmp_path / "base.mp4", seconds=2)
+    commands = []
+
+    def fake_run_ffmpeg(command, timeout=None):
+        commands.append([str(c) for c in command])
+        Path(command[-1]).write_bytes(base.read_bytes())
+        return True
+
+    monkeypatch.setattr(renderer, "run_ffmpeg", fake_run_ffmpeg)
+    layer = composition.lower_third_layer(
+        "Ocean Parkway", start=0.0, duration=2.0,
+    )
+    plan = {"pattern": "lower_third_card", "layers": [layer]}
+    composition.validate_composition(plan, 2.0)
+    ok, _record = composition.apply_composition(
+        base, plan, tmp_path / "composed.mp4", tmp_path / "work",
+    )
+    assert ok is True
+    cmd = commands[0]
+    png_index = next(i for i, c in enumerate(cmd) if c.endswith(".png"))
+    assert "-t" in cmd[:png_index]
+    assert "-loop" in cmd[:png_index]
+
+
 # ---------------------------------------------------------------------------
 # Director decisions -> timeline items
 # ---------------------------------------------------------------------------

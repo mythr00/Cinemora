@@ -340,7 +340,14 @@ def apply_composition(base_clip, composition, out_path, work_dir):
                 png = work_dir / f"layer_{index}.png"
                 render_lower_third_png(layer, png)
                 overlay_input = [
-                    "-loop", "1", "-framerate", "30", "-i", str(png),
+                    # Bounded loop: an unbounded -loop 1 image input
+                    # never EOFs, and -shortest does not reliably end
+                    # the overlay filtergraph — the step hung to the
+                    # ffmpeg timeout on the Petito production
+                    # (2026-11-22). The layer is never visible past
+                    # its end; +1s covers the fade-out and rounding.
+                    "-loop", "1", "-framerate", "30",
+                    "-t", str(round(end + 1.0, 3)), "-i", str(png),
                 ]
                 prep = "format=rgba"
             elif kind == "footage_window":
@@ -392,7 +399,14 @@ def apply_composition(base_clip, composition, out_path, work_dir):
                     "-c:a", "copy", "-shortest", str(step_out),
                 ]
                 result = _renderer.run_ffmpeg(command)
-                if result is None or not step_out.exists():
+                if not result or not step_out.exists():
+                    # run_ffmpeg returns False on failure/timeout and
+                    # never None; a timed-out step still leaves a
+                    # partial file behind, so existence alone is not
+                    # success (Petito run 6091b411: the partial file
+                    # replaced the good base clip and the frame lock
+                    # failed on the corrupt result).
+                    step_out.unlink(missing_ok=True)
                     record["failed"].append({
                         "kind": kind, "reason": "overlay_render_failed",
                     })
@@ -428,7 +442,11 @@ def apply_composition(base_clip, composition, out_path, work_dir):
                 "-c:a", "copy", "-shortest", str(step_out),
             ]
             result = _renderer.run_ffmpeg(command)
-            if result is None or not step_out.exists():
+            if not result or not step_out.exists():
+                # See the split_screen branch: False from run_ffmpeg
+                # (failure or timeout) must fail the step even when
+                # a partial output file exists.
+                step_out.unlink(missing_ok=True)
                 record["failed"].append({
                     "kind": kind, "reason": "overlay_render_failed",
                 })
