@@ -1,20 +1,26 @@
 /**
- * Server-side API proxy (F5 deployment).
+ * Server-side API proxy (F5 deployment; Phase 8.5 session model).
  *
  * In deployed builds the browser client runs in "same-origin" mode
  * (NEXT_PUBLIC_API_BASE_URL=same-origin): every API call goes to
- * this origin's /api/* routes, i.e. here. This handler forwards the
- * request to the real backend and injects the real API token from
- * the server-only CINEMORA_API_TOKEN environment variable,
- * replacing whatever the browser sent. The real token therefore
- * never appears in the public JavaScript bundle — the bundle only
- * carries a non-empty placeholder so the client's connection check
- * can run (see lib/api.ts).
+ * this origin's /api/* routes, i.e. here. This handler forwards
+ * the request to the real backend carrying the visitor's OWN
+ * session cookie — Cinemora is multi-user now (Phase 8): the
+ * browser signs in at /login, the backend issues an httpOnly
+ * session cookie, and this proxy forwards that cookie so every
+ * request runs as the signed-in user and only ever sees that
+ * user's data (the backend enforces ownership; cross-tenant reads
+ * are 404 there).
+ *
+ * The pre-8.5 behaviour — injecting one shared operator token
+ * server-side — is retired: a shared token would make every
+ * visitor the same principal and defeat tenant isolation. A
+ * browser-supplied X-API-Key header is therefore stripped, never
+ * forwarded (the client no longer sends one; stripping is defence
+ * in depth against stale bundles).
  *
  * Server-only configuration (never NEXT_PUBLIC_*):
  * - CINEMORA_BACKEND_URL: origin of the Cinemora backend.
- * - CINEMORA_API_TOKEN: the token matching the backend's own
- *   CINEMORA_API_TOKEN.
  */
 
 import type { NextRequest } from "next/server";
@@ -25,7 +31,6 @@ const BACKEND_URL = (process.env.CINEMORA_BACKEND_URL || "").replace(
   /\/$/,
   "",
 );
-const API_TOKEN = process.env.CINEMORA_API_TOKEN || "";
 
 const FORWARDED_RESPONSE_HEADERS = [
   "content-type",
@@ -45,13 +50,13 @@ async function proxy(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {
-  if (!BACKEND_URL || !API_TOKEN) {
+  if (!BACKEND_URL) {
     return Response.json(
       {
         error: {
           code: "api_proxy_not_configured",
           message:
-            "The API proxy is not configured on this deployment (CINEMORA_BACKEND_URL / CINEMORA_API_TOKEN).",
+            "The API proxy is not configured on this deployment (CINEMORA_BACKEND_URL).",
         },
       },
       { status: 503 },
@@ -68,6 +73,10 @@ async function proxy(
   if (contentType) headers.set("content-type", contentType);
   const accept = request.headers.get("accept");
   if (accept) headers.set("accept", accept);
+  // The session cookie is the credential (Phase 8.5). Forwarded
+  // verbatim; the backend resolves it to the signed-in user.
+  const cookie = request.headers.get("cookie");
+  if (cookie) headers.set("cookie", cookie);
   // Media streaming: the backend honours Range (206 + Content-Range),
   // but only if the player's Range header actually reaches it. Without
   // this the backend returns the whole file with a 200, which breaks
@@ -76,7 +85,7 @@ async function proxy(
   if (range) headers.set("range", range);
   const ifRange = request.headers.get("if-range");
   if (ifRange) headers.set("if-range", ifRange);
-  headers.set("x-api-key", API_TOKEN);
+  // Deliberately NOT forwarded: x-api-key (see the header comment).
 
   const method = request.method;
   const hasBody = method !== "GET" && method !== "HEAD";
@@ -106,6 +115,22 @@ async function proxy(
   for (const name of FORWARDED_RESPONSE_HEADERS) {
     const value = upstream.headers.get(name);
     if (value) responseHeaders.set(name, value);
+  }
+  // Session lifecycle: login/register set the cookie, logout
+  // clears it — Set-Cookie must reach the browser or nobody can
+  // ever sign in through this proxy. getSetCookie preserves
+  // multiple cookies as separate headers.
+  const setCookies =
+    typeof upstream.headers.getSetCookie === "function"
+      ? upstream.headers.getSetCookie()
+      : [];
+  if (setCookies.length > 0) {
+    for (const value of setCookies) {
+      responseHeaders.append("set-cookie", value);
+    }
+  } else {
+    const single = upstream.headers.get("set-cookie");
+    if (single) responseHeaders.set("set-cookie", single);
   }
   const location = upstream.headers.get("location");
   if (location) responseHeaders.set("location", location);

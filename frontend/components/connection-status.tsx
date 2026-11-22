@@ -24,7 +24,7 @@ import {
  * This component performs one authenticated v1 call on mount (and
  * again only when the operator presses retry — no polling) and
  * renders the classified state as icon + text, never a bare dot:
- * connected / token rejected / frontend not configured / server
+ * connected / session rejected / frontend not configured / server
  * not configured / API unavailable / network unreachable. The
  * detailed message is exposed as the element's title and as
  * screen-reader text; the visible label stays short.
@@ -35,7 +35,7 @@ const PRESENTATION: Record<
   { label: string; Icon: typeof CircleCheck; tone: "ok" | "bad" | "warn" }
 > = {
   connected: { label: "API connected", Icon: CircleCheck, tone: "ok" },
-  auth: { label: "API token rejected", Icon: KeyRound, tone: "bad" },
+  auth: { label: "Session rejected", Icon: KeyRound, tone: "bad" },
   "frontend-not-configured": { label: "API not configured in this build", Icon: Settings2, tone: "warn" },
   "backend-not-configured": { label: "API not configured on server", Icon: Settings2, tone: "warn" },
   unavailable: { label: "Studio API unavailable", Icon: CircleExclamationPoint, tone: "bad" },

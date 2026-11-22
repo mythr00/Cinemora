@@ -8,8 +8,10 @@
  *
  * Two surfaces:
  * - The /api/v1 contract (apiRequest + the typed helpers below):
- *   single-operator token auth via the X-API-Key header, consistent
- *   {error: {code, message}} failures surfaced as ApiClientError.
+ *   per-user session auth (Phase 8.5 — the httpOnly session cookie
+ *   issued at sign-in, carried via credentials:"include"),
+ *   consistent {error: {code, message}} failures surfaced as
+ *   ApiClientError.
  * - Legacy endpoints that predate v1 (legacyRequest): NO active
  *   page calls these any more. The legacy surfaces (scene editor,
  *   render-options, voice/music/background catalogues, thumbnails,
@@ -27,14 +29,9 @@
  *   http://localhost:8000). The special value "same-origin" selects
  *   the deployed mode: the browser calls this origin's /api/*
  *   routes and the server-side proxy (app/api/[...path]/route.ts)
- *   forwards them to the real backend, injecting the real API
- *   token from server-only environment variables — so no real
- *   token is ever shipped in the public bundle (F5).
- * - NEXT_PUBLIC_CINEMORA_API_TOKEN: the operator token matching the
- *   backend's CINEMORA_API_TOKEN, for local use. In same-origin
- *   mode this is only a non-empty placeholder: it satisfies the
- *   connection check locally while the proxy replaces the header
- *   with the real token server-side.
+ *   forwards them to the real backend together with the visitor's
+ *   session cookie (Phase 8.5). No credential of any kind is
+ *   shipped in the public bundle.
  */
 
 const RAW_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
@@ -44,18 +41,18 @@ const API_BASE_URL =
     ? ""
     : (RAW_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
-const API_TOKEN = process.env.NEXT_PUBLIC_CINEMORA_API_TOKEN || "";
 
 /**
  * True when the client runs in the deployed same-origin mode
  * (F5): API calls go to this origin's /api/* routes and the
- * server-side proxy injects the real token. In this mode a bare
- * media URL is authenticated by the proxy, so <video>, <img> and
- * download anchors may use it directly and the media endpoint's
- * Range support streams playback — no whole-file blob fetch.
- * In direct mode (local development against a backend origin)
- * the token exists only as a request header, so media still
- * goes through the blob helpers below.
+ * server-side proxy forwards the visitor's session cookie. In
+ * this mode a bare media URL is authenticated by the proxy, so
+ * <video>, <img> and download anchors may use it directly and
+ * the media endpoint's Range support streams playback — no
+ * whole-file blob fetch. In direct mode (local development
+ * against a backend origin) the cookie only exists in the
+ * browser's store for that origin, so media still goes through
+ * the blob helpers below (which send credentials the same way).
  */
 export const SAME_ORIGIN_API = RAW_API_BASE_URL === "same-origin";
 
@@ -113,11 +110,20 @@ async function request<T>(
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  if (authenticated && API_TOKEN) {
-    headers.set("X-API-Key", API_TOKEN);
-  }
+  // Phase 8.5: authentication is the user's session cookie
+  // (httpOnly, issued by /api/v1/auth/login), carried by
+  // credentials:"include" — same-origin requests send it through
+  // the proxy, direct-mode requests send it to the backend origin
+  // (whose CORS allows credentials from the studio origin). The
+  // pre-8.5 shared X-API-Key header is gone: one shared token
+  // would make every visitor the same principal. The
+  // `authenticated` flag now only distinguishes the legacy surface
+  // (which shares the same session) and is kept for signature
+  // compatibility with preserved callers.
+  void authenticated;
   const response = await fetch(apiUrl(path), {
     cache: "no-store",
+    credentials: "include",
     ...init,
     headers,
   });
@@ -125,9 +131,124 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
-/** Call a /api/v1 endpoint (token-authenticated). */
+/** Call a /api/v1 endpoint (session-authenticated). */
 export function apiRequest<T>(path: string, init: RequestOptions = {}): Promise<T> {
   return request<T>(path, init, true);
+}
+
+// ---------------------------------------------------------------------
+// Accounts + sessions (Phase 8.5)
+// ---------------------------------------------------------------------
+
+export type AccountUser = {
+  id: string;
+  email: string;
+  display_name: string | null;
+  role: "user" | "admin" | "super_admin";
+  status: string;
+  email_verified_at: string | null;
+  created_at: string;
+  last_login_at: string | null;
+};
+
+export type AccountUsage = {
+  plan: {
+    name: string;
+    max_concurrent_runs: number | null;
+    max_runs_per_period: number | null;
+    period: string;
+    max_script_chars: number | null;
+    max_storage_bytes: number | null;
+    max_upload_bytes: number | null;
+    priority_tier: number;
+  } | null;
+  period_start: string;
+  concurrent_runs: number;
+  runs_in_period: number;
+  provider: Record<string, unknown>;
+  storage_bytes: number;
+};
+
+/** The signed-in user, or null when there is no valid session.
+ * Only a definitive 401 maps to null; network/server failures
+ * throw, so callers never mistake an outage for a sign-out. */
+export async function getCurrentUser(
+  signal?: AbortSignal,
+): Promise<AccountUser | null> {
+  try {
+    const data = await apiRequest<{ user: AccountUser }>("/api/v1/auth/me", {
+      signal,
+    });
+    return data.user;
+  } catch (error) {
+    if (error instanceof ApiClientError && error.status === 401) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function login(
+  email: string,
+  password: string,
+): Promise<AccountUser> {
+  const data = await apiRequest<{ user: AccountUser }>("/api/v1/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  return data.user;
+}
+
+export async function register(
+  email: string,
+  password: string,
+  displayName?: string,
+): Promise<AccountUser> {
+  const data = await apiRequest<{ user: AccountUser }>(
+    "/api/v1/auth/register",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        email,
+        password,
+        display_name: displayName || undefined,
+      }),
+    },
+  );
+  return data.user;
+}
+
+export async function logout(): Promise<void> {
+  await apiRequest("/api/v1/auth/logout", { method: "POST" });
+}
+
+/** Ask for a password-reset link. The API answers 202 identically
+ * whether or not the email exists; `delivery` reports how the link
+ * reaches the user ("smtp" when mail is configured, "manual" when
+ * the operator provides it out of band). */
+export async function requestPasswordReset(
+  email: string,
+): Promise<{ delivery: string }> {
+  return apiRequest<{ delivery: string }>("/api/v1/auth/password-reset/request", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function confirmPasswordReset(
+  token: string,
+  newPassword: string,
+): Promise<void> {
+  await apiRequest("/api/v1/auth/password-reset/confirm", {
+    method: "POST",
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+}
+
+export async function getAccountUsage(
+  signal?: AbortSignal,
+): Promise<AccountUsage> {
+  return apiRequest<AccountUsage>("/api/v1/account/usage", { signal });
 }
 
 /**
@@ -661,10 +782,10 @@ export async function probeMediaContentType(
   signal?: AbortSignal,
 ): Promise<string> {
   const headers = new Headers();
-  if (API_TOKEN) headers.set("X-API-Key", API_TOKEN);
   const response = await fetch(mediaUrl(projectId, mediaKey), {
     method: "HEAD",
     cache: "no-store",
+    credentials: "include",
     headers,
     signal,
   });
@@ -686,9 +807,9 @@ export async function fetchMediaObjectUrl(
   signal?: AbortSignal,
 ): Promise<{ url: string; contentType: string }> {
   const headers = new Headers();
-  if (API_TOKEN) headers.set("X-API-Key", API_TOKEN);
   const response = await fetch(mediaUrl(projectId, mediaKey), {
     cache: "no-store",
+    credentials: "include",
     headers,
     signal,
   });
@@ -744,9 +865,9 @@ export async function fetchAuthenticatedMediaObjectUrl(
   const ref = parseProjectMediaPath(path);
   if (ref) return fetchMediaObjectUrl(ref.projectId, ref.mediaKey, signal);
   const headers = new Headers();
-  if (API_TOKEN) headers.set("X-API-Key", API_TOKEN);
   const response = await fetch(apiUrl(path), {
     cache: "no-store",
+    credentials: "include",
     headers,
     signal,
   });
@@ -838,16 +959,17 @@ export async function downloadAuthenticatedMedia(options: {
 
 /**
  * The honest connection states the studio can be in. They are
- * distinguished because each needs a different operator action:
+ * distinguished because each needs a different action:
  * - "connected": an authenticated v1 call succeeded.
- * - "auth": the API answered but rejected this build's token
- *   (401) — the token in NEXT_PUBLIC_CINEMORA_API_TOKEN does not
- *   match the server's CINEMORA_API_TOKEN.
- * - "frontend-not-configured": this frontend build carries no
- *   API token at all, so no authenticated call can succeed.
+ * - "auth": the API answered but rejected the session (401) —
+ *   the visitor is signed out, or the session expired or was
+ *   revoked; signing in again is the fix.
+ * - "frontend-not-configured": retained for state-shape
+ *   compatibility; the session model has no build-time credential
+ *   to be missing, so checkApiConnection no longer produces it.
  * - "backend-not-configured": the server itself has no
  *   CINEMORA_API_TOKEN set and fails closed (503
- *   api_not_configured).
+ *   api_not_configured) for credential-less requests.
  * - "unavailable": the API answered with another server error.
  * - "network": the API could not be reached at all.
  */
@@ -866,22 +988,14 @@ export type ApiConnectionStatus = {
 
 /**
  * Probe the connection the way the studio actually uses it: one
- * authenticated v1 call (the project list). The unauthenticated
- * /health route is deliberately NOT used here — it can report "ok"
- * while every real call fails 401/503 (audit D-05). The token is
- * only ever sent as the X-API-Key header — never in a URL, never
- * logged.
+ * authenticated v1 call (the project list, under the visitor's
+ * session). The unauthenticated /health route is deliberately NOT
+ * used here — it can report "ok" while every real call fails
+ * 401/503 (audit D-05).
  */
 export async function checkApiConnection(
   signal?: AbortSignal,
 ): Promise<ApiConnectionStatus> {
-  if (!API_TOKEN) {
-    return {
-      state: "frontend-not-configured",
-      message:
-        "This frontend build has no API token configured (NEXT_PUBLIC_CINEMORA_API_TOKEN), so it cannot sign in to the studio API.",
-    };
-  }
   try {
     await listProjects(signal);
     return { state: "connected", message: "Authenticated API connection confirmed." };
@@ -891,14 +1005,14 @@ export async function checkApiConnection(
         return {
           state: "auth",
           message:
-            "The studio API rejected this build's token. The frontend token must match the server's CINEMORA_API_TOKEN.",
+            "The studio API rejected your session. Sign in again to continue.",
         };
       }
       if (error.status === 503) {
         return {
           state: "backend-not-configured",
           message:
-            "The studio API is running but not configured: CINEMORA_API_TOKEN is not set on the server, so it refuses authenticated calls.",
+            "The studio API is running but not configured: CINEMORA_API_TOKEN is not set on the server, so it refuses credential-less calls.",
         };
       }
       return {
@@ -963,7 +1077,7 @@ export function uploadAsset(
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", apiUrl(`/api/v1/projects/${projectId}/uploads`));
-    if (API_TOKEN) xhr.setRequestHeader("X-API-Key", API_TOKEN);
+    xhr.withCredentials = true;
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
         onProgress(event.loaded / event.total);

@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { AccountMenu } from "@/components/account-menu";
 import { BrandLockup } from "@/components/brand-lockup";
 import { ApiConnectionBadge } from "@/components/connection-status";
-import { listProjects } from "@/lib/api";
+import { getCurrentUser, listProjects, type AccountUser } from "@/lib/api";
 import { BellRing, CirclePlus, FolderOpen, LayoutDashboard } from "lucide-react";
 
 // Brief Stage 3 (C-02): /channel-lab, /thumbnail and /viral-clips
@@ -45,7 +46,33 @@ export function AppNavigation({
   active: _legacyActive,
 }: { active?: string } = {}) {
   void _legacyActive;
-  const active = activeFor(usePathname());
+  const pathname = usePathname();
+  const active = activeFor(pathname);
+  const router = useRouter();
+
+  // Session gate (Phase 8.5): every studio surface is per-user,
+  // so an unresolved session means sign-in comes first. Only a
+  // definitive 401 from /auth/me redirects — a network failure
+  // leaves the page in place, where the connection badge reports
+  // the outage honestly instead of bouncing the user to a login
+  // form that cannot work either.
+  const [user, setUser] = useState<AccountUser | null>(null);
+  const redirectedRef = useRef(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    getCurrentUser(controller.signal)
+      .then((resolved) => {
+        if (resolved) {
+          setUser(resolved);
+        } else if (!redirectedRef.current) {
+          redirectedRef.current = true;
+          const next = pathname ? `?next=${encodeURIComponent(pathname)}` : "";
+          router.replace(`/login${next}`);
+        }
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [pathname, router]);
 
   // The awaiting-approval count comes from the real project list
   // (the same data the dashboard queue uses). When the list
@@ -87,6 +114,7 @@ export function AppNavigation({
             </Link>
           )}
           <ApiConnectionBadge />
+          {user && <AccountMenu user={user} />}
         </div>
       </header>
       <nav className="app-rail" aria-label="Studio navigation">
