@@ -37,6 +37,7 @@ from services import tier_ladder
 from services import url_hygiene
 from services import provider_health
 from services import visual_identity
+from services import frame_verification
 from services.media_probe import probe_image, probe_video
 from services.http_retry import request_with_retry, classify_error
 
@@ -3601,6 +3602,80 @@ def _apply_transcript_check(asset, scenario, bible):
     return result
 
 
+def _apply_frame_check(asset, candidate, scenario, bible):
+    """Run the Phase 1.1 frame-level visual verification on one
+    downloaded asset (transformation plan §1.1).
+
+    The ``visual`` verdict dimension was ``not_evaluated`` under a
+    previous-era standing order (AM-028) because verification was
+    metadata-only. The founder's takeover mandate (2026-11-21)
+    supersedes that carve-out: the dimension is now evaluated on
+    sampled frames of the downloaded file itself by
+    services/frame_verification (deterministic detectors only —
+    banned social/meme formats, transient channel cards,
+    insufficient landscape fill, OCR geography contradiction;
+    watermark presence is recorded, never rejected, per the
+    founder's 2026-11-22 watermark ruling).
+
+    Stamps the full record as ``frame_check`` on the asset AND on
+    the candidate's verdict copy (the ledger's records are built
+    from the candidate pool item), and overwrites the verdict's
+    ``dimension_results["visual"]`` with the evaluated outcome —
+    the metadata-time ``not_evaluated`` stays on candidates that
+    were never downloaded, which is the truthful value for them.
+    On a typed rejection the asset's verdict is demoted in place
+    (accepted=False) exactly like the transcript demotion; the
+    caller records the failure and moves to the next pick. Any
+    internal failure leaves the asset untouched (fail-soft: the
+    record itself says ``not_evaluated`` with the cause). This
+    layer ONLY ever demotes. Returns the frame-check record, or
+    None when it cannot run at all.
+    """
+    if not isinstance(asset, dict):
+        return None
+    try:
+        record = frame_verification.verify_asset_frames(
+            asset, scenario, bible
+        )
+    except Exception as error:  # a frame failure never crashes a pick
+        print(f"FRAME CHECK SKIPPED (error): {error}")
+        return None
+    asset["frame_check"] = record
+    outcome = record.get("outcome")
+    visual_value = {
+        "pass": "pass",
+        "reject": "fail",
+    }.get(outcome, "not_evaluated")
+
+    def _stamp(verdict):
+        if not isinstance(verdict, dict):
+            return verdict
+        stamped = dict(verdict)
+        stamped["frame_check"] = record
+        dimensions = dict(stamped.get("dimension_results") or {})
+        dimensions["visual"] = visual_value
+        stamped["dimension_results"] = dimensions
+        if record.get("watermarked_preview"):
+            # Record-only provenance (founder ruling 2026-11-22):
+            # the same field the metadata path stamps, never a
+            # rejection and never labelled clean.
+            stamped[story.WATERMARKED_PREVIEW_FIELD] = True
+        return stamped
+
+    asset["verification"] = _stamp(asset.get("verification") or {})
+    if isinstance(candidate, dict) and candidate.get("verification"):
+        candidate["verification"] = _stamp(candidate["verification"])
+    if outcome == "reject":
+        reason = str(record.get("reason") or "frame_verification")
+        verdict = dict(asset.get("verification") or {})
+        verdict["accepted"] = False
+        verdict["rejection_reason"] = reason
+        asset["verification"] = verdict
+        asset["reject_reason"] = reason
+        asset["rejection_stage"] = "frame_verification"
+    return record
+
+
 # =====================================================================
 # Evidence-based timestamp fallback helpers.
 # (added by patch_youtube_fallback.py)
@@ -6475,6 +6550,48 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                 pass
             continue
 
+        # Phase 1.1 (transformation plan §1.1): frame-level visual
+        # verification. The downloaded file's own sampled frames
+        # are checked by deterministic detectors (banned social /
+        # meme formats, transient channel cards, insufficient
+        # landscape fill, OCR geography contradiction; watermarks
+        # recorded, never rejected). A typed rejection DEMOTES the
+        # candidate before registration, exactly like the Stage 3B
+        # demotion below: the file is removed (unless segment-
+        # reused), the rejection is recorded with its frame_check
+        # evidence, and the loop moves to the next pick. The URL is
+        # NOT added to the failed-download guard — the download
+        # succeeded; the frames failed (transcript precedent).
+        frame_record = _apply_frame_check(
+            asset, candidate, transcript_scenario, transcript_bible
+        )
+        if frame_record is not None and frame_record.get("outcome") == "reject":
+            print(
+                f"      FRAME CHECK REJECTED (demoted): "
+                f"{candidate_url} reason={frame_record.get('reason')}"
+            )
+            if failures is not None:
+                failures.append({
+                    "provider": candidate.get("provider")
+                    or candidate.get("source")
+                    or "unknown",
+                    "url": candidate_url,
+                    "reason": str(
+                        frame_record.get("reason") or "frame_verification"
+                    ),
+                    "candidate_id": candidate.get("candidate_id"),
+                    "stage": "frame_verification",
+                    "frame_check": frame_record,
+                })
+            if not asset.get("segment_reused"):
+                try:
+                    path = asset.get("file_path")
+                    if path and os.path.exists(path):
+                        os.remove(path)
+                except OSError:
+                    pass
+            continue
+
         # Stage 3B: transcript-interval verification. The asset was
         # accepted by verify_candidate and carries real segment
         # evidence; if the spoken words inside the chosen interval
@@ -7984,6 +8101,10 @@ def _uve_search_and_pick(
                 _record["technical_rejection"] = _failure[
                     "technical_rejection"
                 ]
+            if _failure.get("frame_check"):
+                # Phase 1.1: the frame-verification evidence behind
+                # a frame-stage rejection rides on the record.
+                _record["frame_check"] = _failure["frame_check"]
             _records.append(_record)
         else:
             _records.append({
@@ -8015,6 +8136,13 @@ def _uve_search_and_pick(
         )
         if _accepted.get("segment_evidence"):
             _record["segment_evidence"] = _accepted["segment_evidence"]
+        # Phase 1.1: an accepted asset carries its frame-check
+        # record (the visual dimension, evaluated) into the ledger.
+        _frame_check = _accepted.get("frame_check") or (
+            _source_item.get("verification") or {}
+        ).get("frame_check")
+        if _frame_check:
+            _record["frame_check"] = _frame_check
         # Phase 3: the accepted pick carries the ranking signals that
         # ordered it (intent adjustment + reasons, video preference).
         if _source_item.get("_intent_adjustment"):

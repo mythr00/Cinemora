@@ -74,6 +74,7 @@ STAGE_ORDER = (
     "segment_evidence",
     "download",
     "transcript_verification",
+    "frame_verification",
     "technical_validation",
     "verification",
     "accepted",
@@ -179,6 +180,22 @@ REJECTION_REASON_REGISTRY = {
     "decode_failed": ("technical_validation",),
     # transcript verification (Stage 3B demotion)
     "transcript_mismatch": ("transcript_verification",),
+    # frame verification (transformation Phase 1.1 demotion: the
+    # visual dimension, evaluated on sampled frames of the
+    # downloaded file — services/frame_verification.py; authority:
+    # takeover mandate 2026-11-21, superseding the AM-028
+    # metadata-only carve-out)
+    "social_story_card": ("frame_verification",),
+    "social_caption_overlay": ("frame_verification",),
+    "meme_format_frame": ("frame_verification",),
+    "channel_card_frame": ("frame_verification",),
+    "insufficient_frame_fill": ("frame_verification",),
+    # contradiction classes stamped by verify_candidate at scoring
+    # time (story_understanding.detect_contradiction); the frame
+    # stage can also stamp contradictory_geography when OCR'd
+    # frame text contradicts the scenario's home country.
+    "contradictory_geography": ("scoring", "frame_verification"),
+    "unrelated_named_person": ("scoring",),
 }
 
 # Reason families stamped with a dynamic suffix (the downloaders

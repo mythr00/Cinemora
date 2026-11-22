@@ -2657,12 +2657,23 @@ def detect_contradiction(candidate, scenario, bible, text, subject, subject_hit)
 # Stage 7 / R7 (review section C.B.3): the verdict's per-dimension
 # outcomes, in the review's dimension vocabulary. A dimension a profile
 # does not require is recorded ``not_required``; a dimension nobody can
-# evaluate at metadata-verification time (visual — VA-01 excluded;
-# transcript and media quality are post-download stages; source
-# credibility is a bounded post-acceptance tie-break and never enters
-# the composite) is recorded ``not_evaluated``. The dimension outcomes
-# are RECORDS: they change no decision — the composite and the
-# specificity thresholds above are exactly as before.
+# evaluate at metadata-verification time (transcript and media quality
+# are post-download stages; source credibility is a bounded
+# post-acceptance tie-break and never enters the composite) is recorded
+# ``not_evaluated``. The dimension outcomes are RECORDS: they change no
+# decision — the composite and the specificity thresholds above are
+# exactly as before.
+#
+# ``visual`` AT THIS STAGE stays ``not_evaluated`` — truthfully: no
+# frames exist yet at metadata time. The previous-era standing order
+# (AM-028) excluded the visual dimension from evaluation ENTIRELY;
+# that carve-out is SUPERSEDED by the founder's complete autonomous
+# takeover mandate (2026-11-21) and transformation plan Phase 1.1:
+# the visual dimension IS now evaluated, post-download, on sampled
+# frames of the actual file, by services/frame_verification.py,
+# whose verdict overwrites this field on the downloaded asset's
+# verdict copy (pass/fail) in the candidate ledger. Eligibility
+# (this stage) stays strictly separate from that relevance judgement.
 VERDICT_DIMENSIONS = (
     "entity", "event", "activity", "location", "temporal", "topical",
     "transcript", "visual", "factual_consistency",

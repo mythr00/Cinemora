@@ -881,6 +881,35 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 "recorded_licences": len(real_assets) - len(unknown_licence),
                 "unknown_licences": len(unknown_licence),
             },
+            # Transformation Phase 1.1: the visual dimension,
+            # EVALUATED on sampled frames of each downloaded file
+            # (services/frame_verification) — the dimension the
+            # metadata-only era recorded as not_evaluated under
+            # AM-028, a carve-out the founder's takeover mandate
+            # (2026-11-21) superseded. Derived from the candidate
+            # records and accepted assets themselves, never a
+            # parallel counter. Watermark presence is a provenance
+            # signal only (founder ruling 2026-11-22): counted
+            # here, never a rejection.
+            "visual_frame": {
+                "authority": (
+                    "takeover_mandate_2026-11-21 / "
+                    "transformation_plan_phase_1_1; supersedes AM-028"
+                ),
+                "evaluated_assets": sum(
+                    1 for a in real_assets if a.get("frame_check")
+                ),
+                "rejected_events": sum(
+                    1 for r in candidate_records
+                    if r.get("stage") == "frame_verification"
+                ),
+                "watermarked_preview_detected": sum(
+                    1 for a in real_assets
+                    if (a.get("frame_check") or {}).get(
+                        "watermarked_preview"
+                    )
+                ),
+            },
         },
         # VA-09: rights honesty. RIGHTS_POLICY=allow_all is the
         # founder's operating policy: assets are accepted on relevance
