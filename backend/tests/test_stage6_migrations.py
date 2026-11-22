@@ -84,13 +84,34 @@ def test_upgrade_from_0003_preserves_rows(migration_db):
         conn.commit()
     finally:
         conn.close()
+    # Phase 8 path (0006 -> backfill -> 0007): the additive step
+    # lands first, then the operator step the migrations are
+    # designed around — seed a founder and backfill ownership,
+    # exactly as scripts/seed_founder.py + backfill_ownership.py
+    # did on the preview database — before 0007 enforces NOT NULL.
+    # (0007 refusing an un-backfilled database is covered by the
+    # Phase 8.1 tests; this test's subject is row preservation.)
+    command.upgrade(cfg, "0006_users_and_ownership")
+    conn = sqlite3.connect(migration_db)
+    try:
+        conn.execute(
+            "INSERT INTO users (id, email, password_hash, role, status,"
+            " created_at) VALUES ('founder-1', 'founder@example.com',"
+            " 'hash', 'super_admin', 'active', '2026-11-22 00:00:00')"
+        )
+        conn.execute("UPDATE projects SET owner_id = 'founder-1'")
+        conn.commit()
+    finally:
+        conn.close()
     command.upgrade(cfg, "head")
     conn = sqlite3.connect(migration_db)
     try:
-        rows = conn.execute("SELECT id, script FROM projects").fetchall()
+        rows = conn.execute(
+            "SELECT id, script, owner_id FROM projects"
+        ).fetchall()
     finally:
         conn.close()
-    assert rows == [("p1", "A script.")]
+    assert rows == [("p1", "A script.", "founder-1")]
     assert "project_revisions" in _tables(migration_db)
 
 
