@@ -58,7 +58,7 @@ from database import (
 )
 
 BACKEND = Path(__file__).resolve().parent.parent
-HEAD = "0005_revision_root_uniqueness"
+HEAD = "0007_ownership_required"
 
 
 def _alembic_cfg():
@@ -82,11 +82,22 @@ def adhoc_db(tmp_path, monkeypatch):
 def _insert_project(db_path, project_id):
     conn = sqlite3.connect(str(db_path))
     try:
+        # Phase 8: projects carry a NOT NULL owner on migrated
+        # databases (0007), so seed the owning user first. The
+        # create_all flavour of this helper's database has the same
+        # users table (models), so one code path serves both.
+        owner_id = str(uuid.uuid4())
         conn.execute(
-            "INSERT INTO projects (id, script, category, status, created_at)"
-            " VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO users (id, email, password_hash, role, status,"
+            " created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (owner_id, f"{owner_id}@example.invalid", "x", "user",
+             "active", "2026-11-22 00:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO projects (id, script, category, status, created_at,"
+            " owner_id) VALUES (?, ?, ?, ?, ?, ?)",
             (project_id, "A script.", "Documentary", "created",
-             "2026-11-20 00:00:00"),
+             "2026-11-20 00:00:00", owner_id),
         )
         conn.commit()
     finally:
@@ -106,7 +117,7 @@ def _project_rows(db_path):
 # ---------------------------------------------------------------------
 
 
-def test_migration_head_is_0005():
+def test_migration_head_is_0007():
     assert migration_head() == HEAD
 
 

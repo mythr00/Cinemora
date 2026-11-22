@@ -21,12 +21,210 @@ from database import Base
 JSONVariant = JSON().with_variant(JSONB, "postgresql")
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class User(Base):
+    """A platform account (Phase 8.1, multi-user SaaS migration).
+
+    Schema authority: migrations/versions/0006_users_and_ownership.py.
+    Passwords are Argon2id hashes (services/auth.py); the reset-token
+    columns hold only the token's SHA-256 plus expiry, never the
+    token itself. `role` is the Phase 7 ladder (user < admin <
+    super_admin) as one column — roles are never combined, so no
+    join table (design 02 §1.1).
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    # Stored lowercased; uniqueness is case-insensitive because every
+    # write path normalises (services/auth.py / seed script).
+    email: Mapped[str] = mapped_column(
+        String(320), nullable=False, unique=True, index=True
+    )
+
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    display_name: Mapped[str] = mapped_column(String(200), nullable=True)
+
+    role: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="user"
+    )
+
+    # active / disabled — disabled means no login, sessions revoked,
+    # data retained (design 02 §1.1).
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active"
+    )
+
+    email_verified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    password_reset_token_hash: Mapped[str] = mapped_column(
+        String(64), nullable=True
+    )
+
+    password_reset_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    last_login_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class Plan(Base):
+    """A subscription plan record (Phase 8.1; design 02 §5.1).
+
+    Operator-managed seed data (scripts/seed_founder.py ensures the
+    founder/free/pro/studio rows); limits are enforced at the points
+    named in 02 §5.3 by Phase 8.3. NULL limit = unlimited.
+    """
+
+    __tablename__ = "plans"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    name: Mapped[str] = mapped_column(
+        String(50), nullable=False, unique=True
+    )
+
+    max_concurrent_runs: Mapped[int] = mapped_column(
+        nullable=False, default=1
+    )
+
+    max_runs_per_period: Mapped[int] = mapped_column(nullable=True)
+
+    period: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="month"
+    )
+
+    max_script_chars: Mapped[int] = mapped_column(nullable=True)
+
+    max_storage_bytes: Mapped[int] = mapped_column(nullable=True)
+
+    max_upload_bytes: Mapped[int] = mapped_column(nullable=True)
+
+    # 0 = standard lane, 1 = priority lane (design 03 §3.1).
+    priority_tier: Mapped[int] = mapped_column(
+        nullable=False, default=0
+    )
+
+    is_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+
+class UserSubscription(Base):
+    """One user's subscription to a plan (Phase 8.1; design 02 §5.1).
+
+    Exactly ONE active subscription per user, enforced by the
+    partial unique index below (both dialects, the 0005 pattern).
+    `billing_provider` / `external_id` are the payment seam only:
+    no billing integration exists; until the founder approves one,
+    every subscription is founder-granted and `status` transitions
+    are operator actions.
+    """
+
+    __tablename__ = "user_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    plan_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("plans.id"), nullable=False
+    )
+
+    # active / cancelled / past_due
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active"
+    )
+
+    current_period_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    current_period_end: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    billing_provider: Mapped[str] = mapped_column(String(50), nullable=True)
+
+    external_id: Mapped[str] = mapped_column(String(200), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_user_subscriptions_one_active",
+            "user_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+
+class UserPreference(Base):
+    """One user's preferences document (Phase 8.1; design 02 §6).
+
+    A single JSON document with namespaced sections (`studio`,
+    `assistant`, `notifications`) — one preferences store for the
+    whole platform; the assistant section keeps Phase 6's rule that
+    only explicitly user-approved key/values are stored.
+    """
+
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), primary_key=True
+    )
+
+    document: Mapped[dict] = mapped_column(JSONVariant, nullable=True)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        onupdate=_utcnow,
+    )
+
+
 class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[str] = mapped_column(
         String(36),
         primary_key=True,
+    )
+
+    # Phase 8.1 ownership (design 02 §3.1): added nullable by
+    # migration 0006, backfilled to the founder, enforced NOT NULL
+    # by migration 0007 on migrated databases. The ORM deliberately
+    # keeps the column nullable: legacy test fixtures build schemas
+    # with create_all and insert ownerless projects directly, and
+    # the enforcement that matters lives in the migrated schema +
+    # the API layer, which never creates an ownerless project
+    # (Phase 8.2 owner choke point). Runs carry a denormalised copy
+    # so queue/fairness queries never join (02 §4.1).
+    owner_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
     )
 
     script: Mapped[str] = mapped_column(
@@ -87,6 +285,15 @@ class ProductionRun(Base):
         nullable=False,
     )
 
+    # Phase 8.1: denormalised owner copy (the project's owner at
+    # submission time) — see Project.owner_id for the enforcement
+    # note. Indexed with status for dispatcher fairness queries.
+    owner_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+
     # queued -> running -> completed / failed / cancelled, plus
     # awaiting_approval: the plan-review gate parks an analysed run
     # there (jobs.run_analysis_phase via run_ledger.set_run_status)
@@ -144,6 +351,11 @@ class ProductionRun(Base):
             "status",
         ),
         Index("ix_production_runs_status_created", "status", "created_at"),
+        Index(
+            "ix_production_runs_owner_status",
+            "owner_id",
+            "status",
+        ),
     )
 
 

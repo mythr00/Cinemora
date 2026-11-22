@@ -6,6 +6,8 @@
 # editor file uploads via FastAPI); dev/test: pytest, alembic.
 alembic==1.20.1
 annotated-doc==0.0.7
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.2.0
 annotated-types==0.8.0
 anyio==4.16.0
 av==19.0.2
@@ -14,6 +16,7 @@ charset-normalizer==3.5.2
 click==8.5.1
 croniter==7.0.0
 ctranslate2==4.9.0
+fakeredis==2.40.0
 fastapi==0.165.0
 faster-whisper==1.2.1
 filelock==4.2.12
