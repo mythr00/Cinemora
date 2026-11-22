@@ -576,6 +576,7 @@ def import_production(project_id, run) -> dict:
                         ),
                         "assignment": item.get("assignment"),
                         "transition": item.get("transition") or "cut",
+                        "transition_reason": item.get("transition_reason"),
                         "asset": asset,
                         "graphic": graphic,
                         # Phase 6 (AM-011): the item's composition
@@ -908,6 +909,7 @@ def _gap_item(sentence_number, scene_number, duration, reason, extra=None):
         "duration": round(float(duration), 3),
         "assignment": "gap",
         "transition": "cut",
+        "transition_reason": None,
         "asset": None,
         "graphic": None,
         "classification": "gap",
@@ -1682,6 +1684,7 @@ def _op_add_clip(doc, op, ctx):
         "duration": round(duration, 3),
         "assignment": "editor_added",
         "transition": "cut",
+        "transition_reason": None,
         "asset": asset,
         "graphic": None,
         "classification": classify_asset(asset, "clip"),
@@ -2614,6 +2617,7 @@ def _renderer_item(item) -> dict:
         "clip_start": asset.get("clip_start") or 0,
         "motion": "zoom_in",
         "transition": item.get("transition") or "cut",
+        "transition_reason": item.get("transition_reason"),
         # Phase 6 (AM-011): the item's composition plan rides into
         # the revision render so the editor's render applies the
         # same layers the production render applied.

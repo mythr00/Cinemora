@@ -983,6 +983,159 @@ def concatenate_clips(clips, output_path, expected_frames=None):
     return True
 
 
+def _build_transition_join(all_clips, clip_frames, plan, project_dir):
+    """Build the frame-exact join sequence for honoured transitions.
+
+    For each honoured transition into clip i (window W): clip i-1's
+    main part keeps its first (frames - W) frames, a 2W-frame
+    transition segment replaces clip i-1's last W frames + clip i's
+    first W frames, and clip i's main part starts at frame W. The
+    sequence therefore sums to exactly the original total.
+
+    Returns (join_clips, info) on success, or (None, info) when the
+    caller must fall back to the untouched concat path.
+    """
+    from services import transitions as _transitions
+
+    honoured = {
+        int(record["index"]): record
+        for record in plan
+        if record.get("honoured")
+    }
+    info = {
+        "status": "applied",
+        "applied": [],
+        "downgraded": [
+            {
+                "index": record["index"],
+                "requested_transition": record.get("requested_transition"),
+                "transition_reason": record.get("transition_reason"),
+                "downgrade_cause": record.get("downgrade_cause"),
+            }
+            for record in plan
+            if record.get("downgraded")
+        ],
+        "records": plan,
+        "fallback_reason": None,
+    }
+    if not honoured:
+        info["status"] = "all_cut"
+        return None, info
+
+    # Effective windows, shrunk where a short clip carries both an
+    # incoming and an outgoing transition whose windows would
+    # together exceed its frame count.
+    effective = {
+        index: int(record["window_frames"])
+        for index, record in honoured.items()
+    }
+    for clip_index, frames in enumerate(clip_frames):
+        incoming = effective.get(clip_index, 0)
+        outgoing = effective.get(clip_index + 1, 0)
+        overflow = incoming + outgoing - int(frames)
+        if overflow <= 0:
+            continue
+        cut_outgoing = min(overflow, outgoing)
+        effective[clip_index + 1] = outgoing - cut_outgoing
+        overflow -= cut_outgoing
+        if overflow > 0:
+            effective[clip_index] = incoming - min(overflow, incoming)
+    for index in list(effective):
+        record = honoured[index]
+        if effective[index] != int(record["window_frames"]):
+            record = {**record, "window_frames_original": record["window_frames"]}
+            honoured[index] = record
+        if effective[index] < 1:
+            effective.pop(index)
+            info["downgraded"].append({
+                "index": index,
+                "requested_transition": record.get("requested_transition"),
+                "transition_reason": record.get("transition_reason"),
+                "downgrade_cause": "insufficient_clip_frames",
+            })
+            record["honoured"] = False
+            record["downgraded"] = True
+            record["downgrade_cause"] = "insufficient_clip_frames"
+            record["transition"] = "cut"
+    if not effective:
+        info["status"] = "all_cut"
+        return None, info
+
+    workdir = Path(project_dir) / "transitions"
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    segments = {}
+    for index, window in sorted(effective.items()):
+        record = honoured[index]
+        segment = _transitions.build_transition_segment(
+            all_clips[index - 1],
+            all_clips[index],
+            record["transition"],
+            window,
+            workdir / f"transition_{index:04d}.mp4",
+        )
+        if segment is None:
+            info["status"] = "fallback_concat"
+            info["fallback_reason"] = (
+                f"transition_build_failed:index={index}:kind={record['transition']}"
+            )
+            return None, info
+        segments[index] = segment
+        info["applied"].append({
+            "index": index,
+            "transition": record["transition"],
+            "transition_reason": record.get("transition_reason"),
+            "window_frames": segment["window_frames"],
+            "requested_window_frames": segment["requested_window_frames"],
+            "window_clamped": segment["window_clamped"],
+            "segment_frames": segment["frames"],
+            "segment": segment["path"],
+            "filtergraph": segment["filtergraph"],
+        })
+
+    join_clips = []
+    total = 0
+    for clip_index, clip in enumerate(all_clips):
+        incoming = effective.get(clip_index, 0)
+        outgoing = effective.get(clip_index + 1, 0)
+        if clip_index in segments:
+            join_clips.append(segments[clip_index]["path"])
+            total += segments[clip_index]["frames"]
+        main_frames = int(clip_frames[clip_index]) - incoming - outgoing
+        if main_frames < 0:
+            info["status"] = "fallback_concat"
+            info["fallback_reason"] = f"negative_main_part:clip={clip_index}"
+            return None, info
+        if main_frames == 0:
+            continue
+        if incoming == 0 and outgoing == 0:
+            join_clips.append(clip)
+            total += main_frames
+            continue
+        main_path = _transitions.trim_clip_frames(
+            clip,
+            incoming,
+            main_frames,
+            workdir / f"main_{clip_index:04d}.mp4",
+        )
+        if main_path is None:
+            info["status"] = "fallback_concat"
+            info["fallback_reason"] = f"main_trim_failed:clip={clip_index}"
+            return None, info
+        join_clips.append(main_path)
+        total += main_frames
+
+    expected = sum(int(frames) for frames in clip_frames)
+    if total != expected:
+        info["status"] = "fallback_concat"
+        info["fallback_reason"] = (
+            f"join_frame_total_mismatch:built={total}:expected={expected}"
+        )
+        return None, info
+    info["join_frame_total"] = total
+    return join_clips, info
+
+
 def render_timeline(scenes, project_dir, expected_duration=None):
     project_dir = Path(project_dir)
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -1058,6 +1211,60 @@ def render_timeline(scenes, project_dir, expected_duration=None):
         expected_total_frames = supplied_frames
         expected_total_duration = exact_duration_from_frames(expected_total_frames)
 
+    # F9 (Wave 1): transitions. render_scene returns exactly one
+    # clip per timeline item (its audit raises otherwise, and
+    # holdovers still produce one clip for their item), so the
+    # flattened items pair 1:1 with all_clips. If that alignment
+    # cannot be verified here, the untouched concat path is used
+    # and the reason recorded.
+    join_clips = all_clips
+    flat_items = flatten_timeline_items(scenes)
+    clip_frames = [
+        audit_item.get("actual_frames")
+        for audit in scene_audits
+        for audit_item in audit.get("items", [])
+    ]
+    if len(flat_items) != len(all_clips) or len(clip_frames) != len(all_clips) \
+            or any(frames is None for frames in clip_frames):
+        transitions_info = {
+            "status": "fallback_concat",
+            "applied": [],
+            "downgraded": [],
+            "records": [],
+            "fallback_reason": (
+                "clip_item_alignment_unverified:"
+                f"items={len(flat_items)}:clips={len(all_clips)}:"
+                f"audited_clip_frames={len(clip_frames)}"
+            ),
+        }
+    else:
+        from services import transitions as _transitions
+
+        _plan = _transitions.plan_transitions(flat_items)
+        if any(record.get("honoured") for record in _plan):
+            _built, transitions_info = _build_transition_join(
+                all_clips, clip_frames, _plan, project_dir
+            )
+            if _built is not None:
+                join_clips = _built
+        else:
+            transitions_info = {
+                "status": "all_cut",
+                "applied": [],
+                "downgraded": [
+                    {
+                        "index": record["index"],
+                        "requested_transition": record.get("requested_transition"),
+                        "transition_reason": record.get("transition_reason"),
+                        "downgrade_cause": record.get("downgrade_cause"),
+                    }
+                    for record in _plan
+                    if record.get("downgraded")
+                ],
+                "records": _plan,
+                "fallback_reason": None,
+            }
+
     audit_file = project_dir / "renderer_timing_audit.json"
     audit_payload = {
         "fps": FPS,
@@ -1077,6 +1284,8 @@ def render_timeline(scenes, project_dir, expected_duration=None):
         "holdover_count": sum(
             int(audit.get("holdover_count") or 0) for audit in scene_audits
         ),
+        # F9 (Wave 1): every applied and downgraded transition.
+        "transitions": transitions_info,
     }
     # Atomic (Stage 4): the timing audit is read back by the
     # production report — never observable half-written. Original
@@ -1094,7 +1303,7 @@ def render_timeline(scenes, project_dir, expected_duration=None):
             pass
 
     success = concatenate_clips(
-        all_clips,
+        join_clips,
         raw_video,
         expected_frames=expected_total_frames,
     )
