@@ -84,6 +84,9 @@ def test_producer_maps_recorded_fact_to_starved_sentence():
     )
     assert record == {
         "starved_sentences": 1, "produced": 1,
+        # Phase 2.3: the script-fact fallback counters ride on the
+        # record (zero here — the asset path produced).
+        "produced_script_fact": 0, "produced_kb_fact": 0,
         "no_verified_asset_in_scene": 0, "no_recorded_fact": 0,
         "no_recorded_identity": 0,
     }

@@ -96,9 +96,13 @@ def test_genres_catalogue_matches_pack_data(client):
     assert response.status_code == 200, response.text
     genres = response.json()["genres"]
 
-    # Exactly the real pack ids — no more, no fewer.
-    assert {g["id"] for g in genres} == {"history", "true_crime", "general"}
-    assert len(genres) == 3
+    # Exactly the real pack ids — no more, no fewer (five packs
+    # since Transformation Phase 2.1/2.2 added engineering and
+    # industrial).
+    assert {g["id"] for g in genres} == {
+        "history", "true_crime", "general", "engineering", "industrial",
+    }
+    assert len(genres) == 5
 
     for entry in genres:
         pack = genre_packs.load_pack(entry["id"])
@@ -156,11 +160,15 @@ def test_voices_catalogue_matches_installed_voices(client):
     assert body["default_voice_id"] == narration.DEFAULT_VOICE_ID == "default"
     voices = body["voices"]
 
-    # Exactly the real catalogue ids (Stage 3J: one installed voice
-    # plus its "default" alias) — nothing invented, nothing missing.
+    # Exactly the real catalogue ids (Stage 3J: the installed
+    # voices plus the "default" alias; Phase 2.4 installed the
+    # second voice, en_US-ryan-medium) — nothing invented,
+    # nothing missing.
     assert {v["id"] for v in voices} == set(narration.VOICE_CATALOGUE)
-    assert {v["id"] for v in voices} == {"en_US-lessac-medium", "default"}
-    assert len(voices) == 2
+    assert {v["id"] for v in voices} == {
+        "en_US-lessac-medium", "en_US-ryan-medium", "default",
+    }
+    assert len(voices) == 3
 
     by_id = {v["id"]: v for v in voices}
     canonical = by_id["en_US-lessac-medium"]
