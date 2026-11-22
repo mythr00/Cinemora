@@ -25,10 +25,23 @@ def test_templates_resolve_easings_through_registry():
 
 
 def test_registry_covers_all_fifteen_templates():
+    # Wave 1 (Phase 2.5) supersedes the count: the registry grew
+    # from 15 to 31 — the original fifteen plus the sixteen Wave 1
+    # registrations (F1 charts, F3 map variants, F4 investigation
+    # variants, F5 schematic variants, F6/F7 text treatments, F8
+    # parallax). The fifteen-template vocabulary itself is intact.
     names = set(templates.TEMPLATES) | set(templates_v2.V2_TEMPLATES)
-    assert len(names) == 15
+    assert len(names) == 31
     # The run-10 T5 guarantee template is part of the vocabulary.
     assert "closing_card" in names
+    for name in (
+        "line_chart", "pie_chart", "border_map", "route_map",
+        "trade_route_map", "military_map", "exploded_view",
+        "mechanical_cutaway", "blueprint_section", "red_string_board",
+        "newspaper_montage", "profile_reveal", "photo_parallax",
+        "text_overlay", "text_highlight", "archival_title",
+    ):
+        assert name in names, name
 
 
 def test_easing_behaviour_unchanged_at_sample_points():
