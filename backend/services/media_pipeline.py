@@ -34,6 +34,8 @@ from services import run_metrics
 from services import rejection_diagnostics
 from services import story_understanding as story
 from services import tier_ladder
+from services import url_hygiene
+from services import provider_health
 from services import visual_identity
 from services.media_probe import probe_image, probe_video
 from services.http_retry import request_with_retry, classify_error
@@ -2047,6 +2049,19 @@ def _image_technical_failures(probe, minimums=None):
     return failures
 
 
+# Run-11 fix 2: outer attempts for one image download.
+# download_image already retries transport errors / 429 / 5xx
+# internally (http_retry); this outer loop exists for the failures
+# that surface only when the response body is consumed or that a
+# fresh connection fixes (premature EOF, connection reset) — and
+# it is deliberately small: a persistently dead URL must fail
+# fast, and a 429 is NEVER retried here (the rate limit is
+# respected, recorded into provider health, and left for the
+# scope backoff to govern).
+IMAGE_DOWNLOAD_MAX_ATTEMPTS = 2
+_IMAGE_RETRY_BASE_DELAY_SECONDS = 0.5
+
+
 def _download_image_detailed(image_url, output_path):
     """Download + validate an image with an explicit reason (VA-13).
 
@@ -2057,11 +2072,35 @@ def _download_image_detailed(image_url, output_path):
     output_path = Path(output_path)
     if not image_url:
         return False, "no_url"
-    try:
-        if output_path.exists():
-            output_path.unlink()
-        download_image(image_url, str(output_path))
-    except Exception as error:
+    error = None
+    for attempt in range(1, IMAGE_DOWNLOAD_MAX_ATTEMPTS + 1):
+        try:
+            if output_path.exists():
+                output_path.unlink()
+            download_image(image_url, str(output_path))
+            error = None
+            break
+        except Exception as caught:
+            error = caught
+            status = getattr(
+                getattr(error, "response", None), "status_code", None
+            )
+            if status == 429 or "429" in str(error):
+                # Run-11 fix 2: the 429 is provider-health
+                # evidence (repeated 429s back the scope off for
+                # the rest of the production); it is not retried.
+                provider_health.record_rate_limit(
+                    provider_health.scope_for_url(image_url)
+                )
+                break
+            if (
+                attempt < IMAGE_DOWNLOAD_MAX_ATTEMPTS
+                and classify_error(error).get("transient")
+            ):
+                _time.sleep(_IMAGE_RETRY_BASE_DELAY_SECONDS * attempt)
+                continue
+            break
+    if error is not None:
         print(f"IMAGE DOWNLOAD FAILED: {error}")
         try:
             if output_path.exists():
@@ -2136,11 +2175,42 @@ def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, star
 
     raw_path = output_path.with_name(output_path.stem + "_raw.mp4")
     try:
-        response = _http().get(url, timeout=60, stream=True)
-        response.raise_for_status()
-        with open(raw_path, "wb") as handle:
-            for chunk in response.iter_content(64 * 1024):
-                handle.write(chunk)
+        # Run-11 fix 2: the streamed full download gets ONE
+        # bounded retry on a transient transport failure (premature
+        # EOF / connection reset mid-body — the failure class that
+        # killed image downloads in run 11). A completed-but-tiny
+        # body is a definitive answer and is not retried; a 429 is
+        # recorded into provider health and not retried either.
+        _stream_error = None
+        for _stream_attempt in range(2):
+            try:
+                response = _http().get(url, timeout=60, stream=True)
+                response.raise_for_status()
+                with open(raw_path, "wb") as handle:
+                    for chunk in response.iter_content(64 * 1024):
+                        handle.write(chunk)
+                _stream_error = None
+                break
+            except Exception as stream_error:
+                _stream_error = stream_error
+                _stream_status = getattr(
+                    getattr(stream_error, "response", None),
+                    "status_code", None,
+                )
+                if _stream_status == 429 or "429" in str(stream_error):
+                    provider_health.record_rate_limit(
+                        provider_health.scope_for_url(url)
+                    )
+                    raise
+                if not classify_error(stream_error).get("transient"):
+                    raise
+                try:
+                    if raw_path.exists():
+                        raw_path.unlink()
+                except OSError:
+                    pass
+        if _stream_error is not None:
+            raise _stream_error
         if not raw_path.exists() or raw_path.stat().st_size < 10_000:
             return False
         # MS-3: honour the evidence-backed start_time (was silently
@@ -2287,6 +2357,14 @@ def download_video_clip(
     if returncode != 0:
         print("yt-dlp clip extraction failed:")
         print((stderr or "")[-3000:])
+        # Run-11 fix 2: a 429 inside a failed extraction is
+        # provider-health evidence for the clip's scope — repeated
+        # 429s back the scope off instead of being retried into
+        # the ground by later candidates.
+        if "429" in str(stderr or ""):
+            provider_health.record_rate_limit(
+                provider_health.scope_for_url(video_url)
+            )
 
         cleanup_temp_files(output_path.parent)
 
@@ -2497,6 +2575,11 @@ def reset_media_caches():
     _yt_info_failed.clear()
     _yt_transcript_failed.clear()
     _yt_info_locks.clear()
+    # Run-11 fixes 1+2: redirect resolutions and provider health
+    # are per-production state too — a new production re-resolves
+    # wrappers and re-earns each provider scope's trust.
+    url_hygiene.clear_resolution_cache()
+    provider_health.reset()
     _FAILED_DOWNLOAD_URLS.clear()
     _DISCOVERY_FAILURES.clear()
     _SEGMENT_BASIS.clear()
@@ -2624,6 +2707,13 @@ def _youtube_info(key):
         if code != 0 or not stdout:
             if "429" in str(stderr or ""):
                 source_cache.yt_breaker_trip(90)
+                # Run-11 fix 2: the 429 is also production-scope
+                # provider-health evidence — repeated 429s back
+                # the scope off for the rest of the production,
+                # beyond this breaker's 90-second pause.
+                provider_health.record_rate_limit(
+                    provider_health.scope_for_url(key)
+                )
                 print(f"YOUTUBE INFO 429: {key} ({elapsed:.1f}s) - pausing YouTube calls")
             else:
                 _yt_info_failed.add(key)
@@ -2803,6 +2893,11 @@ def _get_youtube_transcript(url):
         except _HTTPError as exc:
             if exc.code == 429:
                 source_cache.yt_breaker_trip(90)
+                # Run-11 fix 2: production-scope provider-health
+                # evidence, as at the yt-dlp info path.
+                provider_health.record_rate_limit(
+                    provider_health.scope_for_url(key)
+                )
                 source_cache.profile_upsert(
                     key,
                     transcript_status="rate_limited",
@@ -5257,6 +5352,58 @@ def _candidate_id_for(candidate):
     return "cand_" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
 
 
+def _apply_url_hygiene(candidate):
+    """Run-11 fix 1: resolve redirector-wrapper URLs on ONE
+    candidate, in place, before it is identified, gated, scored
+    or fetched.
+
+    The candidate's primary URL (video_url / url / link /
+    image_url, first non-empty) is the address every later stage
+    would hand to yt-dlp or the image fetcher. When it is a
+    redirector wrapper (services.url_hygiene), the recovered
+    destination replaces EVERY field that carried the wrapper and
+    the wrapper is preserved on ``url_resolved_from`` as
+    provenance. When no destination can be recovered, the
+    candidate is stamped ``_url_hygiene_failure`` and
+    _uve_verify_all rejects it at the discovery stage with the
+    typed UNRESOLVABLE_REDIRECTOR reason — no gate call, no
+    scoring, no segment-evidence or download attempt is spent on
+    the wrapper. The provenance page URL (source_url) is rewritten
+    only when its own resolution succeeds; a failed source_url
+    never condemns a fetchable candidate. Returns True when the
+    candidate may proceed, False when it must be rejected."""
+    if not isinstance(candidate, dict):
+        return True
+    primary = ""
+    for field in ("video_url", "url", "link", "image_url"):
+        value = str(candidate.get(field) or "").strip()
+        if value:
+            primary = value
+            break
+    if primary and url_hygiene.is_redirector_url(primary):
+        resolved, status = url_hygiene.resolve_candidate_url(primary)
+        candidate["_url_hygiene_status"] = status
+        if not resolved:
+            candidate["_url_hygiene_failure"] = (
+                rejection_diagnostics.UNRESOLVABLE_REDIRECTOR_REASON
+            )
+            return False
+        for field in ("video_url", "url", "link", "image_url"):
+            if str(candidate.get(field) or "").strip() == primary:
+                candidate[field] = resolved
+        candidate["url_resolved_from"] = primary
+    source_url = str(candidate.get("source_url") or "").strip()
+    if (
+        source_url
+        and source_url != primary
+        and url_hygiene.is_redirector_url(source_url)
+    ):
+        resolved, _status = url_hygiene.resolve_candidate_url(source_url)
+        if resolved:
+            candidate["source_url"] = resolved
+    return True
+
+
 def _uve_verify_all(candidates, scenario, bible, shot_need=None):
     scored, seen = [], set()
 
@@ -5296,6 +5443,35 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
         )
 
     for candidate in candidates:
+        # Run-11 fix 1 (URL hygiene): a redirector wrapper is
+        # resolved to its real destination BEFORE the candidate is
+        # identified, gated, scored or fetched — the wrapper
+        # itself must never reach yt-dlp or the image fetcher. An
+        # unresolvable wrapper is rejected here, at the discovery
+        # stage, with its typed reason (run 11: 69 of 108 download
+        # failures were segment-evidence deaths on google.com/goto
+        # wrappers that were never real media addresses).
+        if not _apply_url_hygiene(candidate):
+            item = dict(candidate)
+            item["candidate_id"] = _candidate_id_for(item)
+            item["reject_reason"] = (
+                rejection_diagnostics.UNRESOLVABLE_REDIRECTOR_REASON
+            )
+            item["rejection_stage"] = "discovery"
+            item["verification"] = {
+                "accepted": False,
+                "score": 0,
+            }
+            item["universal_score"] = 0
+            item["relevance_score"] = 0
+            scored.append(item)
+            print(
+                "      REJECT "
+                f"{rejection_diagnostics.UNRESOLVABLE_REDIRECTOR_REASON}: "
+                f"{result_title(candidate)[:80]}"
+            )
+            continue
+
         candidate["candidate_id"] = _candidate_id_for(candidate)
         key = _uve_candidate_key(candidate)
 
@@ -6175,6 +6351,33 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                 )
             continue
 
+        # Run-11 fix 2 (provider health): a provider scope backed
+        # off for repeated HTTP 429s is refused BEFORE any request
+        # is made. The refusal is recorded with its typed reason;
+        # the candidate is NOT entered into the failed-download
+        # guard (the scope is at fault, not the candidate), no
+        # download attempt is counted (nothing was requested), and
+        # the loop moves on to candidates from scopes that
+        # actually deliver.
+        _health_scope = provider_health.scope_for_url(candidate_url)
+        if _health_scope and provider_health.is_backed_off(_health_scope):
+            if failures is not None:
+                failures.append(
+                    {
+                        "provider": candidate.get("provider")
+                        or candidate.get("source")
+                        or "unknown",
+                        "url": candidate_url,
+                        "reason": (
+                            rejection_diagnostics
+                            .PROVIDER_BACKED_OFF_REASON
+                        ),
+                        "candidate_id": candidate.get("candidate_id"),
+                        "stage": "download",
+                    }
+                )
+            continue
+
         # Stage 0 metrics: every real download attempt passes
         # through this loop (previously-failed URLs skipped above are
         # not attempts — nothing is requested for them).
@@ -6185,6 +6388,10 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
             sentence_number,
             asset_index,
         )
+        # Run-11 fix 2: the attempt's outcome is provider-health
+        # evidence — per-scope download success is a measured fact
+        # of the production, not an anecdote.
+        provider_health.record_download_outcome(_health_scope, bool(asset))
 
         if not asset:
             # Phase 3 / AM-016: a failure from a segment-stamped
@@ -7790,6 +7997,11 @@ def _uve_search_and_pick(
     scene_stats["rejection_reasons"] = (
         rejection_diagnostics.primary_reason_counts(_records)
     )
+    # Run-11 fix 2: the production's provider-health table so far
+    # rides on the scene stats; the asset report publishes the
+    # last (fullest) snapshot as the production's measured
+    # per-provider download evidence.
+    scene_stats["provider_health"] = provider_health.snapshot()
     if accepted_asset is not None:
         return accepted_asset
     if coverage_accepted_assets:

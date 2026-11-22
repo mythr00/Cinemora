@@ -166,6 +166,11 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     candidate_records: list = []
     query_diagnostics: list = []
     beat_sufficiency: list = []
+    # Run-11 fix 2: per-production provider download health. The
+    # snapshot is cumulative across the production (not per
+    # scene), so the LAST scene snapshot a pass stamped is the
+    # production's final table.
+    provider_health_snapshot: dict = {}
 
     for scene in processed_scenes or []:
         if not isinstance(scene, dict):
@@ -192,6 +197,8 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                     funnel[stage] += int(count or 0)
                 except (TypeError, ValueError):
                     pass
+        if scene_stats.get("provider_health"):
+            provider_health_snapshot = scene_stats["provider_health"]
         download_failures.extend(scene_stats.get("download_failures") or [])
         for reason, count in (scene_stats.get("rejection_reasons") or {}).items():
             try:
@@ -1171,6 +1178,12 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             },
         },
         "download_failures": download_failures,
+        # Run-11 fix 2: measured per-provider-scope download
+        # health for the production — attempts / succeeded /
+        # failed / rate_limited / backed_off per scope (the fetch
+        # host), recorded by services.provider_health at every
+        # download attempt and every observed HTTP 429.
+        "provider_health": provider_health_snapshot,
         "rejection_reasons": dict(rejection_reasons),
         "discovery_failures": discovery_failures,
         # Phase 3 zero-vs-unknown: "recorded" only when at least one

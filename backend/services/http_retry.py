@@ -69,7 +69,17 @@ def classify_error(error) -> dict:
     lowered = name.lower()
     if "timeout" in lowered:
         return {"error_class": "timeout", "http_status": None, "transient": True}
-    if "connection" in lowered or "transport" in lowered:
+    if (
+        "connection" in lowered
+        or "transport" in lowered
+        # Run-11 fix 2: a response that ends prematurely mid-body
+        # (requests' ChunkedEncodingError over a urllib3
+        # ProtocolError) is a transport failure — the server sent
+        # no definitive answer, and a bounded retry is the correct
+        # response.
+        or "chunked" in lowered
+        or "protocol" in lowered
+    ):
         return {"error_class": "transport", "http_status": None, "transient": True}
     return {"error_class": lowered, "http_status": None, "transient": None}
 

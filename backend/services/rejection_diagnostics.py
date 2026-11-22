@@ -66,6 +66,7 @@ import hashlib
 # "primary" (the one emitted by the terminating stage); events are
 # stamped with their stage at the point of rejection.
 STAGE_ORDER = (
+    "discovery",
     "dedupe",
     "metadata_gate",
     "scoring",
@@ -97,6 +98,21 @@ MISSING_KEY_REASON = "missing_candidate_key"
 # blocks, and the record must not pretend otherwise.
 PICK_LIMIT_REASON = "pick_limit_reached"
 
+# Run-11 fix 1 (URL hygiene): the reason recorded for a candidate
+# whose URL is a redirector wrapper (e.g. a google.com/goto token
+# from a search provider) whose real destination could not be
+# recovered at discovery time. The candidate is rejected at the
+# discovery stage — before the gate, before scoring, before any
+# segment-evidence or download attempt is spent on the wrapper.
+UNRESOLVABLE_REDIRECTOR_REASON = "unresolvable_redirector"
+
+# Run-11 fix 2 (provider health): the reason recorded on a download
+# failure entry when the candidate's provider scope is backed off
+# for the rest of the production after repeated HTTP 429s — the
+# fetch is refused before any request is made, so the candidate
+# itself is not marked failed and the refusal is data, not silence.
+PROVIDER_BACKED_OFF_REASON = "provider_backed_off"
+
 # ---------------------------------------------------------------------------
 # Closed rejection-reason vocabulary (Architecture Review C.A.4).
 #
@@ -117,6 +133,8 @@ PICK_LIMIT_REASON = "pick_limit_reached"
 # alias's drift from it was one of the defects C.A.3.4 names.
 # ---------------------------------------------------------------------------
 REJECTION_REASON_REGISTRY = {
+    # discovery (URL hygiene, run-11 fix 1)
+    "unresolvable_redirector": ("discovery",),
     # dedupe (this module, via _uve_verify_all)
     "duplicate_candidate": ("dedupe",),
     "missing_candidate_key": ("dedupe", "selection"),
@@ -149,6 +167,7 @@ REJECTION_REASON_REGISTRY = {
     "no_url": ("segment_evidence", "download"),
     "no_segment_evidence": ("segment_evidence", "download"),
     "download_failed": ("download",),
+    "provider_backed_off": ("download",),
     "previously_failed_this_run": ("download",),
     "invalid_media": ("download",),
     "probe_failed": ("download",),
