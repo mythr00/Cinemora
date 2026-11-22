@@ -2135,6 +2135,305 @@ def is_banned_provider(candidate):
     return False
 
 
+# ---------------------------------------------------------------------------
+# Run-9 quality fixes (2026-11-22): three defect classes that the
+# metadata verifier could not see in production run e95ac155 (the
+# Gabby Petito pipeline film) and that are now HARD rejections in the
+# verification chain itself, decided before any threshold comparison
+# exactly like the banned-provider and foreign-provenance rules:
+#
+# 1. WATERMARKED STOCK PREVIEWS. The sentence-9 visual was an Alamy
+#    comp image (provider "Alamy", host l450v.alamy.com) with the
+#    agency watermark burned across the frame. Stock agencies serve
+#    watermarked previews from their public CDNs by construction —
+#    a candidate whose provider label or URL host identifies a stock
+#    agency preview channel, or whose metadata says "watermark", is
+#    not usable documentary material whatever its topical score.
+#    (RIGHTS_POLICY is unaffected: this is a quality rejection of a
+#    watermarked preview, not a copyright gate — provenance is still
+#    recorded honestly for every other source.)
+#
+# 2. SOCIAL-PLATFORM / MEME-FORMAT SOURCES. A vertical TikTok-style
+#    "POV" meme clip about a DIFFERENT case illustrated the remains
+#    beat, and personal Facebook posts/videos were accepted for two
+#    other beats. User-generated social platforms (TikTok, Instagram,
+#    Facebook, X) and YouTube Shorts are re-upload/meme channels, not
+#    documentary sources; meme-format titles ("POV: ..." captions,
+#    #fyp) mark the same class in metadata.
+#
+# 3. POSITIVE GEOGRAPHY / FOREIGN-PERSON CONTRADICTIONS (in
+#    detect_contradiction below): the Alamy title literally read
+#    "Brighton UK" for a Moab, Utah beat, and the meme clip's title
+#    named Tristyn Bailey — a person from a different case who is in
+#    no bible. The bible-entity contradiction checks cannot see
+#    either: Brighton/UK are not bible places and Bailey is not a
+#    bible person. Both checks stay POSITIVE-only, mirroring the
+#    existing doctrine: absence of a signal is never a contradiction.
+# ---------------------------------------------------------------------------
+
+WATERMARKED_STOCK_REASON = "watermarked_stock_preview"
+SOCIAL_PLATFORM_REASON = "social_platform_source"
+MEME_FORMAT_REASON = "meme_format_source"
+CONTRADICTORY_GEOGRAPHY = "contradictory_geography"
+UNRELATED_NAMED_PERSON = "unrelated_named_person"
+
+# Stock agencies whose publicly served images are watermarked
+# previews/comps. Matched against the provider label's head token
+# and against URL host tokens, the same two signals
+# is_banned_provider inspects.
+_WATERMARKED_STOCK_PROVIDERS = frozenset({
+    "alamy", "dreamstime", "123rf", "depositphotos", "shutterstock",
+    "gettyimages", "istockphoto", "istock", "picfair", "stockfresh",
+    "bigstockphoto", "bigstock", "fotolia", "vectorstock", "pond5",
+})
+
+# User-generated social platforms: re-uploads and meme channels.
+_SOCIAL_HOSTS = frozenset({
+    "tiktok", "instagram", "facebook", "fb", "twitter", "x",
+    "snapchat", "reddit",
+})
+
+# Meme-format title markers: a leading "POV" caption (the meme
+# format's signature — a news title does not lead with it) and
+# engagement-bait hashtags.
+_MEME_TITLE_RE = re.compile(r"^\s*pov\s*[:\-]", re.IGNORECASE)
+_MEME_TAGS = ("#fyp", "#foryou", "#foryoupage", "#viralvideo", "#meme")
+
+
+def _candidate_urls(candidate):
+    if not isinstance(candidate, dict):
+        return []
+    return [
+        str(candidate.get(key) or "").strip()
+        for key in ("url", "video_url", "image_url", "download_url", "link")
+    ]
+
+
+def _url_host_tokens(raw_url):
+    if not raw_url:
+        return []
+    host = urlparse(
+        raw_url if "://" in raw_url else f"https://{raw_url}"
+    ).hostname or ""
+    return [t for t in re.split(r"[.\-_]", host.lower()) if t]
+
+
+def is_watermarked_stock(candidate):
+    """True when the candidate is a stock agency's watermarked
+    preview/comp (run-9 fix 1): the provider label or any URL host
+    names a stock agency, or the metadata says "watermark"."""
+    if not isinstance(candidate, dict):
+        return False
+    provider = candidate_provider(candidate)
+    if provider:
+        head = re.split(r"[\s./]", provider)[0]
+        if head in _WATERMARKED_STOCK_PROVIDERS:
+            return True
+    for raw in _candidate_urls(candidate):
+        if any(t in _WATERMARKED_STOCK_PROVIDERS for t in _url_host_tokens(raw)):
+            return True
+    meta = " ".join(
+        str(candidate.get(k) or "")
+        for k in ("title", "snippet", "description")
+    ).lower()
+    return "watermark" in meta
+
+
+def is_social_platform_source(candidate):
+    """True when the candidate comes from a user-generated social
+    platform or a YouTube Shorts URL (run-9 fix 3, source signal)."""
+    if not isinstance(candidate, dict):
+        return False
+    provider = candidate_provider(candidate)
+    if provider:
+        head = re.split(r"[\s./]", provider)[0]
+        if head in _SOCIAL_HOSTS:
+            return True
+    for raw in _candidate_urls(candidate):
+        tokens = _url_host_tokens(raw)
+        if any(t in _SOCIAL_HOSTS for t in tokens):
+            return True
+        lowered = raw.lower()
+        if "youtube.com/shorts/" in lowered or "youtu.be" in lowered and "/shorts" in lowered:
+            return True
+    return False
+
+
+def has_meme_format_title(candidate):
+    """True when the candidate's title carries meme-format markers
+    (run-9 fix 3, format signal): a leading "POV:" caption or
+    engagement-bait hashtags."""
+    if not isinstance(candidate, dict):
+        return False
+    title = str(candidate.get("title") or "")
+    if _MEME_TITLE_RE.search(title):
+        return True
+    lowered = title.lower()
+    return any(tag in lowered for tag in _MEME_TAGS)
+
+
+# Compact gazetteer for the geography contradiction: country name /
+# demonym / region / major-place markers, matched on normalised
+# text. Deliberately limited to the countries whose stock and news
+# footage commonly pollutes English-language documentary retrieval.
+_COUNTRY_MARKERS = {
+    "united states": {
+        "united states", "usa", "america", "american", "new york",
+        "los angeles", "chicago", "houston", "florida", "texas",
+        "california", "utah", "wyoming", "arizona", "colorado",
+        "ohio", "georgia", "virginia", "washington dc", "las vegas",
+        "miami", "boston", "seattle", "denver", "phoenix", "dallas",
+        "atlanta", "idaho", "montana", "nevada", "oregon",
+        "north carolina", "south carolina", "tennessee", "missouri",
+        "illinois", "pennsylvania", "michigan", "minnesota",
+        "wisconsin", "alabama", "louisiana", "kentucky", "oklahoma",
+        "connecticut", "iowa", "mississippi", "arkansas", "kansas",
+        "nebraska", "new mexico", "west virginia", "maryland",
+        "maine", "vermont", "new hampshire", "rhode island",
+        "delaware", "new jersey", "indiana", "massachusetts",
+        "hawaii", "alaska", "north dakota", "south dakota",
+    },
+    "united kingdom": {
+        "united kingdom", "uk", "britain", "british", "england",
+        "scotland", "scottish", "wales", "welsh",
+        "northern ireland", "london", "brighton", "manchester",
+        "liverpool", "birmingham", "glasgow", "edinburgh", "cardiff",
+        "belfast", "leeds", "sheffield", "bristol", "yorkshire",
+        "cornwall", "kent", "essex", "sussex",
+    },
+    "canada": {
+        "canada", "canadian", "toronto", "vancouver", "montreal",
+        "ottawa", "ontario", "quebec", "alberta",
+        "british columbia", "manitoba", "saskatchewan",
+    },
+    "australia": {
+        "australia", "australian", "sydney", "melbourne", "brisbane",
+        "perth", "adelaide", "queensland", "tasmania",
+        "new south wales",
+    },
+    "germany": {
+        "germany", "berlin", "munich", "hamburg",
+        "frankfurt", "cologne", "bavaria",
+    },
+    "france": {
+        "france", "paris", "marseille", "lyon", "normandy",
+        "provence",
+    },
+    "ireland": {"ireland", "irish", "dublin"},
+    "india": {
+        "india", "mumbai", "delhi", "bangalore", "kolkata",
+        "chennai", "hyderabad",
+    },
+    "south africa": {
+        "south africa", "south african", "johannesburg", "cape town",
+        "pretoria", "durban",
+    },
+    "new zealand": {
+        "new zealand", "auckland", "wellington", "christchurch",
+    },
+}
+
+
+def _countries_in_text(text):
+    """The gazetteer countries positively named in normalised text."""
+    if not text:
+        return set()
+    tokens = set(text.split())
+    found = set()
+    for country, markers in _COUNTRY_MARKERS.items():
+        for marker in markers:
+            if " " in marker:
+                if marker in text:
+                    found.add(country)
+                    break
+            elif marker in tokens:
+                found.add(country)
+                break
+    return found
+
+
+def _scenario_countries(bible, scenario):
+    """The country set the production itself establishes: every
+    bible entity name/alias plus the scenario's place/event/visual
+    fields."""
+    parts = []
+    for entity in bible.get("entities", []) or []:
+        parts.append(entity.get("canonical") or "")
+        parts.extend(entity.get("aliases") or [])
+    for key in ("place", "event", "visual"):
+        parts.append(str(scenario.get(key) or ""))
+    return _countries_in_text(_norm(" ".join(parts)))
+
+
+# Role words that legitimately precede a named person in news
+# metadata (officials, experts, spokespeople) — a name introduced by
+# one of these is reporting ABOUT the case, not a different case.
+_NAME_ROLE_WORDS = frozenset({
+    "officer", "sheriff", "detective", "dr", "mr", "mrs", "ms",
+    "judge", "attorney", "chief", "director", "agent", "sgt",
+    "sergeant", "lieutenant", "captain", "mayor", "governor",
+    "senator", "president", "professor", "pastor", "coach",
+    "spokesperson", "trooper", "marshal", "warden", "coroner",
+})
+
+_NAME_BIGRAM_STOPLIST = frozenset({
+    "united states", "united kingdom", "supreme court",
+    "police department", "high school", "national park",
+    "white house", "social media", "press conference",
+    "breaking news", "body cam", "dash cam", "security camera",
+    "surveillance video", "press release", "news conference",
+})
+
+_PERSON_NAME_RE = re.compile(r"\b([A-Z][a-z]{1,}) ([A-Z][a-z]{1,})\b")
+
+
+def _unrelated_named_person(candidate, bible, text, subject_hit):
+    """A person NAME the candidate's title positively carries that
+    belongs to no bible entity, or "" (run-9 fix 2/3 overlap).
+
+    Fires only when the production is person-anchored (the bible
+    names at least one person), the candidate names NO bible person
+    at all, and a capitalised two-word name in the title matches no
+    bible entity of any type and is not introduced by a role word.
+    This is the Tristyn Bailey shape: a different case's victim
+    presented as this beat's visual."""
+    persons = [e for e in bible.get("entities", []) or [] if e.get("type") == "person"]
+    if not persons:
+        return ""
+    if subject_hit:
+        return ""
+    if any(_entity_mentioned(e, text) for e in persons):
+        return ""
+    title = str(candidate.get("title") or "")
+    if not title:
+        return ""
+    entity_names = set()
+    for entity in bible.get("entities", []) or []:
+        entity_names.add(_norm(entity.get("canonical") or ""))
+        entity_names |= {_norm(a) for a in (entity.get("aliases") or [])}
+        if entity.get("type") == "person":
+            parts = str(entity.get("canonical") or "").split()
+            if len(parts) >= 2:
+                entity_names.add(_norm(parts[-1]))
+    for match in _PERSON_NAME_RE.finditer(title):
+        name = match.group(0)
+        normalised = _norm(name)
+        if normalised in _NAME_BIGRAM_STOPLIST:
+            continue
+        # A bigram that STARTS with a role word is the official's
+        # title + first name ("Sheriff Kurt ..."), not a bare name.
+        if match.group(1).lower() in _NAME_ROLE_WORDS:
+            continue
+        if any(n and (normalised in n or n in normalised) for n in entity_names):
+            continue
+        # Role-word exemption: the word immediately before the name.
+        before = title[: match.start()].rstrip().split()
+        if before and before[-1].strip("—–-:;,").lower() in _NAME_ROLE_WORDS:
+            continue
+        return name
+    return ""
+
+
 def candidate_project_id(candidate):
     """The project identity RECORDED on a candidate record, or None.
 
@@ -2313,6 +2612,32 @@ def detect_contradiction(candidate, scenario, bible, text, subject, subject_hit)
     if era_compatibility(scenario.get("era"), extract_years(meta_text)) is False:
         return CONTRADICTORY_DATE, str(scenario.get("era") or "")
 
+    # Geography (run-9 fix 2): the production establishes exactly
+    # one country and the candidate positively names a DIFFERENT
+    # single country and never the production's — a positive
+    # geography contradiction the bible-place check cannot see
+    # (Brighton/UK are not bible places). Multi-country productions
+    # or candidates never fire: absence and ambiguity stay neutral.
+    home_countries = _scenario_countries(bible, scenario)
+    if len(home_countries) == 1:
+        candidate_countries = _countries_in_text(text)
+        if (
+            len(candidate_countries) == 1
+            and candidate_countries.isdisjoint(home_countries)
+        ):
+            return (
+                CONTRADICTORY_GEOGRAPHY,
+                f"{next(iter(candidate_countries))} vs "
+                f"{next(iter(home_countries))}",
+            )
+
+    # Unrelated named person (run-9 fixes 2/3): the candidate's
+    # title names a person who belongs to a different story entirely
+    # (no bible entity, no bible person mentioned at all).
+    unrelated = _unrelated_named_person(candidate, bible, text, subject_hit)
+    if unrelated:
+        return UNRELATED_NAMED_PERSON, unrelated
+
     return "", ""
 
 
@@ -2448,6 +2773,29 @@ def verify_candidate(candidate, scenario, bible):
             "category": resolve_visual_category(scenario),
             "dimension_results": _unevaluated_dimensions(),
         }
+
+    # Run-9 quality fixes (2026-11-22): watermarked stock previews,
+    # social-platform sources and meme-format titles are rejected by
+    # the verification chain itself, before scoring — the same
+    # hard-reject standing as the two rules above. A watermarked
+    # comp, a TikTok/Facebook re-upload or a "POV:" meme is not
+    # documentary material however topical its metadata looks.
+    for _check, _reason, _label in (
+        (is_watermarked_stock, WATERMARKED_STOCK_REASON, "watermarked stock preview"),
+        (is_social_platform_source, SOCIAL_PLATFORM_REASON, "social platform source"),
+        (has_meme_format_title, MEME_FORMAT_REASON, "meme format title"),
+    ):
+        if _check(candidate):
+            return {
+                "accepted": False,
+                "score": 0.0,
+                "reasons": [_label],
+                "contributions": {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0},
+                "rejection_reason": _reason,
+                "failed_checks": [_reason],
+                "category": resolve_visual_category(scenario),
+                "dimension_results": _unevaluated_dimensions(),
+            }
 
     text = _norm(" ".join(str(candidate.get(k) or "") for k in ("title", "snippet", "description", "url", "source")))
     by_id = bible.get("by_id", {})
