@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 import api_v1
 import main
 from database import SessionLocal, engine
-from models import Base, Plan, Project, User
+from models import Base, Plan, Project, User, UserSubscription
 from services import auth as auth_service
 from services import run_ledger
 
@@ -63,6 +63,17 @@ def _auth_env(monkeypatch, tmp_path):
         db.close()
     yield
     auth_service.reset_redis_client()
+    # Leave the shared suite database as the module found it: a
+    # default plan left behind would silently subject every later
+    # module's principals to plan enforcement (Phase 8 gate find).
+    db = SessionLocal()
+    try:
+        db.query(UserSubscription).delete()
+        db.query(User).delete()
+        db.query(Plan).delete()
+        db.commit()
+    finally:
+        db.close()
 
 
 def _register(client, email, password):

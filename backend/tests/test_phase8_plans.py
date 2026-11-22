@@ -94,6 +94,20 @@ def _plans_env(monkeypatch, tmp_path):
         db.close()
     yield
     auth_service.reset_redis_client()
+    # Leave the shared suite database as the module found it: the
+    # seeded plans (free is default) must not leak into later
+    # modules — with plans present, plan enforcement activates
+    # for every principal in the process (Phase 8 gate find).
+    db = SessionLocal()
+    try:
+        db.query(ProductionRun).delete()
+        db.query(Project).delete()
+        db.query(UserSubscription).delete()
+        db.query(User).delete()
+        db.query(Plan).delete()
+        db.commit()
+    finally:
+        db.close()
 
 
 def _user(client, plan=None):

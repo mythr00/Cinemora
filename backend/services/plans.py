@@ -55,8 +55,19 @@ def resolve_effective_plan(db, user_id: str):
     fixture DBs that create_all only the production tables): no
     plan system exists there, so no plan applies — enforcement is
     a property of the plan system, and an unseeded deployment sees
-    zero behaviour change (design 02 §5)."""
+    zero behaviour change (design 02 §5).
+
+    A principal with NO user row is not a tenant and resolves to
+    no plan: that is the synthetic operator principal of the
+    dual-auth window (02 §1.4), whose token must keep working
+    exactly as it did before accounts existed — resolving it to
+    the default tenant plan would throttle the operator with
+    free-tier caps (found by the Phase 8 full-suite gate: leaked
+    plan rows + the operator's own active runs produced 429s on
+    the pre-accounts API contract tests)."""
     try:
+        if db.get(models.User, user_id) is None:
+            return None
         subscription = get_active_subscription(db, user_id)
         if subscription is not None:
             return db.get(models.Plan, subscription.plan_id)
