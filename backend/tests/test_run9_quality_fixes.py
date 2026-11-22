@@ -4,7 +4,10 @@ Production run e95ac155 (Gabby Petito pipeline film) completed the
 pipeline but frame inspection found systemic defects. Each test here
 pins one defect class to the machinery that now prevents it:
 
-1. Watermarked stock previews (Alamy comp on the Moab beat).
+1. Watermarked stock previews (Alamy comp on the Moab beat) —
+   detection recorded on the verdict, NOT a rejection (founder
+   decision 2026-11-22: watermarked stock is allowed; memes and
+   social-platform sources below remain banned).
 2. Wrong-geography / unrelated-person visuals passing verification.
 3. Social-platform and meme-format sources accepted as footage.
 4. Chronology graphic truncated by its timeline slot.
@@ -51,9 +54,14 @@ def _scenario(**over):
 
 # ------------------------------------------------------------- fix 1
 
-def test_alamy_candidate_rejected_as_watermarked_stock():
+def test_alamy_candidate_not_rejected_for_watermark():
     """The exact run-9 sentence-9 candidate: Alamy provider, Alamy
-    comp CDN host, watermarked preview by construction."""
+    comp CDN host, watermarked preview by construction. Founder
+    decision 2026-11-22: watermarked stock is ALLOWED — the
+    candidate is scored on the normal criteria and the watermark
+    detection is recorded on the verdict. (This candidate is still
+    rejected, but for contradictory geography — fix 2, which stays
+    in force — never for the watermark.)"""
     verdict = story.verify_candidate(
         {
             "title": "Brighton UK 18th February 2021 - A man (face has been "
@@ -63,11 +71,22 @@ def test_alamy_candidate_rejected_as_watermarked_stock():
         },
         _scenario(), _petito_bible(),
     )
-    assert verdict["accepted"] is False
-    assert verdict["rejection_reason"] == story.WATERMARKED_STOCK_REASON
+    # Scored normally, not short-circuited at score 0.
+    assert verdict["score"] > 0
+    assert verdict["contributions"]["topical"] > 0
+    # The watermark is not the rejection, in either field.
+    assert verdict["rejection_reason"] != "watermarked_stock_preview"
+    assert "watermarked_stock_preview" not in verdict["failed_checks"]
+    assert verdict["rejection_reason"] == story.CONTRADICTORY_GEOGRAPHY
+    # The detection signal is recorded on the verdict.
+    assert verdict[story.WATERMARKED_PREVIEW_FIELD] is True
 
 
-def test_stock_agency_url_rejected_even_with_innocent_provider_label():
+def test_stock_agency_url_not_rejected_for_watermark():
+    """An agency URL under an innocent provider label is judged on
+    the normal criteria (here: below threshold on topical score),
+    with the watermark signal recorded — and a watermarked
+    candidate with a strong topical match is accepted."""
     verdict = story.verify_candidate(
         {
             "title": "Police van driving away at night",
@@ -76,24 +95,39 @@ def test_stock_agency_url_rejected_even_with_innocent_provider_label():
         },
         _scenario(), _petito_bible(),
     )
-    assert verdict["accepted"] is False
-    assert verdict["rejection_reason"] == story.WATERMARKED_STOCK_REASON
+    assert verdict["rejection_reason"] == "below_threshold"
+    assert "watermarked_stock_preview" not in verdict["failed_checks"]
+    assert verdict[story.WATERMARKED_PREVIEW_FIELD] is True
+
+    accepted = story.verify_candidate(
+        {
+            "title": "Police van driving away on a Utah highway, 2021",
+            "snippet": "Officers in Moab, Utah separated the couple; "
+                       "the van drove away",
+            "url": "https://www.shutterstock.com/image-photo/police-van-6789",
+            "provider": "serper",
+        },
+        _scenario(), _petito_bible(),
+    )
+    assert accepted["accepted"] is True
+    assert accepted[story.WATERMARKED_PREVIEW_FIELD] is True
 
 
-def test_watermark_word_in_metadata_rejected():
+def test_watermark_word_in_metadata_detected():
     assert story.is_watermarked_stock(
         {"title": "Police van (watermarked preview)", "url": "https://x.example/a.jpg"}
     )
 
 
 def test_news_image_not_flagged_as_stock():
-    assert not story.is_watermarked_stock(
-        {
-            "title": "Police van in Moab, Utah",
-            "url": "https://cdn.example-news.com/images/van.jpg",
-            "provider": "example-news.com",
-        }
-    )
+    candidate = {
+        "title": "Police van in Moab, Utah",
+        "url": "https://cdn.example-news.com/images/van.jpg",
+        "provider": "example-news.com",
+    }
+    assert not story.is_watermarked_stock(candidate)
+    verdict = story.verify_candidate(candidate, _scenario(), _petito_bible())
+    assert verdict[story.WATERMARKED_PREVIEW_FIELD] is False
 
 
 # ------------------------------------------------------------- fix 2

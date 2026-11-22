@@ -2136,22 +2136,27 @@ def is_banned_provider(candidate):
 
 
 # ---------------------------------------------------------------------------
-# Run-9 quality fixes (2026-11-22): three defect classes that the
-# metadata verifier could not see in production run e95ac155 (the
-# Gabby Petito pipeline film) and that are now HARD rejections in the
-# verification chain itself, decided before any threshold comparison
-# exactly like the banned-provider and foreign-provenance rules:
+# Run-9 quality fixes (2026-11-22): defect classes that the metadata
+# verifier could not see in production run e95ac155 (the Gabby Petito
+# pipeline film). Two are now HARD rejections in the verification
+# chain itself, decided before any threshold comparison exactly like
+# the banned-provider and foreign-provenance rules; the third is a
+# recorded signal only (see item 1):
 #
-# 1. WATERMARKED STOCK PREVIEWS. The sentence-9 visual was an Alamy
-#    comp image (provider "Alamy", host l450v.alamy.com) with the
-#    agency watermark burned across the frame. Stock agencies serve
-#    watermarked previews from their public CDNs by construction —
-#    a candidate whose provider label or URL host identifies a stock
-#    agency preview channel, or whose metadata says "watermark", is
-#    not usable documentary material whatever its topical score.
-#    (RIGHTS_POLICY is unaffected: this is a quality rejection of a
-#    watermarked preview, not a copyright gate — provenance is still
-#    recorded honestly for every other source.)
+# 1. WATERMARKED STOCK PREVIEWS — DETECTION ONLY (founder decision
+#    2026-11-22, reversing the original run-9 hard rejection). The
+#    sentence-9 visual was an Alamy comp image (provider "Alamy",
+#    host l450v.alamy.com) with the agency watermark burned across
+#    the frame. Stock agencies serve watermarked previews from their
+#    public CDNs by construction — a candidate whose provider label
+#    or URL host identifies a stock agency preview channel, or whose
+#    metadata says "watermark", is detected by is_watermarked_stock
+#    below. The founder ruled watermarked stock ALLOWED: it is
+#    scored and accepted/rejected on the normal criteria like any
+#    other candidate. The detection is still recorded on every
+#    verdict as the non-blocking ``watermarked_preview`` fact, so
+#    provenance stays honest and usage remains reviewable later —
+#    a watermarked preview is never labelled clean or licensed.
 #
 # 2. SOCIAL-PLATFORM / MEME-FORMAT SOURCES. A vertical TikTok-style
 #    "POV" meme clip about a DIFFERENT case illustrated the remains
@@ -2171,7 +2176,10 @@ def is_banned_provider(candidate):
 #    existing doctrine: absence of a signal is never a contradiction.
 # ---------------------------------------------------------------------------
 
-WATERMARKED_STOCK_REASON = "watermarked_stock_preview"
+# Verdict field under which the watermark detection is recorded
+# (non-blocking fact, founder decision 2026-11-22 — see item 1
+# above). It is deliberately NOT a rejection reason.
+WATERMARKED_PREVIEW_FIELD = "watermarked_preview"
 SOCIAL_PLATFORM_REASON = "social_platform_source"
 MEME_FORMAT_REASON = "meme_format_source"
 CONTRADICTORY_GEOGRAPHY = "contradictory_geography"
@@ -2221,7 +2229,12 @@ def _url_host_tokens(raw_url):
 def is_watermarked_stock(candidate):
     """True when the candidate is a stock agency's watermarked
     preview/comp (run-9 fix 1): the provider label or any URL host
-    names a stock agency, or the metadata says "watermark"."""
+    names a stock agency, or the metadata says "watermark".
+
+    Detection only — since the founder decision of 2026-11-22 this
+    no longer rejects; verify_candidate records the result on the
+    verdict under WATERMARKED_PREVIEW_FIELD and scores the
+    candidate normally."""
     if not isinstance(candidate, dict):
         return False
     provider = candidate_provider(candidate)
@@ -2742,6 +2755,15 @@ def verify_candidate(candidate, scenario, bible):
     topical evidence behind it is rejected as "no_topical_evidence"
     regardless of why the topical set is empty.
     """
+    # Founder decision 2026-11-22: watermarked stock previews are
+    # ALLOWED. The detection is computed once here and stamped on
+    # every verdict this function returns (the
+    # WATERMARKED_PREVIEW_FIELD fact, alongside category /
+    # dimension_results / era_waived) so it survives into the asset
+    # record — the verdict dict is stored whole on the item — while
+    # the candidate is scored on the normal criteria below.
+    watermarked_preview = is_watermarked_stock(candidate)
+
     # Workstream J: a candidate from a permanently banned provider is
     # rejected by the verification chain itself, whatever seam produced
     # it and however relevant its metadata looks.
@@ -2755,6 +2777,7 @@ def verify_candidate(candidate, scenario, bible):
             "failed_checks": [BANNED_PROVIDER_REASON],
             "category": resolve_visual_category(scenario),
             "dimension_results": _unevaluated_dimensions(),
+            WATERMARKED_PREVIEW_FIELD: watermarked_preview,
         }
 
     # Plan §3.3 item 1 (tests 17-18): a candidate whose recorded
@@ -2772,16 +2795,19 @@ def verify_candidate(candidate, scenario, bible):
             "failed_checks": [FOREIGN_PROVENANCE_REASON],
             "category": resolve_visual_category(scenario),
             "dimension_results": _unevaluated_dimensions(),
+            WATERMARKED_PREVIEW_FIELD: watermarked_preview,
         }
 
-    # Run-9 quality fixes (2026-11-22): watermarked stock previews,
-    # social-platform sources and meme-format titles are rejected by
-    # the verification chain itself, before scoring — the same
-    # hard-reject standing as the two rules above. A watermarked
-    # comp, a TikTok/Facebook re-upload or a "POV:" meme is not
-    # documentary material however topical its metadata looks.
+    # Run-9 quality fixes (2026-11-22): social-platform sources and
+    # meme-format titles are rejected by the verification chain
+    # itself, before scoring — the same hard-reject standing as the
+    # two rules above. A TikTok/Facebook re-upload or a "POV:" meme
+    # is not documentary material however topical its metadata
+    # looks. (Watermarked stock previews were in this loop until the
+    # founder decision of 2026-11-22 allowed them; their detection
+    # is recorded above instead. The meme/social ban was explicitly
+    # reaffirmed by the same decision.)
     for _check, _reason, _label in (
-        (is_watermarked_stock, WATERMARKED_STOCK_REASON, "watermarked stock preview"),
         (is_social_platform_source, SOCIAL_PLATFORM_REASON, "social platform source"),
         (has_meme_format_title, MEME_FORMAT_REASON, "meme format title"),
     ):
@@ -2795,6 +2821,7 @@ def verify_candidate(candidate, scenario, bible):
                 "failed_checks": [_reason],
                 "category": resolve_visual_category(scenario),
                 "dimension_results": _unevaluated_dimensions(),
+                WATERMARKED_PREVIEW_FIELD: watermarked_preview,
             }
 
     text = _norm(" ".join(str(candidate.get(k) or "") for k in ("title", "snippet", "description", "url", "source")))
@@ -2905,6 +2932,11 @@ def verify_candidate(candidate, scenario, bible):
         failed_checks.append("no_topical_evidence")
     if score < ACCEPT_THRESHOLD.get(specificity, 0.34):
         failed_checks.append("below_threshold")
+    if watermarked_preview:
+        # Non-blocking fact, recorded for review (founder decision
+        # 2026-11-22): the candidate is a watermarked stock preview
+        # and was judged on the normal criteria above.
+        reasons.append("watermarked stock preview (allowed, recorded)")
     return {
         "accepted": accepted,
         "score": round(score, 3),
@@ -2933,6 +2965,11 @@ def verify_candidate(candidate, scenario, bible):
             resolve_visual_category(scenario) == "environmental"
             and not era
         ),
+        # Founder decision 2026-11-22: watermarked stock previews
+        # are allowed; the detection is recorded here as a
+        # non-blocking fact so usage stays reviewable and the asset
+        # is never labelled clean or licensed on this evidence.
+        WATERMARKED_PREVIEW_FIELD: watermarked_preview,
     }
 
 
