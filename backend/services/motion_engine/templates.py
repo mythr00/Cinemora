@@ -757,6 +757,78 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
                         "body_chars": len(body)})
 
 
+# ---------------------------------------------------------------------------
+# 8. Closing card (tier-ladder T5 coverage guarantee, run-10 fix)
+# ---------------------------------------------------------------------------
+
+def closing_card(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
+    """A designed closing/quote card presenting the sentence's OWN
+    words — the T5 floor of the tier ladder. It exists for a beat
+    that exhausted every footage tier and every content graphic
+    family: the card invents nothing (the quote IS the target
+    sentence, the kicker is the production's own title when the
+    caller supplies one), it is themed and rendered like every
+    other engine graphic, and the engine stamps it generated —
+    honestly a graphic, never footage, never a fabricated
+    document. Its only data requirement is the text itself."""
+    style_name, tokens = resolve_style(style)
+    data = data or {}
+    quote = _clean(data.get("quote") or data.get("text"))
+    if not quote:
+        return None, {"reason": "no_text"}
+    kicker = _clean(data.get("kicker"))
+    bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=41)
+    fonts = {
+        "quote": load_font(tokens["font_bold"], 56),
+        "kicker": load_font(tokens["font_bold"], 26),
+        "small": load_font(tokens["font"], 22),
+    }
+    probe = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+    lines = wrap_text(probe, quote, fonts["quote"], 1240)[:5]
+    line_h = 76
+    block_h = line_h * len(lines)
+
+    def draw_frame(t, progress):
+        canvas = core.Canvas(bg=tokens["bg"])
+        base = canvas.new_layer("bg", parallax=0.2)
+        base.image = bg.convert("RGBA")
+        layer = canvas.new_layer("card")
+        d = ImageDraw.Draw(layer.image, "RGBA")
+        fade = ease_out(clamp01(progress * 1.7))
+        alpha = int(255 * fade)
+        cx = WIDTH // 2
+        y = (HEIGHT - block_h) // 2 + int((1 - fade) * 26)
+        # Accent rule above the quote.
+        rule_w = 120
+        d.rectangle(
+            [cx - rule_w // 2, y - 58, cx + rule_w // 2, y - 50],
+            fill=tokens["accent"] + (alpha,),
+        )
+        if kicker:
+            kicker_text = kicker.upper()[:64]
+            kw = d.textlength(kicker_text, font=fonts["kicker"])
+            d.text(
+                (cx - kw / 2, y - 118), kicker_text,
+                font=fonts["kicker"],
+                fill=tokens["accent"] + (alpha,),
+            )
+        for line in lines:
+            lw = d.textlength(line, font=fonts["quote"])
+            d.text(
+                (cx - lw / 2, y), line,
+                font=fonts["quote"],
+                fill=tokens["text"] + (alpha,),
+            )
+            y += line_h
+        _footer(d, tokens)
+        return canvas.composite()
+
+    path = core.render_template(draw_frame, out_path, duration=duration)
+    return path, _meta("closing_card", style_name, duration, sentence_index, scene_number,
+                       {"quote": True, "kicker": bool(kicker),
+                        "lines": len(lines)})
+
+
 TEMPLATES = {
     "territory_map": territory_map,
     "evidence_board": evidence_board,
@@ -765,6 +837,7 @@ TEMPLATES = {
     "outcome_path": outcome_path,
     "stat_comparison": stat_comparison,
     "document_presentation": document_presentation,
+    "closing_card": closing_card,
 }
 
 # Stage 5B: the v2 template family (reference set 2) registers into

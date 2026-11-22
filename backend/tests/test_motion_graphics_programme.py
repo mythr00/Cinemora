@@ -82,6 +82,22 @@ def _fake_write(path, *args, **kwargs):
     path.write_bytes(b"\x00" * 2048)
 
 
+def _refuse_closing_card(monkeypatch):
+    # Run-10 fix (T5 graphics guarantee): a target no family can
+    # serve now falls to a designed closing card instead of a
+    # recorded skip. The MG-05/MG-08 tests below pin specific
+    # stages' failure/skip records, so the guarantee floor is
+    # refused here and the chain exhausts exactly as it did
+    # before the floor existed. The guarantee itself is covered
+    # in tests/test_run10_coverage_fixes.py.
+    from services.motion_engine import templates as engine_templates
+
+    monkeypatch.setitem(
+        engine_templates.TEMPLATES, "closing_card",
+        lambda *args, **kwargs: (None, {"reason": "no_text"}),
+    )
+
+
 # ---------------------------------------------------------------------------
 # MG-05 — the validator itself (real files)
 # ---------------------------------------------------------------------------
@@ -181,6 +197,7 @@ def test_corrupt_native_graphic_is_never_registered(tmp_path, monkeypatch):
     # The renderer "succeeds" but writes garbage: with the REAL
     # validator active, the graphic must not be registered, the
     # failure must be recorded, and no asset may carry the file.
+    _refuse_closing_card(monkeypatch)
     monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", _fake_write)
     assets = graphics_pipeline.build_motion_graphics_assets(
         _stat_data(), tmp_path, mode="balanced",
@@ -354,6 +371,7 @@ def test_skip_vocabulary_is_closed_and_covers_failure_paths():
 
 def test_skip_reason_no_usable_statistic(tmp_path, monkeypatch):
     _stub_validator(monkeypatch)
+    _refuse_closing_card(monkeypatch)
     monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", _fake_write)
     graphics_pipeline.build_motion_graphics_assets(
         _stat_data(), tmp_path, mode="balanced",
@@ -370,6 +388,7 @@ def test_skip_reason_no_usable_statistic(tmp_path, monkeypatch):
 
 def test_skip_reason_rendering_failure(tmp_path, monkeypatch):
     _stub_validator(monkeypatch)
+    _refuse_closing_card(monkeypatch)
 
     def boom(*args, **kwargs):
         raise RuntimeError("ffmpeg exploded")
@@ -390,6 +409,7 @@ def test_skip_reason_rendering_failure(tmp_path, monkeypatch):
 
 def test_skip_reason_range_not_representable(tmp_path, monkeypatch):
     _stub_validator(monkeypatch)
+    _refuse_closing_card(monkeypatch)
     monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", _fake_write)
     graphics_pipeline.build_motion_graphics_assets(
         _stat_data(), tmp_path, mode="balanced",
@@ -406,6 +426,7 @@ def test_skip_reason_range_not_representable(tmp_path, monkeypatch):
 
 def test_skip_reason_missing_document_source(tmp_path, monkeypatch):
     _stub_validator(monkeypatch)
+    _refuse_closing_card(monkeypatch)
     monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", _fake_write)
     assets = graphics_pipeline.build_motion_graphics_assets(
         _stat_data(), tmp_path, mode="balanced",
@@ -439,6 +460,7 @@ def test_skip_reason_no_sentence_text(tmp_path, monkeypatch):
 
 def test_engine_refusal_reason_is_typed_with_detail(tmp_path, monkeypatch):
     _stub_validator(monkeypatch)
+    _refuse_closing_card(monkeypatch)
     monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", _fake_write)
     # A comparison sentence whose comparison template refuses its
     # data: the chain records missing_required_input and preserves

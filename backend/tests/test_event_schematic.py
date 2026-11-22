@@ -176,6 +176,22 @@ def _fake_stat_and_summary(monkeypatch):
     monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_write)
 
 
+def _refuse_closing_card(monkeypatch):
+    # Run-10 fix (T5 graphics guarantee): a target no family can
+    # serve now falls to a designed closing card instead of a
+    # recorded skip. The schematic tests below pin the SCHEMATIC
+    # stage's skip records, so the guarantee floor is refused
+    # here and the chain exhausts exactly as it did before the
+    # floor existed. The guarantee itself is covered in
+    # tests/test_run10_coverage_fixes.py.
+    from services.motion_engine import templates as engine_templates
+
+    monkeypatch.setitem(
+        engine_templates.TEMPLATES, "closing_card",
+        lambda *args, **kwargs: (None, {"reason": "no_text"}),
+    )
+
+
 def test_schematic_generated_for_empty_scene_with_labels(
     tmp_path, monkeypatch
 ):
@@ -214,6 +230,7 @@ def test_schematic_not_generated_when_scene_has_verified_visuals(
 ):
     _fake_schematic(monkeypatch)
     _fake_stat_and_summary(monkeypatch)
+    _refuse_closing_card(monkeypatch)
     # MA-37: the genuine-visual count requires an explicit acceptance
     # record; a verdict-less dict no longer counts as verified.
     verified = {
@@ -243,6 +260,7 @@ def test_schematic_skipped_and_recorded_without_labels(
 ):
     _fake_schematic(monkeypatch)
     _fake_stat_and_summary(monkeypatch)
+    _refuse_closing_card(monkeypatch)
     bare = {"text": _SENTENCE_TEXT, "sentence_number": 3}
     assets = graphics_pipeline.build_motion_graphics_assets(
         _data(sentence=bare), tmp_path, mode="balanced",
@@ -260,6 +278,7 @@ def test_schematic_skipped_and_recorded_without_labels(
 def test_schematic_capped_at_one_per_scene(tmp_path, monkeypatch):
     _fake_schematic(monkeypatch)
     _fake_stat_and_summary(monkeypatch)
+    _refuse_closing_card(monkeypatch)
     data = _data()
     second = dict(_sentence())
     second["text"] = "Neighbours embraced strangers on the bridge."

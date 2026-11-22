@@ -211,17 +211,29 @@ def test_graphics_failure_is_a_recorded_skip_not_a_dead_stage(
     assets = graphics_pipeline.build_motion_graphics_assets(
         _graphics_data(), tmp_path, mode="balanced", manifest=manifest,
     )
-    # One graphic generated; the failed one is a recorded skip
-    # with the typed rendering_failure reason.
-    assert len(assets) == 1
+    # The stage does not die: the second entry still generates.
+    # The failed entry's rendering_failure is RECORDED (below),
+    # and — run-10 fix — the entry is a coverage_fallback target,
+    # so the T5 guarantee floor serves it with a closing card
+    # instead of leaving the beat uncovered: two assets, and
+    # gm_0001's outcome is the guarantee, not a skip.
+    assert len(assets) == 2
     import json
 
     written = json.loads((tmp_path / "motion_graphics.json").read_text())
     outcomes = {
         o["manifest_id"]: o for o in written["targets"]["outcomes"]
     }
-    assert outcomes["gm_0001"]["outcome"] == "skipped"
-    assert outcomes["gm_0001"]["reason"] == "rendering_failure"
+    assert outcomes["gm_0001"]["outcome"] == "generated"
+    assert outcomes["gm_0001"]["reason"] == (
+        "coverage_guarantee:closing_card"
+    )
+    # The stat failure itself remains on record — the floor
+    # covers the beat, it does not erase the failure.
+    assert any(
+        f["reason"] == "rendering_failure"
+        for f in written["graphic_failures"]
+    )
     assert outcomes["gm_0002"]["outcome"] == "generated"
 
 

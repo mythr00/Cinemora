@@ -840,6 +840,65 @@ def _build_graphic_targets(processed_scenes):
     return graphic_targets
 
 
+def _annotate_missing_visual_graphics_outcomes(
+    processed_scenes, motion_graphics_file
+):
+    """Run-10 fix: stamp each missing_visuals record with the
+    graphics stage's outcome for its sentence.
+
+    The Asset Manager's missing_visuals entries are the canonical
+    record of a beat that got no verified visual; the graphics
+    stage's per-target outcomes (targets.outcomes in the written
+    motion_graphics.json) say what the T5 route then did with the
+    beat — generated (and by which family, e.g. the
+    coverage-guarantee closing card) or skipped (with the typed
+    MG-08 reason). Without this stamp, a beat the graphics path
+    genuinely could not serve reads in the report as merely
+    "uncovered", with the reason stranded in the graphics
+    manifest. Data propagation only: the entries are the same
+    dicts the asset report aggregates, so both the success and
+    failure reports carry the stamp. Fail-soft — an unreadable
+    graphics record annotates nothing. Returns the number of
+    entries annotated."""
+    try:
+        record = json.loads(
+            Path(motion_graphics_file).read_text(encoding="utf-8")
+        )
+    except Exception:
+        return 0
+    outcomes = ((record.get("targets") or {}).get("outcomes")) or []
+    by_key = {
+        (outcome.get("scene_number"), outcome.get("sentence_number")):
+            outcome
+        for outcome in outcomes
+        if isinstance(outcome, dict)
+    }
+    if not by_key:
+        return 0
+    annotated = 0
+    for processed_scene in processed_scenes or []:
+        if not isinstance(processed_scene, dict):
+            continue
+        scene = processed_scene.get("scene") or {}
+        scene_number = scene.get("scene_number")
+        stats = processed_scene.get("asset_stats") or {}
+        for entry in stats.get("missing_visuals") or []:
+            if not isinstance(entry, dict):
+                continue
+            outcome = by_key.get(
+                (scene_number, entry.get("sentence_number"))
+            )
+            if outcome is None:
+                continue
+            entry["graphics_outcome"] = {
+                "outcome": outcome.get("outcome"),
+                "family": outcome.get("family"),
+                "reason": outcome.get("reason"),
+            }
+            annotated += 1
+    return annotated
+
+
 # MG-07: closed vocabulary for graphics the attach step refuses.
 ATTACH_SKIP_REASONS = frozenset({
     "not_delivered",            # builder did not mark it delivered
@@ -1452,6 +1511,27 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
 
         print(f"Motion graphics generated: {len(motion_graphics)}")
         print(f"Motion graphics attached to timeline candidates: {sum(1 for s in processed_scenes for v in s.get("videos", []) if v.get("motion_graphic"))}")
+
+        # Run-10 fix: the graphics stage's per-target outcomes ride
+        # onto the missing_visuals records the asset report will
+        # aggregate — a beat the graphics path could not serve
+        # carries its typed reason there, not only in the graphics
+        # manifest. Fail-soft, like the targeting above.
+        try:
+            _annotated = _annotate_missing_visual_graphics_outcomes(
+                processed_scenes,
+                motion_graphics_dir / "motion_graphics.json",
+            )
+            if _annotated:
+                print(
+                    "Graphics outcomes annotated onto "
+                    f"{_annotated} missing-visual record(s)."
+                )
+        except Exception as _annotation_error:
+            print(
+                "Graphics outcome annotation failed (continuing): "
+                f"{_annotation_error}"
+            )
         finish_stage(state, "motion_designer", project_dir)
     except Exception as error:
         fail_pipeline(state, "motion_designer", error, project_dir)

@@ -1916,9 +1916,14 @@ def build_motion_graphics_assets(
     sentences — dicts with scene_number, sentence_index (scene-local,
     0-based), sentence_number, text and optional scenario fields —
     typically derived from the Asset Manager's missing-visual records.
-    A targeted sentence with no defensible graphic content is
-    skipped and the skip is recorded in the manifest (no invented
-    content, no text cards).
+    A targeted sentence whose content fits a graphic family is
+    served by that family; a targeted sentence no content family
+    can serve is served by the T5 coverage guarantee (stage 6 of
+    the chain: a designed closing card presenting the sentence's
+    own words — no invented content). Only a target the guarantee
+    itself cannot render (or one carrying no text at all) is
+    skipped, and the skip is recorded in the manifest with its
+    typed reason.
 
     Phase 6 (AM-001/D1 + AM-002 Pass-2): graphics are generated
     ONLY for targeted requirements. The untargeted statistics sweep
@@ -3156,6 +3161,8 @@ def build_motion_graphics_assets(
         _stat_detail = ""
         _engine_reason = None
         _engine_detail = ""
+        _guarantee_reason = None
+        _guarantee_detail = ""
 
         # Variety pre-pass: if the previous target used the stat
         # family and an engine alternative fits this one, try the
@@ -3342,6 +3349,139 @@ def build_motion_graphics_assets(
                     produced_reason = f"motion_engine:{_name}"
                     break
 
+        # 6) T5 COVERAGE GUARANTEE (tier ladder T5; run-10 fix):
+        # every target in this chain IS a coverage requirement —
+        # a sentence that exhausted retrieval and the footage
+        # tiers with no visual (legacy targets derive from
+        # missing_visuals; the Director issues manifest entries
+        # only for starved beats it graphic-permitted, and run
+        # 10's closing entries were purposed "coverage_fallback"
+        # with empty template candidates). When every content
+        # family above failed to serve such a target, the ladder's
+        # floor is a DESIGNED closing card from the motion engine:
+        # the sentence's own words under the production's title,
+        # themed, validated and delivered like every other
+        # graphic, stamped tier "graphic" on the timeline — never
+        # a stock photo of a form, never a fabricated document.
+        # The Director's candidate lists order the content
+        # families; they do not gate the floor (its own
+        # _graphic_permitted decision already allowed a graphic
+        # for this beat). A guarantee failure falls through to the
+        # recorded skip below with its reason preserved, and jobs
+        # annotates the beat's missing_visuals record with the
+        # outcome — the failure is data, never silent.
+        #
+        # One route is NOT pre-empted: the process graphic is a
+        # chapter-level render anchored to a pre-chosen target
+        # and rendered AFTER this loop (below). When this target
+        # is that anchor and the process stage is positioned to
+        # render for it, the beat is already served by a designed
+        # graphic — the floor stays silent and the anchor's
+        # recorded outcome remains the chain's own (MG-08), as
+        # before. (If that render then fails, the failure is
+        # recorded in graphic_failures — data, not silence.)
+        _served_by_process_anchor = (
+            process_anchor is target
+            and mode in {"balanced", "heavy"}
+            and (
+                target.get("family_candidates") is None
+                or "process" in target["family_candidates"]
+            )
+            and sum(
+                1
+                for _event in timeline_events[:5]
+                if clean_text(_event.get("what", ""))
+            ) >= 3
+        )
+        # Nor does the floor override an affirmative Director
+        # direction: a manifest entry whose template_candidates
+        # NON-EMPTY list names the templates for this beat has
+        # been deliberately directed (Phase 6 doctrine — its
+        # refusals, e.g. document_presentation_disabled, are the
+        # recorded outcome). Run 10's closing entries carried an
+        # EMPTY template list with purpose "coverage_fallback":
+        # undirected, so the floor serves them. A directed list
+        # that itself names closing_card also reaches the floor.
+        _directed_templates = target.get("template_candidates")
+        _manifest_directed = bool(
+            target.get("manifest_id")
+            and isinstance(_directed_templates, (list, tuple))
+            and len(_directed_templates) > 0
+            and "closing_card" not in _directed_templates
+        )
+        if (
+            produced_family is None
+            and not _served_by_process_anchor
+            and not _manifest_directed
+        ):
+            _card_data = {"quote": text}
+            _kicker = clean_text(
+                (case_bible or {}).get("title") or ""
+            )
+            if _kicker:
+                _card_data["kicker"] = _kicker
+            _card_ok, _guarantee_reason, _guarantee_detail = (
+                _make_engine_graphic(
+                    target, "closing_card", _card_data,
+                    style=_style_for_target(
+                        target, _style_for("editorial")
+                    ),
+                )
+            )
+            if _card_ok:
+                produced_family = "motion_engine"
+                produced_reason = "coverage_guarantee:closing_card"
+                for _record in reversed(assets):
+                    if (
+                        _record.get("template") == "closing_card"
+                        and _record.get("scene_number")
+                        == target["scene_number"]
+                        and _record.get("sentence_index")
+                        == target["sentence_index"]
+                    ):
+                        _record["coverage_guarantee"] = True
+                        break
+                # The floor covers the beat; it does not erase
+                # why the beat needed it. A stage failure above
+                # (e.g. a stat render that exploded) was previously
+                # carried by the target's skip reason — with the
+                # beat now served, that reason is preserved in
+                # graphic_failures instead, marked superseded.
+                # Hard reasons outrank soft ones; otherwise the
+                # earliest stage's reason stands.
+                _prior_reasons = [
+                    ("stat", _stat_reason, _stat_detail),
+                    ("event_schematic", _schematic_reason,
+                     _schematic_detail),
+                    ("motion_engine", _engine_reason, _engine_detail),
+                ]
+                _hard = {
+                    "rendering_failure", "validation_failed",
+                    "invalid_graphic_output",
+                }
+                _prior = next(
+                    (p for p in _prior_reasons if p[1] in _hard),
+                    None,
+                ) or next(
+                    (p for p in _prior_reasons if p[1] is not None),
+                    None,
+                )
+                if _prior is not None:
+                    graphic_failures.append({
+                        "graphic_type": _prior[0],
+                        "purpose": "targeted",
+                        "stage": "chain",
+                        "file_path": None,
+                        "reason": _prior[1],
+                        "detail": _prior[2],
+                        "superseded_by": (
+                            "coverage_guarantee:closing_card"
+                        ),
+                        "scene_number": target["scene_number"],
+                        "sentence_index": target["sentence_index"],
+                        "sentence_number": target["sentence_number"],
+                    })
+
         if produced_family is not None:
             covered.add(key)
             targeted_generated += 1
@@ -3361,6 +3501,26 @@ def build_motion_graphics_assets(
                 "rendering_failure", "validation_failed",
                 "invalid_graphic_output",
             }
+            # T5 guarantee (stage 6): its failure reason joins the
+            # same priority selection — a HARD failure of the
+            # floor outranks softer stage reasons, and when no
+            # stage produced any reason at all the floor's refusal
+            # is the outcome of record. A SOFT floor refusal (the
+            # card declined its input) never overrides a more
+            # specific stage reason: the pinned MG-08 reasons
+            # (no_usable_statistic, missing_document_source, ...)
+            # keep naming the stage that actually decided.
+            if _guarantee_reason is not None and (
+                _guarantee_reason in _hard_reasons
+                or (
+                    _engine_reason is None
+                    and _stat_reason is None
+                    and _schematic_reason is None
+                )
+            ):
+                _engine_reason, _engine_detail = (
+                    _guarantee_reason, _guarantee_detail
+                )
             _reason = None
             _detail = ""
             for _cand_reason, _cand_detail in (

@@ -6,6 +6,9 @@ Phase 8 migrates the reference: both template modules resolve
 their easings THROUGH the registry. The registry re-exports
 core's exact callables, so the migration is provably
 rendering-neutral — these tests pin identity, not approximation.
+
+Run-10 fix (2026-11-22): the registry grows to 15 with
+"closing_card", the T5 coverage-guarantee template.
 """
 
 from services.motion_engine import core, motion_registry, templates, templates_v2
@@ -21,9 +24,11 @@ def test_templates_resolve_easings_through_registry():
         assert module.ease_in_out is core.ease_in_out
 
 
-def test_registry_covers_all_fourteen_templates():
+def test_registry_covers_all_fifteen_templates():
     names = set(templates.TEMPLATES) | set(templates_v2.V2_TEMPLATES)
-    assert len(names) == 14
+    assert len(names) == 15
+    # The run-10 T5 guarantee template is part of the vocabulary.
+    assert "closing_card" in names
 
 
 def test_easing_behaviour_unchanged_at_sample_points():
