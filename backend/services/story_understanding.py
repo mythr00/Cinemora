@@ -326,6 +326,34 @@ def build_case_bible(script_text, llm, sentences=None, max_chars=24000, _diag=No
 
     data["by_id"] = {e["id"]: e for e in cleaned}
     data["alias_index"] = build_alias_index(cleaned)
+    # Transformation Phase 2.3 (§2.3): deterministic structured
+    # facts extracted from the script's own sentences — dates,
+    # quantities, dated events — stamped script_claim with their
+    # sentence references (services.script_facts). The table rides
+    # on the bible for the evidence producer, and its dated events
+    # merge into the bible timeline (entries the planner already
+    # supplied stay untouched), so the chronology graphic can
+    # render populated from the script alone. Fail-soft with the
+    # failure recorded on the table — a bible is never lost to
+    # fact extraction.
+    try:
+        from services import script_facts as _script_facts
+
+        _fact_sentences = sentences or [
+            p for p in re.split(r"(?<=[.!?])\s+", script_text) if p.strip()
+        ]
+        _fact_table = _script_facts.build_fact_table(
+            _fact_sentences, bible=data
+        )
+        data["script_facts"] = _fact_table
+        data["timeline"] = _script_facts.merge_timeline_events(
+            data.get("timeline") or [], _fact_table["facts"]
+        )
+    except Exception as error:  # recorded, never silent
+        data["script_facts"] = {
+            "facts": [],
+            "record": {"error": f"{type(error).__name__}: {error}"},
+        }
     # MA-27: one vocabulary end-to-end — the bible is either
     # LLM-produced ("llm") or it fell back ("degraded"). The run-level
     # mode derived in plan_script adds "partial_llm" between them;

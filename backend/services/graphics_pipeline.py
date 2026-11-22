@@ -2296,6 +2296,31 @@ def build_motion_graphics_assets(
     # STORY TIMELINE
     # -----------------------------------------------------
 
+    def _chronology_fact_basis(events):
+        """The chronology graphic's recorded fact basis (MG-09 /
+        Phase 2.3): an event's basis is its recorded fact_basis,
+        or — for planner-supplied events that predate the field —
+        research_supported when the bible's research labelling
+        marked it externally_supported, else script_claim. The
+        graphic as a whole is research_supported only when EVERY
+        event is; a chronology is never stamped above its weakest
+        event. Per-event bases ride in the recipe's events."""
+        bases = []
+        for event in events or []:
+            if not isinstance(event, dict):
+                continue
+            basis = event.get("fact_basis")
+            if basis not in (FACT_BASIS_RESEARCH, FACT_BASIS_SCRIPT):
+                basis = (
+                    FACT_BASIS_RESEARCH
+                    if event.get("support") == "externally_supported"
+                    else FACT_BASIS_SCRIPT
+                )
+            bases.append(basis)
+        if bases and all(b == FACT_BASIS_RESEARCH for b in bases):
+            return FACT_BASIS_RESEARCH
+        return FACT_BASIS_SCRIPT
+
     # Phase 6 (AM-001/D1): the chronology graphic renders ONLY
     # when a target anchors it (timeline_anchor is a target), and —
     # in manifest mode — only when that target's recorded family
@@ -2343,6 +2368,7 @@ def build_motion_graphics_assets(
                     ).get("sentence_number"),
                     source_references=[{"type": "case_bible_timeline"}],
                 ),
+                fact_basis=_chronology_fact_basis(timeline_events),
             )
             if record is not None:
                 _stamp_anchor(record, timeline_anchor)
@@ -2391,13 +2417,18 @@ def build_motion_graphics_assets(
         matching scene sentence record in `data["scenes"]`). The
         stat's kind is recorded.
 
-        MG-09 fact basis: every extraction source available today
-        is script-derived (regex over the sentence, or the analysis
-        record's money field — itself extracted from the script),
-        so the basis is script_claim. A research_supported basis is
-        honoured only when the extraction carries a recorded
-        evidence reference; without one it is downgraded to
-        script_claim rather than stamped VERIFIED on trust."""
+        MG-09 fact basis: extraction from the sentence itself
+        (regex over the sentence, or the analysis record's money
+        field — itself extracted from the script) is script_claim.
+        A research_supported basis is honoured only when the
+        extraction carries a recorded evidence reference; without
+        one it is downgraded to script_claim rather than stamped
+        VERIFIED on trust. Phase 2.3 adds the second recorded
+        path: a target carrying verified_data + an evidence_ref
+        naming a structured script fact (fact_id) presents that
+        fact with the basis the fact table recorded for it —
+        script_claim, or research_supported when the KB
+        corroboration's source rides on the ref."""
         sentence_record = _sentences_by_key.get(
             (scene_number, sentence_index)
         )
@@ -2422,6 +2453,35 @@ def build_motion_graphics_assets(
                 "display": _verified["display"],
                 "source": "verified_asset_metadata",
                 "fact_basis": FACT_BASIS_ASSET,
+                "evidence_ref": _evidence_ref,
+                "range_start": _verified.get("range_start"),
+                "range_end": _verified.get("range_end"),
+            }
+        elif (
+            isinstance(_verified, dict)
+            and _verified.get("display")
+            and isinstance(_evidence_ref, dict)
+            and _evidence_ref.get("fact_id")
+        ):
+            # Phase 2.3 (script facts): the target carries a fact
+            # extracted at planning time from the sentence itself
+            # (services.script_facts, via the evidence producer and
+            # the Director's manifest). Its basis is the one the
+            # fact table recorded: research_supported only when
+            # the ref carries the corroborating KB source — the
+            # generic downgrade below still applies without it.
+            _fact_basis = (target or {}).get("fact_basis")
+            if _fact_basis not in (FACT_BASIS_RESEARCH, FACT_BASIS_SCRIPT):
+                _fact_basis = FACT_BASIS_SCRIPT
+            if _fact_basis == FACT_BASIS_RESEARCH and not (
+                _evidence_ref.get("kb_source")
+            ):
+                _fact_basis = FACT_BASIS_SCRIPT
+            info = {
+                "kind": _verified.get("kind") or "script_fact",
+                "display": _verified["display"],
+                "source": "script_fact_table",
+                "fact_basis": _fact_basis,
                 "evidence_ref": _evidence_ref,
                 "range_start": _verified.get("range_start"),
                 "range_end": _verified.get("range_end"),

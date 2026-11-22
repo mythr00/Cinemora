@@ -25,3 +25,33 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
 os.environ.setdefault("BREWKEG_API_KEY", "test-dummy-key")
 os.environ.setdefault("SERPER_API_KEY", "test-dummy-key")
 os.environ.setdefault("SOURCE_INTEL_DB", os.path.join(_TMP, "source_intel.sqlite3"))
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _kb_default_transport_offline():
+    """Keep the suite's no-real-network rule true after D-2.
+
+    Founder decision D-2 was taken on 2026-11-22 (Transformation
+    Plan §2.3), enabling kb_client's live Wikipedia/Wikidata
+    lookups in production. Tests must stay deterministic and
+    offline (see this file's docstring), so the DEFAULT transport
+    is stubbed to unreachable for the whole session: KB lookups in
+    tests resolve from cache or record "unreachable" and the
+    typing cascade falls through, exactly as it does on an offline
+    production box. Session scope because module-scoped fixtures
+    (the golden-plan bibles) build before function-scoped fixtures
+    run. Tests for the live path inject their own transport (the
+    kb_client contract) and are unaffected by this stub.
+    """
+    from services import kb_client
+
+    original = kb_client._default_transport
+
+    def _offline_transport(url, params, timeout=None):
+        raise ConnectionError("kb default transport disabled in tests")
+
+    kb_client._default_transport = _offline_transport
+    yield
+    kb_client._default_transport = original

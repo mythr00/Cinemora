@@ -1,12 +1,15 @@
-"""Phase 7 — the KB stage with founder decision D-2 UNMADE.
+"""Phase 7 — the KB stage, founder decision D-2 now TAKEN.
 
-kb_client is implemented as architecture (cache, budgets, timeout
-and malformed handling, verified-vs-inferred provenance) with its
-network source OFF: in the shipped state lookup_entity makes ZERO
-outbound calls and records "kb_disabled". The live path is
-exercised only through an injected transport with the gate
-monkeypatched open — the shape the founder's later config flip
-would enable, with no rewrite.
+kb_client was built as architecture (cache, budgets, timeout and
+malformed handling, verified-vs-inferred provenance) behind the
+D-2 gate. The decision was taken on 2026-11-22 under the Complete
+Autonomous Takeover Mandate (Transformation Plan §2.3), so the
+shipped state is network ENABLED. These tests pin: the shipped
+gate state; the disabled behaviour, exercised by monkeypatching
+the gate closed (zero outbound calls, "kb_disabled" recorded);
+and the live path, exercised only through an injected transport.
+The suite itself never performs a real lookup — conftest stubs
+the default transport to unreachable.
 """
 
 import socket
@@ -22,12 +25,15 @@ def _isolated_intel_db(tmp_path, monkeypatch):
     monkeypatch.setenv("SOURCE_INTEL_DB", str(tmp_path / "intel.sqlite3"))
 
 
-def test_network_is_disabled_by_default():
-    assert kb_client.FOUNDER_D2_APPROVED is False
-    assert kb_client.network_enabled() is False
+def test_network_is_enabled_by_the_d2_decision():
+    # D-2 taken 2026-11-22 under the takeover mandate
+    # (Transformation Plan §2.3): the shipped gate state is open.
+    assert kb_client.FOUNDER_D2_APPROVED is True
+    assert kb_client.network_enabled() is True
 
 
-def test_lookup_records_kb_disabled_and_never_calls_transport():
+def test_lookup_records_kb_disabled_and_never_calls_transport(monkeypatch):
+    monkeypatch.setattr(kb_client, "FOUNDER_D2_APPROVED", False)
     calls = []
 
     def spy_transport(url, params):
@@ -42,6 +48,8 @@ def test_lookup_records_kb_disabled_and_never_calls_transport():
 
 
 def test_lookup_makes_zero_network_calls(monkeypatch):
+    monkeypatch.setattr(kb_client, "FOUNDER_D2_APPROVED", False)
+
     def _blocked_connect(self, *args, **kwargs):
         raise AssertionError("a network connection was attempted")
 
@@ -51,7 +59,8 @@ def test_lookup_makes_zero_network_calls(monkeypatch):
     assert "kb_disabled" in result["signals"]
 
 
-def test_bible_records_the_disabled_kb_stage():
+def test_bible_records_the_disabled_kb_stage(monkeypatch):
+    monkeypatch.setattr(kb_client, "FOUNDER_D2_APPROVED", False)
     bible = degraded_planner.build_bible([
         "Marie Curie won two Nobel Prizes.",
         "She worked in Paris for decades.",
@@ -68,6 +77,24 @@ def test_bible_records_the_disabled_kb_stage():
     untyped = [e for e in bible["entities"] if e["type"] == "other"]
     assert untyped and all(
         e["type_source"] == "kb_disabled" for e in untyped
+    )
+
+
+def test_bible_records_the_enabled_kb_stage():
+    # Shipped state (D-2 taken): the bible records the stage as
+    # enabled. The suite's default transport is stubbed offline
+    # (conftest), so lookups record unreachable and typing falls
+    # through to the deterministic stages — the same bible an
+    # offline production box would build.
+    bible = degraded_planner.build_bible([
+        "Marie Curie won two Nobel Prizes.",
+        "She worked in Paris for decades.",
+    ])
+    assert bible["kb"]["network_enabled"] is True
+    assert bible["kb"]["live"] == 0
+    assert all(
+        "kb_disabled" not in entity["type_signals"]
+        for entity in bible["entities"]
     )
 
 

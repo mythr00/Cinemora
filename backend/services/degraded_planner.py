@@ -44,14 +44,17 @@ FOUNDER-GATE BOUNDARIES (Phase 7 scope):
     (`specificity_basis`, recorded per scenario and aggregated in
     the plan's quality block) but NEVER drives the stamp, and the
     low-confidence scenario widening is not applied.
-  * D-2 (Wikipedia/Wikidata lookups) is UNMADE. The KB stage runs
-    through services.kb_client with its network source OFF: it
-    consults the cache, records `kb_disabled` in the entity's
-    signals, and returns no verdict. Zero outbound calls.
+  * D-2 (Wikipedia/Wikidata lookups) was UNMADE when this planner
+    shipped; it was taken on 2026-11-22 under the takeover
+    mandate (Transformation Plan §2.3), so the KB stage now runs
+    live through services.kb_client (cache first, budgeted).
+    With the gate closed it consults the cache only, records
+    `kb_disabled` in the entity's signals, and returns no verdict.
   * DM-2(b) (degraded-plan policy) is not implemented — only the
     recording half (mode / degraded_reason / counts) lands, in
     story_understanding's planner block.
-  * This module NEVER calls an LLM and never touches the network.
+  * This module NEVER calls an LLM; its only network path is the
+    kb_client lookup above.
 
 Rollout (P5): wired at the two existing fallback points
 (build_case_bible's bible fallback, analyze_sentences' missing
@@ -350,10 +353,11 @@ def _type_cluster(cluster, sentences, kb_budget, kb_stats):
     """One cluster through the cascade. Returns (type, confidence,
     type_source, signals, description, kb_aliases).
 
-    Order (§5.2.1, KB stage disabled): cache -> KB stage (records
-    kb_disabled, no verdict while D-2 is unmade) -> lexicon ->
-    frames -> honest `other`. NOTHING here infers type from a
-    preposition ratio: place requires positive place evidence.
+    Order (§5.2.1): cache -> KB stage (live since D-2 was taken
+    on 2026-11-22; records kb_disabled and returns no verdict
+    while the gate is closed) -> lexicon -> frames -> honest
+    `other`. NOTHING here infers type from a preposition ratio:
+    place requires positive place evidence.
     """
     signals = []
     kb = kb_client.lookup_entity(cluster["canonical"], budget=kb_budget)

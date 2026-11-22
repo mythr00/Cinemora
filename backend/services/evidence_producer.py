@@ -43,6 +43,22 @@ whole producer is fail-soft by contract: jobs calls it inside
 the Director's existing try/except, and any unexpected shape
 degrades to an empty map plus the record, never an exception
 escaping into the pipeline (D2 record-and-continue).
+
+SCRIPT-FACT FALLBACK (Transformation Phase 2.3, 2026-11-22)
+    When the caller supplies the production's structured fact
+    table (services.script_facts, extracted at planning time from
+    the script's own sentences), a starved sentence that no
+    verified asset could serve may still rest its graphic on a
+    fact extracted from ITS OWN sentence. The basis is recorded
+    exactly: a plain script fact produces evidence stamped
+    `script_claim`; a fact the knowledge base corroborated
+    (basis research_supported, KB source recorded by the
+    corroboration stage) produces `research_supported` evidence
+    whose ref names the KB source. Asset evidence always wins —
+    the fallback runs only for sentences the asset path left
+    unserved — and the record counts the two fact paths
+    separately (produced_script_fact / produced_kb_fact), so the
+    firing rate per basis stays measurable.
 """
 
 
@@ -106,7 +122,81 @@ def _recorded_fact(asset):
     return None
 
 
-def build_evidence(processed_scenes, outcomes):
+def _facts_by_sentence(fact_table):
+    """{sentence_number: [fact, ...]} from a script_facts table
+    (the dict build_fact_table returns, or a bare fact list)."""
+    if isinstance(fact_table, dict):
+        facts = fact_table.get("facts")
+    else:
+        facts = fact_table
+    by_sentence = {}
+    for fact in facts or []:
+        if isinstance(fact, dict) and fact.get("sentence_number") is not None:
+            by_sentence.setdefault(fact["sentence_number"], []).append(fact)
+    return by_sentence
+
+
+def _fact_evidence(fact):
+    """The Director evidence entry for one script fact, or None.
+
+    The display the graphic presents: a quantity's own text, or a
+    dated event's date. The ref names the fact exactly (fact_id +
+    sentence) and, for a KB-corroborated fact, the KB source the
+    corroboration stage recorded — the Director stamps
+    research_supported only when that source is present."""
+    if not isinstance(fact, dict) or not fact.get("fact_id"):
+        return None
+    if fact.get("kind") == "quantity":
+        display = fact.get("display")
+        kind = "script_quantity"
+    elif fact.get("kind") in ("dated_event", "date"):
+        display = fact.get("when") or fact.get("display")
+        kind = "script_date"
+    else:
+        return None
+    if not display or not str(display).strip():
+        return None
+    basis = fact.get("basis") or "script_claim"
+    ref = {
+        "fact_id": fact["fact_id"],
+        "source": "script_facts",
+        "sentence_number": fact.get("sentence_number"),
+    }
+    if basis == "research_supported":
+        kb_source = (fact.get("source") or {}).get("source")
+        if not kb_source:
+            # A verified stamp without its recorded source is a
+            # claim on trust — downgrade to the honest basis.
+            basis = "script_claim"
+        else:
+            ref["kb_source"] = kb_source
+            ref["kb_query"] = (fact.get("source") or {}).get("query")
+    return {
+        "evidence_ref": ref,
+        "verified_data": {"display": str(display), "kind": kind},
+        "fact_basis": basis,
+    }
+
+
+def _best_fact_evidence(facts):
+    """The strongest evidence a sentence's own facts offer:
+    KB-corroborated first, quantities before dates within a
+    basis (a number is the stat family's natural headline)."""
+    ranked = []
+    for fact in facts or []:
+        entry = _fact_evidence(fact)
+        if entry is None:
+            continue
+        basis_rank = 0 if entry["fact_basis"] == "research_supported" else 1
+        kind_rank = 0 if fact.get("kind") == "quantity" else 1
+        ranked.append((basis_rank, kind_rank, entry))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return ranked[0][2]
+
+
+def build_evidence(processed_scenes, outcomes, fact_table=None):
     """Assemble the Director evidence map for one production.
 
     `outcomes` is the Director's own outcome map (only starved
@@ -120,20 +210,20 @@ def build_evidence(processed_scenes, outcomes):
     record = {
         "starved_sentences": 0,
         "produced": 0,
+        "produced_script_fact": 0,
+        "produced_kb_fact": 0,
         "no_verified_asset_in_scene": 0,
         "no_recorded_fact": 0,
         "no_recorded_identity": 0,
     }
     try:
         by_scene = _verified_assets_by_scene(processed_scenes)
+        facts_by_sentence = _facts_by_sentence(fact_table)
         for number, outcome in (outcomes or {}).items():
             if not isinstance(outcome, dict) or not outcome.get("starved"):
                 continue
             record["starved_sentences"] += 1
             assets = by_scene.get(outcome.get("scene_number")) or []
-            if not assets:
-                record["no_verified_asset_in_scene"] += 1
-                continue
             placed = False
             saw_fact_without_identity = False
             for asset in assets:
@@ -151,11 +241,27 @@ def build_evidence(processed_scenes, outcomes):
                 record["produced"] += 1
                 placed = True
                 break
-            if not placed:
-                if saw_fact_without_identity:
-                    record["no_recorded_identity"] += 1
+            if placed:
+                continue
+            # Phase 2.3 fallback: the sentence's own script facts
+            # (asset evidence always wins — this runs only when
+            # the asset path placed nothing).
+            fact_entry = _best_fact_evidence(
+                facts_by_sentence.get(number)
+            )
+            if fact_entry is not None:
+                evidence[number] = fact_entry
+                if fact_entry["fact_basis"] == "research_supported":
+                    record["produced_kb_fact"] += 1
                 else:
-                    record["no_recorded_fact"] += 1
+                    record["produced_script_fact"] += 1
+                continue
+            if not assets:
+                record["no_verified_asset_in_scene"] += 1
+            elif saw_fact_without_identity:
+                record["no_recorded_identity"] += 1
+            else:
+                record["no_recorded_fact"] += 1
     except Exception:
         # Fail-soft (D2): evidence production must never break the
         # Director stage; the record shows what was assembled

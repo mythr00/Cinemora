@@ -12,19 +12,23 @@ PURPOSE
     about the same subject pays zero lookups and an offline run
     replays from cache.
 
-FOUNDER DECISION D-2 — NETWORK SOURCE DISABLED
+FOUNDER DECISION D-2 — NETWORK SOURCE ENABLED (2026-11-22)
     Calling en.wikipedia.org / www.wikidata.org for planning
-    metadata is founder decision D-2, which is UNMADE. Until it is
-    approved, FOUNDER_D2_APPROVED stays False and lookup_entity()
-    NEVER touches the network: it consults the cache, records the
-    stage as "kb_disabled" in its signals, and returns no verdict,
-    so the typing cascade falls through to its deterministic
-    lexicon/frame stages and stamps the fact. Enabling D-2 later is
-    a config flip (this constant, plus recorded-fixture tests of the
-    live shapes below), not a rewrite: the full lookup path —
-    search, P31 mapping, description classes, caching, budgets,
-    timeout and malformed-response handling — is implemented here
-    and exercised in tests through an injected transport.
+    metadata was founder decision D-2, left unmade through the
+    Master Directive era. The Complete Autonomous Takeover Mandate
+    (2026-11-21 23:46 WAT) transferred ordinary product decisions
+    to the agent, and the Transformation Plan (2026-11-22, §2.3)
+    records the decision as taken under that authority:
+    FOUNDER_D2_APPROVED is True and lookup_entity() may use the
+    network, so facts corroborated by KB lookup can be stamped as
+    verified with their source recorded (services.script_facts).
+    The honest-provenance rule is unchanged: this module only ever
+    returns verified-class results, with the source and fetch
+    provenance attached. The full lookup path — search, P31
+    mapping, description classes, caching, budgets, timeout and
+    malformed-response handling — was implemented and tested
+    behind the gate, so enabling it is the config flip it was
+    designed to be, not a rewrite.
 
 CONTRACT
     * Lookups send entity NAMES only — never script text.
@@ -45,10 +49,13 @@ import time
 from services import source_cache
 
 # ------------------------------------------------------------------
-# The D-2 gate. False = no outbound call to en.wikipedia.org or
-# www.wikidata.org is possible from any code path in this module.
+# The D-2 gate. True since 2026-11-22 (decision taken under the
+# takeover mandate; see the module docstring). Setting it False
+# restores the disabled behaviour exactly: no outbound call to
+# en.wikipedia.org or www.wikidata.org is possible from any code
+# path in this module, and lookups record "kb_disabled".
 # ------------------------------------------------------------------
-FOUNDER_D2_APPROVED = False
+FOUNDER_D2_APPROVED = True
 
 WIKIDATA_API = "https://www.wikidata.org/w/api.php"
 WIKIPEDIA_SUMMARY_API = "https://en.wikipedia.org/api/rest_v1/page/summary"
@@ -161,9 +168,9 @@ class KBBudget:
 
 
 def network_enabled():
-    """True only when founder decision D-2 has been approved (the
-    constant above flipped by a founder-approved change). While
-    False, lookup_entity performs ZERO outbound calls."""
+    """True when founder decision D-2 stands approved (flipped
+    2026-11-22 under the takeover mandate). While False,
+    lookup_entity performs ZERO outbound calls."""
     return bool(FOUNDER_D2_APPROVED)
 
 
@@ -280,8 +287,9 @@ def lookup_entity(name, *, budget=None, transport=None):
     budget-exhausted / no-match are statuses, so the typing cascade
     can record exactly which stage decided (or could not).
 
-    With D-2 unapproved (the shipped state) the flow is: cache ->
-    disabled. Zero outbound calls are made.
+    With D-2 approved (the shipped state since 2026-11-22) the
+    flow is: cache -> live sources under the budget. With the gate
+    closed it is: cache -> disabled, zero outbound calls.
     """
     name = str(name or "").strip()
     signals = []

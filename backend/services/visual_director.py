@@ -70,6 +70,10 @@ TREATMENT_UNRESOLVED = "unresolved"
 
 FACT_BASIS_ASSET = "verified_asset_metadata"
 FACT_BASIS_SCRIPT = "script_claim"
+# Transformation Phase 2.3: a script fact corroborated by a
+# recorded knowledge-base verdict (services.script_facts) — the
+# stamp is honoured only with the KB source on the evidence ref.
+FACT_BASIS_RESEARCH = "research_supported"
 
 _PERCENT_RE = re.compile(r"\d+(?:\.\d+)?\s?(?:%|percent\b)", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
@@ -515,13 +519,35 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                     and verified_data.get("display")
                 ):
                     fact_basis = FACT_BASIS_ASSET
+                elif (
+                    isinstance(evidence_ref, dict)
+                    and evidence_ref.get("fact_id")
+                    and isinstance(verified_data, dict)
+                    and verified_data.get("display")
+                ):
+                    # Phase 2.3: script-fact evidence (the
+                    # sentence's own extracted fact, via the
+                    # evidence producer's fact fallback). The data
+                    # rides through with its recorded basis:
+                    # research_supported ONLY when the ref carries
+                    # the KB source that corroborated it — never on
+                    # the producer's say-so alone — and script_claim
+                    # otherwise. The stamp always says which.
+                    if (
+                        entry_evidence.get("fact_basis")
+                        == FACT_BASIS_RESEARCH
+                        and evidence_ref.get("kb_source")
+                    ):
+                        fact_basis = FACT_BASIS_RESEARCH
                 else:
                     evidence_ref = None
                     verified_data = None
                 families = _family_candidates(
                     row, outcome, production_context
                 )
-                if fact_basis == FACT_BASIS_ASSET and "stat" not in families:
+                if fact_basis in (
+                    FACT_BASIS_ASSET, FACT_BASIS_RESEARCH,
+                ) and "stat" not in families:
                     # The verified-data path IS the stat family: an
                     # evidence-bearing entry always permits it,
                     # whatever the sentence's own numbers look like.

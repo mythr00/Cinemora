@@ -1444,9 +1444,40 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             # reported fact, never a silent zero.
             from services import evidence_producer as _evidence
 
-            _evidence_map, _evidence_record = _evidence.build_evidence(
-                processed_scenes, _outcomes
+            # Transformation Phase 2.3 (§2.3): KB-corroborate the
+            # planning stage's script-fact table (bible
+            # ["script_facts"], services.script_facts) so facts the
+            # knowledge base genuinely supports reach the Director
+            # stamped research_supported with their source recorded
+            # — and refresh the bible timeline's per-event bases so
+            # the chronology's manifest stamp matches. Bounded by
+            # the KB budget, fail-soft, and recorded on the
+            # evidence record either way.
+            _fact_table = (
+                (analysis.get("bible") or {}).get("script_facts")
             )
+            _kb_corroboration = None
+            if isinstance(_fact_table, dict) and _fact_table.get("facts"):
+                try:
+                    from services import script_facts as _script_facts
+
+                    _kb_corroboration = (
+                        _script_facts.corroborate_facts(
+                            _fact_table["facts"]
+                        )
+                    )
+                    _script_facts.apply_fact_bases_to_timeline(
+                        analysis.get("bible") or {}, _fact_table["facts"]
+                    )
+                except Exception as _kb_error:  # recorded, not silent
+                    _kb_corroboration = {
+                        "error": f"{type(_kb_error).__name__}: {_kb_error}"
+                    }
+            _evidence_map, _evidence_record = _evidence.build_evidence(
+                processed_scenes, _outcomes, fact_table=_fact_table
+            )
+            if _kb_corroboration is not None:
+                _evidence_record["kb_corroboration"] = _kb_corroboration
             _plan_v2, _graphics_manifest = (
                 _visual_director.reconcile_visual_plan(
                     _plan_v1,

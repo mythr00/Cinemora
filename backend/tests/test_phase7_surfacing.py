@@ -35,7 +35,7 @@ def test_planner_block_shape(degraded_block):
     assert degraded_block["planner_version"] == "degraded-2.0"
     assert degraded_block["degraded_reason"] == "no_key"
     assert degraded_block["degraded_sentences"] == degraded_block["sentences"] == 11
-    assert degraded_block["kb"]["network_enabled"] is False
+    assert degraded_block["kb"]["network_enabled"] is True
     quality = degraded_block["quality"]
     assert quality["entities"] >= 3
     assert quality["scenarios_per_sentence"] > 1.0
