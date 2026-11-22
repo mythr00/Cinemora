@@ -147,6 +147,29 @@ def test_plan_rejects_script_and_options_mismatch(tmp_path):
     assert "options_mismatch" in (plan["fallback"] or "")
 
 
+def test_retry_bookkeeping_keys_do_not_block_adoption(tmp_path):
+    """Phase 8.6 battery find: the dispatcher's retry sweep stamps
+    retry_of/retry_attempt onto the child's options; those keys
+    are ledger bookkeeping, not production options, so a retry
+    child must still adopt its parent's validated stages."""
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    run_dir, state = _write_source_run(
+        project_dir, "run-src", "hash-1", {"captions": "off"},
+        ["voice_actor"],
+    )
+    _record(project_dir, run_dir, state, "voice_actor",
+            {"narration.wav": b"audio", "captions.json": b"{}"},
+            {"state": {}})
+
+    plan = stage_resume.plan_resume(
+        project_dir, "run-retry", "hash-1",
+        {"captions": "off", "entrypoint": "enqueue_full_pipeline",
+         "retry_of": "run-src", "retry_attempt": 1},
+    )
+    assert sorted(plan["stages"]) == ["voice_actor"]
+
+
 def test_unserialisable_payload_makes_stage_unadoptable(tmp_path):
     project_dir = tmp_path / "proj"
     project_dir.mkdir()

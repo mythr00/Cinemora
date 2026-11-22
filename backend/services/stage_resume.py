@@ -54,7 +54,16 @@ RESUME_DIR_NAME = "resume"
 
 #: Manifest option keys that describe HOW the run was submitted,
 #: not WHAT it produces; they never block adoption.
-_VOLATILE_OPTION_KEYS = frozenset({"entrypoint"})
+#: Option keys that never change what a production IS: submission
+#: plumbing ("entrypoint") and ledger retry bookkeeping
+#: ("retry_of"/"retry_attempt", stamped by the dispatcher's retry
+#: sweep). A retry child MUST compare options-equal to its parent
+#: or stage adoption is refused (options_mismatch) and the retry
+#: re-runs every stage from scratch — the exact failure the
+#: Phase 8.6 crash battery caught live (2026-11-22).
+_VOLATILE_OPTION_KEYS = frozenset(
+    {"entrypoint", "retry_of", "retry_attempt"}
+)
 
 #: Terminal manifest/state statuses a prior run may be adopted from.
 #: A still-"running" prior run is never a source: its artefacts may
