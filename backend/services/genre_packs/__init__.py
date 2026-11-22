@@ -15,7 +15,9 @@ in pipeline code. Each pack declares:
   the targeted-graphics chain,
 - style_family: the motion-engine style family for the genre
   (history -> "history", true_crime -> "true_crime", general ->
-  None, meaning the historical per-template defaults apply),
+  None, meaning the historical per-template defaults apply;
+  engineering / industrial -> "editorial", the clean technical
+  slate — Transformation Phase 2.1/2.2, 2026-11-22),
 - pacing: informational targets only (narration is not retimed),
 - music_mood: a metadata label only. NO music library is
   integrated — that selection is founder-gated.
@@ -81,7 +83,7 @@ from pathlib import Path
 
 _DATA_DIR = Path(__file__).resolve().parent / "data"
 
-PACK_IDS = ("general", "history", "true_crime")
+PACK_IDS = ("general", "history", "true_crime", "engineering")
 
 
 @lru_cache(maxsize=None)
