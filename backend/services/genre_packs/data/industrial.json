@@ -94,6 +94,24 @@
     "{name} production line operations",
     "{name} {place} factory operations"
   ],
+  "source_hints": {
+    "archive": [
+      "collection:prelinger {subject}",
+      "{subject} subject:(\"containerization\")",
+      "creator:(\"United States Maritime Administration\") {subject}"
+    ],
+    "web": [
+      "{query} port authority operations site:loc.gov OR site:si.edu"
+    ],
+    "wikimedia_category": [
+      "incategory:\"Container terminals\" {subject}",
+      "incategory:\"Container ships\" {subject}",
+      "incategory:\"Ports\" {subject}"
+    ],
+    "wikimedia_query": [
+      "{subject} container terminal operations"
+    ]
+  },
   "style_family": "editorial",
   "visual_profile": {
     "broll_vocabulary": {

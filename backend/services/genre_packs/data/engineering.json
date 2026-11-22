@@ -94,6 +94,23 @@
     "{name} engineering report findings",
     "{name} {place} collapse inquiry"
   ],
+  "source_hints": {
+    "archive": [
+      "creator:(\"National Transportation Safety Board\") {subject}",
+      "{subject} collection:nasa",
+      "{subject} subject:(\"structural failure\")"
+    ],
+    "web": [
+      "{query} site:ntsb.gov OR site:nist.gov OR site:loc.gov"
+    ],
+    "wikimedia_category": [
+      "incategory:\"Structural engineering\" {subject}",
+      "incategory:\"Building construction\" {subject}"
+    ],
+    "wikimedia_query": [
+      "{subject} collapse investigation"
+    ]
+  },
   "style_family": "editorial",
   "visual_profile": {
     "broll_vocabulary": {

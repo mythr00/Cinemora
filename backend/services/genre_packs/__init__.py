@@ -54,6 +54,25 @@ in pipeline code. Each pack declares:
   the RESOLVED profile via resolve_visual_profile /
   resolve_genre_pack; pipeline code never branches on genre
   names.
+- source_hints (Transformation Phase 4.2): a top-level block of
+  institutional discovery templates — Wikimedia Commons category
+  searches, Commons free-text searches, Archive.org advanced-
+  search (Lucene) fragments and Serper web searches aimed at
+  institutional material (NTSB, NASA, national archives, port
+  authorities, government footage) that generic web search
+  surfaces poorly. Templates carry {subject} / {place} / {era} /
+  {query} placeholders formatted per shot need; discovery
+  (media_pipeline.build_shot_needs -> _uve_scenario_search)
+  consumes the RESOLVED hints via resolve_source_hints /
+  format_source_hint_queries, and every hint query is accounted
+  in the AM-021 per-query diagnostics under source "source_hint"
+  and aggregated in the asset report's source_hints block.
+  Validation is load-time (validate_source_hints) like the rest
+  of the pack; a block that fails validation resolves to no
+  hints — hints are an aid, never a gate. Packs without the
+  block simply have no hints (no cross-pack fallback: a hint is
+  genre knowledge, and borrowing another genre's institutions
+  would be fabrication, not neutrality).
 - broll_vocabulary (Intelligent B-Roll B1, plan §4.3): a block
   under visual_profile — activities / settings / place_types /
   mood phrase lists a genre's B-roll searches may top up from.
@@ -464,6 +483,163 @@ def _with_visual_profile(result):
     result["visual_theme"] = resolved["visual_theme"]
     result["visual_theme_failures"] = resolved["theme_failures"]
     return result
+
+
+# ---------------------------------------------------------------------------
+# Source hints (Transformation Phase 4.2)
+# ---------------------------------------------------------------------------
+
+#: The discovery channels a pack's source_hints block may target.
+#: wikimedia_category templates format into Commons CirrusSearch
+#: strings (incategory:"..." plus anchor terms) run through the
+#: Commons image/video searches; wikimedia_query templates are
+#: Commons free-text searches; archive templates are Archive.org
+#: advanced-search (Lucene) fragments — search_archive_videos
+#: appends "AND mediatype:movies"; web templates are Serper
+#: searches (videos + web + images).
+SOURCE_HINT_CHANNELS = (
+    "wikimedia_category", "wikimedia_query", "archive", "web",
+)
+
+#: Per-need execution caps per channel (formatted hints actually
+#: stamped on a shot need). Discovery aid, bounded like every
+#: other query expansion (cf. _MAX_NEED_QUERIES for intent
+#: queries): hints widen the funnel, they must not flood it.
+SOURCE_HINT_CAPS = {
+    "wikimedia_category": 2,
+    "wikimedia_query": 1,
+    "archive": 2,
+    "web": 1,
+}
+
+_SOURCE_HINT_MAX_TEMPLATES = 4
+_SOURCE_HINT_MAX_TEMPLATE_CHARS = 200
+_SOURCE_HINT_PLACEHOLDERS = ("{subject}", "{place}", "{era}", "{query}")
+
+
+def validate_source_hints(hints):
+    """Validate one pack's source_hints block (Phase 4.2).
+
+    Returns a list of failure strings; empty means valid. An
+    absent block (None) is legal — the pack simply has no hints.
+    Rules: known channels only; each channel holds at most
+    _SOURCE_HINT_MAX_TEMPLATES non-empty string templates of at
+    most _SOURCE_HINT_MAX_TEMPLATE_CHARS characters; every
+    template uses at least one known placeholder (a template
+    with no anchor would fire the same query for every beat in
+    the genre — a flood, not a hint); no unknown {placeholder}
+    may appear (it would survive formatting as literal noise).
+    """
+    failures = []
+    if hints is None:
+        return failures
+    if not isinstance(hints, dict):
+        return ["source_hints_not_an_object"]
+    unknown = sorted(set(hints) - set(SOURCE_HINT_CHANNELS))
+    if unknown:
+        failures.append(f"source_hints_unknown_channels:{','.join(unknown)}")
+    for channel in sorted(set(hints) & set(SOURCE_HINT_CHANNELS)):
+        templates = hints[channel]
+        if not isinstance(templates, list):
+            failures.append(f"source_hints_{channel}_not_a_list")
+            continue
+        if len(templates) > _SOURCE_HINT_MAX_TEMPLATES:
+            failures.append(f"source_hints_{channel}_too_many")
+        for template in templates:
+            if not isinstance(template, str) or not template.strip():
+                failures.append(f"source_hints_{channel}_template_invalid")
+                break
+            if len(template) > _SOURCE_HINT_MAX_TEMPLATE_CHARS:
+                failures.append(f"source_hints_{channel}_template_too_long")
+                break
+            found = re.findall(r"\{[^{}]*\}", template)
+            bad = [f for f in found if f not in _SOURCE_HINT_PLACEHOLDERS]
+            if bad:
+                failures.append(
+                    f"source_hints_{channel}_unknown_placeholder:"
+                    f"{','.join(sorted(set(bad)))}"
+                )
+                break
+            if not found:
+                failures.append(
+                    f"source_hints_{channel}_template_unanchored"
+                )
+                break
+    return failures
+
+
+def resolve_source_hints(pack):
+    """The pack's validated source_hints, normalised per channel.
+
+    Returns {"hints": {channel: [templates]}, "failures": [...]}.
+    A pack without the block — or with a block that fails
+    validation — resolves to empty hints with the failures
+    recorded (fail-closed to no-hints: discovery proceeds exactly
+    as before Phase 4.2). The returned lists are fresh copies;
+    the cached pack dicts are never mutated.
+    """
+    result = {"hints": {}, "failures": []}
+    if not isinstance(pack, dict):
+        return result
+    hints = pack.get("source_hints")
+    if hints is None:
+        return result
+    failures = validate_source_hints(hints)
+    if failures:
+        result["failures"] = failures
+        return result
+    for channel in SOURCE_HINT_CHANNELS:
+        templates = hints.get(channel) or []
+        if templates:
+            result["hints"][channel] = list(templates)
+    return result
+
+
+def format_source_hint_queries(hints, *, subject="", place="", era="",
+                               query=""):
+    """Format a resolved hints block against one shot need's
+    anchors.
+
+    ``hints`` is the {channel: [templates]} mapping from
+    resolve_source_hints. A template is SKIPPED when any
+    placeholder it uses has an empty anchor (a hint that cannot
+    name its subject is not issued half-formed). Formatted
+    queries are whitespace-normalised, deduplicated within the
+    channel, and capped per SOURCE_HINT_CAPS. Returns a list of
+    {"query", "channel", "template"} in channel order — the
+    record build_shot_needs stamps on the need and
+    _uve_scenario_search executes.
+    """
+    anchors = {
+        "{subject}": str(subject or "").strip(),
+        "{place}": str(place or "").strip(),
+        "{era}": str(era or "").strip(),
+        "{query}": str(query or "").strip(),
+    }
+    formatted = []
+    for channel in SOURCE_HINT_CHANNELS:
+        seen = set()
+        for template in (hints or {}).get(channel) or []:
+            used = re.findall(r"\{[^{}]*\}", str(template))
+            if any(not anchors.get(ph) for ph in used):
+                continue
+            text = str(template)
+            for placeholder, value in anchors.items():
+                text = text.replace(placeholder, value)
+            text = " ".join(text.split()).strip()
+            if not text or text.lower() in seen:
+                continue
+            seen.add(text.lower())
+            formatted.append({
+                "query": text,
+                "channel": channel,
+                "template": str(template),
+            })
+            if len([f for f in formatted if f["channel"] == channel]) >= (
+                SOURCE_HINT_CAPS[channel]
+            ):
+                break
+    return formatted
 
 
 # ---------------------------------------------------------------------------
