@@ -6554,7 +6554,37 @@ def _uve_unsearched_ladder_entry(
     return [attempt]
 
 
+def _raise_if_cancel_requested():
+    """Cooperative cancellation inside the pipeline (Phase 8.4;
+    design 03 §4.2): jobs.run_stage checks the ledger flag at stage
+    boundaries, but the asset-manager stage is long — this check
+    runs at scene entry and at each coverage-recovery round, so a
+    cancelled production stops within one scene/round of work
+    instead of grinding to the next stage. Raises
+    run_ledger.RunCancelled, which the pipeline's existing handler
+    routes to a cancelled finish. Fail-soft: any lookup problem
+    means "not cancelled"."""
+    try:
+        from services import run_context as _run_context
+        from services import run_ledger as _run_ledger
+    except ImportError:
+        return
+    try:
+        context = _run_context.current_context()
+        run_id = getattr(context, "run_id", None) if context else None
+        cancelled = bool(
+            run_id and _run_ledger.is_cancel_requested(run_id)
+        )
+    except Exception:
+        cancelled = False
+    if cancelled:
+        raise _run_ledger.RunCancelled(
+            f"run {run_id} cancelled during asset retrieval"
+        )
+
+
 def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
+    _raise_if_cancel_requested()
     if not isinstance(scene, dict):
         scene = {}
     scene_number = scene.get("scene_number", 1)
@@ -6730,6 +6760,7 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
             base_scenario = dict(scenarios[0])
             base_need = (beat.get("shot_needs") or [{}])[0]
             for round_no in range(1, MAX_COVERAGE_RECOVERY_ROUNDS + 1):
+                _raise_if_cancel_requested()
                 recovery_queries = _recovery_queries(
                     beat, tried_queries, broad=(round_no > 1),
                 )

@@ -1137,6 +1137,20 @@ def _build_transition_join(all_clips, clip_frames, plan, project_dir):
 
 
 def render_timeline(scenes, project_dir, expected_duration=None):
+    """Final-render entry (pipeline + editor). Phase 8.4: the
+    encode runs under a render slot (services/render_slots) so
+    concurrent productions overlap their retrieval/narration but
+    serialise their CPU-saturating final encodes per
+    CINEMORA_RENDER_CONCURRENCY (design 03 §6.2)."""
+    from services import render_slots
+
+    with render_slots.render_slot():
+        return _render_timeline_impl(
+            scenes, project_dir, expected_duration=expected_duration
+        )
+
+
+def _render_timeline_impl(scenes, project_dir, expected_duration=None):
     project_dir = Path(project_dir)
     project_dir.mkdir(parents=True, exist_ok=True)
 

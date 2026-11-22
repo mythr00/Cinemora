@@ -61,6 +61,33 @@ video_queue = Queue(
     default_timeout=3600,
 )
 
+# Phase 8.4 two-lane design (03 §3.3): interactive work (plan
+# analysis, revision renders, priority-tier productions) runs on
+# the priority lane; workers always drain it first. Per-kind job
+# timeouts replace the single 1-hour default (03 §3.3 table).
+PRIORITY_QUEUE_NAME = "video_generation_priority"
+
+video_queue_priority = Queue(
+    PRIORITY_QUEUE_NAME,
+    connection=redis_connection,
+    default_timeout=3600,
+)
+
+FULL_PIPELINE_TIMEOUT_SECONDS = 4 * 3600
+ANALYSIS_TIMEOUT_SECONDS = 1800
+REVISION_RENDER_TIMEOUT_SECONDS = 3600
+
+
+def _dispatch_quietly():
+    """Fail-soft dispatcher pass (Phase 8.4): submissions and
+    completions are the two moments capacity changes."""
+    try:
+        from services import dispatcher
+
+        dispatcher.dispatch_once()
+    except Exception:
+        pass
+
 # PIPE-101: queue ordering policy is FIFO. Every enqueue in this
 # module appends to the BACK of the queue (RQ's default); no call
 # site passes at_front. The blanket at_front=True that used to sit
@@ -362,6 +389,9 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
         )
     if isinstance(state, dict) and "_run_context_previous" in state:
         run_context.deactivate(state.pop("_run_context_previous"))
+    # Phase 8.4: a terminal run frees capacity — let the dispatcher
+    # promote the next queued production.
+    _dispatch_quietly()
     print()
     print("========================================")
     print("PIPELINE FAILED")
@@ -602,6 +632,34 @@ def build_production_scenes(script: str, project_id: str = "", project_dir=None,
     }
 
 
+def enqueue_promoted_run(run, project, is_priority):
+    """Enqueue one dispatcher-promoted run (Phase 8.4). Called by
+    services.dispatcher with ORM rows. Returns the RQ job id, or
+    None when the enqueue failed — in which case the run STAYS
+    QUEUED in the ledger backlog and a later dispatch pass retries
+    the promotion (design 03 §3.1: the ledger, not RQ, is the
+    queue of record; a Redis outage delays productions, it does
+    not fail them)."""
+    options = dict(run.options or {})
+    queue = video_queue_priority if is_priority else video_queue
+    try:
+        job = queue.enqueue(
+            run_full_pipeline,
+            project.id,
+            project.script,
+            job_timeout=FULL_PIPELINE_TIMEOUT_SECONDS,
+            run_id=run.id,
+            options=options,
+        )
+    except Exception as exc:
+        print(
+            f"Dispatcher: promotion of run {run.id} failed "
+            f"({exc}); the run stays in the ledger backlog."
+        )
+        return None
+    return job.id
+
+
 def enqueue_test_job(project_id: str):
     job = video_queue.enqueue(test_job, project_id)
     print(f"Queued test job: {job.id}")
@@ -622,6 +680,10 @@ def enqueue_full_pipeline(project_id: str, script: str, options=None, run_id=Non
     # "narration_volume", "voice_id", "captions") are merged into
     # the ledger/manifest options snapshot next to the entrypoint.
     # Unknown keys pass through harmlessly.
+    # Phase 8.4: remember whether the caller released an EXISTING
+    # run (plan approval) versus submitting a new one — only new
+    # submissions route through the dispatcher backlog.
+    _release = run_id is not None
     run_options = {"entrypoint": "enqueue_full_pipeline"}
     if isinstance(options, dict):
         run_options.update(options)
@@ -652,11 +714,35 @@ def enqueue_full_pipeline(project_id: str, script: str, options=None, run_id=Non
         )
         return submission["run_id"]
     run_id = submission["run_id"] if submission else None
+    # Phase 8.4: a NEW ledger submission enters the dispatcher's
+    # backlog instead of enqueueing directly — the fair dispatcher
+    # (services.dispatcher) promotes it when per-user and platform
+    # capacity allow. Returns the promoted job id when promotion
+    # was immediate, else None (the run is queued in the ledger;
+    # its status tells the truth). The direct-enqueue path below is
+    # unchanged for the two cases that were never new submissions:
+    # an explicit run_id (the plan-approval release — the run
+    # already held an active slot while parked in
+    # awaiting_approval) and a ledger-unavailable submission (the
+    # fail-soft ad-hoc enqueue it always had).
+    if submission is not None and not _release:
+        from services import dispatcher
+
+        for promoted_run_id, job_id in dispatcher.dispatch_once():
+            if promoted_run_id == run_id:
+                print(f"Queued full pipeline job: {job_id} (run {run_id})")
+                return job_id
+        print(
+            f"Run {run_id} queued in the ledger backlog for project "
+            f"{project_id}; the dispatcher will promote it."
+        )
+        return None
     try:
         job = video_queue.enqueue(
             run_full_pipeline,
             project_id,
             script,
+            job_timeout=FULL_PIPELINE_TIMEOUT_SECONDS,
             run_id=run_id,
             options=run_options,
         )
@@ -676,10 +762,13 @@ def enqueue_analysis_phase(project_id: str, script: str, run_id: str, options=No
     run_ledger.submit_production); an enqueue failure marks it
     failed rather than orphaning it, mirroring enqueue_full_pipeline."""
     try:
-        job = video_queue.enqueue(
+        # Interactive lane (Phase 8.4): a user is waiting on the
+        # plan, so analysis rides the priority queue.
+        job = video_queue_priority.enqueue(
             run_analysis_phase,
             project_id,
             script,
+            job_timeout=ANALYSIS_TIMEOUT_SECONDS,
             run_id=run_id,
             options=options,
         )
@@ -704,11 +793,14 @@ def enqueue_revision_render(project_id: str, revision_id: str, run_id: str):
     from services import editor
 
     try:
-        job = video_queue.enqueue(
+        # Interactive lane (Phase 8.4): revision renders ride the
+        # priority queue — the user is waiting in the editor.
+        job = video_queue_priority.enqueue(
             editor.run_revision_render,
             project_id,
             revision_id,
             run_id,
+            job_timeout=REVISION_RENDER_TIMEOUT_SECONDS,
         )
     except Exception as error:
         if run_id:
@@ -765,6 +857,8 @@ def run_analysis_phase(project_id: str, script: str, run_id: str = None, options
         # full pipeline — it stops itself when the run parks in
         # awaiting_approval or finishes.
         run_ledger.start_heartbeat(run_id)
+        # Phase 8.4: this run's provider counters are its own.
+        run_metrics.begin_run(run_id)
 
     _set_project_status(project_id, "running")
     try:
@@ -809,6 +903,8 @@ def run_analysis_phase(project_id: str, script: str, run_id: str = None, options
             run_id, "awaiting_approval", stage="script_analysis"
         )
     _set_project_status(project_id, "awaiting_approval")
+    # Phase 8.4: the analysis run leaving "running" frees capacity.
+    _dispatch_quietly()
     print(
         f"Analysis phase complete: run {run_id} is awaiting plan approval."
     )
@@ -1140,6 +1236,12 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             script,
             options=_merged_options,
         )
+
+    # Phase 8.4: bind this run's metrics state to its ledger id —
+    # counters recorded from here on belong to THIS run even when
+    # another production shares the process.
+    if _run_id:
+        run_metrics.rebind_run(_run_id)
 
     # Stage 3 (R2): the run is ours (claimed atomically or begun
     # here) — beat for it until it leaves "running", so liveness
@@ -2598,6 +2700,9 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             execution=run_metrics.snapshot(),
             manifest_path=manifest_path,
         )
+        # Phase 8.4: completion frees capacity — promote the next
+        # queued production.
+        _dispatch_quietly()
     if "_run_context_previous" in state:
         run_context.deactivate(state.pop("_run_context_previous"))
 

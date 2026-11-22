@@ -289,6 +289,7 @@ class _RecordingQueue:
 def _record_enqueues(monkeypatch):
     queue = _RecordingQueue()
     monkeypatch.setattr(jobs, "video_queue", queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", queue)
     return queue
 
 
@@ -310,6 +311,30 @@ def test_enqueue_full_pipeline_is_fifo(monkeypatch):
         jobs.run_ledger,
         "submit_production",
         lambda *a, **k: {"run_id": "run-1", "deduplicated": False},
+    )
+    # Phase 8.4: a new submission enters the dispatcher backlog;
+    # the promotion seam is stubbed to promote immediately through
+    # the REAL jobs.enqueue_promoted_run, so this test keeps
+    # asserting the enqueue discipline itself (no at_front, FIFO)
+    # while dispatch policy is covered by
+    # tests/test_phase8_concurrency.py.
+    from types import SimpleNamespace
+
+    from services import dispatcher
+
+    monkeypatch.setattr(
+        dispatcher,
+        "dispatch_once",
+        lambda: [
+            (
+                "run-1",
+                jobs.enqueue_promoted_run(
+                    SimpleNamespace(id="run-1", options={}),
+                    SimpleNamespace(id="project-1", script="a script"),
+                    False,
+                ),
+            )
+        ],
     )
     jobs.enqueue_full_pipeline("project-1", "a script")
     _assert_fifo(queue)

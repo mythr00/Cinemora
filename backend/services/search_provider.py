@@ -49,6 +49,16 @@ def _post_with_retry(path: str, query: str) -> dict:
 
     for attempt in range(SERPER_MAX_ATTEMPTS):
         with _serper_sem:
+            # Phase 8.4: the platform token bucket sits in front of
+            # the per-process semaphore — the Serper key's rate
+            # limit is a platform resource shared by every worker
+            # (design 03 §5). Fail-open if Redis is down.
+            try:
+                from services import rate_bucket
+
+                rate_bucket.acquire("serper", timeout=30.0)
+            except Exception:
+                pass
             source_cache.bump("serper_calls")
             # Stage 0 metrics: this function is the single choke
             # point every real Serper request passes through (cache

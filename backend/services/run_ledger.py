@@ -202,14 +202,33 @@ def _insert_run(project_id, script_text, options, status):
     """Insert a production_runs row; returns the row as a dict, or
     None when the database is unavailable (fail-soft)."""
     try:
-        from models import ProductionRun
+        from models import ProductionRun, Project
 
         run_id = _new_uuid()
         now = _now()
         digest = script_sha256(script_text)
+        # Phase 8.1: the run carries a denormalised copy of its
+        # project's owner (design 02 §4.1) — this insert is the one
+        # choke point every run creation funnels through (full
+        # pipeline, analysis phase, revision renders), so ownership
+        # is stamped here and nowhere else. Fail-soft like the rest
+        # of the module: an unresolvable project leaves owner None
+        # rather than blocking the run.
+        owner_id = None
+        try:
+            owner_db = _session()
+            try:
+                project_row = owner_db.get(Project, str(project_id))
+                if project_row is not None:
+                    owner_id = project_row.owner_id
+            finally:
+                owner_db.close()
+        except Exception:
+            owner_id = None
         row = ProductionRun(
             id=run_id,
             project_id=str(project_id),
+            owner_id=owner_id,
             status=status,
             stage=None,
             # Stage 3 (R2): a run inserted directly in "running"
@@ -397,6 +416,66 @@ def list_runs_for(project_id):
         return []
 
 
+def mark_dispatched(run_id, job_id):
+    """Stamp a queued run as promoted by the dispatcher (Phase 8.4):
+    records the RQ job id + dispatch time in the run's options so
+    the backlog query can tell promoted runs from waiting ones.
+    Fail-soft like everything in this module."""
+    if not run_id:
+        return False
+    try:
+        from models import ProductionRun
+
+        db = _session()
+        try:
+            row = db.get(ProductionRun, str(run_id))
+            if row is None or row.status != "queued":
+                return False
+            options = dict(row.options or {})
+            options["dispatched_job_id"] = str(job_id) if job_id else None
+            options["dispatched_at"] = _now().isoformat()
+            row.options = options
+            db.commit()
+            return True
+        finally:
+            db.close()
+    except Exception:
+        return False
+
+
+def flag_stuck(run_id, stage, budget_seconds):
+    """Flag a running run as suspected-stuck in its progress record
+    (Phase 8.4 stage watchdog, design 03 §4.1). Flagged, never
+    killed: a slow render and a hung render look identical from
+    outside. Idempotent per stage. Fail-soft."""
+    if not run_id:
+        return False
+    try:
+        from models import ProductionRun
+
+        db = _session()
+        try:
+            row = db.get(ProductionRun, str(run_id))
+            if row is None or row.status != "running":
+                return False
+            progress = dict(row.progress or {})
+            existing = progress.get("stuck_suspected") or {}
+            if existing.get("stage") == stage:
+                return False
+            progress["stuck_suspected"] = {
+                "stage": stage,
+                "budget_seconds": budget_seconds,
+                "flagged_at": _now().isoformat(),
+            }
+            row.progress = progress
+            db.commit()
+            return True
+        finally:
+            db.close()
+    except Exception:
+        return False
+
+
 def set_run_stage(run_id, stage):
     """Record the run's current stage (observability only)."""
     if not run_id:
@@ -433,6 +512,7 @@ def get_run(run_id):
             return {
                 "run_id": row.id,
                 "project_id": row.project_id,
+                "owner_id": row.owner_id,
                 "status": row.status,
                 "stage": row.stage,
                 "progress": row.progress,

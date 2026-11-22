@@ -100,6 +100,17 @@ def _request(
     last_response = None
 
     for attempt in range(4):
+        # Phase 8.4: platform token bucket at the choke point (the
+        # BrewKeg key is shared by every worker — design 03 §5) and
+        # the usage counter the Phase 7 audit found missing: every
+        # real request is counted, with token usage when the
+        # gateway reports it.
+        try:
+            from services import rate_bucket
+
+            rate_bucket.acquire("llm", timeout=30.0)
+        except Exception:
+            pass
         response = requests.post(
             f"{BREWKEG_BASE_URL}/messages",
             headers={
@@ -111,6 +122,22 @@ def _request(
         )
 
         last_response = response
+
+        try:
+            from services import run_metrics
+
+            _tokens = 0
+            if response.ok:
+                try:
+                    _usage = response.json().get("usage") or {}
+                    _tokens = int(_usage.get("input_tokens") or 0) + int(
+                        _usage.get("output_tokens") or 0
+                    )
+                except Exception:
+                    _tokens = 0
+            run_metrics.llm_call(_tokens)
+        except Exception:
+            pass
 
         if response.ok:
             break

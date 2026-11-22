@@ -50,6 +50,11 @@ class SyncQueue:
         from types import SimpleNamespace
 
         kwargs.pop("at_front", None)
+        # RQ consumes its job-option kwargs itself; the job
+        # function never sees them (Phase 8.4 added job_timeout).
+        for _opt in ("job_timeout", "job_id", "job_ttl", "result_ttl",
+                     "failure_ttl", "depends_on", "job_description"):
+            kwargs.pop(_opt, None)
         fn(*args, **kwargs)
         return SimpleNamespace(id="job-sync")
 
@@ -71,7 +76,9 @@ class RecordingQueue:
 def sync_queue(monkeypatch):
     import jobs
 
-    monkeypatch.setattr(jobs, "video_queue", SyncQueue())
+    _paired_queue = SyncQueue()
+    monkeypatch.setattr(jobs, "video_queue", _paired_queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", _paired_queue)
     return jobs.video_queue
 
 
@@ -676,7 +683,9 @@ def test_cancelled_render_leaves_revision_consistent(production, monkeypatch):
     import jobs
     from services import editor, run_ledger
 
-    monkeypatch.setattr(jobs, "video_queue", RecordingQueue())
+    _paired_queue = RecordingQueue()
+    monkeypatch.setattr(jobs, "video_queue", _paired_queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", _paired_queue)
     _view0, doc0 = _rev0(production["project_id"])
     result = editor.request_render(
         production["project_id"], doc0["revision_id"]

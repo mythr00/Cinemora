@@ -52,6 +52,11 @@ class SyncQueue:
         from types import SimpleNamespace
 
         kwargs.pop("at_front", None)
+        # RQ consumes its job-option kwargs itself; the job
+        # function never sees them (Phase 8.4 added job_timeout).
+        for _opt in ("job_timeout", "job_id", "job_ttl", "result_ttl",
+                     "failure_ttl", "depends_on", "job_description"):
+            kwargs.pop(_opt, None)
         fn(*args, **kwargs)
         return SimpleNamespace(id="job-sync")
 
@@ -83,7 +88,9 @@ def client(monkeypatch, production):
     monkeypatch.setenv("CINEMORA_API_TOKEN", TOKEN)
     import jobs
 
-    monkeypatch.setattr(jobs, "video_queue", SyncQueue())
+    _paired_queue = SyncQueue()
+    monkeypatch.setattr(jobs, "video_queue", _paired_queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", _paired_queue)
     from main import app
 
     return TestClient(app, raise_server_exceptions=False)
@@ -193,7 +200,9 @@ def test_volume_adjustment_failure_records_failed_render(
         [{"type": "set_volumes", "narration": 0.5}],
     )
 
-    monkeypatch.setattr(jobs, "video_queue", RecordingQueue())
+    _paired_queue = RecordingQueue()
+    monkeypatch.setattr(jobs, "video_queue", _paired_queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", _paired_queue)
     submitted = editor.request_render(project_id, view1["revision_id"])
     run_id = submitted["run_id"]
 

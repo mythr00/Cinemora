@@ -15,12 +15,23 @@ Design rules:
   monetary_cost_usd is None (unknown) — never 0, never estimated.
 - Counts are of REAL work: the Serper counter sits at the HTTP choke
   point, so cache hits are not counted as API calls.
+- RUN-SCOPED (Phase 8.4): states live in a dict keyed by run id;
+  begin_run(run_id) creates and binds that run's state, counters
+  land on the bound run, and snapshot(run_id) reads a specific run
+  back. The pre-8.4 holder was one global state — a second run
+  starting in the same process (SimpleWorker sequential runs, or a
+  late snapshot) silently overwrote the first run's counts. The
+  binding itself is still process-global by design: the worker is
+  process-per-run (design 03 §1), so exactly one run is bound at a
+  time in production; the keyed states make each run's record
+  addressable and incorruptible after the fact.
 """
 
 from __future__ import annotations
 
 import threading
 import time
+import uuid
 
 _LOCK = threading.Lock()
 
@@ -34,6 +45,7 @@ def _fresh_state():
     return {
         "started_monotonic": None,
         "serper": {"total": 0, "web": 0, "images": 0, "video": 0},
+        "llm": {"total": 0, "total_tokens": 0},
         "archive_org_searches": 0,
         "wikimedia_searches": 0,
         "candidates_discovered": 0,
@@ -47,19 +59,68 @@ def _fresh_state():
     }
 
 
-_STATE = _fresh_state()
+_STATES: dict[str, dict] = {}
+_BOUND_RUN_KEY: str | None = None
+_MAX_KEPT_STATES = 8
 
 
-def begin_run():
-    """Reset every counter and start the wall clock. Called once by
-    jobs.run_full_pipeline before the first stage runs."""
-    global _STATE
+def _bound_state() -> dict:
+    """The currently bound run's state, creating an ad-hoc one when
+    nothing is bound (choke points outside a run — unchanged
+    pre-8.4 behaviour of counting into a default holder)."""
+    global _BOUND_RUN_KEY
+    if _BOUND_RUN_KEY is None or _BOUND_RUN_KEY not in _STATES:
+        key = f"adhoc-{uuid.uuid4().hex}"
+        _STATES[key] = _fresh_state()
+        _BOUND_RUN_KEY = key
+    return _STATES[_BOUND_RUN_KEY]
+
+
+def begin_run(run_id=None):
+    """Start a fresh state for a run and bind it. Called once by
+    jobs.run_full_pipeline before the first stage runs. `run_id`
+    may be None when the ledger id isn't known yet — rebind_run()
+    renames the binding once it is."""
+    global _BOUND_RUN_KEY
     try:
         with _LOCK:
-            _STATE = _fresh_state()
-            _STATE["started_monotonic"] = time.monotonic()
+            key = str(run_id) if run_id else f"adhoc-{uuid.uuid4().hex}"
+            state = _fresh_state()
+            state["started_monotonic"] = time.monotonic()
+            _STATES[key] = state
+            _BOUND_RUN_KEY = key
+            # Bound memory: keep only the most recent states.
+            while len(_STATES) > _MAX_KEPT_STATES:
+                oldest = next(iter(_STATES))
+                if oldest == _BOUND_RUN_KEY:
+                    break
+                _STATES.pop(oldest, None)
+            return key
+    except Exception:
+        return None
+
+
+def rebind_run(run_id):
+    """Rename the bound state to the ledger run id (jobs learns the
+    id at claim time, after begin_run)."""
+    global _BOUND_RUN_KEY
+    if not run_id:
+        return
+    try:
+        with _LOCK:
+            if _BOUND_RUN_KEY and _BOUND_RUN_KEY in _STATES:
+                _STATES[str(run_id)] = _STATES.pop(_BOUND_RUN_KEY)
+                _BOUND_RUN_KEY = str(run_id)
     except Exception:
         pass
+
+
+def _state_for(run_id=None) -> dict:
+    if run_id is not None:
+        state = _STATES.get(str(run_id))
+        if state is not None:
+            return state
+    return _bound_state()
 
 
 def serper_call(path):
@@ -69,9 +130,9 @@ def serper_call(path):
     try:
         kind = _SERPER_KINDS.get(str(path or "").strip().lower())
         with _LOCK:
-            _STATE["serper"]["total"] += 1
+            _bound_state()["serper"]["total"] += 1
             if kind:
-                _STATE["serper"][kind] += 1
+                _bound_state()["serper"][kind] += 1
     except Exception:
         pass
 
@@ -80,7 +141,7 @@ def archive_org_search():
     """One archive.org advancedsearch invocation."""
     try:
         with _LOCK:
-            _STATE["archive_org_searches"] += 1
+            _bound_state()["archive_org_searches"] += 1
     except Exception:
         pass
 
@@ -89,7 +150,7 @@ def wikimedia_search():
     """One Wikimedia Commons search invocation (stills or video)."""
     try:
         with _LOCK:
-            _STATE["wikimedia_searches"] += 1
+            _bound_state()["wikimedia_searches"] += 1
     except Exception:
         pass
 
@@ -100,7 +161,7 @@ def candidates_discovered(count):
     built from)."""
     try:
         with _LOCK:
-            _STATE["candidates_discovered"] += int(count or 0)
+            _bound_state()["candidates_discovered"] += int(count or 0)
     except Exception:
         pass
 
@@ -108,7 +169,7 @@ def candidates_discovered(count):
 def download_attempted():
     try:
         with _LOCK:
-            _STATE["downloads_attempted"] += 1
+            _bound_state()["downloads_attempted"] += 1
     except Exception:
         pass
 
@@ -116,9 +177,9 @@ def download_attempted():
 def download_succeeded(num_bytes=0):
     try:
         with _LOCK:
-            _STATE["downloads_succeeded"] += 1
+            _bound_state()["downloads_succeeded"] += 1
             try:
-                _STATE["bytes_downloaded"] += max(int(num_bytes or 0), 0)
+                _bound_state()["bytes_downloaded"] += max(int(num_bytes or 0), 0)
             except (TypeError, ValueError):
                 pass
     except Exception:
@@ -129,7 +190,7 @@ def coverage_recovery_round():
     """One coverage-recovery round actually executed for a beat."""
     try:
         with _LOCK:
-            _STATE["coverage_recovery_rounds"] += 1
+            _bound_state()["coverage_recovery_rounds"] += 1
     except Exception:
         pass
 
@@ -137,15 +198,15 @@ def coverage_recovery_round():
 def stage_started(stage):
     try:
         with _LOCK:
-            _STATE["stage_started_at"][str(stage)] = time.monotonic()
+            _bound_state()["stage_started_at"][str(stage)] = time.monotonic()
     except Exception:
         pass
 
 
 def _close_stage(stage):
-    started = _STATE["stage_started_at"].pop(str(stage), None)
+    started = _bound_state()["stage_started_at"].pop(str(stage), None)
     if started is not None:
-        _STATE["stage_durations"][str(stage)] = round(
+        _bound_state()["stage_durations"][str(stage)] = round(
             time.monotonic() - started, 3
         )
 
@@ -164,40 +225,62 @@ def stage_failed(stage):
     try:
         with _LOCK:
             _close_stage(stage)
-            _STATE["failures"] += 1
+            _bound_state()["failures"] += 1
     except Exception:
         pass
 
 
-def snapshot():
-    """The report-ready "execution" block. Never raises."""
+def llm_call(total_tokens=0):
+    """One real BrewKeg LLM request (Phase 8.4: the counter whose
+    absence the Phase 7 audit found — llm_client never counted).
+    Token usage comes from the gateway response when it reports
+    any; unknown usage counts the call with 0 tokens, never an
+    estimate."""
     try:
         with _LOCK:
-            started = _STATE["started_monotonic"]
+            _bound_state()["llm"]["total"] += 1
+            try:
+                _bound_state()["llm"]["total_tokens"] += max(
+                    int(total_tokens or 0), 0
+                )
+            except (TypeError, ValueError):
+                pass
+    except Exception:
+        pass
+
+
+def snapshot(run_id=None):
+    """The report-ready "execution" block for a run (default: the
+    bound run). Never raises."""
+    try:
+        with _LOCK:
+            state = _state_for(run_id)
+            started = state["started_monotonic"]
             wall = (
                 round(time.monotonic() - started, 3)
                 if started is not None
                 else None
             )
-            attempted = _STATE["downloads_attempted"]
-            succeeded = _STATE["downloads_succeeded"]
+            attempted = state["downloads_attempted"]
+            succeeded = state["downloads_succeeded"]
             return {
                 "wall_time_seconds": wall,
-                "stage_durations_seconds": dict(_STATE["stage_durations"]),
-                "serper_calls": dict(_STATE["serper"]),
-                "archive_org_searches": _STATE["archive_org_searches"],
-                "wikimedia_searches": _STATE["wikimedia_searches"],
-                "candidates_discovered": _STATE["candidates_discovered"],
+                "stage_durations_seconds": dict(state["stage_durations"]),
+                "serper_calls": dict(state["serper"]),
+                "llm_calls": dict(state["llm"]),
+                "archive_org_searches": state["archive_org_searches"],
+                "wikimedia_searches": state["wikimedia_searches"],
+                "candidates_discovered": state["candidates_discovered"],
                 "downloads": {
                     "attempted": attempted,
                     "succeeded": succeeded,
                     "failed": attempted - succeeded,
-                    "bytes_downloaded": _STATE["bytes_downloaded"],
+                    "bytes_downloaded": state["bytes_downloaded"],
                 },
-                "coverage_recovery_rounds": _STATE[
+                "coverage_recovery_rounds": state[
                     "coverage_recovery_rounds"
                 ],
-                "failures": _STATE["failures"],
+                "failures": state["failures"],
                 "monetary_cost_usd": None,
                 "monetary_cost_note": _COST_NOTE,
             }
@@ -206,6 +289,7 @@ def snapshot():
             "wall_time_seconds": None,
             "stage_durations_seconds": {},
             "serper_calls": {"total": 0, "web": 0, "images": 0, "video": 0},
+            "llm_calls": {"total": 0, "total_tokens": 0},
             "archive_org_searches": 0,
             "wikimedia_searches": 0,
             "candidates_discovered": 0,

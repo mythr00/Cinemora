@@ -594,6 +594,11 @@ class _SyncQueue:
         from types import SimpleNamespace
 
         kwargs.pop("at_front", None)
+        # RQ consumes its job-option kwargs itself; the job
+        # function never sees them (Phase 8.4 added job_timeout).
+        for _opt in ("job_timeout", "job_id", "job_ttl", "result_ttl",
+                     "failure_ttl", "depends_on", "job_description"):
+            kwargs.pop(_opt, None)
         fn(*args, **kwargs)
         return SimpleNamespace(id="job-sync")
 
@@ -602,7 +607,9 @@ class _SyncQueue:
 def sync_queue(monkeypatch):
     import jobs
 
-    monkeypatch.setattr(jobs, "video_queue", _SyncQueue())
+    _paired_queue = _SyncQueue()
+    monkeypatch.setattr(jobs, "video_queue", _paired_queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", _paired_queue)
     return jobs.video_queue
 
 

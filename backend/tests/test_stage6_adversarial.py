@@ -94,6 +94,11 @@ class SyncQueue:
         from types import SimpleNamespace
 
         kwargs.pop("at_front", None)
+        # RQ consumes its job-option kwargs itself; the job
+        # function never sees them (Phase 8.4 added job_timeout).
+        for _opt in ("job_timeout", "job_id", "job_ttl", "result_ttl",
+                     "failure_ttl", "depends_on", "job_description"):
+            kwargs.pop(_opt, None)
         fn(*args, **kwargs)
         return SimpleNamespace(id="job-sync")
 
@@ -115,7 +120,9 @@ class RecordingQueue:
 def sync_queue(monkeypatch):
     import jobs
 
-    monkeypatch.setattr(jobs, "video_queue", SyncQueue())
+    _paired_queue = SyncQueue()
+    monkeypatch.setattr(jobs, "video_queue", _paired_queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", _paired_queue)
     return jobs.video_queue
 
 
@@ -125,6 +132,7 @@ def recording_queue(monkeypatch):
 
     queue = RecordingQueue()
     monkeypatch.setattr(jobs, "video_queue", queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", queue)
     return queue
 
 
@@ -336,7 +344,7 @@ def test_cancel_before_claim_then_recover(
     # Recovery: the cancelled revision is not wedged.
     import jobs
 
-    jobs.video_queue = SyncQueue()
+    jobs.video_queue = jobs.video_queue_priority = SyncQueue()
     editor.request_render(render_production["project_id"], view0["revision_id"])
     view_done, doc_done = editor.get_revision(
         render_production["project_id"], view0["revision_id"]
@@ -391,7 +399,7 @@ def test_worker_death_mid_render_reconcile_and_rerender(
 
     import jobs
 
-    jobs.video_queue = SyncQueue()
+    jobs.video_queue = jobs.video_queue_priority = SyncQueue()
     editor.request_render(render_production["project_id"], branch["revision_id"])
     view_done, doc_done = editor.get_revision(
         render_production["project_id"], branch["revision_id"]
@@ -431,7 +439,7 @@ def test_kill_render_subprocess_mid_flight(
         "        from types import SimpleNamespace\n"
         "        return SimpleNamespace(id='rec')\n"
         "\n"
-        "jobs.video_queue = RecQ()\n"
+        "jobs.video_queue = jobs.video_queue_priority = RecQ()\n"
         "_orig = renderer.render_timeline\n"
         "def slow(scenes, work_dir, **kw):\n"
         f"    open({str(marker)!r}, 'w').write('started')\n"
@@ -493,7 +501,7 @@ def test_kill_render_subprocess_mid_flight(
 
     import jobs
 
-    jobs.video_queue = SyncQueue()
+    jobs.video_queue = jobs.video_queue_priority = SyncQueue()
     editor.request_render(render_production["project_id"], branch["revision_id"])
     view_done, doc_done = editor.get_revision(
         render_production["project_id"], branch["revision_id"]
@@ -519,7 +527,9 @@ def test_branch_from_exported_revision_inherits_exports(
 
     view0, doc0 = _rev0(render_production["project_id"])
     if not doc0["exports"]:
-        monkeypatch.setattr(jobs, "video_queue", SyncQueue())
+        _paired_queue = SyncQueue()
+        monkeypatch.setattr(jobs, "video_queue", _paired_queue)
+        monkeypatch.setattr(jobs, "video_queue_priority", _paired_queue)
         editor.request_render(
             render_production["project_id"], view0["revision_id"]
         )

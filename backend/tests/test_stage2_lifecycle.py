@@ -94,7 +94,9 @@ def test_enqueue_dedupes_and_carries_run_id(project_id, monkeypatch):
             calls.append((fn, args, kwargs))
             return SimpleNamespace(id=f"job-{len(calls)}")
 
-    monkeypatch.setattr(jobs, "video_queue", FakeQueue())
+    _paired_queue = FakeQueue()
+    monkeypatch.setattr(jobs, "video_queue", _paired_queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", _paired_queue)
     script = _unique_script("enqueue")
 
     first = jobs.enqueue_full_pipeline(project_id, script)

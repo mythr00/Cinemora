@@ -1,6 +1,15 @@
 """Stage 3 (R2) — worker reliability: presence, ownership,
 singleton, stale-job safety, submission mutex, TEST-002.
 
+Phase 8.4 addendum: the singleton-era tests in this file were
+REPLACED (per the migration plan, doc 04 §3) by tests asserting
+the multi-worker properties — no singleton gate remains, worker
+startup reconciliation is heartbeat-aware and spares a foreign
+worker's live run, the worker listens on both lanes
+priority-first, two real workers boot side by side, and a
+Redis-down submission waits in the ledger backlog instead of
+failing.
+
 What this stage proved broken at HEAD 768a554 and fixed:
 
 - PIPE-005: a run carried NO liveness signal — no heartbeat, no
@@ -357,9 +366,16 @@ def test_submit_dedup_includes_awaiting_approval(project_id):
 # ---------------------------------------------------------------------
 
 
-def test_worker_listens_only_on_the_produced_queue():
-    assert [queue.name for queue in worker.queues] == ["video_generation"]
+def test_worker_listens_on_both_lanes_priority_first():
+    # Phase 8.4 two-lane contract (design 03 §3.3): the worker
+    # drains the priority lane before the standard lane, and the
+    # names are exactly the ones jobs.py produces to.
+    assert [queue.name for queue in worker.queues] == [
+        "video_generation_priority",
+        "video_generation",
+    ]
     assert jobs.QUEUE_NAME == "video_generation"
+    assert jobs.PRIORITY_QUEUE_NAME == "video_generation_priority"
 
 
 # ---------------------------------------------------------------------
@@ -395,54 +411,44 @@ def _record_fifo_marker(label):
     Redis.from_url(REDIS_URL).rpush("stage3:fifo:order", label)
 
 
-def test_singleton_acquire_renew_release(redis15):
-    key = f"cinemora:worker:singleton:test:{uuid.uuid4().hex[:8]}"
-    try:
-        holder = worker.acquire_worker_singleton(
-            connection=redis15, worker_id="test-worker-a", key=key
-        )
-        assert holder == "test-worker-a"
-        # A second worker is refused, loudly.
-        with pytest.raises(SystemExit):
-            worker.acquire_worker_singleton(
-                connection=redis15, worker_id="test-worker-b", key=key
-            )
-        # The holder renews; a non-holder cannot.
-        assert (
-            worker._renew_singleton(redis15, "test-worker-a", key=key)
-            is True
-        )
-        assert (
-            worker._renew_singleton(redis15, "test-worker-b", key=key)
-            is False
-        )
-        # Release frees the lock for the next worker.
-        worker._release_singleton(redis15, "test-worker-a", key=key)
-        assert (
-            worker.acquire_worker_singleton(
-                connection=redis15, worker_id="test-worker-b", key=key
-            )
-            == "test-worker-b"
-        )
-        worker._release_singleton(redis15, "test-worker-b", key=key)
-    finally:
-        redis15.delete(key)
+def test_no_singleton_gate_remains():
+    """Phase 8.4 (design 03 §7.1): the worker singleton is DELETED,
+    not bypassed — the multi-worker design's safety comes from
+    atomic claims, ownership-checked heartbeats and
+    heartbeat-aware reconciliation, so nothing in the worker
+    module may refuse a second worker."""
+    assert not hasattr(worker, "acquire_worker_singleton")
+    assert not hasattr(worker, "SINGLETON_KEY")
 
 
-def test_singleton_unreachable_redis_fails_loud():
-    from redis import Redis
+def test_startup_reconciliation_spares_a_live_foreign_run(project_id):
+    """The exact call worker.py's startup makes (heartbeat-aware
+    reconciliation) must leave another worker's live run strictly
+    alone — and still reclaim it once its heartbeat goes stale.
+    This is the property that replaced the singleton: worker B
+    starting can never fail worker A's in-flight production."""
+    run = run_ledger.submit_production(project_id, _unique_script("foreign"))
+    # The claim itself stamps worker-a's ownership + a fresh
+    # heartbeat (see test_claim_records_ownership_and_heartbeat).
+    claimed = run_ledger.claim_run(run["run_id"], worker_id="worker-a")
+    assert claimed is not None
 
-    dead = Redis.from_url(
-        "redis://127.0.0.1:6399/0",
-        socket_connect_timeout=2,
-        socket_timeout=2,
+    reconciled = run_ledger.reconcile_stale_runs(
+        stale_after_seconds=run_ledger.STALE_AFTER_SECONDS
     )
-    with pytest.raises(SystemExit):
-        worker.acquire_worker_singleton(
-            connection=dead,
-            worker_id="test-worker",
-            key="cinemora:worker:singleton:test:dead",
-        )
+    assert reconciled == 0
+    assert run_ledger.get_run(run["run_id"])["status"] == "running"
+
+    _set_heartbeat(
+        run["run_id"],
+        datetime.now(timezone.utc)
+        - timedelta(seconds=run_ledger.STALE_AFTER_SECONDS + 120),
+    )
+    reconciled = run_ledger.reconcile_stale_runs(
+        stale_after_seconds=run_ledger.STALE_AFTER_SECONDS
+    )
+    assert reconciled == 1
+    assert run_ledger.get_run(run["run_id"])["status"] == "failed"
 
 
 def test_real_redis_fifo_order_on_the_production_queue(redis15):
@@ -470,11 +476,14 @@ def test_real_redis_fifo_order_on_the_production_queue(redis15):
         redis15.delete("stage3:fifo:order")
 
 
-def test_redis_down_enqueue_marks_the_run_failed(project_id):
-    """Redis unavailability at submit time (audit coverage gap):
-    the enqueue raises through the REAL redis client against a
-    dead port, and the ledger run is marked failed — never left
-    queued behind a job that does not exist."""
+def test_redis_down_submission_waits_in_the_ledger_backlog(project_id):
+    """Redis unavailability at submit time, Phase 8.4 semantics
+    (design 03 §3.1): the ledger is the queue of record, so a
+    submission whose promotion cannot reach Redis does NOT fail
+    and does NOT raise — the run waits in the backlog (status
+    queued, no job stamp) for a later dispatch pass. (Pre-8.4
+    this test asserted the old direct-enqueue contract: raise +
+    run marked failed.)"""
     from redis import Redis
     from rq import Queue
 
@@ -489,16 +498,16 @@ def test_redis_down_enqueue_marks_the_run_failed(project_id):
     original = jobs.video_queue
     jobs.video_queue = dead_queue
     try:
-        with pytest.raises(Exception):
-            jobs.enqueue_full_pipeline(
-                project_id, _unique_script("redis-down")
-            )
+        result = jobs.enqueue_full_pipeline(
+            project_id, _unique_script("redis-down")
+        )
     finally:
         jobs.video_queue = original
+    assert result is None  # not promoted — and NOT an exception
     runs = run_ledger.list_runs_for(project_id)
     assert len(runs) == 1
-    assert runs[0]["status"] == "failed"
-    assert "enqueue failed" in (runs[0]["error"] or "")
+    assert runs[0]["status"] == "queued"
+    assert not (runs[0]["options"] or {}).get("dispatched_job_id")
 
 
 def test_concurrent_submissions_mint_exactly_one_run(
@@ -540,12 +549,13 @@ def test_concurrent_submissions_mint_exactly_one_run(
 
 
 def test_worker_boots_against_migrated_database(redis15, tmp_path):
-    """BLOCK-002 residual + singleton, end to end: the REAL
-    worker.py, as a subprocess, against a database built by the
-    REAL Alembic chain and the REAL Redis — passes the schema
-    gate, takes the singleton, reaches work() readiness; a second
-    worker is refused while the first lives; the first then shuts
-    down cleanly on SIGTERM and releases the singleton."""
+    """BLOCK-002 residual + Phase 8.4 multi-worker boot, end to
+    end: the REAL worker.py, as a subprocess, against a database
+    built by the REAL Alembic chain and the REAL Redis — passes
+    the schema gate and reaches work() readiness (RQ registration
+    visible in Redis); a SECOND worker then boots alongside it —
+    the exact behaviour the deleted singleton used to refuse —
+    and both shut down cleanly on SIGTERM."""
     db_file = tmp_path / "boot.sqlite3"
     env = dict(os.environ)
     env["DATABASE_URL"] = f"sqlite:///{db_file}"
@@ -562,7 +572,16 @@ def test_worker_boots_against_migrated_database(redis15, tmp_path):
     )
     assert migrated.returncode == 0, migrated.stdout + migrated.stderr
 
-    redis15.delete(worker.SINGLETON_KEY)
+    def _registered_workers():
+        try:
+            return {
+                value.decode() if isinstance(value, bytes) else value
+                for value in redis15.smembers("rq:workers")
+            }
+        except Exception:
+            return set()
+
+    baseline_workers = _registered_workers()
     process = subprocess.Popen(
         [sys.executable, "worker.py"],
         cwd=BACKEND_DIR,
@@ -571,53 +590,69 @@ def test_worker_boots_against_migrated_database(redis15, tmp_path):
         stderr=subprocess.STDOUT,
         text=True,
     )
+    second_process = None
     output = []
     try:
-        # Wait for work() readiness: the singleton is held in
-        # Redis (only reachable after the schema gate + singleton
-        # gate, immediately before reconciliation + work()).
+        # Wait for work() readiness: the worker's RQ registration
+        # appears in Redis (only reachable after the schema gate,
+        # reconciliation and work() startup).
         deadline = time.time() + 180
-        holder = None
         while time.time() < deadline:
             if process.poll() is not None:
                 break
-            holder = redis15.get(worker.SINGLETON_KEY)
-            if holder:
+            if len(_registered_workers() - baseline_workers) >= 1:
                 break
             time.sleep(0.5)
         assert process.poll() is None, (
             "worker exited during boot; output so far is in the "
             "finally-drained buffer"
         )
-        assert holder, "worker never took the singleton"
+        assert len(_registered_workers() - baseline_workers) >= 1, (
+            "worker never registered with RQ"
+        )
 
-        # A second worker on the same deployment is refused.
-        second = subprocess.run(
+        # A second worker on the same deployment boots ALONGSIDE
+        # the first — the multi-worker property Phase 8.4 exists
+        # to provide (the singleton used to refuse exactly this).
+        second_process = subprocess.Popen(
             [sys.executable, "worker.py"],
             cwd=BACKEND_DIR,
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=180,
         )
-        assert second.returncode == 1
-        assert "another worker already holds" in (
-            second.stdout + second.stderr
+        deadline = time.time() + 180
+        while time.time() < deadline:
+            if second_process.poll() is not None:
+                break
+            if len(_registered_workers() - baseline_workers) >= 2:
+                break
+            time.sleep(0.5)
+        assert second_process.poll() is None, (
+            "second worker exited during boot — multi-worker "
+            "startup regressed"
+        )
+        assert len(_registered_workers() - baseline_workers) >= 2, (
+            "second worker never registered with RQ"
         )
     finally:
-        if process.poll() is None:
-            process.send_signal(signal.SIGTERM)
-        try:
-            out, _ = process.communicate(timeout=120)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            out, _ = process.communicate(timeout=30)
-        output.append(out or "")
-        redis15.delete(worker.SINGLETON_KEY)
+        for proc in (second_process, process):
+            if proc is None:
+                continue
+            if proc.poll() is None:
+                proc.send_signal(signal.SIGTERM)
+            try:
+                out, _ = proc.communicate(timeout=120)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                out, _ = proc.communicate(timeout=30)
+            output.append(out or "")
 
     combined = "".join(output)
     assert "Schema check OK" in combined
-    assert "Worker singleton held by" in combined
+    assert "video_generation_priority" in combined
     # Clean SIGTERM shutdown (RQ warm shutdown returns from work()
-    # and the process exits normally, releasing the singleton).
+    # and the process exits normally).
     assert process.returncode == 0, combined
+    assert second_process is not None and second_process.returncode == 0

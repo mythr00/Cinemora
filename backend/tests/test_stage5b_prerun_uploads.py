@@ -183,6 +183,7 @@ def _awaiting_project(client, monkeypatch):
     _stub_analysis(monkeypatch)
     queue = FakeQueue()
     monkeypatch.setattr(jobs, "video_queue", queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", queue)
     project = _create_project(
         client, options={"require_plan_approval": True}
     )

@@ -207,6 +207,7 @@ def test_rate_limit_fires(client, monkeypatch):
 def test_run_submission_dedupes_through_api(client, monkeypatch):
     queue = FakeQueue()
     monkeypatch.setattr(jobs, "video_queue", queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", queue)
     project = _create_project(client)
 
     first = client.post(
@@ -239,6 +240,7 @@ def test_run_submission_dedupes_through_api(client, monkeypatch):
 def test_run_cancel(client, monkeypatch):
     queue = FakeQueue()
     monkeypatch.setattr(jobs, "video_queue", queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", queue)
     project = _create_project(client)
     submitted = client.post(
         f"/api/v1/projects/{project['id']}/runs", headers=HEADERS, json={}
@@ -443,6 +445,7 @@ def test_plan_gate_parks_run_and_approve_releases_it(client, monkeypatch):
     _stub_analysis(monkeypatch)
     queue = FakeQueue()
     monkeypatch.setattr(jobs, "video_queue", queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", queue)
     project = _create_project(
         client, options={"require_plan_approval": True}
     )
@@ -952,7 +955,13 @@ def test_migration_0003_preserves_rows_and_adds_columns(tmp_path, monkeypatch):
         conn.close()
     assert "title" not in columns_before and "options" not in columns_before
 
-    command.upgrade(cfg, "head")
+    # Scoped to 0003 (Phase 8.4 note): this test asserts 0003's
+    # preservation contract. Upgrading further to head now crosses
+    # 0006/0007, whose ownership enforcement deliberately refuses
+    # to proceed while ownerless rows exist (the backfill is a
+    # separate, scripted step — covered by
+    # tests/test_phase8_data_layer.py).
+    command.upgrade(cfg, "0003_project_title_options")
     conn = sqlite3.connect(str(db_path))
     try:
         columns = [row[1] for row in conn.execute("PRAGMA table_info(projects)")]
