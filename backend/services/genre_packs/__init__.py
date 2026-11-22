@@ -209,6 +209,18 @@ ASSEMBLED_TEMPLATES = frozenset({
     "document_presentation",
     "photo_parallax", "text_overlay", "text_highlight",
     "archival_title",
+    # Wave 2 (Motion Graphics Engine plan §C Wave 2): the breadth
+    # families — every one has a production assembler in the
+    # targeted chain; classified_file's assembler yields a render
+    # only for a genuine document asset, exactly like
+    # document_presentation.
+    "bubble_chart", "population_pyramid", "animated_dashboard",
+    "checklist_graphic", "milestone_waveform",
+    "territory_expansion", "satellite_zoom", "heatmap",
+    "classified_file", "newspaper_wall", "crime_scene_diagram",
+    "construction_sequence", "molecular_diagram",
+    "hud_overlay", "holographic_panel", "before_after",
+    "layered_reveal", "object_labels",
 })
 
 _PROFILE_FIELDS = frozenset({

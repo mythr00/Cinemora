@@ -313,7 +313,15 @@ def _template_candidates(row, outcome, pack):
     gap is a wave acceptance criterion. document_presentation is
     proposed ONLY when the scene carries a genuine document asset
     (outcome["document_asset"], recorded provenance) — without
-    one it stays refused, exactly as before (AM-010)."""
+    one it stays refused, exactly as before (AM-010).
+
+    Wave 2: the breadth templates register under the same
+    discipline — text cues for the data families, recorded
+    scenario data contracts (pyramid / checklist / stages /
+    molecule / density points / expansion / scene markers /
+    object labels / before-after pair) for the scenario-fed
+    families, verified-photo counts for the photo treatments,
+    and the genuine document asset for classified_file."""
     text = outcome.get("text") or ""
     scenario = outcome.get("scenario") or {}
     features = _text_features(text, scenario)
@@ -328,6 +336,15 @@ def _template_candidates(row, outcome, pack):
         candidates.append("line_chart")
     if features["has_pair"]:
         candidates.append("pie_chart")
+    # Wave 2 (F1/F2 breadth): the dashboard, bubble chart and
+    # holographic panel ride on the same recorded series cue;
+    # the milestone waveform rides on the date cue (its
+    # assembler still requires >= 3 recorded timeline events).
+    if features["has_series"]:
+        candidates += [
+            "bubble_chart", "animated_dashboard", "holographic_panel"]
+    if features["has_date"]:
+        candidates.append("milestone_waveform")
     place = scenario.get("place") or scenario.get("location")
     if place:
         candidates.append("territory_map")
@@ -347,6 +364,36 @@ def _template_candidates(row, outcome, pack):
     if isinstance(layers, list) and layers:
         candidates += [
             "exploded_view", "mechanical_cutaway", "blueprint_section"]
+    # Wave 2 scenario-recorded data contracts (the layers
+    # precedent): each of these templates is proposed ONLY when
+    # the scenario itself records the data it renders — the
+    # Director never proposes a graphic whose material is not
+    # already on the record.
+    pyramid = scenario.get("pyramid")
+    if isinstance(pyramid, (list, dict)) and pyramid:
+        candidates.append("population_pyramid")
+    if isinstance(scenario.get("checklist"), list) \
+            and scenario["checklist"]:
+        candidates.append("checklist_graphic")
+    if isinstance(scenario.get("stages"), list) \
+            and len(scenario["stages"]) >= 2:
+        candidates.append("construction_sequence")
+    molecule = scenario.get("molecule")
+    if isinstance(molecule, dict) and molecule.get("atoms"):
+        candidates.append("molecular_diagram")
+    if isinstance(scenario.get("density_points"), list) \
+            and len(scenario["density_points"]) >= 3:
+        candidates.append("heatmap")
+    expansion = scenario.get("expansion")
+    if isinstance(expansion, dict) \
+            and isinstance(expansion.get("states"), list) \
+            and len(expansion["states"]) >= 2:
+        candidates.append("territory_expansion")
+    if isinstance(scenario.get("scene_markers"), list) \
+            and scenario["scene_markers"]:
+        candidates.append("crime_scene_diagram")
+    if scenario.get("before_image") and scenario.get("after_image"):
+        candidates.append("before_after")
     photo_count = outcome.get("scene_photo_count") or 0
     if photo_count > 0:
         candidates.append("evidence_board")
@@ -357,9 +404,17 @@ def _template_candidates(row, outcome, pack):
     # F4 investigation variants on their recorded material.
     if outcome.get("document_asset"):
         candidates.append("document_presentation")
+        # Wave 2: the classified presentation of the same
+        # genuine document — proposed only with it, gated
+        # identically in the pipeline.
+        candidates.append("classified_file")
     if any(m in lowered for m in (
             "newspaper", "headline", "front page", "press reported")):
         candidates.append("newspaper_montage")
+        # Wave 2: the wall is the montage's grid composition —
+        # proposed after it (its assembler requires >= 3
+        # recorded articles where the montage needs fewer).
+        candidates.append("newspaper_wall")
     if outcome.get("scene_has_identity_photo") or (
         scenario.get("subject_type") == "person"
     ):
@@ -367,6 +422,23 @@ def _template_candidates(row, outcome, pack):
     # F8/F6 photo & text treatments on recorded photos / quotes.
     if photo_count >= 1:
         candidates += ["photo_parallax", "text_overlay"]
+        # Wave 2 photo-backed breadth: the HUD needs recorded
+        # numbers to read out; object labels need the scenario's
+        # recorded anchors; the satellite zoom needs a recorded
+        # place (or focus) plus an aerial cue in the text.
+        if features["has_number"]:
+            candidates.append("hud_overlay")
+        if isinstance(scenario.get("object_labels"), list) \
+                and scenario["object_labels"]:
+            candidates.append("object_labels")
+        if place and any(m in lowered for m in (
+                "satellite", "aerial", "overhead", "from above")):
+            candidates.append("satellite_zoom")
+    if photo_count >= 3:
+        # Wave 2: the layered reveal stacks the scene's recorded
+        # photos — proposed only when at least three exist (its
+        # assembler still refuses below two).
+        candidates.append("layered_reveal")
     if outcome.get("sentence_index") == 0:
         candidates.append("archival_title")
     if '"' in text or "“" in text:

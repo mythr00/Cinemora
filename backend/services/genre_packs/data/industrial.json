@@ -1,9 +1,9 @@
 {
   "description": "Documentaries about industry and manufacturing: how things are made, moved and assembled. Research leans on process records and trade sources; graphics lean on process sequences and statistics that explain how a line, a plant or a port actually works.",
   "entity_handling": [
-    "Never invent a throughput figure, a capacity, a production rate or a process step — if the script and retrieved sources do not state it, it does not appear.",
+    "Never invent a throughput figure, a capacity, a production rate or a process step \u2014 if the script and retrieved sources do not state it, it does not appear.",
     "A company's own claims about its process stay labelled as that company's claims; they are never upgraded to settled fact by narration.",
-    "Process steps are kept in the script's order and terminology — a stage is never merged, skipped or renamed silently.",
+    "Process steps are kept in the script's order and terminology \u2014 a stage is never merged, skipped or renamed silently.",
     "Figures from a single trade source stay labelled with that source; uncorroborated numbers are not presented as industry-wide fact."
   ],
   "expectations": {
@@ -73,7 +73,25 @@
     "photo_parallax",
     "text_overlay",
     "text_highlight",
-    "archival_title"
+    "archival_title",
+    "bubble_chart",
+    "population_pyramid",
+    "animated_dashboard",
+    "checklist_graphic",
+    "milestone_waveform",
+    "territory_expansion",
+    "satellite_zoom",
+    "heatmap",
+    "classified_file",
+    "newspaper_wall",
+    "crime_scene_diagram",
+    "construction_sequence",
+    "molecular_diagram",
+    "hud_overlay",
+    "holographic_panel",
+    "before_after",
+    "layered_reveal",
+    "object_labels"
   ],
   "id": "industrial",
   "label": "Industrial / manufacturing",
@@ -83,7 +101,7 @@
     "fade_out_seconds": 2.5,
     "music_volume": 0.1
   },
-  "music_mood": "Driven, rhythmic underscore — muted percussion and low synth pulses (metadata only — no music library is integrated; the soundtrack remains user-supplied or absent).",
+  "music_mood": "Driven, rhythmic underscore \u2014 muted percussion and low synth pulses (metadata only \u2014 no music library is integrated; the soundtrack remains user-supplied or absent).",
   "pacing": {
     "narration_speed": 0.94,
     "notes": "Slightly slower narration for technical density (narration_speed, Phase 2.4); the sentence target stays informational.",
@@ -190,7 +208,25 @@
       "red_string_board": 1,
       "border_map": 1,
       "military_map": 1,
-      "text_highlight": 1
+      "text_highlight": 1,
+      "animated_dashboard": 3,
+      "heatmap": 2,
+      "construction_sequence": 2,
+      "checklist_graphic": 2,
+      "bubble_chart": 2,
+      "hud_overlay": 2,
+      "satellite_zoom": 2,
+      "holographic_panel": 1,
+      "milestone_waveform": 1,
+      "population_pyramid": 1,
+      "territory_expansion": 1,
+      "classified_file": 1,
+      "newspaper_wall": 1,
+      "crime_scene_diagram": 1,
+      "molecular_diagram": 1,
+      "before_after": 1,
+      "layered_reveal": 1,
+      "object_labels": 1
     }
   },
   "visual_theme": "editorial"

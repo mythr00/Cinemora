@@ -3280,6 +3280,334 @@ def build_motion_graphics_assets(
             }
         return None
 
+    # -----------------------------------------------------
+    # Wave 2 assemblers (Motion Graphics Engine plan §C Wave 2).
+    # Same contract as Wave 1: engine data built ONLY from the
+    # target's recorded material — the Phase 2.3 fact table, the
+    # case bible's recorded timeline, the scene's verified
+    # assets, or scenario-recorded data contracts (pyramid /
+    # checklist / stages / molecule / density points / scene
+    # markers / object labels / expansion states / before-after
+    # pair — the layers precedent from Wave 1's schematics) —
+    # or None, and the template stays unproposed for the target.
+    # -----------------------------------------------------
+
+    def _assemble_bubble_chart(target):
+        grouped = _fact_quantities()
+        for _unit, facts in grouped.items():
+            if len(facts) >= 3:
+                return {
+                    "items": [
+                        {"label": f["date"] or f["display"],
+                         "value": f["value"], "display": f["display"]}
+                        for f in facts[:6]
+                    ],
+                    "title": shorten(target["text"], 60),
+                }
+        points = _series_from_text(target["text"])
+        if points:
+            return {"items": points[:6],
+                    "title": shorten(target["text"], 60)}
+        return None
+
+    def _assemble_population_pyramid(target):
+        scenario = target.get("scenario") or {}
+        pyramid = scenario.get("pyramid")
+        groups = None
+        left_label = right_label = ""
+        if isinstance(pyramid, dict):
+            groups = pyramid.get("groups")
+            left_label = clean_text(pyramid.get("left_label") or "")
+            right_label = clean_text(pyramid.get("right_label") or "")
+        elif isinstance(pyramid, list):
+            groups = pyramid
+        if not isinstance(groups, list):
+            return None
+        valid = [
+            g for g in groups
+            if isinstance(g, dict)
+            and isinstance(g.get("left"), (int, float))
+            and isinstance(g.get("right"), (int, float))
+            and clean_text(g.get("label") or "")
+        ]
+        if len(valid) < 2:
+            return None
+        return {
+            "groups": valid[:9],
+            "left_label": left_label,
+            "right_label": right_label,
+            "title": shorten(target["text"], 60),
+        }
+
+    def _assemble_animated_dashboard(target):
+        items = extract_comparison(target["text"]) or []
+        stats = [
+            {"label": clean_text(i.get("label") or ""),
+             "value": i.get("value"), "display": i.get("display") or ""}
+            for i in items
+            if isinstance(i.get("value"), (int, float))
+            and clean_text(i.get("label") or "")
+        ]
+        if len(stats) >= 3:
+            return {"stats": stats[:6],
+                    "title": shorten(target["text"], 60)}
+        # Fact-table fallback: one card per DISTINCT recorded
+        # unit (its first recorded value) — never the same unit
+        # twice, which would present one measure as several.
+        grouped = _fact_quantities()
+        distinct = [
+            {"label": unit, "value": facts[0]["value"],
+             "display": facts[0]["display"]}
+            for unit, facts in grouped.items() if facts
+        ]
+        if len(distinct) >= 3:
+            data = {"stats": distinct[:6],
+                    "title": shorten(target["text"], 60)}
+            for _unit, facts in grouped.items():
+                if len(facts) >= 3:
+                    data["series"] = [
+                        {"label": f["date"] or f["display"],
+                         "value": f["value"]}
+                        for f in facts[:8]
+                    ]
+                    break
+            return data
+        return None
+
+    def _assemble_checklist_graphic(target):
+        scenario = target.get("scenario") or {}
+        items = scenario.get("checklist")
+        if not isinstance(items, list):
+            return None
+        valid = [
+            i for i in items
+            if isinstance(i, dict)
+            and clean_text(i.get("label") or i.get("text") or "")
+        ]
+        if not valid:
+            return None
+        return {"items": valid[:7],
+                "title": shorten(target["text"], 60)}
+
+    def _assemble_milestone_waveform(target):
+        events = [
+            {"when": clean_text(e.get("when", "")),
+             "what": clean_text(e.get("what", "")),
+             "amplitude": e.get("amplitude", e.get("weight"))}
+            for e in timeline_events
+            if clean_text(e.get("what", ""))
+        ]
+        if len(events) < 3:
+            return None
+        return {"events": events[:7],
+                "title": shorten(target["text"], 60)}
+
+    def _assemble_territory_expansion(target):
+        scenario = target.get("scenario") or {}
+        expansion = scenario.get("expansion")
+        states = expansion.get("states") if isinstance(
+            expansion, dict) else None
+        if not isinstance(states, list) or len(states) < 2:
+            return None
+        return {"states": states,
+                "title": shorten(target["text"], 60)}
+
+    def _assemble_satellite_zoom(target):
+        _asset, path = _first_scene_photo(target)
+        if path is None:
+            return None
+        scenario = target.get("scenario") or {}
+        place = clean_text(
+            scenario.get("place") or scenario.get("location") or "")
+        focus = scenario.get("focus")
+        if not place and not focus:
+            return None
+        data = {
+            "image": path,
+            "label": place or clean_text(scenario.get("event") or ""),
+        }
+        if isinstance(focus, (list, tuple)) and len(focus) >= 2:
+            data["focus"] = list(focus)
+            data["focus_source"] = "recorded"
+        return data
+
+    def _assemble_heatmap(target):
+        scenario = target.get("scenario") or {}
+        points = scenario.get("density_points")
+        if not isinstance(points, list) or len(points) < 3:
+            return None
+        data = {
+            "points": points,
+            "title": shorten(target["text"], 60),
+            "weight_label": clean_text(
+                scenario.get("density_label") or ""),
+        }
+        base = _assemble_territory_map(target)
+        if base is not None:
+            data["regions"] = base["regions"]
+        return data
+
+    def _assemble_classified_file(target):
+        # The classified presentation rides on the SAME genuine
+        # document asset as document_presentation — no asset, no
+        # data, and the document gate's refusal is recorded.
+        data = _assemble_document_presentation(target)
+        if data is None:
+            return None
+        data = dict(data)
+        data["variant"] = "classified"
+        return data
+
+    def _assemble_newspaper_wall(target):
+        articles = []
+        for asset in _verified_scene_assets(target):
+            title = clean_text(
+                asset.get("title") or asset.get("asset_title") or "")
+            if not title:
+                continue
+            articles.append({
+                "headline": title,
+                "source": source_label(asset),
+                "date": clean_text(
+                    asset.get("date") or asset.get("published") or ""),
+            })
+            if len(articles) >= 6:
+                break
+        if len(articles) < 3:
+            return None
+        return {"articles": articles,
+                "title": shorten(target["text"], 60)}
+
+    def _assemble_crime_scene_diagram(target):
+        scenario = target.get("scenario") or {}
+        markers = scenario.get("scene_markers")
+        if not isinstance(markers, list) or not markers:
+            return None
+        return {
+            "markers": markers,
+            "rooms": scenario.get("rooms") or [],
+            "title": clean_text(scenario.get("event") or "")
+            or shorten(target["text"], 52),
+        }
+
+    def _assemble_construction_sequence(target):
+        scenario = target.get("scenario") or {}
+        stages = scenario.get("stages")
+        if not isinstance(stages, list) or len(stages) < 2:
+            return None
+        return {"stages": stages,
+                "title": shorten(target["text"], 60)}
+
+    def _assemble_molecular_diagram(target):
+        scenario = target.get("scenario") or {}
+        molecule = scenario.get("molecule")
+        if not isinstance(molecule, dict):
+            return None
+        atoms = molecule.get("atoms")
+        if not isinstance(atoms, list) or len(atoms) < 2:
+            return None
+        return {
+            "molecule": molecule,
+            "title": clean_text(molecule.get("name") or "")
+            or shorten(target["text"], 52),
+        }
+
+    def _assemble_hud_overlay(target):
+        _asset, path = _first_scene_photo(target)
+        if path is None:
+            return None
+        readouts = []
+        number = target.get("sentence_number")
+        for fact in (case_bible.get("script_facts") or []):
+            if not isinstance(fact, dict) or fact.get("kind") != "quantity":
+                continue
+            if number is not None and fact.get(
+                    "sentence_number") not in (None, number):
+                continue
+            display = clean_text(fact.get("display") or "")
+            if display:
+                readouts.append({
+                    "label": clean_text(fact.get("unit") or "") or "VALUE",
+                    "value": display,
+                })
+        if not readouts:
+            for point in _series_from_text(target["text"]) or []:
+                readouts.append({
+                    "label": clean_text(point.get("label") or "") or "VALUE",
+                    "value": point.get("display") or "",
+                })
+        readouts = [r for r in readouts if r["value"]][:5]
+        if not readouts:
+            return None
+        return {"photo": path, "readouts": readouts,
+                "title": shorten(target["text"], 52)}
+
+    def _assemble_holographic_panel(target):
+        items = []
+        for entry in extract_comparison(target["text"]) or []:
+            label = clean_text(entry.get("label") or "")
+            display = clean_text(entry.get("display") or "")
+            if label and display:
+                items.append({"label": label, "value": display})
+        if len(items) < 2:
+            grouped = _fact_quantities()
+            items = [
+                {"label": unit, "value": facts[0]["display"]}
+                for unit, facts in grouped.items()
+                if facts and facts[0]["display"]
+            ]
+        if len(items) < 2:
+            return None
+        return {"items": items[:6],
+                "title": shorten(target["text"], 60)}
+
+    def _assemble_before_after(target):
+        scenario = target.get("scenario") or {}
+        before = scenario.get("before_image")
+        after = scenario.get("after_image")
+        if not before or not after:
+            return None
+        if not (os.path.exists(str(before))
+                and os.path.exists(str(after))):
+            return None
+        return {
+            "before": str(before), "after": str(after),
+            "before_label": clean_text(
+                scenario.get("before_label") or ""),
+            "after_label": clean_text(scenario.get("after_label") or ""),
+            "title": shorten(target["text"], 60),
+        }
+
+    def _assemble_layered_reveal(target):
+        photos = []
+        for asset in _verified_scene_assets(target):
+            path = _asset_file(asset)
+            if path and os.path.exists(path):
+                photos.append({
+                    "path": str(path),
+                    "caption": clean_text(asset.get("title") or ""),
+                })
+            if len(photos) >= 4:
+                break
+        if len(photos) < 2:
+            return None
+        return {"photos": photos,
+                "title": shorten(target["text"], 60)}
+
+    def _assemble_object_labels(target):
+        scenario = target.get("scenario") or {}
+        labels = scenario.get("object_labels")
+        if not isinstance(labels, list) or not labels:
+            return None
+        _asset, path = _first_scene_photo(target)
+        if path is None:
+            return None
+        return {
+            "photo": path, "labels": labels,
+            "title": clean_text(scenario.get("event") or "")
+            or shorten(target["text"], 52),
+        }
+
     #: Assemblers the undirected chain never appends on its own —
     #: these templates are proposed by the Visual Director (or
     #: not at all), never volunteered by the coverage chain.
@@ -3310,6 +3638,25 @@ def build_motion_graphics_assets(
         "text_highlight": _assemble_text_highlight,
         "archival_title": _assemble_archival_title,
         "document_presentation": _assemble_document_presentation,
+        # Wave 2 (Motion Graphics Engine plan §C Wave 2).
+        "bubble_chart": _assemble_bubble_chart,
+        "population_pyramid": _assemble_population_pyramid,
+        "animated_dashboard": _assemble_animated_dashboard,
+        "checklist_graphic": _assemble_checklist_graphic,
+        "milestone_waveform": _assemble_milestone_waveform,
+        "territory_expansion": _assemble_territory_expansion,
+        "satellite_zoom": _assemble_satellite_zoom,
+        "heatmap": _assemble_heatmap,
+        "classified_file": _assemble_classified_file,
+        "newspaper_wall": _assemble_newspaper_wall,
+        "crime_scene_diagram": _assemble_crime_scene_diagram,
+        "construction_sequence": _assemble_construction_sequence,
+        "molecular_diagram": _assemble_molecular_diagram,
+        "hud_overlay": _assemble_hud_overlay,
+        "holographic_panel": _assemble_holographic_panel,
+        "before_after": _assemble_before_after,
+        "layered_reveal": _assemble_layered_reveal,
+        "object_labels": _assemble_object_labels,
     }
 
     def _make_engine_graphic(target, template_name, engine_data,
@@ -3330,7 +3677,9 @@ def build_motion_graphics_assets(
         from the script. Before this, only an input SUMMARY
         (engine_metadata) survived and the raw data was discarded.
         """
-        if template_name == "document_presentation" and not (
+        if template_name in (
+            "document_presentation", "classified_file",
+        ) and not (
             isinstance(engine_data, dict)
             and engine_data.get("document_source")
         ):
@@ -3341,11 +3690,14 @@ def build_motion_graphics_assets(
             # one is refused explicitly and typed — the chain never
             # feeds it fabricated document content, and a manifest
             # entry naming it without a source is refused the
-            # same way (AM-010 discipline unchanged).
+            # same way (AM-010 discipline unchanged). Wave 2: the
+            # classified_file variant rides under the same gate —
+            # a redacted presentation of a fabricated document
+            # would be worse than none.
             return (
                 False,
                 "document_presentation_disabled",
-                "document_presentation requires a genuine document "
+                f"{template_name} requires a genuine document "
                 "asset with recorded provenance",
             )
         try:
@@ -3527,6 +3879,12 @@ def build_motion_graphics_assets(
             # refusal is what gets recorded — never a fabricated
             # document (AM-010 discipline unchanged).
             return _assemble_document_presentation(target) or {}
+        if name == "classified_file":
+            # Wave 2: the classified variant rides on the same
+            # genuine document asset and the same gate — with no
+            # asset the attempt is made with empty data so the
+            # gate's refusal is recorded, exactly as above.
+            return _assemble_classified_file(target) or {}
         if name == "bar_chart" and comparison:
             return {"items": comparison, "title": shorten(text, 60)}
         if name == "stat_comparison" and comparison:
