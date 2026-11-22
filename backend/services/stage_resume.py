@@ -56,13 +56,15 @@ RESUME_DIR_NAME = "resume"
 #: not WHAT it produces; they never block adoption.
 #: Option keys that never change what a production IS: submission
 #: plumbing ("entrypoint") and ledger retry bookkeeping
-#: ("retry_of"/"retry_attempt", stamped by the dispatcher's retry
-#: sweep). A retry child MUST compare options-equal to its parent
-#: or stage adoption is refused (options_mismatch) and the retry
-#: re-runs every stage from scratch — the exact failure the
-#: Phase 8.6 crash battery caught live (2026-11-22).
+#: ("retry_of"/"retry_attempt"/"retry_not_before" — the full set
+#: the dispatcher's retry sweep stamps). A retry child MUST
+#: compare options-equal to its parent or stage adoption is
+#: refused (options_mismatch) and the retry re-runs every stage
+#: from scratch — the exact failure the Phase 8.6 crash battery
+#: caught live (2026-11-22; the first fix missed retry_not_before
+#: and the battery's recovery line caught that too).
 _VOLATILE_OPTION_KEYS = frozenset(
-    {"entrypoint", "retry_of", "retry_attempt"}
+    {"entrypoint", "retry_of", "retry_attempt", "retry_not_before"}
 )
 
 #: Terminal manifest/state statuses a prior run may be adopted from.

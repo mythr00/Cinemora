@@ -165,7 +165,8 @@ def test_retry_bookkeeping_keys_do_not_block_adoption(tmp_path):
     plan = stage_resume.plan_resume(
         project_dir, "run-retry", "hash-1",
         {"captions": "off", "entrypoint": "enqueue_full_pipeline",
-         "retry_of": "run-src", "retry_attempt": 1},
+         "retry_of": "run-src", "retry_attempt": 1,
+         "retry_not_before": "2026-11-22T00:01:00+00:00"},
     )
     assert sorted(plan["stages"]) == ["voice_actor"]
 
