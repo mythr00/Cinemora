@@ -331,6 +331,24 @@ def apply_composition(base_clip, composition, out_path, work_dir):
     work_dir.mkdir(parents=True, exist_ok=True)
     current = Path(base_clip)
     try:
+        # The composed output must keep the base clip's EXACT
+        # duration — the editor's frame lock is a hard contract, and
+        # an overlay step otherwise stretches the output toward its
+        # longest input stream (-shortest does not reliably clamp a
+        # filtergraph; Petito run 3f54aaea composed a 6.0s item to
+        # 7.0s). Probe the base once and clamp every step to it.
+        from services.media_probe import probe_video
+
+        _probe = probe_video(current)
+        base_duration = (
+            float(_probe["duration_seconds"])
+            if _probe and _probe.get("duration_seconds")
+            else None
+        )
+        _clamp = (
+            ["-t", str(round(base_duration, 3))]
+            if base_duration else []
+        )
         for index, layer in enumerate(layers):
             step_out = work_dir / f"composed_step_{index}.mp4"
             kind = layer["kind"]
@@ -344,10 +362,13 @@ def apply_composition(base_clip, composition, out_path, work_dir):
                     # never EOFs, and -shortest does not reliably end
                     # the overlay filtergraph — the step hung to the
                     # ffmpeg timeout on the Petito production
-                    # (2026-11-22). The layer is never visible past
-                    # its end; +1s covers the fade-out and rounding.
+                    # (2026-11-22). Bound it to the base duration
+                    # (fallback: the layer end + 1s of fade margin).
                     "-loop", "1", "-framerate", "30",
-                    "-t", str(round(end + 1.0, 3)), "-i", str(png),
+                    "-t", str(round(
+                        base_duration if base_duration
+                        else end + 1.0, 3)),
+                    "-i", str(png),
                 ]
                 prep = "format=rgba"
             elif kind == "footage_window":
@@ -396,7 +417,7 @@ def apply_composition(base_clip, composition, out_path, work_dir):
                     "-filter_complex", filter_complex,
                     "-map", "[out]", "-map", "0:a?",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    "-c:a", "copy", "-shortest", str(step_out),
+                    "-c:a", "copy", "-shortest", *_clamp, str(step_out),
                 ]
                 result = _renderer.run_ffmpeg(command)
                 if not result or not step_out.exists():
@@ -439,7 +460,7 @@ def apply_composition(base_clip, composition, out_path, work_dir):
                 "-filter_complex", filter_complex,
                 "-map", "[out]", "-map", "0:a?",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                "-c:a", "copy", "-shortest", str(step_out),
+                "-c:a", "copy", "-shortest", *_clamp, str(step_out),
             ]
             result = _renderer.run_ffmpeg(command)
             if not result or not step_out.exists():

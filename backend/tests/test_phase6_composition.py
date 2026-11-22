@@ -125,6 +125,40 @@ def test_lower_third_composition_renders(tmp_path):
     assert base.exists()
 
 
+def test_lower_third_on_video_only_base_keeps_exact_duration(tmp_path):
+    """Regression (live failure, Petito run 3f54aaea, 2026-11-22):
+    production image clips are VIDEO-ONLY (no audio track). The
+    bounded overlay loop ran 1s past the base and -shortest did not
+    clamp the filtergraph output, so a 6.0s item composed to 7.0s
+    and the editor's frame lock refused it (210 frames vs 180).
+    Composition must return the base's exact duration."""
+    from services.media_probe import probe_video
+
+    base = tmp_path / "base.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-f", "lavfi",
+            "-i", "color=c=navy:s=1920x1080:r=30:d=2",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an", str(base),
+        ],
+        check=True, capture_output=True,
+    )
+    layer = composition.lower_third_layer(
+        "Ocean Parkway", "Long Island, New York",
+        start=0.0, duration=2.0, theme="investigative",
+    )
+    plan = {"pattern": "lower_third_card", "layers": [layer]}
+    composition.validate_composition(plan, 2.0)
+    out = tmp_path / "composed.mp4"
+    ok, record = composition.apply_composition(
+        base, plan, out, tmp_path / "work",
+    )
+    assert ok is True
+    probe = probe_video(out)
+    assert probe is not None
+    assert abs(probe["duration_seconds"] - 2.0) < 0.06
+
+
 def test_failed_layer_keeps_base_and_records(tmp_path):
     base = _make_base_clip(tmp_path / "base.mp4", seconds=2)
     layer = composition.lower_third_layer(
