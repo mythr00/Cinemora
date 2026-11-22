@@ -108,6 +108,24 @@ def available_packs():
     return [load_pack(p) for p in PACK_IDS if load_pack(p) is not None]
 
 
+def narration_speed(pack):
+    """The pack's declared narration pace (Transformation Phase
+    2.4): pacing.narration_speed, a Piper speed multiplier where
+    < 1.0 is slower. Engineering and industrial declare 0.94 —
+    slightly slower for technical density. A missing or out-of
+    range declaration resolves to 1.0 (the historical pace): the
+    setting is data, and bad data must not retime a film."""
+    pacing = (pack or {}).get("pacing") or {}
+    speed = pacing.get("narration_speed")
+    if (
+        isinstance(speed, (int, float))
+        and not isinstance(speed, bool)
+        and 0.5 <= float(speed) <= 1.5
+    ):
+        return float(speed)
+    return 1.0
+
+
 def broll_share_band(pack):
     """The founder-set B-roll share band (D-B1, approved 2026-11-21)
     carried in a pack's expectations data: {"max": float, "basis":

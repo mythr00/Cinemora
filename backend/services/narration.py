@@ -15,15 +15,27 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 PIPER_MODEL = BASE_DIR / "en_US-lessac-medium.onnx"
 PIPER_CONFIG = BASE_DIR / "en_US-lessac-medium.onnx.json"
 
-# Stage 3J (AUD-29): the voice catalogue. HONEST CONTENTS: exactly
-# ONE real Piper voice model is installed in backend/
-# (en_US-lessac-medium.onnx + its .json config). The piper package
-# ships other .onnx files, but they are Hebrew diacritics models,
-# not voices, and are NOT catalogued. Both ids below therefore map
-# to the same installed model; any other requested id falls back to
-# it and the fallback is reported, never hidden.
+# Transformation Phase 2.4 (§2.4): the second voice — a
+# contrasting local Piper model (en_US-ryan-medium: male, against
+# lessac's female), downloaded from the Piper voices repository
+# and installed beside the primary model, same pattern. No
+# service dependency, no cloud TTS. It exists for quoted /
+# interview beats only (see assign_sentence_voices); narration
+# proper stays on the primary voice.
+SECONDARY_MODEL = BASE_DIR / "en_US-ryan-medium.onnx"
+SECONDARY_CONFIG = BASE_DIR / "en_US-ryan-medium.onnx.json"
+SECONDARY_VOICE_ID = "en_US-ryan-medium"
+
+# Stage 3J (AUD-29): the voice catalogue. HONEST CONTENTS: two
+# real Piper voice models are installed in backend/
+# (en_US-lessac-medium and en_US-ryan-medium, each with its .json
+# config). The piper package ships other .onnx files, but they are
+# Hebrew diacritics models, not voices, and are NOT catalogued.
+# Any other requested id falls back to the default voice and the
+# fallback is reported, never hidden.
 VOICE_CATALOGUE = {
     "en_US-lessac-medium": (PIPER_MODEL, PIPER_CONFIG),
+    "en_US-ryan-medium": (SECONDARY_MODEL, SECONDARY_CONFIG),
     "default": (PIPER_MODEL, PIPER_CONFIG),
 }
 
@@ -44,6 +56,67 @@ def resolve_voice(voice_id):
         return model, config, requested, False
     model, config = VOICE_CATALOGUE[DEFAULT_VOICE_ID]
     return model, config, DEFAULT_VOICE_ID, True
+
+
+def secondary_voice_available():
+    """True when the secondary voice's model + config are actually
+    installed (a catalogue entry pointing at missing files must
+    never be assigned)."""
+    return SECONDARY_MODEL.exists() and SECONDARY_CONFIG.exists()
+
+
+_QUOTED_SPAN_RE = re.compile(r"[“\"][^”\"]{10,}[”\"]|[‘'][^’']{10,}[’']")
+_QUOTE_ROLES = frozenset({
+    "quote", "quoted", "interview", "interviewee", "testimony",
+})
+
+
+def _is_quoted_or_interview(sentence):
+    """True when a sentence is quoted speech or an interview beat:
+    an explicit role marker on a sentence record, or a quoted span
+    of at least ten characters in the text itself."""
+    if isinstance(sentence, dict):
+        role = str(
+            sentence.get("voice_role") or sentence.get("role") or ""
+        ).strip().lower()
+        if role in _QUOTE_ROLES or sentence.get("quoted") is True:
+            return True
+        text = str(sentence.get("text") or "")
+    else:
+        text = str(sentence or "")
+    return bool(_QUOTED_SPAN_RE.search(text))
+
+
+def assign_sentence_voices(sentences, primary_voice_id=None,
+                           secondary_available=None):
+    """Per-sentence voice assignment (Phase 2.4): the secondary
+    voice for quoted / interview beats ONLY; the primary voice
+    everywhere else. `sentences` may be a raw script string (split
+    with the narration splitter, so the result is parallel to the
+    parts generate_narration will synthesise) or a list of
+    sentence strings / records.
+
+    Returns the list of voice ids, or None when no sentence
+    qualifies (or the secondary model is not installed) — the
+    caller then keeps the exact single-voice path."""
+    if isinstance(sentences, str):
+        items = _split_sentences(sentences)
+    else:
+        items = list(sentences or [])
+    if not items:
+        return None
+    if secondary_available is None:
+        secondary_available = secondary_voice_available()
+    if not secondary_available:
+        return None
+    primary = primary_voice_id or DEFAULT_VOICE_ID
+    voices = [
+        SECONDARY_VOICE_ID if _is_quoted_or_interview(item) else primary
+        for item in items
+    ]
+    if SECONDARY_VOICE_ID not in voices:
+        return None
+    return voices
 
 
 def _audio_duration(audio_file):
@@ -345,6 +418,7 @@ def generate_narration(
     output_path: str,
     voice_id=None,
     speed=None,
+    sentence_voices=None,
 ):
     if not text or not text.strip():
         raise ValueError("Narration text cannot be empty.")
@@ -361,6 +435,19 @@ def generate_narration(
         raise FileNotFoundError(
             f"Piper config not found: {config}"
         )
+
+    # Phase 2.4: per-sentence voices (quoted/interview beats on
+    # the secondary voice) resolve and check out up front too — a
+    # missing secondary model fails here with its name, not three
+    # retries into the parts loop.
+    if sentence_voices:
+        for _part_voice in dict.fromkeys(sentence_voices):
+            _pmodel, _pconfig, _presolved, _ = resolve_voice(_part_voice)
+            if not _pmodel.exists() or not _pconfig.exists():
+                raise FileNotFoundError(
+                    f"Piper model not found for sentence voice "
+                    f"{_part_voice}: {_pmodel}"
+                )
 
     output_file = Path(output_path)
 
@@ -393,17 +480,31 @@ def generate_narration(
 
     manifest_parts = []
     part_files = []
+    voices_used = set()
 
     for index, sentence in enumerate(sentences):
         part_name = f"part_{index:03d}.wav"
         part_file = parts_dir / part_name
-        part_hash = _part_hash(sentence, voice_id=voice_id, speed=speed)
+        # Phase 2.4: this part's voice — the per-sentence
+        # assignment when one was supplied for this index, else
+        # the narration's requested voice. The part hash keys on
+        # the part's own resolved voice (via _part_hash), so a
+        # voice change re-synthesises exactly the affected parts.
+        part_voice_id = voice_id
+        if sentence_voices and index < len(sentence_voices):
+            part_voice_id = sentence_voices[index]
+        _pv_model, _pv_config, part_resolved_voice, _pv_fb = (
+            resolve_voice(part_voice_id)
+        )
+        voices_used.add(part_resolved_voice)
+        part_hash = _part_hash(sentence, voice_id=part_voice_id, speed=speed)
 
         entry = {
             "index": index,
             "file": part_name,
             "hash": part_hash,
             "sentence_sha256": _sentence_sha256(sentence),
+            "voice_id": part_resolved_voice,
         }
 
         existing = existing_entries.get(index)
@@ -432,7 +533,7 @@ def generate_narration(
                     _run_piper(
                         sentence,
                         part_file,
-                        voice_id=voice_id,
+                        voice_id=part_voice_id,
                         speed=speed,
                     )
                     last_error = None
@@ -509,6 +610,10 @@ def generate_narration(
         "voice_id_requested": voice_id,
         "voice_id_used": resolved_voice_id,
         "voice_fallback": voice_fell_back,
+        # Phase 2.4: every voice actually used across the parts
+        # (more than one only when sentence_voices assigned the
+        # secondary voice to quoted/interview beats).
+        "voice_ids_used": sorted(voices_used),
         "model": model.name,
         "output_file": str(output_file),
     }
