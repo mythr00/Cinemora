@@ -104,8 +104,10 @@ def test_pass_records_carry_verdict_dimensions(monkeypatch, tmp_path):
         }
         for index in range(2)
     ]
-    # No metadata at all: the gate rejects it before any verdict
-    # exists, so its record must keep the synthesised shape.
+    # No metadata at all: its gate failures are absence-only, so it
+    # now proceeds to the scorer and is rejected there on zero
+    # topical evidence — its record carries the real verdict
+    # dimensions plus the gate failures, not the synthesised shape.
     candidates.append({
         "url": "https://www.youtube.com/watch?v=empty",
         "title": "", "snippet": "", "provider": "youtube",
@@ -162,11 +164,14 @@ def test_pass_records_carry_verdict_dimensions(monkeypatch, tmp_path):
     for record in verdict_records:
         assert set(record["dimension_results"]) == _DIM_KEYS
         assert "era_waived" in record
-    gate_records = [r for r in records if r["stage"] == "metadata_gate"]
-    assert gate_records
-    for record in gate_records:
-        assert record["dimension_results"] == _SYNTHESISED
-        assert record["era_waived"] is None
+    empty_records = [
+        r for r in records if r["url"].endswith("v=empty")
+    ]
+    assert empty_records
+    for record in empty_records:
+        assert record["stage"] == "scoring"
+        assert record["reason"] == "no_topical_evidence"
+        assert set(record["dimension_results"]) == _DIM_KEYS
 
 
 # ---------------------------------------------------------------------------

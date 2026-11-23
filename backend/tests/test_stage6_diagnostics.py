@@ -495,20 +495,26 @@ def test_gate_rejection_event_carries_contributing_failures(
     monkeypatch, tmp_path
 ):
     # A shot need whose person + place are both absent from the
-    # candidate: the gate's primary is missing_person and the
-    # contributing list must carry missing_place (C.A.3.2's
-    # headline causal question). Stage 7 supersession (C.B.2): the
-    # absence contract is the EVIDENCE profile's, so the need
-    # declares visual_category "evidence" explicitly — a plain
+    # candidate AND whose era the candidate positively contradicts:
+    # the gate's primary is the contradiction and the contributing
+    # list must carry the absence failures (C.A.3.2's headline
+    # causal question). Stage 7 supersession (C.B.2): the absence
+    # contract is the EVIDENCE profile's, so the need declares
+    # visual_category "evidence" explicitly — a plain
     # representative (contextual) need no longer rejects at the gate
-    # for absent names.
+    # for absent names. Metadata-absence bypass (run-6345 fix,
+    # 2026-11-23): a candidate whose gate failures are absence-ONLY
+    # no longer terminates at the gate at all (it is scored, and
+    # rejected or speculatively admitted there), so this pin's
+    # fixture carries a contradiction primary — the gate-event
+    # collect-all property it pins is unchanged.
     monkeypatch.setattr(
         mp, "_uve_scenario_search",
         lambda scenario, cache, pid, need: (
             [{
                 "url": "https://videos.example.org/cooking",
-                "title": "Cooking show highlights",
-                "snippet": "recipes and kitchen fun",
+                "title": "Cooking show highlights 1998",
+                "snippet": "recipes and kitchen fun from 1998",
                 "provider": "youtube",
             }],
             [],
@@ -524,7 +530,10 @@ def test_gate_rejection_event_carries_contributing_failures(
         "search_terms": ["kohberger"], "visual": "court hearing",
     }
     mp._uve_search_and_pick(
-        scenario, {**_PERSON_NEED, "visual_category": "evidence"},
+        scenario, {
+            **_PERSON_NEED, "visual_category": "evidence",
+            "era": "2022",
+        },
         search_cache={}, project_id="t", bible={},
         registry=VisualRegistry(), used_keys=set(),
         scene_dir=tmp_path, scene_stats=scene_stats,
@@ -538,8 +547,10 @@ def test_gate_rejection_event_carries_contributing_failures(
     ]
     assert len(gate_records) == 1
     record = gate_records[0]
-    assert record["primary_rejection_reason"] == "missing_person"
-    assert record["contributing_reasons"] == ["missing_place"]
+    assert record["primary_rejection_reason"] == "contradictory_date"
+    assert record["contributing_reasons"] == [
+        "missing_person", "missing_place",
+    ]
     assert record["score_basis"] == "gate_pre_scoring"
     assert record["dimension_results"]["subject"] == "not_evaluated"
 

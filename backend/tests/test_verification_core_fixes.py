@@ -160,9 +160,17 @@ def test_gate_executes_once_per_candidate(monkeypatch):
     assert picked == []     # gate-rejected / unverified candidates stay out
 
 
-def test_pick_rejection_counts_single_execution(capsys):
+def test_pick_rejection_counts_single_execution(capsys, monkeypatch):
+    calls = []
+    real_gate = mp.gate_shot_need
+
+    def counting_gate(candidate, shot_need):
+        calls.append(1)
+        return real_gate(candidate, shot_need)
+
+    monkeypatch.setattr(mp, "gate_shot_need", counting_gate)
     candidates = [
-        {"title": "Champagne wall rental", "snippet": "weddings", "url": "https://x.example/1"},
+        {"title": "Champagne wall rental", "snippet": "weddings", "url": "https://media.example.org/1"},
     ]
     # Evidence category declared explicitly (Stage 7 / C.B.2 — see
     # test_gate_ignores_matched_query_words).
@@ -173,6 +181,20 @@ def test_pick_rejection_counts_single_execution(capsys):
     from services.visual_registry import VisualRegistry
     mp._uve_pick(scored, _scenario(), VisualRegistry(), set(), shot_need=need)
     out = capsys.readouterr().out
-    assert out.count("REJECT missing_subject") == 1  # not printed twice
+    # VA-11's pin, unchanged: the gate executed exactly once (the
+    # pick did not re-run it), so the rejection is recorded exactly
+    # once — never double-counted, never double-printed.
+    assert len(calls) == 1
+    assert out.count("REJECT missing_subject") == 0  # not printed twice
     rejected = [c for c in scored if c.get("reject_reason")]
-    assert len(rejected) == 1 and rejected[0]["rejection_stage"] == "metadata_gate"
+    assert len(rejected) == 1
+    # Metadata-absence bypass (run-6345 fix, 2026-11-23): the
+    # candidate's gate failures are absence-only, so evaluation
+    # continues to the scorer, whose no_topical_evidence verdict
+    # (zero topical overlap — VA-04) is the terminating rejection.
+    # The gate's own failures remain on the record as diagnostics.
+    assert rejected[0]["rejection_stage"] == "scoring"
+    assert rejected[0]["reject_reason"] == "no_topical_evidence"
+    assert rejected[0]["gate_failures"] == [
+        "missing_subject", "missing_place",
+    ]

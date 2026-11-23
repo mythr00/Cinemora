@@ -752,11 +752,16 @@ def test_19_no_random_or_unrelated_fallback_is_selected(tmp_path):
     from services.visual_registry import VisualRegistry
 
     # M06 never survives verification for the beat's contract.
+    # (Metadata-absence bypass, run-6345 fix 2026-11-23: M06's gate
+    # failures are absence-only, so the gate no longer terminates
+    # it; the scorer's contradictory_geography verdict is the
+    # recorded rejection. It is still rejected, still unpickable.)
     scored = mp._uve_verify_all(
         [fx.MISLEADING["M06"]()], fx.scenario(), fx.bible(),
         shot_need=fx.shot_need(),
     )
-    assert scored[0].get("reject_reason") == "missing_person"
+    assert scored[0].get("reject_reason") == "contradictory_geography"
+    assert scored[0].get("rejection_stage") == "scoring"
     assert mp._uve_pick(
         scored, fx.scenario(), VisualRegistry("t19"), set(),
         shot_need=fx.shot_need(),

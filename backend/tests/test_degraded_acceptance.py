@@ -205,7 +205,7 @@ def test_01_exact_candidate_beats_generic_candidate():
     """Required test 1 (visual-quality ranking; DM-04/DM-12 family):
     B02 exact event beat — the candidate matching subject+event+
     place+era ranks first and is selected; the M04 generic same-topic
-    candidate (topical overlap only) is gate-rejected, and even the
+    candidate (topical overlap only) is rejected, and even the
     maximum format-intent bonus (0.10, at confidence 1.0 for the
     favoured format) cannot close the relevance gap."""
     exact = fx.candidate()
@@ -220,7 +220,15 @@ def test_01_exact_candidate_beats_generic_candidate():
     assert scored[0]["url"] == exact["url"]
     exact_score = by_url[exact["url"]]["universal_score"]
     generic_item = by_url[generic["url"]]
-    assert generic_item["reject_reason"] == "missing_person"
+    # Metadata-absence bypass (run-6345 fix, 2026-11-23): M04's
+    # gate failures are absence-only (missing_person), so the gate
+    # no longer terminates it — the scorer's exact-specificity
+    # verdict (missing_required_subject) is the recorded rejection.
+    # The gate's failure remains on the record as diagnostics, and
+    # the selection outcome this test exists to pin is unchanged.
+    assert generic_item["reject_reason"] == "missing_required_subject"
+    assert generic_item["rejection_stage"] == "scoring"
+    assert "missing_person" in (generic_item.get("gate_failures") or [])
     assert (generic_item.get("verification") or {}).get("accepted") is False
     # The bounded format-intent bonus (<= 0.10, here at its maximum:
     # footage intent, confidence 1.0, generic is a video) still
@@ -274,7 +282,17 @@ def test_02_correct_entity_beats_keyword_only_candidate():
         shot_need=fx.shot_need(),
     )
     by_url = {c["url"]: c for c in scored}
-    assert by_url[keyword_only["url"]]["reject_reason"] == "missing_person"
+    # Metadata-absence bypass (run-6345 fix, 2026-11-23): the gate
+    # failure (missing_person, absence-only) no longer terminates
+    # the candidate, so the recorded primary is the verifier's
+    # missing_required_subject — the same verdict asserted directly
+    # above; the gate failure rides on the record as diagnostics.
+    assert by_url[keyword_only["url"]]["reject_reason"] == (
+        "missing_required_subject"
+    )
+    assert "missing_person" in (
+        by_url[keyword_only["url"]].get("gate_failures") or []
+    )
 
     picked = mp._uve_pick(
         scored, fx.scenario(), VisualRegistry("t2"), set(),
