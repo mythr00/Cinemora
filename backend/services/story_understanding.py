@@ -2428,7 +2428,7 @@ _NAME_BIGRAM_STOPLIST = frozenset({
 _PERSON_NAME_RE = re.compile(r"\b([A-Z][a-z]{1,}) ([A-Z][a-z]{1,})\b")
 
 
-def _unrelated_named_person(candidate, bible, text, subject_hit):
+def _unrelated_named_person(candidate, bible, text, subject_hit, subject=None):
     """A person NAME the candidate's title positively carries that
     belongs to no bible entity, or "" (run-9 fix 2/3 overlap).
 
@@ -2437,11 +2437,21 @@ def _unrelated_named_person(candidate, bible, text, subject_hit):
     at all, and a capitalised two-word name in the title matches no
     bible entity of any type and is not introduced by a role word.
     This is the Tristyn Bailey shape: a different case's victim
-    presented as this beat's visual."""
+    presented as this beat's visual.
+
+    Founder defect ruling 2026-11-23 (the Eleanor Roosevelt
+    shape): the subject_hit exemption applies ONLY when the
+    beat's subject is itself a person the candidate named. The
+    historical code exempted ANY subject hit — so on a
+    place-subject beat ("Newark, New Jersey") a photograph of a
+    completely unrelated named person passed every check on the
+    strength of the place match alone and played under sentences
+    about someone else. Callers that know the subject pass it;
+    legacy callers without one keep the historical exemption."""
     persons = [e for e in bible.get("entities", []) or [] if e.get("type") == "person"]
     if not persons:
         return ""
-    if subject_hit:
+    if subject_hit and (subject is None or subject.get("type") == "person"):
         return ""
     if any(_entity_mentioned(e, text) for e in persons):
         return ""
@@ -2675,7 +2685,9 @@ def detect_contradiction(candidate, scenario, bible, text, subject, subject_hit)
     # Unrelated named person (run-9 fixes 2/3): the candidate's
     # title names a person who belongs to a different story entirely
     # (no bible entity, no bible person mentioned at all).
-    unrelated = _unrelated_named_person(candidate, bible, text, subject_hit)
+    unrelated = _unrelated_named_person(
+        candidate, bible, text, subject_hit, subject=subject
+    )
     if unrelated:
         return UNRELATED_NAMED_PERSON, unrelated
 
