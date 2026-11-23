@@ -492,21 +492,43 @@ def create_video_clip(video_path, duration, output_path, frame_count=None, start
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Founder defect ruling 2026-11-23 (flickering footage): one
+    # placement of an asset is ONE continuous segment. The
+    # historical command looped the source (-stream_loop -1), so
+    # any source shorter than its timeline slot repeated from
+    # frame 0 — a 3s motion graphic in a 9s slot visibly
+    # restarted its entrance animation three times (photos fading
+    # in, vanishing, fading in again), and short footage looped
+    # the same way. The source now plays ONCE; when it is shorter
+    # than the slot, tpad clones its LAST frame to the slot end
+    # (a settled hold, never a restart). The start offset is
+    # clamped inside the source for the same reason: with no loop
+    # to wrap around, an out-of-range offset would yield no
+    # frames at all.
+    if start_offset > 0:
+        _probe = probe_media(video_path)
+        _source_duration = (_probe or {}).get("duration")
+        if _source_duration:
+            start_offset = min(
+                start_offset, max(0.0, float(_source_duration) - 0.1)
+            )
+
     video_filter = build_video_filter()
     if retime_factor:
         # Run-9 fix 4: compress the source's presentation timestamps
         # so the whole sequence fits the slot instead of being
         # trimmed at the slot boundary.
         video_filter = f"setpts=PTS*{float(retime_factor):.6f}," + video_filter
+    video_filter += (
+        f",tpad=stop_mode=clone:stop_duration={float(duration):.3f}"
+    )
 
     command = [
         "ffmpeg", "-y",
-        "-stream_loop", "-1",
     ]
-    # Stage 3F (MA-15): input seeking — "-ss" BEFORE "-i" starts the
-    # (looped) source at the asset's verified segment offset instead
-    # of always at t=0. With start_offset=0 the command is identical
-    # to the historical one.
+    # Stage 3F (MA-15): input seeking — "-ss" BEFORE "-i" starts
+    # the source at the asset's verified segment offset instead of
+    # always at t=0.
     if start_offset > 0:
         command.extend(["-ss", str(start_offset)])
     command.extend([

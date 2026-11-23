@@ -383,14 +383,13 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         )
         if _identity is not None:
             seen_identities.add(_identity)
-        loops = False
-        real_duration = probed_duration.get(path)
-        item_duration = item.get("duration")
-        if isinstance(real_duration, (int, float)) and isinstance(item_duration, (int, float)):
-            # The renderer loops a clip (-stream_loop -1) when the timeline
-            # window is longer than the clip itself.
-            loops = float(item_duration) > float(real_duration) + 0.05
-        if is_repeat or loops:
+        # Founder defect ruling 2026-11-23: the renderer no longer
+        # loops a short source to fill its window (the historical
+        # -stream_loop -1 repetition this counter also flagged);
+        # a longer window now holds the source's last frame, which
+        # is one continuous segment, not repeated footage. Only a
+        # genuine identity repeat counts here.
+        if is_repeat:
             repeated += 1
 
     # MA-35: positional (evidence-free) segment ASSIGNMENTS, counted
