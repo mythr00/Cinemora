@@ -326,7 +326,9 @@ def newspaper_montage(data, style, out_path, duration=5.0, sentence_index=None, 
             continue
         articles.append({
             "headline": headline,
-            "source": _clean(entry.get("source")),
+            # Founder ruling 2026-11-23: an article's "source"
+            # field is never read or drawn — provenance is not
+            # screen content, whatever a caller supplies.
             "date": _clean(entry.get("date")),
         })
     if not articles:
@@ -348,10 +350,6 @@ def newspaper_montage(data, style, out_path, duration=5.0, sentence_index=None, 
         cd.rectangle([0, 0, card_w, card_h], fill=(246, 242, 230, 255))
         cd.rectangle([0, 0, card_w, 8], fill=tokens["accent"] + (255,))
         y = 30
-        if article["source"]:
-            cd.text((30, y), article["source"].upper()[:44],
-                    font=fonts["small"], fill=tokens["accent"] + (255,))
-            y += 34
         for line in wrap_text(probe, article["headline"], fonts["headline"], card_w - 60)[:4]:
             cd.text((30, y), line, font=fonts["headline"], fill=(30, 28, 24, 255))
             y += 50
@@ -555,6 +553,11 @@ def text_overlay(data, style, out_path, duration=5.0, sentence_index=None, scene
     text = _clean(data.get("text") or data.get("title"))
     if not text:
         return None, {"reason": "no_text"}
+    # Founder ruling 2026-11-23: an overlay is a short label, not
+    # a sentence — sentence-length text is refused at the
+    # template so no caller can turn this into a text card.
+    if len(text) > 64 or len(text.split()) > 8:
+        return None, {"reason": "payload_not_short"}
     subtext = _clean(data.get("subtext"))
     position = _clean(data.get("position")).lower()
     if position not in ("lower", "center", "upper"):
@@ -637,9 +640,17 @@ def text_highlight(data, style, out_path, duration=5.0, sentence_index=None, sce
     text = _clean(data.get("text") or data.get("quote"))
     if not text:
         return None, {"reason": "no_text"}
+    # Founder ruling 2026-11-23: the page presents a SHORT
+    # excerpt (a quoted passage), never a full narration
+    # sentence dressed as a document.
+    if len(text) > 200:
+        return None, {"reason": "payload_not_short"}
     phrase = _clean(data.get("highlight"))
     title = _clean(data.get("title"))
-    source_label = _clean(data.get("source_label"))
+    # Founder ruling 2026-11-23: no source/header label is drawn
+    # on the page — a supplied source_label is ignored entirely
+    # (the historical header burned an entity name, or the
+    # placeholder word "Document", over the excerpt).
     fonts = {
         "body": load_font(tokens["font"], 34),
         "title": load_font(tokens["font_bold"], 36),
@@ -679,10 +690,6 @@ def text_highlight(data, style, out_path, duration=5.0, sentence_index=None, sce
         d.rectangle([x0 + 14, y0 + 18, x1 + 14, y1 + 18], fill=(0, 0, 0, 120))
         d.rectangle([x0, y0, x1, y1], fill=(246, 242, 230, 255))
         d.rectangle([x0, y0, x1, y0 + 6], fill=tokens["accent"] + (255,))
-        header = source_label.upper() if source_label else ""
-        if header:
-            d.text((x0 + 52, y0 + 28), header[:80], font=fonts["small"],
-                   fill=tokens["accent"] + (255,))
         if title:
             d.text((x0 + 52, y0 + 62), title.upper()[:56],
                    font=fonts["title"], fill=(28, 26, 22, 255))

@@ -16,6 +16,7 @@ scene_number, duration, style, inputs, generated: True}
 
 import math
 import random
+import re
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -82,9 +83,17 @@ def _textured_dark(size, base, seed=7):
     return img
 
 
-def _footer(draw, tokens, label="CINEMORA / GENERATED GRAPHIC"):
-    font = load_font(tokens["font"], 20)
-    draw.text((90, HEIGHT - 52), label, font=font, fill=tokens["muted"])
+def _footer(draw, tokens, label=""):
+    """Footer hook kept for call-site compatibility.
+
+    Founder ruling 2026-11-23: NO branding or watermark text is
+    burned into generated graphics — the historical
+    "CINEMORA / GENERATED GRAPHIC" corner label is removed
+    everywhere. A graphic's provenance lives in its asset record
+    and the rights manifest, never in pixels. This hook therefore
+    deliberately draws nothing; the ~35 template call sites keep
+    working unchanged."""
+    return None
 
 
 def _polyline_window(points, f0, f1):
@@ -549,10 +558,21 @@ def evidence_board(data, style, out_path, duration=5.0, sentence_index=None, sce
             img = Image.open(p).convert("RGB")
         except Exception:
             continue
-        cards.append((img, _clean(entry.get("caption"))))
+        caption = _clean(entry.get("caption"))
+        # Founder ruling 2026-11-23 (template-level guard): a
+        # caption that is a raw file title ("File:...", anything
+        # carrying an image-file extension) is provenance, not a
+        # caption — it is dropped whoever supplied it.
+        if caption.lower().startswith("file:") or re.search(
+            r"\.(jpe?g|png|tiff?|webp|gif|svg)\b", caption.lower()
+        ):
+            caption = ""
+        cards.append((img, caption))
     if not cards:
         return None, {"reason": "no_valid_photos"}
-    title = _clean(data.get("title")) or "EVIDENCE"
+    # No placeholder banner: the torn-paper title is drawn only
+    # when the caller supplies a real (short, designed) title.
+    title = _clean(data.get("title"))
     labels = [_clean(x) for x in (data.get("labels") or []) if _clean(x)]
     paper = _aged_paper((WIDTH, HEIGHT), tokens)
     fonts = {
@@ -635,8 +655,9 @@ def evidence_board(data, style, out_path, duration=5.0, sentence_index=None, sce
                 sd.line(pts, fill=string_fill, width=3, joint="curve")
         top = canvas.new_layer("banner")
         td = ImageDraw.Draw(top.image, "RGBA")
-        _torn_banner(td, 90, 56, 1050, 92, fill=(250, 246, 236, 255))
-        td.text((122, 78), title.upper()[:52], font=fonts["title"], fill=(30, 26, 20, 255))
+        if title:
+            _torn_banner(td, 90, 56, 1050, 92, fill=(250, 246, 236, 255))
+            td.text((122, 78), title.upper()[:52], font=fonts["title"], fill=(30, 26, 20, 255))
         for i, lab in enumerate(labels[:3]):
             td.text((120, HEIGHT - 120 + i * 30), lab.upper(), font=fonts["label"], fill=(60, 30, 24, 255))
         return canvas.composite()
@@ -742,7 +763,9 @@ def data_gauge(data, style, out_path, duration=5.0, sentence_index=None, scene_n
     except (TypeError, ValueError):
         return None, {"reason": "no_percent_value"}
     percent = max(0.0, min(100.0, percent))
-    label = _clean(data.get("label")) or "VALUE"
+    # No placeholder label: the gauge's label line is drawn only
+    # when the caller supplies a real (short, designed) label.
+    label = _clean(data.get("label"))
     sublabel = _clean(data.get("sublabel"))
     photo_path = data.get("photo")
     bg_img = _dark_photo(photo_path, darkness=0.35) if photo_path else None
@@ -770,8 +793,9 @@ def data_gauge(data, style, out_path, duration=5.0, sentence_index=None, scene_n
         value_text = f"{int(round(sweep))}%"
         tw = d.textlength(value_text, font=fonts["big"])
         d.text((cx - tw / 2, cy - 78), value_text, font=fonts["big"], fill=(255, 255, 255, 255))
-        lw = d.textlength(label.upper(), font=fonts["label"])
-        d.text((cx - lw / 2, cy + r + 48), label.upper()[:52], font=fonts["label"], fill=tokens["text"] + (255,))
+        if label:
+            lw = d.textlength(label.upper(), font=fonts["label"])
+            d.text((cx - lw / 2, cy + r + 48), label.upper()[:52], font=fonts["label"], fill=tokens["text"] + (255,))
         if sublabel:
             sw = d.textlength(sublabel, font=fonts["small"])
             d.text((cx - sw / 2, cy + r + 104), sublabel[:70], font=fonts["small"], fill=tokens["muted"] + (255,))
@@ -983,8 +1007,12 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
             return None, {"reason": "document_image_unreadable"}
     if not body and doc_image is None:
         return None, {"reason": "no_document_text"}
-    title = _clean(data.get("title")) or "DOCUMENT"
-    source_label = _clean(data.get("source_label"))
+    # Founder ruling 2026-11-23: no placeholder title and no
+    # source label on the presented page — the title line is
+    # drawn only when the caller supplies a real one, and the
+    # header carries at most the date. Provenance lives in the
+    # recorded document_source, never in pixels.
+    title = _clean(data.get("title"))
     date_label = _clean(data.get("date_label"))
     highlight = _clean(data.get("highlight"))
     # Wave 2 (F4): the classified-file variant — the same genuine
@@ -1030,10 +1058,11 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
         d.rectangle([x0 + 14, y0 + 18, x1 + 14, y1 + 18], fill=(0, 0, 0, 120))
         d.rectangle([x0, y0, x1, y1], fill=(246, 242, 230, 255))
         d.rectangle([x0, y0, x1, y0 + 6], fill=tokens["accent"] + (255,))
-        header = "  ·  ".join(p for p in (source_label.upper() if source_label else "", date_label.upper() if date_label else "") if p)
+        header = date_label.upper() if date_label else ""
         if header:
             d.text((x0 + 52, y0 + 30), header[:80], font=fonts["small"], fill=tokens["accent"] + (255,))
-        d.text((x0 + 52, y0 + 72), title.upper()[:56], font=fonts["title"], fill=(28, 26, 22, 255))
+        if title:
+            d.text((x0 + 52, y0 + 72), title.upper()[:56], font=fonts["title"], fill=(28, 26, 22, 255))
         if doc_image is not None:
             # The genuine document, fitted inside the page under
             # its header; an accent frame sweeps around it as the
@@ -1103,7 +1132,7 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
         return canvas.composite()
 
     path = core.render_template(draw_frame, out_path, duration=duration)
-    _doc_inputs = {"title": True, "source_label": bool(source_label),
+    _doc_inputs = {"title": bool(title),
                    "date_label": bool(date_label), "highlight": bool(highlight),
                    "body_chars": len(body),
                    "image": doc_image is not None}
@@ -1142,21 +1171,34 @@ def classified_file(data, style, out_path, duration=5.0,
 # ---------------------------------------------------------------------------
 
 def closing_card(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
-    """A designed closing/quote card presenting the sentence's OWN
-    words — the T5 floor of the tier ladder. It exists for a beat
-    that exhausted every footage tier and every content graphic
-    family: the card invents nothing (the quote IS the target
-    sentence, the kicker is the production's own title when the
-    caller supplies one), it is themed and rendered like every
-    other engine graphic, and the engine stamps it generated —
-    honestly a graphic, never footage, never a fabricated
-    document. Its only data requirement is the text itself."""
+    """A designed closing card presenting ONE short payload — the
+    T5 floor of the tier ladder. It exists for a beat that
+    exhausted every footage tier and every content graphic
+    family.
+
+    Founder ruling 2026-11-23 (superseding the original
+    sentence-quote design): the card must NEVER print a narration
+    sentence — the film's caption already carries the sentence,
+    so a sentence card duplicates it as giant headline text. The
+    payload is a short designed element the CALLER selected from
+    the sentence (a statistic, a date, a name, a place — see
+    graphics_pipeline.short_payload_for), presented under the
+    production's own title as kicker. Sentence-length payloads
+    are refused here, at the template, so no caller — chain,
+    Director manifest or replayed recipe — can reintroduce the
+    defect."""
     style_name, tokens = resolve_style(style)
     data = data or {}
     quote = _clean(data.get("quote") or data.get("text"))
     if not quote:
         return None, {"reason": "no_text"}
+    if len(quote) > 64 or len(quote.split()) > 8:
+        return None, {"reason": "payload_not_short"}
     kicker = _clean(data.get("kicker"))
+    # Never print the same string twice on one frame: when the
+    # kicker duplicates the headline payload it is dropped.
+    if kicker and kicker.upper() == quote.upper():
+        kicker = ""
     bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=41)
     fonts = {
         "quote": load_font(tokens["font_bold"], 56),

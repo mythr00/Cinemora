@@ -57,6 +57,39 @@ def _fontfile(font_path):
 # TEXT HELPERS
 # =========================================================
 
+_DRAWTEXT_SCRATCH_DIR = None
+
+
+def drawtext_textfile(text):
+    """Write literal drawtext content to a scratch file and
+    return its path, escaped as a filter option value.
+
+    WHY: inline `text='...'` values cannot carry an apostrophe
+    safely through ffmpeg's two-level filter parsing when the
+    filter string is passed as a subprocess argument (no shell):
+    the historical `'\''` escaping silently corrupts the filter
+    — the drawtext then renders its own option string
+    ("...:x=342:y=663:fontsize=22:...") across the frame at the
+    default position (the Container film's chronology graphic,
+    founder defect audit 2026-11-23). `textfile=` sidesteps all
+    escaping: the file's bytes ARE the text. Files are tiny,
+    content-addressed, and live in a per-process scratch dir.
+    """
+    global _DRAWTEXT_SCRATCH_DIR
+    import hashlib
+    import tempfile
+
+    if _DRAWTEXT_SCRATCH_DIR is None:
+        _DRAWTEXT_SCRATCH_DIR = Path(
+            tempfile.mkdtemp(prefix="cinemora_drawtext_")
+        )
+    key = hashlib.sha1(str(text).encode("utf-8")).hexdigest()[:20]
+    path = _DRAWTEXT_SCRATCH_DIR / f"{key}.txt"
+    if not path.exists():
+        path.write_text(str(text), encoding="utf-8")
+    return str(path).replace("\\", "/").replace(":", "\\:")
+
+
 def escape_drawtext(text, programmatic=False):
     """
     Escape text for safe embedding inside a single-quoted
@@ -154,6 +187,159 @@ def labels_from_text(text):
         if entity:
             names = [entity.upper()]
     return names, places
+
+
+# =========================================================
+# FOUNDER DEFECT RULINGS (2026-11-23): what may be burned
+# into a graphic's pixels. Provenance (file names, sources,
+# providers, URLs, licences) lives in the rights manifest and
+# the reports — NEVER on screen. A text-bearing graphic may
+# carry only a SHORT DESIGNED payload (a statistic, a date, a
+# name, a place, a beat label of a few words) — never the
+# narration sentence itself, whole or truncated, and never a
+# raw asset title. The helpers below are the single selection
+# point for those payloads; templates additionally refuse
+# sentence-length payloads so no caller (chain, Director
+# manifest, replayed recipe) can reintroduce the defect.
+# =========================================================
+
+MAX_PAYLOAD_WORDS = 8
+MAX_PAYLOAD_CHARS = 64
+
+
+def is_short_payload(value):
+    """True when `value` is short enough to be a designed
+    graphic payload rather than sentence text."""
+    value = clean_text(value)
+    return bool(value) and len(value) <= MAX_PAYLOAD_CHARS \
+        and len(value.split()) <= MAX_PAYLOAD_WORDS
+
+
+def is_metadata_title(value):
+    """True when a string is a raw asset/file title rather than
+    displayable text: a Wikimedia-style "File:" name, a bare
+    file name with an image extension, or a provider-stamped
+    title. Such strings are provenance, not content."""
+    value = clean_text(value)
+    if not value:
+        return False
+    lowered = value.lower()
+    if lowered.startswith("file:"):
+        return True
+    if re.search(r"\.(jpe?g|png|tiff?|webp|gif|svg)\b", lowered):
+        return True
+    if "wikimedia" in lowered or "commons.wikimedia" in lowered:
+        return True
+    return False
+
+
+def short_payload_for(text, sentence_record=None):
+    """Select ONE short designed payload from a sentence, in
+    preference order: a statistic, a date, a named entity, a
+    place. Returns "" when the sentence carries none — the
+    caller then does not build a text graphic for the beat at
+    all (the narration sentence is never the fallback)."""
+    text = clean_text(text)
+    if not text:
+        return ""
+    stat = extract_stat(text, sentence_record=sentence_record)
+    if stat and stat.get("display"):
+        display = clean_text(stat["display"])
+        if is_short_payload(display):
+            return display
+    date = detect_date(text)
+    if date and is_short_payload(date):
+        return date
+    try:
+        from services.script_analyzer import analyze_sentence
+        analysis = analyze_sentence(text) or {}
+        for key in ("entities", "locations"):
+            for value in analysis.get(key) or []:
+                value = clean_text(value)
+                if is_short_payload(value):
+                    return value
+    except Exception:
+        pass
+    entity = detect_entity(text)
+    if entity and is_short_payload(entity):
+        return entity
+    return ""
+
+
+def photo_person_conflict(asset, sentence_text, bible):
+    """The name of a person a photo must not be placed for, or "".
+
+    Founder defect ruling 2026-11-23 (graphics-layer guard): a
+    photo whose recorded title identifies a person is never used
+    as the visual for a sentence about someone else. Two prongs,
+    both judged on the metadata that actually identifies the
+    photo (its title):
+
+    1. The title names a person who belongs to NO bible entity
+       and the title names no bible person either (the Eleanor
+       Roosevelt shape — an identifiable stranger to the story).
+       Delegates to story_understanding's unrelated-person scan,
+       evaluated on the title.
+    2. The sentence names bible person(s) and the title names a
+       DIFFERENT bible person (a right-story, wrong-person
+       photo).
+
+    Assets whose titles name no person raise no conflict — the
+    guard judges only what the metadata can actually identify,
+    and says so rather than guessing from pixels."""
+    if not isinstance(asset, dict) or not isinstance(bible, dict):
+        return ""
+    title = clean_text(asset.get("title") or asset.get("asset_title") or "")
+    if not title:
+        return ""
+    try:
+        from services import story_understanding as _su
+    except Exception:
+        return ""
+    persons = [
+        e for e in (bible.get("entities") or [])
+        if isinstance(e, dict) and e.get("type") == "person"
+    ]
+    if not persons:
+        return ""
+    unrelated = _su._unrelated_named_person(
+        asset, bible, _su._norm(title), False
+    )
+    if unrelated:
+        return unrelated
+    sentence_norm = _su._norm(sentence_text or "")
+    sentence_persons = {
+        _su._norm(e.get("canonical") or "")
+        for e in persons
+        if _su._entity_mentioned(e, sentence_norm)
+    }
+    if sentence_persons:
+        title_norm = _su._norm(title)
+        for entity in persons:
+            if _su._norm(entity.get("canonical") or "") in sentence_persons:
+                continue
+            if _su._entity_mentioned(entity, title_norm):
+                return entity.get("canonical") or ""
+    return ""
+
+
+def short_title_for(target, text=""):
+    """A short designed title for a graphic: the beat's
+    recorded scenario label when one exists, else the
+    sentence's first entity/place label, else "" (no title).
+    NEVER the sentence text, whole or truncated — a truncated
+    sentence as a title duplicates the caption and reads as a
+    text card."""
+    target = target or {}
+    scenario = target.get("scenario") or {}
+    event = clean_text(scenario.get("event") or "")
+    if event and len(event) <= 60:
+        return event
+    names, places = labels_from_text(text or target.get("text") or "")
+    for value in names + places:
+        if value:
+            return value[:60]
+    return ""
 
 
 # =========================================================
@@ -544,7 +730,9 @@ def build_graphics_plan(data):
 def add_scene_marker(filters, graphic):
     start = graphic["start"]
     end = graphic["end"]
-    text = escape_drawtext(graphic["text"])
+    # Literal text via textfile= — inline text= corrupts on
+    # apostrophes (see drawtext_textfile).
+    text = graphic["text"]
 
     filters.append(
         "drawbox="
@@ -570,7 +758,7 @@ def add_scene_marker(filters, graphic):
         "drawtext="
         "font='Arial':"
         "expansion=none:"
-        f"text='{text}':"
+        f"textfile={drawtext_textfile(text)}:"
         "fontcolor=white:"
         "fontsize=28:"
         "x=92:"
@@ -582,8 +770,10 @@ def add_scene_marker(filters, graphic):
 def add_entity_graphic(filters, graphic):
     start = graphic["start"]
     end = graphic["end"]
-    text = escape_drawtext(graphic["text"])
-    subtext = escape_drawtext(graphic.get("subtext", ""))
+    # Literal text via textfile= — inline text= corrupts on
+    # apostrophes (see drawtext_textfile).
+    text = graphic["text"]
+    subtext = graphic.get("subtext", "")
 
     filters.append(
         "drawbox="
@@ -609,7 +799,7 @@ def add_entity_graphic(filters, graphic):
         "drawtext="
         "font='Arial':"
         "expansion=none:"
-        f"text='{text}':"
+        f"textfile={drawtext_textfile(text)}:"
         "fontcolor=white:"
         "fontsize=34:"
         "x=105:"
@@ -621,7 +811,7 @@ def add_entity_graphic(filters, graphic):
             "drawtext="
             "font='Arial':"
             "expansion=none:"
-            f"text='{subtext}':"
+            f"textfile={drawtext_textfile(subtext)}:"
             "fontcolor=white@0.62:"
             "fontsize=21:"
             "x=105:"
@@ -633,7 +823,9 @@ def add_entity_graphic(filters, graphic):
 def add_date_graphic(filters, graphic):
     start = graphic["start"]
     end = graphic["end"]
-    text = escape_drawtext(graphic["text"])
+    # Literal text via textfile= — inline text= corrupts on
+    # apostrophes (see drawtext_textfile).
+    text = graphic["text"]
 
     filters.append(
         "drawbox="
@@ -649,7 +841,7 @@ def add_date_graphic(filters, graphic):
         "drawtext="
         "font='Arial':"
         "expansion=none:"
-        f"text='{text}':"
+        f"textfile={drawtext_textfile(text)}:"
         "fontcolor=white:"
         "fontsize=27:"
         "x=95:"
@@ -661,13 +853,15 @@ def add_date_graphic(filters, graphic):
 def add_source_graphic(filters, graphic):
     start = graphic["start"]
     end = graphic["end"]
-    text = escape_drawtext(graphic["text"])
+    # Literal text via textfile= — inline text= corrupts on
+    # apostrophes (see drawtext_textfile).
+    text = graphic["text"]
 
     filters.append(
         "drawtext="
         "font='Arial':"
         "expansion=none:"
-        f"text='{text}':"
+        f"textfile={drawtext_textfile(text)}:"
         "fontcolor=white@0.55:"
         "fontsize=18:"
         "x=w-text_w-55:"
@@ -892,12 +1086,16 @@ def _ffmpeg_text_filter(
     bold=False,
     enable=None,
 ):
-    text = escape_drawtext(shorten(text, 64))
+    # Literal text rides via textfile= (see drawtext_textfile):
+    # inline text= corrupts on apostrophes and can burn the
+    # filter's own option string into the frame.
+    text = shorten(text, 64)
     font = _fontfile(
         GRAPHIC_FONT_BOLD_FILE if bold else GRAPHIC_FONT_FILE
     )
     result = (
-        f"drawtext={font}text='{text}':"
+        f"drawtext={font}textfile={drawtext_textfile(text)}:"
+        "expansion=none:"
         f"x={x}:y={y}:"
         f"fontsize={fontsize}:"
         f"fontcolor={fontcolor}@{alpha}:"
@@ -1145,14 +1343,10 @@ def _render_stat_graphic(
         "color=white@0.65:"
         "t=fill",
 
-        _ffmpeg_text_filter(
-            "CINEMORA / ANALYSIS",
-            "195",
-            "805",
-            21,
-            GRAPHIC_TEXT,
-            0.45,
-        ),
+        # Founder ruling 2026-11-23: no branding text is burned
+        # into generated graphics (the historical
+        # "CINEMORA / ANALYSIS" footer is removed; provenance
+        # lives in the asset record, not in pixels).
     ]
 
     command = [
@@ -1318,15 +1512,22 @@ def _render_timeline_graphic(
         "t=fill",
     ]
 
-    usable = events[:6]
-
+    # Founder defect ruling 2026-11-23: no fabricated placeholder
+    # events. The historical fallback drew a NOW / EVENT node when
+    # the event list was empty — a chronology of nothing (the
+    # run-9 Petito near-empty chronology shape). Events with no
+    # readable when/what are dropped, and a graphic with no real
+    # events left is refused loudly instead of rendered empty.
+    usable = [
+        event for event in (events or [])[:6]
+        if isinstance(event, dict)
+        and (clean_text(event.get("when", ""))
+             or clean_text(event.get("what", "")))
+    ]
     if not usable:
-        usable = [
-            {
-                "when": "NOW",
-                "what": "EVENT",
-            }
-        ]
+        raise ValueError(
+            "timeline graphic has no usable events to present"
+        )
 
     positions, spacing_mode, reveals = _timeline_node_positions(
         usable, duration
@@ -1463,10 +1664,21 @@ def _render_process_graphic(
         )
     ]
 
-    usable = steps[:5]
-
+    # Founder defect ruling 2026-11-23: no fabricated placeholder
+    # steps (the historical START / CHANGE / RESULT fallback
+    # invented a process the script never described). No real
+    # steps — no graphic.
+    usable = [
+        step for step in (steps or [])[:5]
+        if (isinstance(step, str) and clean_text(step))
+        or (isinstance(step, dict)
+            and clean_text(
+                step.get("label") or step.get("what") or ""))
+    ]
     if not usable:
-        usable = ["START", "CHANGE", "RESULT"]
+        raise ValueError(
+            "process graphic has no usable steps to present"
+        )
 
     spacing = 1500 / max(len(usable), 1)
 
@@ -1879,12 +2091,20 @@ def extract_comparison(text):
 
 
 def _series_from_text(text):
-    """Wave 1 (F1): every quantity in a sentence, in order, as
-    line-chart points — the series analogue of extract_comparison
-    (which keeps only the first two). Bare years are excluded
-    (they are dates, not measurements — the same rule
-    extract_comparison applies). Returns points or None when
-    fewer than three measured values exist."""
+    """Wave 1 (F1): quantities in a sentence as line-chart
+    points — the series analogue of extract_comparison (which
+    keeps only the first two). Bare years are excluded (they
+    are dates, not measurements — the same rule
+    extract_comparison applies).
+
+    Founder defect ruling 2026-11-23: a series must share ONE
+    unit. The historical version plotted every number in the
+    sentence on one axis regardless of unit — the Container
+    film's crane sentence became a "chart" of 80 (metres) → 25
+    (moves) → 30 (moves), a fabricated trend across unlike
+    quantities. Values are now grouped by their unit (scale +
+    noun); only a group of at least three same-unit values is a
+    series, and only the largest such group is returned."""
     text = clean_text(text)
     if not text:
         return None
@@ -1916,7 +2136,15 @@ def _series_from_text(text):
         values.append({
             "start": match.start(), "value": numeric,
             "display": display,
+            "unit": f"{scale} {noun.lower()}".strip(),
         })
+    groups = {}
+    for entry in values:
+        if entry["unit"]:
+            groups.setdefault(entry["unit"], []).append(entry)
+    if not groups:
+        return None
+    values = max(groups.values(), key=len)
     if len(values) < 3:
         return None
     points = []
@@ -2564,7 +2792,12 @@ def build_motion_graphics_assets(
         )
 
         headline = value.upper()
-        subtext = shorten(text, 72)
+        # Founder ruling 2026-11-23: the stat card's context line
+        # is a short designed label (the sentence's first entity
+        # or place), never a truncated fragment of the narration
+        # sentence — the caption already carries the sentence.
+        _stat_names, _stat_places = labels_from_text(text)
+        subtext = (_stat_names + _stat_places + [""])[0]
         try:
             _render_stat_graphic(
                 path,
@@ -2943,6 +3176,14 @@ def build_motion_graphics_assets(
                     "accepted"
                 ) is not True:
                     continue
+                # Founder ruling 2026-11-23: a board photo whose
+                # title identifies a person the beat is not about
+                # never reaches the board, even when its
+                # verification predates the tightened guard.
+                if photo_person_conflict(
+                    _v, target.get("text") or "", case_bible
+                ):
+                    continue
                 _p = _v.get("file_path") or _v.get("path")
                 if _p and Path(_p).exists():
                     photos.append(
@@ -2955,16 +3196,20 @@ def build_motion_graphics_assets(
                             # on the first live evidence-board run
                             # (Petito production, 2026-11-21).
                             "path": str(_p),
-                            "caption": clean_text(_v.get("title") or ""),
+                            # Founder ruling 2026-11-23: the
+                            # polaroid caption is NEVER the asset's
+                            # recorded title — that is a raw file
+                            # name ("File:Barrels and cockpit.png")
+                            # burned into the frame. Provenance
+                            # stays in the rights manifest; the
+                            # polaroid chin stays blank.
+                            "caption": "",
                         }
                     )
             break
         if not photos:
             return None
-        scenario = target.get("scenario") or {}
-        title = clean_text(scenario.get("event") or "") or shorten(
-            target["text"], 52
-        )
+        title = short_title_for(target)
         return {"photos": photos[:4], "title": title, "labels": []}
 
     def _assemble_outcome_path(target):
@@ -3031,12 +3276,12 @@ def build_motion_graphics_assets(
                          "value": f["value"], "display": f["display"]}
                         for f in facts[:8]
                     ],
-                    "title": shorten(target["text"], 60),
+                    "title": short_title_for(target),
                     "unit": unit,
                 }
         points = _series_from_text(target["text"])
         if points:
-            return {"points": points, "title": shorten(target["text"], 60)}
+            return {"points": points, "title": short_title_for(target)}
         return None
 
     def _assemble_pie_chart(target):
@@ -3047,7 +3292,7 @@ def build_motion_graphics_assets(
             items = extract_comparison(text) or _series_from_text(text)
             if items and len(items) >= 2:
                 return {"items": items,
-                        "title": shorten(text, 60)}
+                        "title": short_title_for(target)}
         grouped = _fact_quantities()
         for _unit, facts in grouped.items():
             if len(facts) >= 2:
@@ -3057,7 +3302,7 @@ def build_motion_graphics_assets(
                          "value": f["value"], "display": f["display"]}
                         for f in facts[:6]
                     ],
-                    "title": shorten(text, 60),
+                    "title": short_title_for(target),
                 }
         return None
 
@@ -3098,7 +3343,7 @@ def build_motion_graphics_assets(
             return {
                 "layers": layers,
                 "title": clean_text(
-                    scenario.get("event") or target["text"][:60]),
+                    short_title_for(target)),
                 "variant": name,
                 "markers": scenario.get("markers") or [],
             }
@@ -3123,24 +3368,32 @@ def build_motion_graphics_assets(
         for asset in _verified_scene_assets(target):
             title = clean_text(
                 asset.get("title") or asset.get("asset_title") or "")
-            if not title:
+            # Founder ruling 2026-11-23: no raw metadata text on
+            # screen — an asset whose title is a file name is not
+            # a headline, and no source label is ever attached.
+            if not title or is_metadata_title(title):
                 continue
             articles.append({
                 "headline": title,
-                "source": source_label(asset),
-                "dek": clean_text(asset.get("description") or "")[:90],
             })
             if len(articles) >= 3:
                 break
         if len(articles) < 2:
             return None
         return {"articles": articles,
-                "title": shorten(target["text"], 60)}
+                "title": short_title_for(target)}
 
     def _identity_photo(target):
         for asset in _verified_scene_assets(target):
             if asset.get("evidence_type") == "identity" or asset.get(
                     "asset_role") == "real_person_photo":
+                # Founder ruling 2026-11-23: an identity photo of
+                # a person the sentence is not about is the
+                # wrong-person defect in its purest form — skip it.
+                if photo_person_conflict(
+                    asset, target.get("text") or "", case_bible
+                ):
+                    continue
                 path = _asset_file(asset)
                 if path and os.path.exists(path):
                     return asset, path
@@ -3157,16 +3410,32 @@ def build_motion_graphics_assets(
             fields.append({"label": "Date", "value": clean_text(date)})
         for place in (sentence.get("locations") or [])[:1]:
             fields.append({"label": "Place", "value": clean_text(place)})
+        # Founder ruling 2026-11-23: the profile's title is the
+        # PERSON the sentence names (a designed payload), never
+        # the asset's recorded title (raw metadata), and the
+        # subtitle is never a source/provider label. No nameable
+        # person in the sentence — no profile card.
+        title = clean_text(detect_entity(target["text"]) or "")
+        if not title:
+            names, _places = labels_from_text(target["text"])
+            title = names[0] if names else ""
+        if not title:
+            return None
         return {
             "photo": path,
-            "title": clean_text(
-                asset.get("title") or detect_entity(target["text"]) or ""),
-            "subtitle": source_label(asset),
+            "title": title,
             "fields": fields,
         }
 
     def _first_scene_photo(target):
         for asset in _verified_scene_assets(target):
+            # Founder ruling 2026-11-23: never place a photo whose
+            # title identifies a person the target sentence is not
+            # about (see photo_person_conflict).
+            if photo_person_conflict(
+                asset, target.get("text") or "", case_bible
+            ):
+                continue
             path = _asset_file(asset)
             if path and os.path.exists(path):
                 return asset, path
@@ -3179,11 +3448,15 @@ def build_motion_graphics_assets(
         sentence = _sentences_by_key.get(
             (target["scene_number"], target["sentence_index"]), {})
         locations = sentence.get("locations") or []
+        # Founder ruling 2026-11-23: the parallax lower third
+        # carries at most a short PLACE label from the sentence's
+        # own analysis. The historical fallbacks — the asset's
+        # recorded title ("File:Eleanor Roosevelt at ...") and a
+        # "SOURCE • WIKIMEDIA" caption — are provenance burned
+        # into pixels and are removed entirely.
         return {
             "photo": path,
-            "title": clean_text(
-                locations[0] if locations else asset.get("title") or ""),
-            "caption": source_label(asset),
+            "title": clean_text(locations[0] if locations else ""),
         }
 
     def _assemble_text_overlay(target):
@@ -3193,10 +3466,24 @@ def build_motion_graphics_assets(
         _asset, path = _first_scene_photo(target)
         if path is None:
             return None
+        # Founder ruling 2026-11-23: the overlay's text is a
+        # SHORT DESIGNED payload selected from the sentence
+        # (statistic / date / name / place) — never the sentence
+        # itself, which the caption already carries. Position is
+        # UPPER so the label never collides with the caption
+        # band at the bottom of the frame.
+        payload = short_payload_for(
+            target["text"],
+            sentence_record=_sentences_by_key.get(
+                (target["scene_number"], target["sentence_index"])
+            ),
+        )
+        if not payload:
+            return None
         return {
-            "text": target["text"],
+            "text": payload,
             "photo": path,
-            "position": "lower",
+            "position": "upper",
         }
 
     def _assemble_text_highlight(target):
@@ -3209,11 +3496,14 @@ def build_motion_graphics_assets(
         quoted = re.search(r"[\"“]([^\"”]{3,60})[\"”]", text)
         if quoted is None:
             return None
+        # Founder ruling 2026-11-23: the page presents the QUOTED
+        # PASSAGE itself — the genuine short excerpt — never the
+        # whole narration sentence as a fabricated document page,
+        # and no header label (the historical source_label burned
+        # an entity name, or the placeholder "Document", onto it).
         return {
-            "text": text,
+            "text": quoted.group(1),
             "highlight": quoted.group(1),
-            "source_label": clean_text(
-                detect_entity(text) or "Document"),
         }
 
     def _assemble_archival_title(target):
@@ -3266,9 +3556,12 @@ def build_motion_graphics_assets(
             dates = sentence.get("dates") or []
             return {
                 "image": path,
-                "title": clean_text(
-                    asset.get("title") or "Document"),
-                "source_label": provenance or source_label(asset),
+                # Founder ruling 2026-11-23: the presented page
+                # carries no asset title and no source label —
+                # provenance is recorded in document_source (and
+                # the rights manifest), never drawn. A date label
+                # from the sentence's own analysis is content and
+                # stays.
                 "date_label": clean_text(dates[0]) if dates else "",
                 "document_source": {
                     "asset_id": asset.get("candidate_id")
@@ -3302,12 +3595,12 @@ def build_motion_graphics_assets(
                          "value": f["value"], "display": f["display"]}
                         for f in facts[:6]
                     ],
-                    "title": shorten(target["text"], 60),
+                    "title": short_title_for(target),
                 }
         points = _series_from_text(target["text"])
         if points:
             return {"items": points[:6],
-                    "title": shorten(target["text"], 60)}
+                    "title": short_title_for(target)}
         return None
 
     def _assemble_population_pyramid(target):
@@ -3336,7 +3629,7 @@ def build_motion_graphics_assets(
             "groups": valid[:9],
             "left_label": left_label,
             "right_label": right_label,
-            "title": shorten(target["text"], 60),
+            "title": short_title_for(target),
         }
 
     def _assemble_animated_dashboard(target):
@@ -3350,7 +3643,7 @@ def build_motion_graphics_assets(
         ]
         if len(stats) >= 3:
             return {"stats": stats[:6],
-                    "title": shorten(target["text"], 60)}
+                    "title": short_title_for(target)}
         # Fact-table fallback: one card per DISTINCT recorded
         # unit (its first recorded value) — never the same unit
         # twice, which would present one measure as several.
@@ -3362,7 +3655,7 @@ def build_motion_graphics_assets(
         ]
         if len(distinct) >= 3:
             data = {"stats": distinct[:6],
-                    "title": shorten(target["text"], 60)}
+                    "title": short_title_for(target)}
             for _unit, facts in grouped.items():
                 if len(facts) >= 3:
                     data["series"] = [
@@ -3387,7 +3680,7 @@ def build_motion_graphics_assets(
         if not valid:
             return None
         return {"items": valid[:7],
-                "title": shorten(target["text"], 60)}
+                "title": short_title_for(target)}
 
     def _assemble_milestone_waveform(target):
         events = [
@@ -3400,7 +3693,7 @@ def build_motion_graphics_assets(
         if len(events) < 3:
             return None
         return {"events": events[:7],
-                "title": shorten(target["text"], 60)}
+                "title": short_title_for(target)}
 
     def _assemble_territory_expansion(target):
         scenario = target.get("scenario") or {}
@@ -3410,7 +3703,7 @@ def build_motion_graphics_assets(
         if not isinstance(states, list) or len(states) < 2:
             return None
         return {"states": states,
-                "title": shorten(target["text"], 60)}
+                "title": short_title_for(target)}
 
     def _assemble_satellite_zoom(target):
         _asset, path = _first_scene_photo(target)
@@ -3438,7 +3731,7 @@ def build_motion_graphics_assets(
             return None
         data = {
             "points": points,
-            "title": shorten(target["text"], 60),
+            "title": short_title_for(target),
             "weight_label": clean_text(
                 scenario.get("density_label") or ""),
         }
@@ -3463,11 +3756,13 @@ def build_motion_graphics_assets(
         for asset in _verified_scene_assets(target):
             title = clean_text(
                 asset.get("title") or asset.get("asset_title") or "")
-            if not title:
+            # Founder ruling 2026-11-23: same as the montage —
+            # file-name titles are not headlines, and no source
+            # label is ever attached to an article card.
+            if not title or is_metadata_title(title):
                 continue
             articles.append({
                 "headline": title,
-                "source": source_label(asset),
                 "date": clean_text(
                     asset.get("date") or asset.get("published") or ""),
             })
@@ -3476,7 +3771,7 @@ def build_motion_graphics_assets(
         if len(articles) < 3:
             return None
         return {"articles": articles,
-                "title": shorten(target["text"], 60)}
+                "title": short_title_for(target)}
 
     def _assemble_crime_scene_diagram(target):
         scenario = target.get("scenario") or {}
@@ -3487,7 +3782,7 @@ def build_motion_graphics_assets(
             "markers": markers,
             "rooms": scenario.get("rooms") or [],
             "title": clean_text(scenario.get("event") or "")
-            or shorten(target["text"], 52),
+            or short_title_for(target),
         }
 
     def _assemble_construction_sequence(target):
@@ -3496,7 +3791,7 @@ def build_motion_graphics_assets(
         if not isinstance(stages, list) or len(stages) < 2:
             return None
         return {"stages": stages,
-                "title": shorten(target["text"], 60)}
+                "title": short_title_for(target)}
 
     def _assemble_molecular_diagram(target):
         scenario = target.get("scenario") or {}
@@ -3509,7 +3804,7 @@ def build_motion_graphics_assets(
         return {
             "molecule": molecule,
             "title": clean_text(molecule.get("name") or "")
-            or shorten(target["text"], 52),
+            or short_title_for(target),
         }
 
     def _assemble_hud_overlay(target):
@@ -3525,22 +3820,28 @@ def build_motion_graphics_assets(
                     "sentence_number") not in (None, number):
                 continue
             display = clean_text(fact.get("display") or "")
-            if display:
+            unit = clean_text(fact.get("unit") or "")
+            # No placeholder labels: a readout without a real
+            # unit label is not presented (the historical "VALUE"
+            # fallback burned a placeholder word into the frame).
+            if display and unit:
                 readouts.append({
-                    "label": clean_text(fact.get("unit") or "") or "VALUE",
+                    "label": unit,
                     "value": display,
                 })
         if not readouts:
             for point in _series_from_text(target["text"]) or []:
-                readouts.append({
-                    "label": clean_text(point.get("label") or "") or "VALUE",
-                    "value": point.get("display") or "",
-                })
+                label = clean_text(point.get("label") or "")
+                if label and point.get("display"):
+                    readouts.append({
+                        "label": label,
+                        "value": point.get("display") or "",
+                    })
         readouts = [r for r in readouts if r["value"]][:5]
         if not readouts:
             return None
         return {"photo": path, "readouts": readouts,
-                "title": shorten(target["text"], 52)}
+                "title": short_title_for(target)}
 
     def _assemble_holographic_panel(target):
         items = []
@@ -3559,7 +3860,7 @@ def build_motion_graphics_assets(
         if len(items) < 2:
             return None
         return {"items": items[:6],
-                "title": shorten(target["text"], 60)}
+                "title": short_title_for(target)}
 
     def _assemble_before_after(target):
         scenario = target.get("scenario") or {}
@@ -3575,24 +3876,31 @@ def build_motion_graphics_assets(
             "before_label": clean_text(
                 scenario.get("before_label") or ""),
             "after_label": clean_text(scenario.get("after_label") or ""),
-            "title": shorten(target["text"], 60),
+            "title": short_title_for(target),
         }
 
     def _assemble_layered_reveal(target):
         photos = []
         for asset in _verified_scene_assets(target):
+            if photo_person_conflict(
+                asset, target.get("text") or "", case_bible
+            ):
+                continue
             path = _asset_file(asset)
             if path and os.path.exists(path):
                 photos.append({
                     "path": str(path),
-                    "caption": clean_text(asset.get("title") or ""),
+                    # Founder ruling 2026-11-23: photo captions
+                    # are never the asset's recorded title (raw
+                    # file metadata); the layer label stays blank.
+                    "caption": "",
                 })
             if len(photos) >= 4:
                 break
         if len(photos) < 2:
             return None
         return {"photos": photos,
-                "title": shorten(target["text"], 60)}
+                "title": short_title_for(target)}
 
     def _assemble_object_labels(target):
         scenario = target.get("scenario") or {}
@@ -3605,7 +3913,7 @@ def build_motion_graphics_assets(
         return {
             "photo": path, "labels": labels,
             "title": clean_text(scenario.get("event") or "")
-            or shorten(target["text"], 52),
+            or short_title_for(target),
         }
 
     #: Assemblers the undirected chain never appends on its own —
@@ -3899,13 +4207,12 @@ def build_motion_graphics_assets(
             # gate's refusal is recorded, exactly as above.
             return _assemble_classified_file(target) or {}
         if name == "bar_chart" and comparison:
-            return {"items": comparison, "title": shorten(text, 60)}
+            return {"items": comparison, "title": short_title_for(target)}
         if name == "stat_comparison" and comparison:
-            return {"items": comparison, "title": shorten(text, 60)}
+            return {"items": comparison, "title": short_title_for(target)}
         if name == "data_gauge" and percent is not None:
             return {
-                "percent": percent, "label": shorten(text, 52),
-                "sublabel": text,
+                "percent": percent, "label": short_title_for(target, text),
             }
         if name == "ring_badges":
             if comparison:
@@ -3914,7 +4221,7 @@ def build_motion_graphics_assets(
                 return {
                     "badges": [{
                         "value": f"{percent:g}%",
-                        "label": shorten(text, 44),
+                        "label": short_title_for(target, text),
                     }],
                 }
             return None
@@ -3958,12 +4265,11 @@ def build_motion_graphics_assets(
             if _pack_id is None:
                 if percent is not None:
                     return ("data_gauge", {
-                        "percent": percent, "label": shorten(text, 52),
-                        "sublabel": text,
+                        "percent": percent, "label": short_title_for(target, text),
                     }, "editorial")
                 if comparison:
                     return ("stat_comparison", {
-                        "items": comparison, "title": shorten(text, 60),
+                        "items": comparison, "title": short_title_for(target),
                     }, "editorial")
                 # MG-09: document_presentation is NOT offered for a
                 # bare document-marker sentence. The chain has no
@@ -3978,18 +4284,17 @@ def build_motion_graphics_assets(
             candidates = []
             if percent is not None:
                 candidates.append(("data_gauge", {
-                    "percent": percent, "label": shorten(text, 52),
-                    "sublabel": text,
+                    "percent": percent, "label": short_title_for(target, text),
                 }, _style_for("editorial")))
                 candidates.append(("ring_badges", {
-                    "badges": [{"value": f"{percent:g}%", "label": shorten(text, 44)}],
+                    "badges": [{"value": f"{percent:g}%", "label": short_title_for(target, text)}],
                 }, _style_for("editorial")))
             if comparison:
                 candidates.append(("bar_chart", {
-                    "items": comparison, "title": shorten(text, 60),
+                    "items": comparison, "title": short_title_for(target),
                 }, _style_for("editorial")))
                 candidates.append(("stat_comparison", {
-                    "items": comparison, "title": shorten(text, 60),
+                    "items": comparison, "title": short_title_for(target),
                 }, _style_for("editorial")))
                 candidates.append(("ring_badges", {
                     "badges": _badges_from_items(comparison),
@@ -4139,10 +4444,10 @@ def build_motion_graphics_assets(
                 # ring_badges; styles come from the pack's family.
                 if comparison:
                     _candidates.append(("bar_chart", {
-                        "items": comparison, "title": shorten(text, 60),
+                        "items": comparison, "title": short_title_for(target),
                     }, _style_for("editorial")))
                     _candidates.append(("stat_comparison", {
-                        "items": comparison, "title": shorten(text, 60),
+                        "items": comparison, "title": short_title_for(target),
                     }, _style_for("editorial")))
                     _candidates.append(("ring_badges", {
                         "badges": _badges_from_items(comparison),
@@ -4151,23 +4456,21 @@ def build_motion_graphics_assets(
                 # _engine_alternative — missing_document_source).
                 if percent is not None:
                     _candidates.append(("data_gauge", {
-                        "percent": percent, "label": shorten(text, 52),
-                        "sublabel": text,
+                        "percent": percent, "label": short_title_for(target, text),
                     }, _style_for("editorial")))
                     _candidates.append(("ring_badges", {
-                        "badges": [{"value": f"{percent:g}%", "label": shorten(text, 44)}],
+                        "badges": [{"value": f"{percent:g}%", "label": short_title_for(target, text)}],
                     }, _style_for("editorial")))
             else:
                 if comparison:
                     _candidates.append(("stat_comparison", {
-                        "items": comparison, "title": shorten(text, 60),
+                        "items": comparison, "title": short_title_for(target),
                     }, "editorial"))
                 # MG-09: no document_presentation candidate (see
                 # _engine_alternative — missing_document_source).
                 if percent is not None:
                     _candidates.append(("data_gauge", {
-                        "percent": percent, "label": shorten(text, 52),
-                        "sublabel": text,
+                        "percent": percent, "label": short_title_for(target, text),
                     }, "editorial"))
             if not _manifest_restricted:
                 # Phase 6 (AM-010): the assembled templates join
@@ -4407,7 +4710,20 @@ def build_motion_graphics_assets(
                         "sentence_number": target["sentence_number"],
                     })
         if produced_family is None and not _served_by_process_anchor:
-            _card_data = {"quote": text}
+            # Founder ruling 2026-11-23: the coverage floor's card
+            # carries a SHORT DESIGNED payload selected from the
+            # sentence (a statistic, a date, a name, a place) under
+            # the production's title — never the narration sentence
+            # itself. A sentence with no selectable payload gets
+            # no card; the skip machinery below records the beat
+            # honestly instead of printing its own narration.
+            _payload = short_payload_for(
+                text,
+                sentence_record=_sentences_by_key.get(
+                    (target["scene_number"], target["sentence_index"])
+                ),
+            )
+            _card_data = {"quote": _payload}
             _kicker = clean_text(
                 (case_bible or {}).get("title") or ""
             )
@@ -4568,6 +4884,56 @@ def build_motion_graphics_assets(
                 }
             )
             _record_outcome(target, "skipped", None, _reason)
+            # Founder defect audit 2026-11-23: the chain's primary
+            # attempt failure is preserved in graphic_failures for
+            # UNSERVED beats too — the same record the superseded
+            # path writes when the coverage floor serves. Before
+            # the floor stopped printing whole sentences it served
+            # every beat, so this gap was invisible: an unserved
+            # beat's refusals (e.g. the classified_file document
+            # gate) reached the target outcome but vanished from
+            # the failure audit.
+            _prior_reasons = [
+                ("stat", _stat_reason, _stat_detail),
+                ("event_schematic", _schematic_reason,
+                 _schematic_detail),
+                ("motion_engine", _engine_reason, _engine_detail),
+            ]
+            _hard = {
+                "rendering_failure", "validation_failed",
+                "invalid_graphic_output",
+            }
+            _prior = next(
+                (p for p in _prior_reasons if p[1] in _hard),
+                None,
+            ) or next(
+                (p for p in _prior_reasons if p[1] is not None),
+                None,
+            )
+            # A hard failure that register_asset already logged
+            # at the validation stage (the entry immediately
+            # before this one, same reason) is not recorded
+            # twice — this append exists for refusals that never
+            # reach registration.
+            _already_logged = (
+                _prior is not None
+                and _prior[1] in _hard
+                and bool(graphic_failures)
+                and graphic_failures[-1].get("stage") == "validation"
+                and graphic_failures[-1].get("reason") == _prior[1]
+            )
+            if _prior is not None and not _already_logged:
+                graphic_failures.append({
+                    "graphic_type": _prior[0],
+                    "purpose": "targeted",
+                    "stage": "chain",
+                    "file_path": None,
+                    "reason": _prior[1],
+                    "detail": _prior[2],
+                    "scene_number": target["scene_number"],
+                    "sentence_index": target["sentence_index"],
+                    "sentence_number": target["sentence_number"],
+                })
             # A targeted sentence with a recorded outcome — generated
             # OR skipped — is DECIDED: the untargeted sweep below
             # must not silently retry it and double-record the same

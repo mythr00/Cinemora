@@ -22,6 +22,7 @@ Families:
 """
 
 import math
+import re
 
 from PIL import Image, ImageDraw, ImageFilter
 
@@ -937,7 +938,9 @@ def newspaper_wall(data, style, out_path, duration=5.0, sentence_index=None, sce
             continue
         articles.append({
             "headline": headline,
-            "source": _clean(entry.get("source")),
+            # Founder ruling 2026-11-23: an article's "source"
+            # field is never read or drawn — provenance is not
+            # screen content, whatever a caller supplies.
             "date": _clean(entry.get("date")),
         })
     if len(articles) < 3:
@@ -959,10 +962,6 @@ def newspaper_wall(data, style, out_path, duration=5.0, sentence_index=None, sce
         cd.rectangle([0, 0, card_w, card_h], fill=(246, 242, 230, 255))
         cd.rectangle([0, 0, card_w, 7], fill=tokens["accent"] + (255,))
         y = 26
-        if article["source"]:
-            cd.text((26, y), article["source"].upper()[:40],
-                    font=fonts["small"], fill=tokens["accent"] + (255,))
-            y += 32
         for line in wrap_text(
                 probe, article["headline"], fonts["headline"],
                 card_w - 52)[:5]:
@@ -1634,9 +1633,17 @@ def layered_reveal(data, style, out_path, duration=5.0, sentence_index=None, sce
         img = _load_image(entry.get("path") or entry.get("photo"))
         if img is None:
             continue
+        caption = _clean(entry.get("caption") or entry.get("title"))
+        # Founder ruling 2026-11-23 (template-level guard): a
+        # caption that is a raw file title is provenance, not a
+        # caption — dropped whoever supplied it.
+        if caption.lower().startswith("file:") or re.search(
+            r"\.(jpe?g|png|tiff?|webp|gif|svg)\b", caption.lower()
+        ):
+            caption = ""
         photos.append({
             "image": img,
-            "caption": _clean(entry.get("caption") or entry.get("title")),
+            "caption": caption,
         })
     if len(photos) < 2:
         return None, {"reason": "insufficient_photos"}

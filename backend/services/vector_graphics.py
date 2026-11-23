@@ -192,12 +192,9 @@ def _frame(t, duration, fonts, event_label, place_label, era_label):
         [120, 984, 120 + 1680 * _clamp01(t / duration), 987],
         fill=(235, 238, 242),
     )
-    draw.text(
-        (120, 1014),
-        "CINEMORA / GENERATED SCHEMATIC",
-        font=fonts["footer"],
-        fill=_MUTED,
-    )
+    # Founder ruling 2026-11-23: no branding/watermark text on
+    # generated graphics (the historical
+    # "CINEMORA / GENERATED SCHEMATIC" footer is removed).
     return img
 
 
@@ -234,7 +231,8 @@ def _draw_header_footer(draw, fonts, event_label, place_label, era_label, t, dur
         draw.text((120, 154), sub, font=fonts["sub"], fill=_MUTED)
     draw.rectangle([120, 984, 1800, 987], fill=(52, 62, 76))
     draw.rectangle([120, 984, 120 + 1680 * _clamp01(t / duration), 987], fill=(235, 238, 242))
-    draw.text((120, 1014), "CINEMORA / GENERATED SCHEMATIC", font=fonts["footer"], fill=_MUTED)
+    # Founder ruling 2026-11-23: no branding/watermark text on
+    # generated graphics (footer text removed; track stays).
 
 
 def _frame_journey(t, duration, fonts, event_label, place_label, era_label):
@@ -258,7 +256,10 @@ def _frame_journey(t, duration, fonts, event_label, place_label, era_label):
     # Ground line.
     draw.line([120, _GROUND, 1800, _GROUND], fill=(90, 102, 120), width=3)
     # Start / end markers.
-    for (x, y), label in ((points[0], place_label), (points[-1], era_label or "DESTINATION")):
+    # No placeholder end label: with no recorded era label the
+    # journey's end marker simply carries no text (the historical
+    # "DESTINATION" fallback burned a placeholder into the frame).
+    for (x, y), label in ((points[0], place_label), (points[-1], era_label)):
         draw.ellipse([x - 14, y - 14, x + 14, y + 14], outline=(235, 238, 242), width=4)
         if label:
             draw.text((x - 10, y + 28), str(label).upper()[:28], font=fonts["sub"], fill=_MUTED)
