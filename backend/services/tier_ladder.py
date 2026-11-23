@@ -82,6 +82,14 @@ TIER_DOWNLOAD_ATTEMPTS = 2
 PRODUCTION_MAX_EXTRA_SEARCHES = 40
 PRODUCTION_MAX_EXTRA_DOWNLOADS = 20
 
+#: Metadata-absence bypass (run-6345 fix, 2026-11-23): speculative
+#: downloads of gate-absence candidates are capped per beat at the
+#: D-B2 per-need download-attempt number, and per production they
+#: share the PRODUCTION_MAX_EXTRA_DOWNLOADS account above with
+#: tier-escalation downloads — the production never spends more
+#: than 20 extra downloads in total, whichever route spends them.
+SPECULATIVE_PER_BEAT_DOWNLOAD_CAP = TIER_DOWNLOAD_ATTEMPTS
+
 #: Breadth-first allocation (founder live test, Petito run
 #: 1b0a4508): the caps above used to be spent strictly in scene
 #: order, so early scenes' repeated full ladder walks drained the
@@ -252,6 +260,18 @@ class EscalationLedger:
         self._active_started = None
         self.searches = 0
         self.downloads = 0
+        # Metadata-absence bypass (run-6345 fix, 2026-11-23):
+        # speculative downloads — downloads of candidates the
+        # metadata gate failed on absence grounds only, admitted
+        # conditionally pending frame confirmation — spend from
+        # the SAME production account as escalation downloads:
+        # downloads + speculative_downloads may never exceed
+        # PRODUCTION_MAX_EXTRA_DOWNLOADS (D-B2's ≤20 extra
+        # downloads per production). Per-beat speculative spends
+        # are tracked by beat key for the per-beat cap
+        # (SPECULATIVE_PER_BEAT_DOWNLOAD_CAP).
+        self.speculative_downloads = 0
+        self._speculative_beat_downloads = {}
         # Breadth-first allocation state: per-need executed
         # escalation searches / downloads, keyed by the need key
         # the pipeline registers (see register_need). A need's
@@ -405,7 +425,12 @@ class EscalationLedger:
     def _download_gate(self, need_key, wall_clock_binds):
         if wall_clock_binds and self.wall_clock_exceeded():
             return False
-        if self.downloads >= PRODUCTION_MAX_EXTRA_DOWNLOADS:
+        # The production account is shared with speculative
+        # (metadata-absence bypass) downloads — see __init__.
+        if (
+            self.downloads + self.speculative_downloads
+            >= PRODUCTION_MAX_EXTRA_DOWNLOADS
+        ):
             return False
         if need_key is None:
             return True
@@ -414,9 +439,39 @@ class EscalationLedger:
             # A need's first escalation download is breadth too.
             return True
         return (
-            self.downloads + 1 + FAIRNESS_LOOKAHEAD_DOWNLOADS
+            self.downloads + self.speculative_downloads + 1
+            + FAIRNESS_LOOKAHEAD_DOWNLOADS
             <= PRODUCTION_MAX_EXTRA_DOWNLOADS
         )
+
+    # -- speculative downloads (metadata-absence bypass) ------------
+    def can_spend_speculative_download(self, beat_key=None):
+        """Whether a speculative (metadata-absence bypass) download
+        may start: the shared production account (escalation +
+        speculative ≤ PRODUCTION_MAX_EXTRA_DOWNLOADS, D-B2) and the
+        per-beat speculative cap both bind. The wall-clock guard
+        does NOT bind here — it gates new escalation work, and a
+        speculative candidate was verified (scored) before the
+        guard could trip, the can_draw_verified_download
+        precedent."""
+        if (
+            self.downloads + self.speculative_downloads
+            >= PRODUCTION_MAX_EXTRA_DOWNLOADS
+        ):
+            return False
+        if beat_key is not None and (
+            self._speculative_beat_downloads.get(beat_key, 0)
+            >= SPECULATIVE_PER_BEAT_DOWNLOAD_CAP
+        ):
+            return False
+        return True
+
+    def spend_speculative_download(self, beat_key=None):
+        self.speculative_downloads += 1
+        if beat_key is not None:
+            self._speculative_beat_downloads[beat_key] = (
+                self._speculative_beat_downloads.get(beat_key, 0) + 1
+            )
 
     def can_spend_download(self, need_key=None):
         """Whether a NEW escalation download spend may start. The
@@ -512,6 +567,10 @@ class EscalationLedger:
         return {
             "extra_searches": self.searches,
             "extra_downloads": self.downloads,
+            # Metadata-absence bypass (run-6345 fix): speculative
+            # downloads share the download_budget account above;
+            # reported separately so the split stays auditable.
+            "speculative_downloads": self.speculative_downloads,
             "search_budget": PRODUCTION_MAX_EXTRA_SEARCHES,
             "download_budget": PRODUCTION_MAX_EXTRA_DOWNLOADS,
             # Breadth-first allocation accounting (additive): how

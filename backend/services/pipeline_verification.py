@@ -45,10 +45,12 @@ access through another namespace — a behaviour risk, not a move.
 import os
 
 from services import frame_verification
+from services import pipeline_assignment
 from services import provider_health
 from services import rejection_diagnostics
 from services import run_metrics
 from services import story_understanding as story
+from services import tier_ladder
 from services import url_hygiene
 from services import visual_identity
 
@@ -319,6 +321,46 @@ def _apply_url_hygiene(candidate):
     return True
 
 
+def _speculative_verdict(verdict, absence_failures):
+    """Stamp an ACCEPTED verdict as a metadata-absence bypass
+    (run-6345 fix): the candidate's gate failures were absence-only
+    and the scorer accepted it on positive evidence, so it is
+    admitted CONDITIONALLY — score reduced by
+    METADATA_ABSENCE_PENALTY, the bypass and the absence reasons
+    recorded on the verdict, and acceptance explicitly conditioned
+    on frame-level confirmation after download (enforced in
+    _uve_fetch_first). This is not the retired AUD-16 relaxed pool:
+    that admitted verifier-REJECTED candidates on score alone with
+    no further check; a speculative candidate was verifier-ACCEPTED,
+    is penalised and marked, is budget-capped, and is rejected at
+    the frame stage unless the frame stage positively evaluates
+    its frames."""
+    stamped = dict(verdict)
+    raw_score = stamped.get("score") or 0
+    stamped["pre_penalty_score"] = raw_score
+    stamped["score"] = round(
+        max(0.0, raw_score - pipeline_assignment.METADATA_ABSENCE_PENALTY),
+        3,
+    )
+    stamped["metadata_absence_bypass"] = True
+    stamped["metadata_absence_penalty"] = (
+        pipeline_assignment.METADATA_ABSENCE_PENALTY
+    )
+    stamped["absence_reasons"] = list(absence_failures)
+    stamped["acceptance_basis"] = (
+        "metadata_absence_bypass_frame_confirmation_required"
+    )
+    reasons = list(stamped.get("reasons") or [])
+    reasons.append(
+        "metadata absence bypass: gate failures "
+        + ", ".join(absence_failures)
+        + " are absence-only; admitted speculatively pending "
+        "frame confirmation"
+    )
+    stamped["reasons"] = reasons
+    return stamped
+
+
 def _uve_verify_all(candidates, scenario, bible, shot_need=None):
     scored, seen = [], set()
 
@@ -436,31 +478,49 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
             gate_need,
         )
 
+        # Metadata-absence bypass (run-6345 fix, 2026-11-23): a
+        # gate failure whose collect-all failure list is ABSENCE-
+        # ONLY (rejection_diagnostics.failures_are_absence_only —
+        # the metadata does not mention a required entity, but
+        # nothing in it positively contradicts the need) is no
+        # longer a hard rejection here. The candidate proceeds to
+        # the scorer; if the scorer accepts it on positive
+        # evidence it is admitted speculatively (penalty + marker,
+        # see _speculative_verdict) and must still be confirmed by
+        # frame-level verification after a budget-capped download.
+        # Any contradiction in the list keeps the historical hard
+        # rejection at the gate, byte for byte.
+        absence_failures = None
         if not ok:
-            item = dict(candidate)
-            source_cache.bump("gate_rejects")
-            item["reject_reason"] = reason
-            item["rejection_stage"] = "metadata_gate"
             # Stage 6 / R5: the gate's collect-all failure list,
             # stamped on the candidate by gate_shot_need itself —
-            # the rejection record's contributing reasons, from the
-            # SAME single gate execution (VA-11).
-            item["gate_failures"] = list(
+            # from the SAME single gate execution (VA-11).
+            gate_failures = list(
                 candidate.get("_gate_failures") or [reason]
             )
-            item["verification"] = {
-                "accepted": False,
-                "score": 0,
-            }
-            item["universal_score"] = 0
-            item["relevance_score"] = 0
-            scored.append(item)
+            if rejection_diagnostics.failures_are_absence_only(
+                gate_failures
+            ):
+                absence_failures = gate_failures
+            else:
+                item = dict(candidate)
+                source_cache.bump("gate_rejects")
+                item["reject_reason"] = reason
+                item["rejection_stage"] = "metadata_gate"
+                item["gate_failures"] = gate_failures
+                item["verification"] = {
+                    "accepted": False,
+                    "score": 0,
+                }
+                item["universal_score"] = 0
+                item["relevance_score"] = 0
+                scored.append(item)
 
-            print(
-                f"      REJECT {reason}: "
-                f"{_media_pipeline().result_title(candidate)[:80]}"
-            )
-            continue
+                print(
+                    f"      REJECT {reason}: "
+                    f"{_media_pipeline().result_title(candidate)[:80]}"
+                )
+                continue
 
         source_cache.bump("llm_verify_calls")
         verdict = story.verify_candidate(
@@ -470,6 +530,29 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
         )
 
         item = dict(candidate)
+        if absence_failures is not None:
+            item["gate_failures"] = list(absence_failures)
+            if verdict.get("accepted"):
+                verdict = _speculative_verdict(
+                    verdict, absence_failures
+                )
+                item["metadata_absence_bypass"] = True
+                item["metadata_absence_penalty"] = (
+                    pipeline_assignment.METADATA_ABSENCE_PENALTY
+                )
+                item["absence_reasons"] = list(absence_failures)
+                print(
+                    "      SPECULATIVE (metadata absence bypass: "
+                    f"{', '.join(absence_failures)}): "
+                    f"{_media_pipeline().result_title(candidate)[:80]}"
+                )
+            # A scorer REJECTION of an absence-bypassed candidate
+            # stands exactly as recorded below (stage "scoring"):
+            # the scorer's absence verdicts (no_topical_evidence /
+            # missing_required_subject) and its threshold encode
+            # "no positive evidence" / an explicit exact contract,
+            # which the frame stage cannot truthfully rescue — see
+            # rejection_diagnostics' classification comment.
         item["verification"] = verdict
         item["universal_score"] = verdict["score"]
         item["relevance_score"] = verdict["score"]
@@ -592,6 +675,47 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                     }
                 )
             continue
+
+        # Metadata-absence bypass budget (run-6345 fix): a
+        # speculative candidate's download spends from the
+        # production's shared D-B2 extra-download account (the
+        # tier_ladder ledger on the registry: escalation +
+        # speculative ≤ 20 per production) and is capped per beat
+        # (SPECULATIVE_PER_BEAT_DOWNLOAD_CAP). A candidate drawn by
+        # tier escalation is already charged by the draw's own
+        # spend_download, so it is not charged twice. The refusal
+        # is recorded with its typed reason, no download attempt is
+        # counted (nothing was requested), and the candidate is NOT
+        # entered into the failed-download guard — the budget is at
+        # fault, not the candidate (provider-backoff precedent).
+        if (
+            candidate.get("metadata_absence_bypass")
+            and not candidate.get("tier_escalation")
+        ):
+            _spec_ledger = tier_ladder.ledger_for(registry)
+            _spec_beat_key = (str(scene_dir), sentence_number)
+            if not _spec_ledger.can_spend_speculative_download(
+                beat_key=_spec_beat_key
+            ):
+                if failures is not None:
+                    failures.append(
+                        {
+                            "provider": candidate.get("provider")
+                            or candidate.get("source")
+                            or "unknown",
+                            "url": candidate_url,
+                            "reason": (
+                                rejection_diagnostics
+                                .SPECULATIVE_DOWNLOAD_BUDGET_REASON
+                            ),
+                            "candidate_id": candidate.get("candidate_id"),
+                            "stage": "download",
+                        }
+                    )
+                continue
+            _spec_ledger.spend_speculative_download(
+                beat_key=_spec_beat_key
+            )
 
         # Stage 0 metrics: every real download attempt passes
         # through this loop (previously-failed URLs skipped above are
@@ -731,6 +855,50 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                 except OSError:
                     pass
             continue
+
+        # Metadata-absence bypass confirmation (run-6345 fix): a
+        # speculative asset's metadata already failed the gate, so
+        # the frame stage is the only positive judgement it can
+        # ever receive. An evaluated PASS confirms it. An
+        # abstention — outcome not_evaluated (no frames sampled,
+        # OCR unavailable, an internal error) or no record at all —
+        # confirms nothing, so the asset is demoted here with the
+        # typed frame-stage reason and the loop moves on: a
+        # speculative asset is never silently accepted. (A frame
+        # REJECT was handled by the block above, with the frame
+        # stage's own reason.) Non-speculative assets keep the
+        # historical fail-soft semantics — their metadata verdict
+        # stands on its own.
+        if candidate.get("metadata_absence_bypass"):
+            if frame_record is None or frame_record.get("outcome") != "pass":
+                print(
+                    "      SPECULATIVE UNCONFIRMED (demoted): "
+                    f"{candidate_url} frame outcome="
+                    f"{(frame_record or {}).get('outcome')}"
+                )
+                if failures is not None:
+                    failures.append({
+                        "provider": candidate.get("provider")
+                        or candidate.get("source")
+                        or "unknown",
+                        "url": candidate_url,
+                        "reason": (
+                            rejection_diagnostics
+                            .SPECULATIVE_FRAME_UNCONFIRMED_REASON
+                        ),
+                        "candidate_id": candidate.get("candidate_id"),
+                        "stage": "frame_verification",
+                        "frame_check": frame_record,
+                    })
+                if not asset.get("segment_reused"):
+                    try:
+                        path = asset.get("file_path")
+                        if path and os.path.exists(path):
+                            os.remove(path)
+                    except OSError:
+                        pass
+                continue
+            asset["speculative_frame_confirmed"] = True
 
         # Stage 3B: transcript-interval verification. The asset was
         # accepted by verify_candidate and carries real segment

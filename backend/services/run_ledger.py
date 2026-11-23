@@ -1504,6 +1504,17 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                         "era_waived": record.get("era_waived"),
                         # Phase 1 / AM-014: the candidate's title.
                         "title": record.get("title"),
+                        # Metadata-absence bypass (run-6345 fix):
+                        # the bypass marker, penalty and absence
+                        # reasons ride in the same JSON column (None
+                        # on records that were never bypassed).
+                        "metadata_absence_bypass": record.get(
+                            "metadata_absence_bypass"
+                        ),
+                        "metadata_absence_penalty": record.get(
+                            "metadata_absence_penalty"
+                        ),
+                        "absence_reasons": record.get("absence_reasons"),
                     },
                     "rights": None,
                     "decision_type": "rejected",
@@ -1560,6 +1571,18 @@ def record_decisions(run_id, project_id, asset_report, timeline,
                     ),
                     "era_waived": record.get("era_waived"),
                     "title": record.get("title"),
+                    # Metadata-absence bypass (run-6345 fix): see
+                    # the rejected rows above — same JSON column.
+                    "metadata_absence_bypass": record.get(
+                        "metadata_absence_bypass"
+                    ),
+                    "metadata_absence_penalty": record.get(
+                        "metadata_absence_penalty"
+                    ),
+                    "absence_reasons": record.get("absence_reasons"),
+                    "speculative_frame_confirmed": record.get(
+                        "speculative_frame_confirmed"
+                    ),
                 }
 
             for record in records:

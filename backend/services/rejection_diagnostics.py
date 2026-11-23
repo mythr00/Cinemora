@@ -196,11 +196,102 @@ REJECTION_REASON_REGISTRY = {
     # frame text contradicts the scenario's home country.
     "contradictory_geography": ("scoring", "frame_verification"),
     "unrelated_named_person": ("scoring",),
+    # metadata-absence bypass (run-6345 fix): a speculative
+    # candidate whose download the shared D-B2 extra-download
+    # account refused, and a speculative candidate frame
+    # verification could not confirm.
+    "speculative_download_budget": ("download",),
+    "speculative_frame_unconfirmed": ("frame_verification",),
 }
 
 # Reason families stamped with a dynamic suffix (the downloaders
 # stamp f"download_exception: {exc}"). Membership is by prefix.
 REJECTION_REASON_PREFIXES = ("download_exception:",)
+
+# ---------------------------------------------------------------------------
+# Metadata-layer outcome classification (run-6345 fix, 2026-11-23).
+#
+# The metadata layer (the eligibility gate in gate_all_failures plus
+# verify_candidate's metadata checks) produces two fundamentally
+# different kinds of negative outcome:
+#
+# * CONTRADICTION — the candidate's metadata POSITIVELY contradicts
+#   the need: it names a different place/date/person/event, comes
+#   from a banned or social/meme source, carries another project's
+#   provenance, or hits an explicit forbidden term. Positive
+#   evidence of wrongness. These stay hard rejects at whichever
+#   layer raises them, always.
+# * ABSENCE — the candidate's metadata simply does not MENTION a
+#   required entity or topic: missing_place / missing_subject /
+#   missing_person at the gate, missing_required_subject /
+#   no_topical_evidence at the scorer. Absence of evidence is not
+#   evidence of wrongness — archival and news photography routinely
+#   carries terse captions that omit the place or subject the
+#   planner asked for (run 6345a1d7: 357 of 543 candidates died at
+#   the metadata gate, 311 of them on absence primaries, and only
+#   8 downloads were ever attempted).
+#
+# The classification drives the metadata-absence bypass in
+# _uve_verify_all: a candidate whose GATE failures are absence-only
+# is no longer hard-rejected at the gate — it is scored, and when
+# the scorer accepts it on positive evidence it proceeds toward
+# download as a SPECULATIVE candidate (recorded penalty + marker,
+# budget-capped, frame-confirmation required). The scorer's own
+# absence verdicts remain rejections: no_topical_evidence there
+# means the metadata shares NOTHING with the topic (the VA-04
+# guarantee), and missing_required_subject enforces an explicit
+# exact-specificity contract — neither is a mere unmentioned
+# entity, and the frame stage cannot judge topical relevance for
+# textless frames, so there is nothing downstream that could
+# truthfully rescue them.
+# ---------------------------------------------------------------------------
+ABSENCE_REASONS = frozenset({
+    "missing_place",
+    "missing_subject",
+    "missing_required_subject",
+    "missing_person",
+    "no_topical_evidence",
+})
+
+CONTRADICTION_REASONS = frozenset({
+    "banned_provider",
+    "foreign_provenance",
+    "forbidden_term",
+    "contradictory_date",
+    "contradictory_person",
+    "contradictory_place",
+    "contradictory_event",
+    "contradictory_geography",
+    "unrelated_named_person",
+    "social_platform_source",
+    "meme_format_source",
+})
+
+
+def failures_are_absence_only(failures):
+    """Whether a failure list is non-empty and EVERY entry is an
+    absence outcome (see the classification above). An empty list
+    is not absence-only — it is no failure at all. Any entry outside
+    ABSENCE_REASONS (a contradiction, or an unclassified reason)
+    makes the list non-absence: the bypass fails closed."""
+    failures = list(failures or [])
+    return bool(failures) and all(
+        failure in ABSENCE_REASONS for failure in failures
+    )
+
+
+# Metadata-absence bypass (run-6345 fix): the reason recorded when
+# a speculative candidate's download is refused because the
+# production's shared extra-download account (D-B2, ≤20) or the
+# per-beat speculative cap is spent — the refusal is data, recorded
+# on the candidate's failure record, never a silent skip; and the
+# typed reason a speculative candidate is rejected with at the
+# frame stage when frame verification cannot confirm it (the frame
+# stage abstained — not_evaluated or no record — so no positive
+# judgement of the actual frames exists for an asset whose
+# metadata already failed).
+SPECULATIVE_DOWNLOAD_BUDGET_REASON = "speculative_download_budget"
+SPECULATIVE_FRAME_UNCONFIRMED_REASON = "speculative_frame_unconfirmed"
 
 
 def is_registered_reason(reason):

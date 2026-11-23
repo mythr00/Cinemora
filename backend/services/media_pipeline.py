@@ -517,6 +517,7 @@ try:
     from services.pipeline_assignment import (
         COVERAGE_DRAW_MAX_ATTEMPTS,
         INTENT_FIT_MAX,
+        METADATA_ABSENCE_PENALTY,
         MISREPRESENTATION_DEMOTION,
         REUSE_PENALTY_PER_USE,
         STOP_BEAT_DOWNLOAD_ATTEMPT_CAP,
@@ -553,6 +554,7 @@ except ImportError:  # flat-layout fallback
     from pipeline_assignment import (
         COVERAGE_DRAW_MAX_ATTEMPTS,
         INTENT_FIT_MAX,
+        METADATA_ABSENCE_PENALTY,
         MISREPRESENTATION_DEMOTION,
         REUSE_PENALTY_PER_USE,
         STOP_BEAT_DOWNLOAD_ATTEMPT_CAP,
@@ -5858,7 +5860,7 @@ def _uve_search_and_pick(
             _contributing = [
                 c for c in _verdict["failed_checks"] if c != _reason
             ]
-        return rejection_diagnostics.build_event(
+        _event = rejection_diagnostics.build_event(
             candidate_id=_item.get("candidate_id"),
             url=(
                 _item.get("url") or _item.get("video_url")
@@ -5911,6 +5913,21 @@ def _uve_search_and_pick(
                 or "direct"
             ),
         )
+        # Metadata-absence bypass (run-6345 fix): a speculative
+        # candidate's events carry the bypass marker, the recorded
+        # penalty and the absence reasons, so the asset report (and
+        # the ledger built from it) can distinguish a conditional,
+        # frame-confirmation-pending admission from an ordinary
+        # metadata verification.
+        if _item.get("metadata_absence_bypass"):
+            _event["metadata_absence_bypass"] = True
+            _event["metadata_absence_penalty"] = _item.get(
+                "metadata_absence_penalty"
+            )
+            _event["absence_reasons"] = list(
+                _item.get("absence_reasons") or []
+            )
+        return _event
 
     for _pool, _kind in (
         (scored_videos, "video"),
@@ -6036,6 +6053,12 @@ def _uve_search_and_pick(
         ).get("frame_check")
         if _frame_check:
             _record["frame_check"] = _frame_check
+        # Metadata-absence bypass (run-6345 fix): an accepted
+        # speculative asset records that frame verification
+        # positively confirmed it — the condition its admission
+        # was granted under.
+        if _accepted.get("speculative_frame_confirmed"):
+            _record["speculative_frame_confirmed"] = True
         # Phase 3: the accepted pick carries the ranking signals that
         # ordered it (intent adjustment + reasons, video preference).
         if _source_item.get("_intent_adjustment"):

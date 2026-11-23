@@ -561,6 +561,26 @@ def gate_shot_need(candidate, shot_need):
         return False, failures[0]
     return True, ""
 
+# Metadata-absence bypass (run-6345 fix, 2026-11-23): the score
+# penalty a SPECULATIVE candidate carries. A candidate whose gate
+# failures are absence-only (rejection_diagnostics.ABSENCE_REASONS)
+# and whom the scorer accepts on positive evidence is admitted
+# conditionally — its verdict score is reduced by this penalty, so
+# it ranks below every metadata-verified candidate of comparable
+# evidence and can only win a pick when the verified pool cannot
+# serve the beat. 0.10 sits on the existing bounded-adjustment
+# scale (format-intent bonus max 0.10; reuse penalty 0.05/use;
+# intent fit 0.05): large enough to demote a speculative candidate
+# below a same-evidence verified one, small enough not to bury it
+# below unrelated verified material. The admission is never silent:
+# the marker (metadata_absence_bypass), this penalty and the
+# absence reasons are recorded on the verdict, the candidate
+# record and the decision ledger, downloads are budget-capped
+# (services.tier_ladder speculative account), and the asset must
+# still be CONFIRMED by frame-level verification after download —
+# see _uve_verify_all / _uve_fetch_first in pipeline_verification.
+METADATA_ABSENCE_PENALTY = 0.10
+
 # Quality Recovery Phase 2 (workstream C): selection-time REUSE
 # PENALTY per prior use of a candidate's canonical source. Bounded by
 # construction: at the hard cap of 3 uses the maximum differential is
