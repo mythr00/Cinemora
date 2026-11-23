@@ -652,7 +652,12 @@ def test_unservable_target_gets_guarantee_closing_card(
     assert card["source"] == "cinemora_motion_graphics"
     # The recipe regenerates the same template.
     assert card["graphic_recipe"]["template"] == "closing_card"
-    assert card["engine_inputs"]["quote"] == CLOSING_TEXT
+    # PIN CHANGED (founder defect ruling 2026-11-23): the card's
+    # payload is the short element SELECTED from the sentence —
+    # the person's name — never the sentence itself (the old pin
+    # expected the full narration sentence as the card's text,
+    # which is the full-sentence-card defect the founder banned).
+    assert card["engine_inputs"]["quote"] == "Gabby Petito"
     assert card["engine_inputs"]["kicker"] == "Gabby Petito"
 
     manifest = json.loads((tmp_path / "motion_graphics.json").read_text())
@@ -737,14 +742,21 @@ def test_guarantee_graphic_covers_sentence_on_timeline(
 
 
 def test_closing_card_template_renders_and_refuses_honestly(tmp_path):
-    """The real template: renders a valid MP4 from the sentence's
-    words alone (the REAL validator passes it), and refuses —
-    with its typed reason — when there is no text to present."""
+    """The real template: renders a valid MP4 from a short
+    designed payload (the REAL validator passes it), and refuses
+    — with typed reasons — for empty text and for a full
+    narration sentence.
+
+    PIN CHANGED (founder defect ruling 2026-11-23): the render
+    case previously fed the whole closing sentence as the card's
+    quote; that IS the banned full-sentence card. The render
+    case now uses the selected short payload, and the sentence
+    itself is a refusal case."""
     from services.motion_engine import templates as engine_templates
 
     out = tmp_path / "card.mp4"
     rendered, meta = engine_templates.TEMPLATES["closing_card"](
-        {"quote": CLOSING_TEXT, "kicker": "Gabby Petito"},
+        {"quote": "Gabby Petito", "kicker": "Gabby Petito"},
         "editorial", out, duration=3.0,
         sentence_index=0, scene_number=7,
     )
@@ -761,6 +773,14 @@ def test_closing_card_template_renders_and_refuses_honestly(tmp_path):
     )
     assert refused is None
     assert meta["reason"] == "no_text"
+
+    refused, meta = engine_templates.TEMPLATES["closing_card"](
+        {"quote": CLOSING_TEXT, "kicker": "Gabby Petito"},
+        "editorial", tmp_path / "sentence.mp4",
+        duration=3.0,
+    )
+    assert refused is None
+    assert meta["reason"] == "payload_not_short"
 
 
 def test_missing_visuals_annotated_with_graphics_outcomes(tmp_path):

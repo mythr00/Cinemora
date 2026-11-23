@@ -523,11 +523,28 @@ def test_year_span_is_not_a_statistic():
 
 def _captured_stamp(monkeypatch, fact_basis_marker):
     """Render a stat graphic with a capturing run_ffmpeg and return
-    the drawtext stamp the card would carry."""
+    the drawtext stamp the card would carry.
+
+    UPDATED (founder defect audit 2026-11-23): drawtext content
+    now travels via textfile= scratch files (inline text=
+    corrupts on apostrophes and leaked filter text into frames),
+    so the capture resolves every textfile= reference in the
+    command and appends the file's literal contents — the stamp
+    assertion still judges exactly what will be drawn."""
+    import re as _re
+    from pathlib import Path as _Path
+
     commands = []
 
     def capture(command):
-        commands.append(" ".join(str(part) for part in command))
+        joined = " ".join(str(part) for part in command)
+        for ref in _re.findall(r"textfile=([^:]+)", joined):
+            try:
+                joined += " " + _Path(ref).read_text(
+                    encoding="utf-8")
+            except OSError:
+                pass
+        commands.append(joined)
 
     monkeypatch.setattr(graphics_pipeline, "run_ffmpeg", capture)
     return commands

@@ -128,7 +128,13 @@ def test_stat_comparison_renders(tmp_path):
     assert meta["inputs"]["items"] == 2
 
 
-def test_document_presentation_renders_with_source_label(tmp_path):
+def test_document_presentation_renders_without_source_label(tmp_path):
+    # PIN CHANGED (founder defect ruling 2026-11-23): this test
+    # previously pinned the source label being rendered into the
+    # document header. Source/provider labels must never be
+    # burned into a graphic; the template now ignores a supplied
+    # source_label entirely — it is neither drawn nor recorded
+    # as a rendered input.
     data = {"title": "Signal", "source_label": "BENCHMARK RECONSTRUCTION",
             "date_label": "31 July 1949",
             "body": "Have rejoined the fleet south of Woosung. God save the King.",
@@ -136,8 +142,7 @@ def test_document_presentation_renders_with_source_label(tmp_path):
     path, meta = templates.document_presentation(
         data, "history", tmp_path / "doc.mp4", duration=SHORT)
     _check(path)
-    # The caller-supplied source label is recorded in the metadata.
-    assert meta["inputs"]["source_label"] is True
+    assert not meta["inputs"].get("source_label")
     assert meta["inputs"]["body_chars"] == len(data["body"])
 
 

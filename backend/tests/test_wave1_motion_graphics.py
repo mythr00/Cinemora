@@ -205,11 +205,21 @@ def test_line_chart_from_fact_table_through_pipeline(tmp_path):
     points = charts[0]["engine_inputs"]["points"]
     assert [p["value"] for p in points] == [12.0, 30.0, 55.0]
     assert charts[0]["validation"]["passed"]  # MG-05
+    # PIN CHANGED (founder defect ruling 2026-11-23): the chart
+    # title is no longer the narration sentence — sentence-as-
+    # title is the banned full-sentence class, so the old OCR
+    # fallback on the sentence's first word ("THROUGHPUT") is
+    # gone with it. The frame check now asserts the first
+    # point's recorded data label, which the chart genuinely
+    # draws (the frame is sampled at 1.0s, before later points
+    # reveal).
+    title = charts[0]["engine_inputs"].get("title") or ""
+    assert "Throughput climbed" not in title
     frame = _frame(charts[0]["file_path"], tmp_path / "lc.png")
     _assert_frame_alive(frame)
     text = _ocr_text(tmp_path / "lc.png")
     if text:
-        assert "55" in text or "THROUGHPUT" in text.upper()
+        assert "12" in text
 
 
 def test_pie_chart_share_sentence_through_pipeline(tmp_path):
