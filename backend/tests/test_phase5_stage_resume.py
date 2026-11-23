@@ -171,6 +171,50 @@ def test_retry_bookkeeping_keys_do_not_block_adoption(tmp_path):
     assert sorted(plan["stages"]) == ["voice_actor"]
 
 
+def test_source_status_ledger_read_rides_out_lock_burst(
+    tmp_path, monkeypatch
+):
+    """Phase 8.6 battery find: the resume plan reads the source
+    run's status from the ledger; a momentary SQLite lock made
+    that read raise, and the fallback (a killed source's file
+    status, "running" forever) refused a legitimate adoption.
+    The read must retry through the burst."""
+    from services import run_ledger
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    run_dir, state = _write_source_run(
+        project_dir, "run-src", "hash-1", {"captions": "off"},
+        ["voice_actor"],
+    )
+    _record(project_dir, run_dir, state, "voice_actor",
+            {"narration.wav": b"audio", "captions.json": b"{}"},
+            {"state": {}})
+    # Simulate the killed source: its FILES still say "running"
+    # (only a graceful finish enriches them); the ledger — once
+    # readable — is the authority that says "failed".
+    for name in ("run_manifest.json", "production_state.json"):
+        path = run_dir / name
+        doc = json.loads(path.read_text())
+        doc["status"] = "running"
+        path.write_text(json.dumps(doc))
+
+    calls = {"n": 0}
+
+    def flaky_get_run(run_id):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise RuntimeError("database is locked")
+        return {"status": "failed"}
+
+    monkeypatch.setattr(run_ledger, "get_run", flaky_get_run)
+    plan = stage_resume.plan_resume(
+        project_dir, "run-new", "hash-1", {"captions": "off"}
+    )
+    assert sorted(plan["stages"]) == ["voice_actor"]
+    assert calls["n"] == 3
+
+
 def test_unserialisable_payload_makes_stage_unadoptable(tmp_path):
     project_dir = tmp_path / "proj"
     project_dir.mkdir()

@@ -45,6 +45,7 @@ adopted run's usage exactly as if the stage had executed here.
 
 import hashlib
 import json
+import time
 from pathlib import Path
 
 from services.atomic_write import write_json_atomic
@@ -310,14 +311,23 @@ def find_resume_source(project_dir, current_run_id, script_sha256,
         # manifest FILE still says "running" (it is only enriched at
         # a graceful finish). The files are the fallback.
         status = ""
-        try:
-            from services import run_ledger
+        # The ledger read gets a short retry: under concurrent
+        # production the SQLite ledger can be momentarily locked,
+        # and falling back to a killed source's file status
+        # ("running" forever) would refuse a legitimate adoption
+        # (Phase 8.6 battery find, 2026-11-23 — the same lock burst
+        # that starved the child's claim).
+        for _attempt in range(4):
+            try:
+                from services import run_ledger
 
-            row = run_ledger.get_run(run_dir.name)
-            if isinstance(row, dict) and row.get("status"):
-                status = str(row["status"])
-        except Exception:
-            status = ""
+                row = run_ledger.get_run(run_dir.name)
+                if isinstance(row, dict) and row.get("status"):
+                    status = str(row["status"])
+                break
+            except Exception:
+                status = ""
+                time.sleep(0.25)
         if not status:
             status = str(manifest.get("status") or state.get("status") or "")
         if status not in _SOURCE_STATUSES:

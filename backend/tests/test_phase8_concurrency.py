@@ -391,6 +391,34 @@ def test_render_slots_serialise_encodes(fake_redis, monkeypatch):
 # ---------------------------------------------------------------------
 
 
+def test_claim_run_rides_out_lock_bursts(monkeypatch):
+    """Phase 8.6 battery find: under concurrent production the
+    SQLite ledger's lock bursts outlasted the claim's 3x50ms
+    retry, and a retry child executed unclaimed (no heartbeat,
+    invisible to reconciliation). The claim must back off through
+    a burst and still win."""
+    from sqlalchemy.exc import OperationalError
+
+    owner = _user("claimburst@example.com")
+    project_id = _project(owner)
+    run = run_ledger.submit_production(project_id, "One. Two.")
+
+    real_claim_row = run_ledger._claim_row
+    calls = {"n": 0}
+
+    def flaky_claim_row(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise OperationalError("UPDATE", {}, "database is locked")
+        return real_claim_row(*args, **kwargs)
+
+    monkeypatch.setattr(run_ledger, "_claim_row", flaky_claim_row)
+    claimed = run_ledger.claim_run(run["run_id"])
+    assert claimed is not None
+    assert claimed["status"] == "running"
+    assert calls["n"] == 3
+
+
 def test_pipeline_cancellation_check(monkeypatch):
     from services import media_pipeline, run_context
 

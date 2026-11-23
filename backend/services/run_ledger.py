@@ -699,7 +699,15 @@ def claim_run(run_id, from_statuses=("queued",), worker_id=None):
     recorded on the run by the claim itself."""
     if not run_id:
         return None
-    for attempt in range(3):
+    # SQLite writer-lock contention under concurrent production is
+    # bursty (two pipelines + dispatcher + reconciler + API all
+    # writing one file): the original 3x50ms retry starved real
+    # claims — a retry child executed UNCLAIMED (no heartbeat, no
+    # ledger presence) when its claim hit a ~1s lock burst
+    # (Phase 8.6 battery find, 2026-11-23). Back off properly:
+    # ~3.3s of grace before treating the claim as lost.
+    delays = (0.05, 0.15, 0.4, 0.9, 1.8)
+    for attempt in range(len(delays) + 1):
         try:
             if _claim_row(
                 str(run_id),
@@ -709,10 +717,8 @@ def claim_run(run_id, from_statuses=("queued",), worker_id=None):
                 return get_run(run_id)
             return None
         except Exception as error:
-            # SQLite writer-lock contention under a race: brief retry,
-            # then treat as a lost claim rather than crashing a worker.
-            if "locked" in str(error).lower() and attempt < 2:
-                time.sleep(0.05)
+            if "locked" in str(error).lower() and attempt < len(delays):
+                time.sleep(delays[attempt])
                 continue
             print(f"WARNING: run claim failed: {error}")
             return None
