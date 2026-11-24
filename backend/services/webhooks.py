@@ -371,7 +371,9 @@ def notify_run_finished(run_id: str, status: str, *, wait: bool = False) -> None
                     "data": {
                         "run_id": run.id,
                         "project_id": project.id,
-                        "status": run.status,
+                        # The status that fired the event (the
+                        # finish path has already committed it).
+                        "status": str(status),
                         "finished_at": (
                             run.finished_at.isoformat()
                             if run.finished_at is not None

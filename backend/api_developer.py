@@ -63,6 +63,10 @@ def create_api_key(
     body: ApiKeyCreateIn,
     principal: auth_service.Principal = Depends(require_user),
 ):
+    if not body.name.strip():
+        raise ApiError(
+            422, "validation_error", "A key name is required."
+        )
     if body.expires_at is not None:
         expires = body.expires_at
         if expires.tzinfo is None:

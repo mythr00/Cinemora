@@ -170,6 +170,8 @@ ADMIN_ROUTES = [
     ("GET", "/api/v1/admin/assistant/actions", None),
     ("GET", "/api/v1/admin/assistant/conversations", None),
     ("GET", "/api/v1/admin/assistant/security-events", None),
+    # Phase N — Developer API visibility (founder #16).
+    ("GET", "/api/v1/admin/developer", None),
 ]
 
 
