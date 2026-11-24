@@ -48,7 +48,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import jobs
@@ -72,6 +72,7 @@ from services import (
     research_studio,
     run_ledger,
     script_studio,
+    templates as templates_service,
     thumbnail_studio,
     versioning,
 )
@@ -959,32 +960,49 @@ def list_voice_catalogue(principal=Depends(require_user)):
 # ---------------------------------------------------------------------
 
 
+def _create_project_record(db, principal, *, title, script, category, options):
+    """The ONE project-creation path (manual creation and
+    template application both land here): plan script-length
+    enforcement, the Project row, and the Versioning (§3.2)
+    snapshot of the creation script. Callers validate their
+    input through ProjectCreateIn first — this helper assumes a
+    validated body and applies no second, divergent rule set."""
+    plans_service.enforce_script_length(db, principal.user_id, script)
+    project = Project(
+        id=str(uuid4()),
+        owner_id=principal.user_id,
+        title=title,
+        script=script,
+        category=category or "Documentary",
+        options=options or None,
+        status="created",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    # Versioning (§3.2): the creation script is the first
+    # recorded script version — snapshot its text fail-soft so
+    # it stays restorable even after the field is overwritten.
+    versioning.try_record_script_snapshot(
+        project.id, project.script, "project_created",
+        actor=principal.user_id,
+    )
+    return _project_view(
+        db, project, detail=True, access_role=collaboration.ROLE_OWNER
+    )
+
+
 @router.post("/projects", status_code=201)
 def create_project(body: ProjectCreateIn, principal=Depends(post_guard)):
     db = SessionLocal()
     try:
-        plans_service.enforce_script_length(db, principal.user_id, body.script)
-        project = Project(
-            id=str(uuid4()),
-            owner_id=principal.user_id,
+        return _create_project_record(
+            db,
+            principal,
             title=body.title,
             script=body.script,
-            category=body.category or "Documentary",
-            options=_options_dict(body.options) or None,
-            status="created",
-        )
-        db.add(project)
-        db.commit()
-        db.refresh(project)
-        # Versioning (§3.2): the creation script is the first
-        # recorded script version — snapshot its text fail-soft so
-        # it stays restorable even after the field is overwritten.
-        versioning.try_record_script_snapshot(
-            project.id, project.script, "project_created",
-            actor=principal.user_id,
-        )
-        return _project_view(
-            db, project, detail=True, access_role=collaboration.ROLE_OWNER
+            category=body.category,
+            options=_options_dict(body.options),
         )
     finally:
         db.close()
@@ -2619,6 +2637,278 @@ def attach_script_to_project(
         script_id,
         body.project_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Templates & production presets (founder priority #15) — named
+# bundles over services/templates.py: built-ins derived live from
+# the real genre packs, user templates in the caller's own
+# preferences document (another user's id is a 404). Applying a
+# template goes through the SAME creation paths as manual work:
+# apply-project validates through ProjectCreateIn and creates via
+# _create_project_record; apply-draft creates through the Script
+# Studio's own create path. Literal routes are declared before
+# the {template_id} routes so they can never be shadowed by one.
+# ---------------------------------------------------------------------------
+
+
+def _template_call(fn, *args, **kwargs):
+    """Run a templates service call, mapping TemplateError (and a
+    Script Studio error surfacing through apply-to-draft) onto the
+    v1 error shape."""
+    try:
+        return fn(*args, **kwargs)
+    except templates_service.TemplateError as error:
+        message = error.message
+        if error.details:
+            message = f"{message} Details: {json.dumps(error.details)}"
+        raise ApiError(error.status_code, error.code, message) from error
+    except script_studio.ScriptError as error:
+        raise ApiError(error.status_code, error.code, error.message) from error
+
+
+class TemplateSectionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    heading: str | None = Field(default=None, max_length=200)
+
+
+class TemplateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=200)
+    category: str | None = Field(default=None, max_length=120)
+    target_minutes: float | None = None
+    options: dict | None = None
+    sections: list[TemplateSectionIn] | None = None
+
+
+class TemplateUpdateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=200)
+    category: str | None = Field(default=None, max_length=120)
+    target_minutes: float | None = None
+    clear_target: bool = False
+    options: dict | None = None
+    sections: list[TemplateSectionIn] | None = None
+
+
+class TemplateFromProjectIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str = Field(min_length=1)
+    name: str | None = Field(default=None, max_length=200)
+
+
+class TemplateFromDraftIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    script_id: str = Field(min_length=1)
+    name: str | None = Field(default=None, max_length=200)
+
+
+class TemplateCopyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=200)
+
+
+class TemplateApplyDraftIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=300)
+
+
+class TemplateApplyProjectIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=300)
+    script: str = Field(min_length=1, max_length=MAX_SCRIPT_CHARS)
+
+
+def _template_sections(body_sections):
+    if body_sections is None:
+        return None
+    return [{"heading": s.heading} for s in body_sections]
+
+
+@router.get("/templates")
+def list_templates(principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        return _template_call(templates_service.list_templates, db, principal)
+    finally:
+        db.close()
+
+
+@router.post("/templates", status_code=201)
+def create_template(body: TemplateIn, principal=Depends(post_guard)):
+    db = SessionLocal()
+    try:
+        return _template_call(
+            templates_service.create_template,
+            db,
+            principal,
+            name=body.name,
+            category=body.category,
+            target_minutes=body.target_minutes,
+            options=body.options,
+            sections=_template_sections(body.sections),
+        )
+    finally:
+        db.close()
+
+
+@router.post("/templates/from-project", status_code=201)
+def create_template_from_project(
+    body: TemplateFromProjectIn, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(db, body.project_id, principal)
+        view, dropped = _template_call(
+            templates_service.template_from_project,
+            db,
+            principal,
+            project,
+            name=body.name,
+        )
+        return {"template": view, "dropped_options": dropped}
+    finally:
+        db.close()
+
+
+@router.post("/templates/from-draft", status_code=201)
+def create_template_from_draft(
+    body: TemplateFromDraftIn, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        return _template_call(
+            templates_service.template_from_draft,
+            db,
+            principal,
+            body.script_id,
+            name=body.name,
+        )
+    finally:
+        db.close()
+
+
+@router.post("/templates/builtins/{pack_id}/copy", status_code=201)
+def copy_builtin_template(
+    pack_id: str, body: TemplateCopyIn, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        return _template_call(
+            templates_service.copy_builtin, db, principal, pack_id, name=body.name
+        )
+    finally:
+        db.close()
+
+
+@router.get("/templates/{template_id}")
+def get_template(template_id: str, principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        return _template_call(
+            templates_service.resolve_template, db, principal, template_id
+        )
+    finally:
+        db.close()
+
+
+@router.patch("/templates/{template_id}")
+def update_template(
+    template_id: str, body: TemplateUpdateIn, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        return _template_call(
+            templates_service.update_template,
+            db,
+            principal,
+            template_id,
+            name=body.name,
+            category=body.category,
+            target_minutes=None if body.clear_target else (
+                body.target_minutes if body.target_minutes is not None else "__unset__"
+            ),
+            options=body.options,
+            sections=_template_sections(body.sections),
+        )
+    finally:
+        db.close()
+
+
+@router.delete("/templates/{template_id}")
+def delete_template(template_id: str, principal=Depends(post_guard)):
+    db = SessionLocal()
+    try:
+        return _template_call(
+            templates_service.delete_template, db, principal, template_id
+        )
+    finally:
+        db.close()
+
+
+@router.post("/templates/{template_id}/apply-draft", status_code=201)
+def apply_template_to_draft(
+    template_id: str, body: TemplateApplyDraftIn, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        return _template_call(
+            templates_service.apply_to_draft,
+            db,
+            principal,
+            template_id,
+            title=body.title,
+        )
+    finally:
+        db.close()
+
+
+@router.post("/templates/{template_id}/apply-project", status_code=201)
+def apply_template_to_project(
+    template_id: str, body: TemplateApplyProjectIn, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        payload = _template_call(
+            templates_service.template_creation_payload, db, principal, template_id
+        )
+        # The creation path's own validation, unchanged: the
+        # template's bundle is fed through ProjectCreateIn (whose
+        # ProjectOptionsIn field ranges are the create form's) and
+        # created by the same helper manual creation uses — plan
+        # script-length enforcement included.
+        try:
+            validated = ProjectCreateIn(
+                title=body.title,
+                script=body.script,
+                category=payload["category"],
+                options=ProjectOptionsIn(**payload["options"]),
+            )
+        except ValidationError as error:
+            raise ApiError(
+                422,
+                "template_options_invalid",
+                "The template's options no longer pass the "
+                f"creation path's validation: {error.errors()[0]['msg']}",
+            ) from error
+        return _create_project_record(
+            db,
+            principal,
+            title=validated.title,
+            script=validated.script,
+            category=validated.category,
+            options=_options_dict(validated.options),
+        )
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
