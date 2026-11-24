@@ -969,6 +969,144 @@ export function qaReportExportPath(projectId: string, runId: string) {
 }
 
 // ---------------------------------------------------------------------
+// Project Intelligence (founder priority #10) — the assembly layer
+// over the persistent project record (services/project_intelligence
+// .py). Recorded data passes through as recorded (bible entities,
+// QA verdicts, provider funnels); derived data (entities shared
+// across Case Bibles, timeline mentions) carries its derivation
+// text; recommendations carry the recorded figures they rest on.
+// ---------------------------------------------------------------------
+
+export type IntelligenceProject = {
+  project_id: string;
+  title?: string | null;
+  category?: string | null;
+  status?: string | null;
+  created_at?: string | null;
+};
+
+export type IntelligenceVerdicts = {
+  state: string;
+  integrity?: string | null;
+  quality?: string | null;
+  reliability?: string | null;
+  delivery_status?: string | null;
+};
+
+export type IntelligenceEntity = {
+  entity_id?: string | null;
+  canonical?: string | null;
+  type?: string | null;
+  effective_canonical?: string | null;
+  effective_type?: string | null;
+  role?: string | null;
+  support?: string | null;
+  is_primary_subject: boolean;
+  corrections: number;
+  kb_check?: { status?: string | null; conflict: boolean; kb_type?: string | null } | null;
+};
+
+export type IntelligenceSharedEntity = {
+  canonical?: string | null;
+  type?: string | null;
+  project_count: number;
+  derivation: string;
+  this_project?: Record<string, unknown> | null;
+  other_projects?: { project_id: string; project_title?: string | null; entity_id?: string | null }[];
+  appearances?: Record<string, unknown>[];
+};
+
+export type IntelligenceFinding = {
+  finding: string;
+  evidence: Record<string, unknown>;
+  suggestion: string;
+  link?: string | null;
+};
+
+export type IntelligenceRule = {
+  rule: string;
+  state: string;
+  run_id?: string;
+  findings: IntelligenceFinding[];
+  findings_total?: number;
+  note?: string | null;
+};
+
+export type ProjectIntelligence = {
+  schema: string;
+  project: IntelligenceProject | null;
+  record: {
+    runs: { total: number; production: number; by_status: Record<string, number> };
+    latest_production_run?: { run_id: string; status?: string | null; created_at?: string | null } | null;
+    bible_recorded: boolean;
+    story_type?: string | null;
+    research_counts?: Record<string, number> | null;
+  };
+  quality: IntelligenceVerdicts;
+  entities: IntelligenceEntity[];
+  connections: {
+    primary_subject_id?: string | null;
+    shared_entities: IntelligenceSharedEntity[];
+    timeline_mentions: {
+      entity_id?: string | null;
+      canonical?: string | null;
+      type?: string | null;
+      events: { when?: string | null; what?: string | null; support?: string | null; matched_name?: string | null }[];
+      derivation: string;
+    }[];
+    kb_conflicts: IntelligenceEntity[];
+  };
+  recommendations: { rules: IntelligenceRule[]; findings_total: number };
+};
+
+export type AccountIntelligence = {
+  schema: string;
+  totals: {
+    projects: number;
+    runs: number;
+    projects_with_bible: number;
+    distinct_entities: number;
+    shared_entities: number;
+  };
+  projects_by_category: { category: string; projects: number }[];
+  quality_by_category: {
+    category: string;
+    projects: number;
+    with_recorded_verdict: number;
+    quality_verdicts: Record<string, number>;
+  }[];
+  providers: {
+    state: string;
+    projects_with_funnel: number;
+    providers: {
+      provider: string;
+      discovered: number;
+      verified: number;
+      rejected: number;
+      downloaded: number;
+      download_failed: number;
+      project_count: number;
+    }[];
+    derivation: string;
+  };
+  entity_connections: IntelligenceSharedEntity[];
+  projects: (IntelligenceProject & {
+    run_count: number;
+    bible_recorded: boolean;
+    entity_count: number;
+    quality?: IntelligenceVerdicts | null;
+  })[];
+};
+
+export function getProjectIntelligence(projectId: string, signal?: AbortSignal) {
+  return apiRequest<ProjectIntelligence>(`/api/v1/projects/${projectId}/intelligence`, { signal });
+}
+
+export function getAccountIntelligence(signal?: AbortSignal) {
+  return apiRequest<AccountIntelligence>(`/api/v1/intelligence`, { signal });
+}
+
+// ---------------------------------------------------------------------
 // Research Studio (Phase D, founder priority #6) — the workspace
 // over services/research_studio.py. Every type mirrors the recorded
 // shapes the service returns; nothing here invents a field.

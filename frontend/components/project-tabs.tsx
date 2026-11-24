@@ -25,6 +25,7 @@ const TABS = [
   { suffix: "/certificate", label: "Delivery" },
   { suffix: "/qa", label: "QA Report" },
   { suffix: "/versions", label: "Versions" },
+  { suffix: "/intelligence", label: "Intelligence" },
 ] as const;
 
 export function ProjectTabs({ projectId }: { projectId: string }) {
