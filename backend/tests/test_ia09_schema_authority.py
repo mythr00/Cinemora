@@ -58,7 +58,7 @@ from database import (
 )
 
 BACKEND = Path(__file__).resolve().parent.parent
-HEAD = "0008_admin_audit_log"
+HEAD = "0009_assistant"
 
 
 def _alembic_cfg():
@@ -117,7 +117,7 @@ def _project_rows(db_path):
 # ---------------------------------------------------------------------
 
 
-def test_migration_head_is_0008():
+def test_migration_head_is_0009():
     assert migration_head() == HEAD
 
 

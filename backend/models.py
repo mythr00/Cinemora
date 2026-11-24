@@ -603,3 +603,201 @@ class AdminAuditLog(Base):
         default=_utcnow,
         index=True,
     )
+
+
+class AssistantConversation(Base):
+    """One AI Product Assistant conversation (Phase 6; design
+    assistant/05 §1.2, reconciled with Phase 8: the owner is a real
+    users.id, not the design draft's literal "operator").
+
+    Owner-scoped like every Phase 8 surface: another user's
+    conversation is indistinguishable from a nonexistent one.
+    `project_id` optionally binds the conversation to one of the
+    owner's projects for context (validated at creation and again
+    whenever context is assembled).
+    Schema authority: migrations/versions/0009_assistant.py.
+    """
+
+    __tablename__ = "assistant_conversations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    owner_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    title: Mapped[str] = mapped_column(String(300), nullable=True)
+
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id"), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        onupdate=_utcnow,
+    )
+
+
+class AssistantMessage(Base):
+    """One message in an assistant conversation (Phase 6; design
+    assistant/05 §1.3). `tool_trace` on assistant turns is the
+    ordered record of tool calls the answer rests on — the UI's
+    provenance strip and the tests' factuality anchor. Tool rows
+    store a compact result summary, never a full payload dump.
+    Schema authority: migrations/versions/0009_assistant.py.
+    """
+
+    __tablename__ = "assistant_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("assistant_conversations.id"),
+        nullable=False,
+        index=True,
+    )
+
+    # user | assistant | tool | system_note
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    tool_trace: Mapped[dict] = mapped_column(JSONVariant, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+
+class AssistantAction(Base):
+    """The assistant's confirmation + audit record in one (Phase 6;
+    design assistant/05 §1.4).
+
+    Every tool execution writes a row: READ tools land directly as
+    `executed` (or `failed`); WRITE/CONSEQUENTIAL tools are created
+    as `pending` by the orchestrator and can only move to `executed`
+    through the authenticated confirm endpoint — the model has no
+    path to execution. Rows are never deleted; status transitions
+    are the only updates. Arguments and results pass the redaction
+    filter before persistence (design assistant/08 §4).
+    Schema authority: migrations/versions/0009_assistant.py.
+    """
+
+    __tablename__ = "assistant_actions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("assistant_conversations.id"),
+        nullable=True,
+        index=True,
+    )
+
+    message_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("assistant_messages.id"), nullable=True
+    )
+
+    owner_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # read | write | consequential
+    action_class: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    arguments: Mapped[dict] = mapped_column(JSONVariant, nullable=True)
+
+    # pending | confirmed | rejected | expired | executed | failed
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, index=True
+    )
+
+    result: Mapped[dict] = mapped_column(JSONVariant, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    executed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class AssistantToolOverride(Base):
+    """Admin M9 control plane for the assistant (Phase 6 + admin
+    design 02 §M9): one row per scope — a tool name, or "*" for the
+    whole assistant. The orchestrator reads overrides on every turn,
+    so disabling a tool (or the assistant) takes effect on the next
+    request, as the M9 acceptance test requires. Written only
+    through the admin router, which audit-logs every change.
+    Schema authority: migrations/versions/0009_assistant.py.
+    """
+
+    __tablename__ = "assistant_tool_overrides"
+
+    # Tool name, or "*" for the global assistant switch.
+    scope: Mapped[str] = mapped_column(String(100), primary_key=True)
+
+    disabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+
+    updated_by: Mapped[str] = mapped_column(String(320), nullable=True)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        onupdate=_utcnow,
+    )
+
+
+class AssistantSecurityEvent(Base):
+    """Prompt-injection rejection feed (Phase 6; design
+    assistant/08 §6 + admin M9). One row when retrieved content
+    (search result, fetched page, project script read back through
+    a tool) carries instruction-shaped text aimed at the assistant.
+    The content is treated as data regardless; the row exists so
+    the attempt is reviewable in the admin console.
+    Schema authority: migrations/versions/0009_assistant.py.
+    """
+
+    __tablename__ = "assistant_security_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    owner_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("assistant_conversations.id"),
+        nullable=True,
+    )
+
+    # search_result | fetched_page | project_script | tool_result
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    # Matched pattern name + a short redacted excerpt.
+    detail: Mapped[dict] = mapped_column(JSONVariant, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        index=True,
+    )
