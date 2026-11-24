@@ -274,7 +274,8 @@ def run_session(project_id, topic: str) -> dict:
         if existing is not None:
             if session_id not in existing.setdefault("session_ids", []):
                 existing["session_ids"].append(session_id)
-            source_ids.append(existing["id"])
+            if existing["id"] not in source_ids:
+                source_ids.append(existing["id"])
             continue
         record = {
             "id": _new_id("src"),
