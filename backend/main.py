@@ -26,6 +26,7 @@ from services import media_paths
 from api_v1 import ApiError, register_error_handlers, require_api_token
 from api_v1 import router as api_v1_router
 from api_admin import router as api_admin_router
+from api_assistant import router as api_assistant_router
 
 
 @asynccontextmanager
@@ -80,6 +81,9 @@ app.include_router(api_v1_router, prefix="/api/v1")
 # Phase 7: the administration API lives under the same /api/v1
 # prefix (its router adds /admin), gated by its own role guard.
 app.include_router(api_admin_router, prefix="/api/v1")
+# Phase 6: the AI Product Assistant API under the same prefix (its
+# router adds /assistant), gated by the same principal auth.
+app.include_router(api_assistant_router, prefix="/api/v1")
 register_error_handlers(app)
 
 
