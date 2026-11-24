@@ -68,6 +68,7 @@ from services import (
     qa_report,
     research_studio,
     run_ledger,
+    versioning,
 )
 from services.atomic_write import write_json_atomic
 
@@ -909,6 +910,13 @@ def create_project(body: ProjectCreateIn, principal=Depends(post_guard)):
         db.add(project)
         db.commit()
         db.refresh(project)
+        # Versioning (§3.2): the creation script is the first
+        # recorded script version — snapshot its text fail-soft so
+        # it stays restorable even after the field is overwritten.
+        versioning.try_record_script_snapshot(
+            project.id, project.script, "project_created",
+            actor=principal.user_id,
+        )
         return _project_view(db, project, detail=True)
     finally:
         db.close()
@@ -983,6 +991,13 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depen
         project_options = dict(project.options or {})
     finally:
         db.close()
+
+    # Versioning (§3.2): snapshot the submitted script's exact
+    # text (fail-soft, idempotent per hash) so this run's script
+    # version stays browsable and restorable after later edits.
+    versioning.try_record_script_snapshot(
+        project_id, script, "run_submission", actor=principal.user_id
+    )
 
     merged = {**project_options, **((body.options if body else None) or {})}
     script_hash = run_ledger.script_sha256(script)
@@ -1814,6 +1829,176 @@ def export_run_qa_report(
                 f'attachment; filename="qa-report-{project_id}-{run_id}.json"'
             )
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Versioning (Phase G, founder priority #9) — the unified version
+# story over the recorded histories (services/versioning.py): script
+# versions snapshotted at submission with list/diff/restore, the
+# run + revision + plan timeline with per-entry changes, and named
+# project snapshots (script + plan + revision pointer) with a
+# restore that branches the revision chain instead of mutating it.
+# Every route loads the project through the Phase 8 owner choke
+# point first: another user's project is a 404 on reads AND writes.
+# ---------------------------------------------------------------------------
+
+
+def _versioning_call(fn, *args, **kwargs):
+    """Run a versioning service call, mapping VersioningError onto
+    the v1 error shape."""
+    try:
+        return fn(*args, **kwargs)
+    except versioning.VersioningError as error:
+        message = error.message
+        if error.details:
+            message = f"{message} Details: {json.dumps(error.details)}"
+        raise ApiError(error.status_code, error.code, message) from error
+
+
+def _owned_project_dict(project_id: str, principal) -> dict:
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(db, project_id, principal)
+        return {
+            "id": project.id,
+            "script": project.script,
+            "title": project.title,
+            "category": project.category,
+        }
+    finally:
+        db.close()
+
+
+class SnapshotCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class VersionLabelIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entry_id: str = Field(min_length=1, max_length=300)
+    name: str | None = Field(default=None, max_length=200)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.get("/projects/{project_id}/versions")
+def get_versions(project_id: str, principal=Depends(require_user)):
+    project = _owned_project_dict(project_id, principal)
+    return _versioning_call(
+        versioning.build_versions_view, project_id, project
+    )
+
+
+@router.get("/projects/{project_id}/versions/scripts/{script_hash}")
+def get_script_version(
+    project_id: str, script_hash: str, principal=Depends(require_user)
+):
+    project = _owned_project_dict(project_id, principal)
+    return _versioning_call(
+        versioning.get_script_version, project_id, project, script_hash
+    )
+
+
+@router.post(
+    "/projects/{project_id}/versions/scripts/{script_hash}/restore"
+)
+def restore_script_version(
+    project_id: str, script_hash: str, principal=Depends(post_guard)
+):
+    project = _owned_project_dict(project_id, principal)
+    return _versioning_call(
+        versioning.restore_script_version,
+        project_id,
+        project,
+        script_hash,
+        actor=principal.user_id,
+    )
+
+
+@router.get("/projects/{project_id}/versions/compare")
+def compare_versions(
+    project_id: str, a: str, b: str, principal=Depends(require_user)
+):
+    project = _owned_project_dict(project_id, principal)
+    return _versioning_call(
+        versioning.compare_versions, project_id, project, a, b
+    )
+
+
+@router.post(
+    "/projects/{project_id}/versions/snapshots", status_code=201
+)
+def create_snapshot(
+    project_id: str,
+    body: SnapshotCreateIn,
+    principal=Depends(post_guard),
+):
+    project = _owned_project_dict(project_id, principal)
+    return _versioning_call(
+        versioning.create_snapshot,
+        project_id,
+        project,
+        body.name.strip(),
+        body.note,
+        actor=principal.user_id,
+    )
+
+
+@router.get("/projects/{project_id}/versions/snapshots/{snapshot_id}")
+def get_snapshot(
+    project_id: str, snapshot_id: str, principal=Depends(require_user)
+):
+    _owned_project_dict(project_id, principal)
+    return _versioning_call(
+        versioning.get_snapshot, project_id, snapshot_id
+    )
+
+
+@router.delete("/projects/{project_id}/versions/snapshots/{snapshot_id}")
+def delete_snapshot(
+    project_id: str, snapshot_id: str, principal=Depends(post_guard)
+):
+    _owned_project_dict(project_id, principal)
+    return _versioning_call(
+        versioning.delete_snapshot, project_id, snapshot_id
+    )
+
+
+@router.post(
+    "/projects/{project_id}/versions/snapshots/{snapshot_id}/restore"
+)
+def restore_snapshot(
+    project_id: str, snapshot_id: str, principal=Depends(post_guard)
+):
+    project = _owned_project_dict(project_id, principal)
+    return _versioning_call(
+        versioning.restore_snapshot,
+        project_id,
+        project,
+        snapshot_id,
+        actor=principal.user_id,
+    )
+
+
+@router.put("/projects/{project_id}/versions/labels")
+def set_version_label(
+    project_id: str,
+    body: VersionLabelIn,
+    principal=Depends(post_guard),
+):
+    project = _owned_project_dict(project_id, principal)
+    return _versioning_call(
+        versioning.set_label,
+        project_id,
+        project,
+        body.entry_id,
+        body.name,
+        body.note,
+        actor=principal.user_id,
     )
 
 
