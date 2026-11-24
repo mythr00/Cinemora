@@ -3,9 +3,8 @@
 
 Users A and B are created through the REAL registration path;
 sessions live in fakeredis (injected via services.auth's seam).
-Case 8 (assistant conversations) is Phase 6 surface that does not
-exist yet — it is enumerated in 02 §4.2 as post-Phase 6 and is
-marked skipped here so the gap is explicit, not silent.
+Case 8 (assistant conversations) landed with Phase 6 and is a real
+test below.
 """
 
 import uuid
@@ -17,9 +16,20 @@ from fastapi.testclient import TestClient
 import api_v1
 import main
 from database import SessionLocal, engine
-from models import Base, Plan, Project, User, UserSubscription
+from models import (
+    AssistantAction,
+    AssistantConversation,
+    AssistantMessage,
+    Base,
+    Plan,
+    Project,
+    User,
+    UserSubscription,
+)
 from services import auth as auth_service
 from services import run_ledger
+from services.assistant import llm as assistant_llm
+from services.assistant import orchestrator
 
 TOKEN = "phase8-" + "operator-token-for-tests"
 PASSWORD_A = "alpha-correct-horse-42"
@@ -451,10 +461,85 @@ def test_battery_admin_endpoints(client, users):
     assert anon.status_code == 401
 
 
-@pytest.mark.skip(
-    reason="Case 8 (assistant conversations) is Phase 6 surface; "
-    "the endpoints do not exist yet. Enumerated in 02 §4.2 as "
-    "post-Phase 6 and tested when Phase 6 lands."
-)
-def test_battery_assistant_conversations():
-    pass
+def test_battery_assistant_conversations(client, users, monkeypatch):
+    """Case 8 (Phase 6 surface, landed 2026-11-24): B cannot read,
+    post to, delete or decide on A's assistant conversation or its
+    pending actions — every cross-tenant touch is a 404, and B's
+    lists never contain A's records."""
+    a, b = users
+    db = SessionLocal()
+    try:
+        for model in (AssistantAction, AssistantMessage, AssistantConversation):
+            db.query(model).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    created = client.post(
+        "/api/v1/assistant/conversations",
+        headers=_bearer(a["session_token"]),
+        json={},
+    )
+    assert created.status_code == 201, created.text
+    conversation_id = created.json()["id"]
+
+    queue = [{"tool": "cancel_run", "arguments": {"run_id": "r-x"}}]
+
+    def _complete(system_prompt, user_payload):
+        return queue.pop(0)
+
+    monkeypatch.setattr(assistant_llm, "complete_json", _complete)
+    monkeypatch.setattr(orchestrator.llm, "complete_json", _complete)
+    posted = client.post(
+        f"/api/v1/assistant/conversations/{conversation_id}/messages",
+        headers=_bearer(a["session_token"]),
+        json={"content": "Cancel my run"},
+    )
+    assert posted.status_code == 200, posted.text
+    action_id = posted.json()["pending_action"]["id"]
+
+    b_headers = _bearer(b["session_token"])
+    # B's lists exclude A's records.
+    b_conversations = client.get(
+        "/api/v1/assistant/conversations", headers=b_headers
+    )
+    assert b_conversations.status_code == 200
+    assert all(
+        row["id"] != conversation_id
+        for row in b_conversations.json()["conversations"]
+    )
+    b_actions = client.get("/api/v1/assistant/actions", headers=b_headers)
+    assert all(
+        row["id"] != action_id for row in b_actions.json()["actions"]
+    )
+    # Every direct touch by B is a 404.
+    for method, path in (
+        ("GET", f"/api/v1/assistant/conversations/{conversation_id}"),
+        ("DELETE", f"/api/v1/assistant/conversations/{conversation_id}"),
+        ("GET", f"/api/v1/assistant/actions/{action_id}"),
+        ("POST", f"/api/v1/assistant/actions/{action_id}/confirm"),
+        ("POST", f"/api/v1/assistant/actions/{action_id}/reject"),
+    ):
+        response = client.request(method, path, headers=b_headers)
+        assert response.status_code == 404, (method, path, response.text)
+    posted_by_b = client.post(
+        f"/api/v1/assistant/conversations/{conversation_id}/messages",
+        headers=b_headers,
+        json={"content": "hello?"},
+    )
+    assert posted_by_b.status_code == 404
+
+    # Positive control: A keeps full access, and A's confirm reaches
+    # execution (the run does not exist, so the action records a
+    # failure — ownership passed, the executor ran).
+    own = client.get(
+        f"/api/v1/assistant/conversations/{conversation_id}",
+        headers=_bearer(a["session_token"]),
+    )
+    assert own.status_code == 200
+    confirmed = client.post(
+        f"/api/v1/assistant/actions/{action_id}/confirm",
+        headers=_bearer(a["session_token"]),
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["action"]["status"] == "failed"
