@@ -162,6 +162,14 @@ ADMIN_ROUTES = [
     ("POST", "/api/v1/admin/users/some-user/plan", {"plan_name": "pro"}),
     ("GET", "/api/v1/admin/subscriptions", None),
     ("GET", "/api/v1/admin/projects", None),
+    # M9 — AI Assistant administration (Phase 6 hooks).
+    ("GET", "/api/v1/admin/assistant/tools", None),
+    ("POST", "/api/v1/admin/assistant/tools/some-tool/disable",
+     {"reason": "pin"}),
+    ("POST", "/api/v1/admin/assistant/tools/some-tool/enable", {}),
+    ("GET", "/api/v1/admin/assistant/actions", None),
+    ("GET", "/api/v1/admin/assistant/conversations", None),
+    ("GET", "/api/v1/admin/assistant/security-events", None),
 ]
 
 
@@ -177,7 +185,8 @@ def test_route_table_matches_registered_admin_routes(client):
                 registered.add((method, path))
     expected = {
         (method, path.replace("some-run", "{run_id}")
-         .replace("some-user", "{user_id}"))
+         .replace("some-user", "{user_id}")
+         .replace("some-tool", "{name}"))
         for method, path, _ in ADMIN_ROUTES
     }
     assert registered == expected
