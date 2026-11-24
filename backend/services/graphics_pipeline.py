@@ -86,7 +86,7 @@ def drawtext_textfile(text):
     key = hashlib.sha1(str(text).encode("utf-8")).hexdigest()[:20]
     path = _DRAWTEXT_SCRATCH_DIR / f"{key}.txt"
     if not path.exists():
-        path.write_text(str(text), encoding="utf-8")
+        write_text_atomic(path, str(text), encoding="utf-8")
     return str(path).replace("\\", "/").replace(":", "\\:")
 
 

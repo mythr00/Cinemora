@@ -217,8 +217,11 @@ def test_asset_report_counts_substitutions_honestly():
     assert report["text_cards"] == 1
     assert report["placeholder_clips"] == 2
     assert report["low_confidence_selections"] == 1  # the unverified v2
-    # item 1 loops v1 (12s window > 8s clip), item 2 reuses v1: 2 repeats
-    assert report["repeated_footage"] == 2
+    # item 1's window (12s) exceeds v1's real length (8s): the renderer
+    # now HOLDS the last frame instead of looping the source (founder
+    # defect fix d19a9a8), so a held frame is not repeated footage.
+    # item 2 reuses v1: 1 repeat.
+    assert report["repeated_footage"] == 1
     assert report["sentence_assignment_accuracy"] == pytest.approx(2 / 3, abs=0.01)
     assert report["authentic"] is False
     assert report["authenticity"]["authentic"] is False
