@@ -65,6 +65,7 @@ from services import (
     media_paths,
     narration,
     plan_document,
+    qa_report,
     research_studio,
     run_ledger,
 )
@@ -1732,6 +1733,88 @@ def get_certificate(project_id: str, principal=Depends(require_user)):
         project_id, run_id=latest["run_id"]
     )
     return certificate
+
+
+# ---------------------------------------------------------------------------
+# QA Report (Phase F, founder priority #8) — the unified Documentary
+# Quality Report over the records a production already wrote
+# (services/qa_report.py). Assembly only: verdicts and metrics pass
+# through exactly as recorded, sections whose artefacts were never
+# written report "not_recorded", and nothing is recomputed. Every
+# route loads the project through the Phase 8 owner choke point
+# first: another user's project — or a run of it — is a 404.
+# ---------------------------------------------------------------------------
+
+
+def _qa_report_for_run(project_id: str, run: dict) -> dict:
+    return qa_report.build_qa_report(project_id, run)
+
+
+def _owned_run_in_project_or_404(project_id: str, run_id: str) -> dict:
+    run = run_ledger.get_run(run_id)
+    if run is None or run.get("project_id") != project_id:
+        raise ApiError(
+            404, "run_not_found", f"No run {run_id} in this project."
+        )
+    return run
+
+
+@router.get("/projects/{project_id}/qa-report")
+def get_latest_qa_report(project_id: str, principal=Depends(require_user)):
+    """The QA report for the project's latest PRODUCTION run (the
+    same run selection the certificate uses, so a revision render
+    can never displace the production the report describes)."""
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal)
+    finally:
+        db.close()
+    latest = run_ledger.latest_production_run_for(project_id)
+    if latest is None:
+        raise ApiError(
+            404,
+            "no_runs",
+            "This project has no production runs, so no QA report "
+            "exists.",
+        )
+    return _qa_report_for_run(project_id, latest)
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/qa-report")
+def get_run_qa_report(
+    project_id: str, run_id: str, principal=Depends(require_user)
+):
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal)
+    finally:
+        db.close()
+    run = _owned_run_in_project_or_404(project_id, run_id)
+    return _qa_report_for_run(project_id, run)
+
+
+@router.get("/projects/{project_id}/runs/{run_id}/qa-report/export")
+def export_run_qa_report(
+    project_id: str, run_id: str, principal=Depends(require_user)
+):
+    """The same recorded report as a downloadable JSON file —
+    generated from the same assembly, so the export can never
+    disagree with the on-screen report."""
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal)
+    finally:
+        db.close()
+    run = _owned_run_in_project_or_404(project_id, run_id)
+    report = _qa_report_for_run(project_id, run)
+    return JSONResponse(
+        content=report,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="qa-report-{project_id}-{run_id}.json"'
+            )
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
