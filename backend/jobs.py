@@ -1061,6 +1061,31 @@ def _annotate_missing_visual_graphics_outcomes(
     return annotated
 
 
+def _annotate_missing_visuals_motion_graphics_disabled(processed_scenes):
+    """Phase 9 (§13.1): with motion graphics disabled by the
+    production configuration, every missing-visual record is
+    stamped with the graphics outcome it actually had — not
+    attempted, because disabled — so the asset report shows the
+    beat as honestly uncovered-by-configuration rather than
+    merely "uncovered" with the reason stranded. Returns the
+    number of entries stamped."""
+    stamped = 0
+    for processed_scene in processed_scenes or []:
+        if not isinstance(processed_scene, dict):
+            continue
+        stats = processed_scene.get("asset_stats") or {}
+        for entry in stats.get("missing_visuals") or []:
+            if not isinstance(entry, dict):
+                continue
+            entry["graphics_outcome"] = {
+                "outcome": "not_attempted",
+                "family": None,
+                "reason": "motion_graphics_disabled",
+            }
+            stamped += 1
+    return stamped
+
+
 # MG-07: closed vocabulary for graphics the attach step refuses.
 ATTACH_SKIP_REASONS = frozenset({
     "not_delivered",            # builder did not mark it delivered
@@ -1224,6 +1249,30 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         f"Genre pack: {_genre_info['pack_id']} "
         f"(source: {_genre_info['source']})"
     )
+
+    # Phase 9 (§13.3/§14.2): a configured visual theme overrides
+    # the pack's theme for every theme consumer in this run
+    # (Visual Director, graphics build, caption renderer). The
+    # override travels as a shallow pack copy — visual_theme
+    # only — so the pack's composition affinities, template
+    # data and mix preset ride untouched. With no configured
+    # theme, _theme_pack IS the pack and behaviour is unchanged.
+    from services import production_config as _production_config
+
+    _config = _production_config.stored_config(options)
+    _theme_pack, _theme_resolution = (
+        _production_config.theme_pack_override(_config, _genre_pack)
+    )
+    if _theme_resolution["founder_id"] is not None:
+        options["visual_theme"] = _theme_resolution["founder_id"]
+        options["visual_theme_engine"] = _theme_resolution["engine_name"]
+        options["visual_theme_source"] = "production_config"
+        print(
+            "Visual theme: "
+            f"{_theme_resolution['founder_id']} "
+            f"(engine: {_theme_resolution['engine_name']}, "
+            "source: production_config)"
+        )
 
     # Stage 2: claim or begin the ledger run. All fail-soft — the
     # ledger records the run; it never gates it. When the caller
@@ -1740,120 +1789,169 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 f"{len(graphic_targets)}"
             )
 
-        # Phase 6 (AM-002 Pass-2 + AM-001/D1): the Visual Director
-        # reconciles the pre-retrieval visual plan (v1) against the
-        # Asset Manager's actual per-sentence outcomes and issues
-        # the authoritative graphics manifest; graphics generation
-        # consumes the manifest — no manifest entry, no graphic.
-        # visual_plan.json is upgraded in place to v2 and
-        # graphics_manifest.json written beside it (both fail-soft).
-        # D2 record-and-continue: if reconciliation itself fails,
-        # the failure is printed and production continues on the
-        # legacy targets path rather than dying.
+        # Phase 9 (§13.1/§14.2): the run's motion-graphics
+        # configuration, resolved from the run's production
+        # config snapshot. Recorded on the production state so
+        # the report shows which intensity actually ran.
+        _graphics_params = _production_config.graphics_build_params(
+            _config
+        )
+        state["motion_graphics"] = {
+            "enabled": _graphics_params["enabled"],
+            "intensity": (_config or {}).get("motion_graphics", {})
+            .get("intensity") if _config else None,
+            "mode": _graphics_params["mode"],
+            "compositions": _graphics_params["compositions"],
+        }
+        save_production_state(project_dir, state)
         _graphics_manifest = None
-        try:
-            from services import visual_director as _visual_director
+        if not _graphics_params["enabled"]:
+            # §13.1: disabled means NO graphics — the Director
+            # directs none and the build below runs in its off
+            # mode, so no graphic is inserted even as the T5
+            # coverage fallback. The empty manifest is written
+            # with the reason recorded, so the absence reads as
+            # a configuration decision, not a failure.
+            from services import plan_document as _plan_doc_mod
+            from services.visual_director import (
+                GRAPHICS_MANIFEST_VERSION as _MANIFEST_VERSION,
+            )
 
-            _plan_v1 = _plan_document.visual_plan_from_analysis(
-                analysis,
-                project_id,
-                scene_governor=production_data.get("scene_governor"),
-            )
-            _outcomes = (
-                _visual_director.outcomes_from_processed_scenes(
-                    processed_scenes
-                )
-            )
-            # Phase 8 (AM-009 live producer): assemble the
-            # verified asset-data evidence for starved beats from
-            # this production's own verified assets (recorded
-            # structured facts only — see evidence_producer).
-            # Fail-soft by construction; the production record
-            # rides on plan v2's summary so the firing rate is a
-            # reported fact, never a silent zero.
-            from services import evidence_producer as _evidence
-
-            # Transformation Phase 2.3 (§2.3): KB-corroborate the
-            # planning stage's script-fact table (bible
-            # ["script_facts"], services.script_facts) so facts the
-            # knowledge base genuinely supports reach the Director
-            # stamped research_supported with their source recorded
-            # — and refresh the bible timeline's per-event bases so
-            # the chronology's manifest stamp matches. Bounded by
-            # the KB budget, fail-soft, and recorded on the
-            # evidence record either way.
-            _fact_table = (
-                (analysis.get("bible") or {}).get("script_facts")
-            )
-            _kb_corroboration = None
-            if isinstance(_fact_table, dict) and _fact_table.get("facts"):
-                try:
-                    from services import script_facts as _script_facts
-
-                    _kb_corroboration = (
-                        _script_facts.corroborate_facts(
-                            _fact_table["facts"]
-                        )
-                    )
-                    _script_facts.apply_fact_bases_to_timeline(
-                        analysis.get("bible") or {}, _fact_table["facts"]
-                    )
-                except Exception as _kb_error:  # recorded, not silent
-                    _kb_corroboration = {
-                        "error": f"{type(_kb_error).__name__}: {_kb_error}"
-                    }
-            _evidence_map, _evidence_record = _evidence.build_evidence(
-                processed_scenes, _outcomes, fact_table=_fact_table
-            )
-            if _kb_corroboration is not None:
-                _evidence_record["kb_corroboration"] = _kb_corroboration
-            _plan_v2, _graphics_manifest = (
-                _visual_director.reconcile_visual_plan(
-                    _plan_v1,
-                    _outcomes,
-                    genre_pack=_genre_pack,
-                    evidence=_evidence_map,
-                    production_context={
-                        "timeline_event_count": len(
-                            (analysis.get("bible") or {}).get(
-                                "timeline"
-                            )
-                            or []
-                        ),
-                    },
-                )
-            )
-            (_plan_v2.setdefault("summary", {}))[
-                "evidence_production"
-            ] = _evidence_record
-            _plan_document.write_visual_plan_v2_document(
-                project_dir, _plan_v2
-            )
-            _plan_document.write_graphics_manifest_document(
+            _graphics_manifest = {
+                "version": _MANIFEST_VERSION,
+                "project_id": project_id,
+                "theme": _theme_resolution["engine_name"],
+                "entries": [],
+                "motion_graphics_disabled": True,
+                "disabled_reason": "production_config",
+            }
+            _plan_doc_mod.write_graphics_manifest_document(
                 project_dir, _graphics_manifest
             )
             print(
-                "Visual Director Pass-2: "
-                f"{len(_graphics_manifest.get('entries') or [])} "
-                "targeted graphic(s) manifested, "
-                f"{(_plan_v2.get('summary') or {}).get('compositions', 0)} "
-                "composition decision(s)."
+                "Motion graphics DISABLED by the production "
+                "configuration — no graphics will be generated."
             )
-        except Exception as _director_error:
-            print(
-                "Visual Director Pass-2 FAILED (continuing on "
-                f"legacy targets): {_director_error}"
-            )
+        else:
+            # Phase 6 (AM-002 Pass-2 + AM-001/D1): the Visual Director
+            # reconciles the pre-retrieval visual plan (v1) against the
+            # Asset Manager's actual per-sentence outcomes and issues
+            # the authoritative graphics manifest; graphics generation
+            # consumes the manifest — no manifest entry, no graphic.
+            # visual_plan.json is upgraded in place to v2 and
+            # graphics_manifest.json written beside it (both fail-soft).
+            # D2 record-and-continue: if reconciliation itself fails,
+            # the failure is printed and production continues on the
+            # legacy targets path rather than dying.
             _graphics_manifest = None
+            try:
+                from services import visual_director as _visual_director
+
+                _plan_v1 = _plan_document.visual_plan_from_analysis(
+                    analysis,
+                    project_id,
+                    scene_governor=production_data.get("scene_governor"),
+                )
+                _outcomes = (
+                    _visual_director.outcomes_from_processed_scenes(
+                        processed_scenes
+                    )
+                )
+                # Phase 8 (AM-009 live producer): assemble the
+                # verified asset-data evidence for starved beats from
+                # this production's own verified assets (recorded
+                # structured facts only — see evidence_producer).
+                # Fail-soft by construction; the production record
+                # rides on plan v2's summary so the firing rate is a
+                # reported fact, never a silent zero.
+                from services import evidence_producer as _evidence
+
+                # Transformation Phase 2.3 (§2.3): KB-corroborate the
+                # planning stage's script-fact table (bible
+                # ["script_facts"], services.script_facts) so facts the
+                # knowledge base genuinely supports reach the Director
+                # stamped research_supported with their source recorded
+                # — and refresh the bible timeline's per-event bases so
+                # the chronology's manifest stamp matches. Bounded by
+                # the KB budget, fail-soft, and recorded on the
+                # evidence record either way.
+                _fact_table = (
+                    (analysis.get("bible") or {}).get("script_facts")
+                )
+                _kb_corroboration = None
+                if isinstance(_fact_table, dict) and _fact_table.get("facts"):
+                    try:
+                        from services import script_facts as _script_facts
+
+                        _kb_corroboration = (
+                            _script_facts.corroborate_facts(
+                                _fact_table["facts"]
+                            )
+                        )
+                        _script_facts.apply_fact_bases_to_timeline(
+                            analysis.get("bible") or {}, _fact_table["facts"]
+                        )
+                    except Exception as _kb_error:  # recorded, not silent
+                        _kb_corroboration = {
+                            "error": f"{type(_kb_error).__name__}: {_kb_error}"
+                        }
+                _evidence_map, _evidence_record = _evidence.build_evidence(
+                    processed_scenes, _outcomes, fact_table=_fact_table
+                )
+                if _kb_corroboration is not None:
+                    _evidence_record["kb_corroboration"] = _kb_corroboration
+                _plan_v2, _graphics_manifest = (
+                    _visual_director.reconcile_visual_plan(
+                        _plan_v1,
+                        _outcomes,
+                        genre_pack=_theme_pack,
+                        evidence=_evidence_map,
+                        compositions=_graphics_params["compositions"],
+                        production_context={
+                            "timeline_event_count": len(
+                                (analysis.get("bible") or {}).get(
+                                    "timeline"
+                                )
+                                or []
+                            ),
+                        },
+                    )
+                )
+                (_plan_v2.setdefault("summary", {}))[
+                    "evidence_production"
+                ] = _evidence_record
+                _plan_document.write_visual_plan_v2_document(
+                    project_dir, _plan_v2
+                )
+                _plan_document.write_graphics_manifest_document(
+                    project_dir, _graphics_manifest
+                )
+                print(
+                    "Visual Director Pass-2: "
+                    f"{len(_graphics_manifest.get('entries') or [])} "
+                    "targeted graphic(s) manifested, "
+                    f"{(_plan_v2.get('summary') or {}).get('compositions', 0)} "
+                    "composition decision(s)."
+                )
+            except Exception as _director_error:
+                print(
+                    "Visual Director Pass-2 FAILED (continuing on "
+                    f"legacy targets): {_director_error}"
+                )
+                _graphics_manifest = None
 
         motion_graphics_dir = project_dir / "motion_graphics"
         motion_graphics = build_motion_graphics_assets(
             motion_data,
             motion_graphics_dir,
-            mode="balanced",
+            mode=_graphics_params["mode"],
             targets=graphic_targets,
-            max_stats=MOTION_GRAPHIC_MAX_STATS,
-            genre_pack=_genre_pack,
+            max_stats=(
+                _graphics_params["max_stats"]
+                if _graphics_params["max_stats"] is not None
+                else MOTION_GRAPHIC_MAX_STATS
+            ),
+            genre_pack=_theme_pack,
             manifest=_graphics_manifest,
         )
 
@@ -1892,6 +1990,17 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 "Graphics outcome annotation failed (continuing): "
                 f"{_annotation_error}"
             )
+        if not _graphics_params["enabled"]:
+            # Phase 9 (§13.1): no graphics record exists to
+            # annotate from — the disabled stamp is the outcome.
+            _stamped = _annotate_missing_visuals_motion_graphics_disabled(
+                processed_scenes
+            )
+            if _stamped:
+                print(
+                    "Motion-graphics-disabled outcome stamped onto "
+                    f"{_stamped} missing-visual record(s)."
+                )
         _finish_executed_stage(
             state,
             "motion_designer",
@@ -2298,8 +2407,10 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
 
             # Production theme for caption colours; None when the
             # pack selects no theme -- the renderer then falls back
-            # to its editorial_dark tokens.
-            _caption_theme = theme_for_pack(_genre_pack)
+            # to its editorial_dark tokens. Phase 9: the theme
+            # pack carries any configured theme override, so
+            # captions wear the same theme as the graphics.
+            _caption_theme = theme_for_pack(_theme_pack)
 
             create_ass_file(
                 str(captions_json),
