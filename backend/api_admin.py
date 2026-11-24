@@ -37,6 +37,7 @@ import jobs
 from api_v1 import ApiError
 from database import SessionLocal
 from models import (
+    ApiKey,
     AssistantAction,
     AssistantConversation,
     AssistantMessage,
@@ -46,6 +47,8 @@ from models import (
     Project,
     User,
     UserSubscription,
+    WebhookDelivery,
+    WebhookEndpoint,
 )
 from services import (
     admin_audit,
@@ -323,6 +326,77 @@ def audit_log(
             db, actor=actor, action=action, target_id=target_id,
             result=result, limit=limit, offset=offset,
         )
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------
+# Developer API (Phase N, founder #16): platform-wide key + webhook
+# visibility. Reads only — key management stays with the owning
+# account. Views carry prefixes and recorded usage, never secrets
+# or hashes. Issuance/revocation events themselves are in the
+# audit log above (api_key.created / api_key.revoked /
+# webhook.created / webhook.disabled).
+# ---------------------------------------------------------------------
+
+
+@router.get("/developer")
+def developer_overview(principal=Depends(admin_guard)):
+    from services import api_keys as api_keys_service
+
+    db = SessionLocal()
+    try:
+        keys = db.query(ApiKey).order_by(ApiKey.created_at.desc()).all()
+        key_views = []
+        for row in keys:
+            owner = db.get(User, row.user_id)
+            view = api_keys_service.key_view(row)
+            view["owner_email"] = owner.email if owner else None
+            key_views.append(view)
+        endpoints = (
+            db.query(WebhookEndpoint)
+            .order_by(WebhookEndpoint.created_at.desc())
+            .all()
+        )
+        endpoint_views = []
+        for row in endpoints:
+            owner = db.get(User, row.user_id)
+            deliveries = (
+                db.query(WebhookDelivery)
+                .filter(WebhookDelivery.endpoint_id == row.id)
+                .count()
+            )
+            endpoint_views.append(
+                {
+                    "id": row.id,
+                    "owner_email": owner.email if owner else None,
+                    "url": row.url,
+                    "events": list(row.events or []),
+                    "created_at": row.created_at,
+                    "disabled_at": row.disabled_at,
+                    "status": (
+                        "disabled" if row.disabled_at is not None else "active"
+                    ),
+                    "delivery_count": deliveries,
+                }
+            )
+        return {
+            "api_keys": key_views,
+            "webhooks": endpoint_views,
+            "totals": {
+                "api_keys": len(key_views),
+                "active_api_keys": sum(
+                    1 for view in key_views if view["status"] == "active"
+                ),
+                "api_requests_recorded": sum(
+                    view["request_count"] for view in key_views
+                ),
+                "webhooks": len(endpoint_views),
+                "webhook_deliveries": sum(
+                    view["delivery_count"] for view in endpoint_views
+                ),
+            },
+        }
     finally:
         db.close()
 

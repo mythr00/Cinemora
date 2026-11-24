@@ -119,7 +119,7 @@ def register_error_handlers(app):
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error_handler(request: Request, exc: StarletteHTTPException):
-        if request.url.path.startswith("/api/v1"):
+        if request.url.path.startswith(("/api/v1", "/api/public/")):
             message = exc.detail if isinstance(exc.detail, str) else "Request failed."
             return JSONResponse(
                 status_code=exc.status_code,
@@ -134,7 +134,7 @@ def register_error_handlers(app):
 
     @app.exception_handler(RequestValidationError)
     async def _validation_handler(request: Request, exc: RequestValidationError):
-        if request.url.path.startswith("/api/v1"):
+        if request.url.path.startswith(("/api/v1", "/api/public/")):
             errors = exc.errors()
             first = errors[0] if errors else {}
             location = ".".join(str(part) for part in first.get("loc", []))
@@ -320,6 +320,18 @@ class _RateLimiter:
                     "retry shortly.",
                 )
             hits.append(now)
+
+    def peek(self, identity: str) -> int:
+        """Current in-window hit count for an identity, without
+        recording a hit (Developer API usage surface, Phase N)."""
+        now = time.monotonic()
+        with self._lock:
+            hits = self._hits.get(identity)
+            if not hits:
+                return 0
+            while hits and now - hits[0] > 60.0:
+                hits.popleft()
+            return len(hits)
 
     def reset(self) -> None:
         with self._lock:

@@ -297,9 +297,20 @@ def finish_run(run_id, status, error=None, execution=None,
                 row.manifest_path = str(manifest_path)
             row.finished_at = _now()
             db.commit()
-            return True
         finally:
             db.close()
+        # Developer API webhooks (Phase N): fan the terminal status
+        # out to the project owner's subscribed endpoints. The
+        # service is fail-soft and delivers on its own thread; the
+        # extra guard here keeps even an import failure from ever
+        # disturbing a production finish.
+        try:
+            from services import webhooks
+
+            webhooks.notify_run_finished(str(run_id), status)
+        except Exception:
+            pass
+        return True
     except Exception as ledger_error:
         print(f"WARNING: run ledger finish failed: {ledger_error}")
         return False

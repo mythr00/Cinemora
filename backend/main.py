@@ -27,6 +27,8 @@ from api_v1 import ApiError, register_error_handlers, require_api_token
 from api_v1 import router as api_v1_router
 from api_admin import router as api_admin_router
 from api_assistant import router as api_assistant_router
+from api_developer import router as api_developer_router
+from api_public import router as api_public_router
 
 
 @asynccontextmanager
@@ -84,6 +86,14 @@ app.include_router(api_admin_router, prefix="/api/v1")
 # Phase 6: the AI Product Assistant API under the same prefix (its
 # router adds /assistant), gated by the same principal auth.
 app.include_router(api_assistant_router, prefix="/api/v1")
+# Phase N (founder #16): the Developer API management surfaces
+# (account API keys, webhooks, docs) under the same /api/v1 prefix,
+# and the public key-authenticated surface under its own versioned
+# prefix. The public router delegates to the api_v1 handlers; its
+# errors take the v1 shape (register_error_handlers covers both
+# prefixes).
+app.include_router(api_developer_router, prefix="/api/v1")
+app.include_router(api_public_router, prefix="/api/public/v1")
 register_error_handlers(app)
 
 
