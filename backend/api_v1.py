@@ -59,6 +59,7 @@ from services import auth as auth_service
 from services import plans as plans_service
 from services import (
     asset_library,
+    collaboration,
     editor,
     editor_studio,
     genre_packs,
@@ -697,14 +698,48 @@ def _now_iso() -> str:
 
 
 def _get_owned_project_or_404(
+    db, project_id: str, principal: auth_service.Principal, *, write: bool = False
+) -> Project:
+    """The project load choke point (design 02 §4.1, extended by
+    Collaboration #11): every project-scoped route loads through
+    here. Access is the owner's, or an accepted project member's
+    (services/collaboration.role_for — the grant layer above
+    ownership). A principal with no grant sees another user's
+    project as indistinguishable from a nonexistent one — 404,
+    never 403 — so existence itself stays tenant-private. Legacy
+    rows with a NULL owner (pre-8.1 databases that never ran the
+    backfill) are visible only to the founder principal who would
+    own them.
+
+    `write=True` is the mutating-route form (every POST/PUT/PATCH/
+    DELETE handler passes it): a viewer member is refused with a
+    clear 403 project_read_only — they legitimately know the
+    project exists, so hiding it would be a lie; editors and the
+    owner pass. Reads (write=False) pass for every accepted role."""
+    project = db.get(Project, str(project_id))
+    if project is None:
+        raise ApiError(404, "project_not_found", f"No project {project_id}.")
+    role = collaboration.role_for(db, project, principal)
+    if role is None:
+        raise ApiError(404, "project_not_found", f"No project {project_id}.")
+    if write and role == collaboration.ROLE_VIEWER:
+        raise ApiError(
+            403,
+            "project_read_only",
+            "Your role on this project is viewer: it is read-only. "
+            "Ask the project owner for the editor role to make changes.",
+        )
+    return project
+
+
+def _get_owner_project_or_404(
     db, project_id: str, principal: auth_service.Principal
 ) -> Project:
-    """The owner-scoped load choke point (design 02 §4.1): every
-    project-scoped route loads through here. Another user's project
-    is indistinguishable from a nonexistent one — 404, never 403 —
-    so existence itself stays tenant-private. Legacy rows with a
-    NULL owner (pre-8.1 databases that never ran the backfill) are
-    visible only to the founder principal who would own them."""
+    """Owner-ONLY load: ownership-level routes (member management)
+    use this, never the grant-aware loader — a member, however
+    trusted, administering membership would be privilege
+    escalation. Non-owners (members included) get the same 404 as
+    any other non-granted principal."""
     project = db.get(Project, str(project_id))
     if project is None:
         raise ApiError(404, "project_not_found", f"No project {project_id}.")
@@ -719,19 +754,40 @@ def _get_owned_project_or_404(
     return project
 
 
-def _get_owned_run_or_404(run_id: str, principal: auth_service.Principal):
+def _get_owned_run_or_404(
+    run_id: str, principal: auth_service.Principal, *, write: bool = False
+):
     """Run-level equivalent: the run dict (run_ledger) with the
-    same 404 cross-tenant semantics."""
+    same semantics. A run's recorded owner_id is its PROJECT's
+    owner (run_ledger stamps it from the project row), so member
+    access resolves through the run's project, exactly like the
+    project loader."""
     run = run_ledger.get_run(run_id)
     if run is None:
         raise ApiError(404, "run_not_found", f"No run {run_id}.")
     owner = run.get("owner_id")
-    if owner is None:
-        if principal.auth_method != "operator_token":
-            raise ApiError(404, "run_not_found", f"No run {run_id}.")
-    elif owner != principal.user_id:
-        raise ApiError(404, "run_not_found", f"No run {run_id}.")
-    return run
+    if owner is not None and owner == principal.user_id:
+        return run
+    if owner is None and principal.auth_method == "operator_token":
+        return run
+    db = SessionLocal()
+    try:
+        project = db.get(Project, str(run.get("project_id")))
+        if project is not None:
+            role = collaboration.role_for(db, project, principal)
+            if role is not None:
+                if write and role == collaboration.ROLE_VIEWER:
+                    raise ApiError(
+                        403,
+                        "project_read_only",
+                        "Your role on this project is viewer: it is "
+                        "read-only. Ask the project owner for the "
+                        "editor role to make changes.",
+                    )
+                return run
+    finally:
+        db.close()
+    raise ApiError(404, "run_not_found", f"No run {run_id}.")
 
 
 def _options_dict(options) -> dict:
@@ -778,7 +834,9 @@ def _film_media_url(project_id: str, project_dir: Path) -> str | None:
     return None
 
 
-def _project_view(db, project: Project, *, detail: bool = False) -> dict:
+def _project_view(
+    db, project: Project, *, detail: bool = False, access_role: str | None = None
+) -> dict:
     project_dir = media_paths.project_dir(project.id)
     state = _production_state(project_dir)
     latest = run_ledger.latest_run_for(project.id)
@@ -788,6 +846,10 @@ def _project_view(db, project: Project, *, detail: bool = False) -> dict:
         "category": project.category,
         "status": project.status,
         "created_at": project.created_at,
+        # Collaboration (#11): the CALLER's role on this project
+        # ("owner" for their own projects; the member role for
+        # shared ones). Present only where the caller resolved it.
+        "access_role": access_role,
         "script_preview": (project.script or "")[:140],
         "current_stage": (state or {}).get("current_stage"),
         "video_url": _film_media_url(project.id, project_dir)
@@ -918,7 +980,9 @@ def create_project(body: ProjectCreateIn, principal=Depends(post_guard)):
             project.id, project.script, "project_created",
             actor=principal.user_id,
         )
-        return _project_view(db, project, detail=True)
+        return _project_view(
+            db, project, detail=True, access_role=collaboration.ROLE_OWNER
+        )
     finally:
         db.close()
 
@@ -928,14 +992,38 @@ def list_projects(principal=Depends(require_user)):
     db = SessionLocal()
     try:
         # Owner-filtered in SQL, never in Python after the fact
-        # (design 02 §4.1).
+        # (design 02 §4.1). Collaboration (#11) adds the projects
+        # shared WITH the caller (accepted memberships) as a second
+        # SQL-filtered set, each annotated with the caller's role.
         projects = (
             db.query(Project)
             .filter(Project.owner_id == principal.user_id)
             .order_by(Project.created_at.desc())
             .all()
         )
-        return {"projects": [_project_view(db, p) for p in projects]}
+        views = [
+            _project_view(db, p, access_role=collaboration.ROLE_OWNER)
+            for p in projects
+        ]
+        shared_ids = collaboration.shared_project_ids(db, principal.user_id)
+        if shared_ids:
+            shared = (
+                db.query(Project)
+                .filter(Project.id.in_(shared_ids))
+                .order_by(Project.created_at.desc())
+                .all()
+            )
+            for project in shared:
+                if project.owner_id == principal.user_id:
+                    continue
+                views.append(
+                    _project_view(
+                        db,
+                        project,
+                        access_role=collaboration.role_for(db, project, principal),
+                    )
+                )
+        return {"projects": views}
     finally:
         db.close()
 
@@ -945,7 +1033,12 @@ def get_project(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
         project = _get_owned_project_or_404(db, project_id, principal)
-        return _project_view(db, project, detail=True)
+        return _project_view(
+            db,
+            project,
+            detail=True,
+            access_role=collaboration.role_for(db, project, principal),
+        )
     finally:
         db.close()
 
@@ -987,7 +1080,7 @@ def get_project_status(project_id: str, principal=Depends(require_user)):
 def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depends(post_guard)):
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal)
+        project = _get_owned_project_or_404(db, project_id, principal, write=True)
         script = project.script
         project_options = dict(project.options or {})
     finally:
@@ -1099,7 +1192,7 @@ def get_run(run_id: str, principal=Depends(require_user)):
 def cancel_run(run_id: str, principal=Depends(post_guard)):
     # Owner check FIRST: a cross-tenant cancel attempt is a 404 and
     # verifiably changes nothing (isolation battery case 3).
-    _get_owned_run_or_404(run_id, principal)
+    _get_owned_run_or_404(run_id, principal, write=True)
     accepted = run_ledger.request_cancel(run_id)
     return {
         "run_id": run_id,
@@ -1138,7 +1231,7 @@ def get_plan(project_id: str, principal=Depends(require_user)):
 def generate_plan(project_id: str, principal=Depends(post_guard)):
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal)
+        project = _get_owned_project_or_404(db, project_id, principal, write=True)
         script = project.script
     finally:
         db.close()
@@ -1418,7 +1511,7 @@ def post_plan_decision(project_id: str, body: PlanDecisionIn, principal=Depends(
         )
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal)
+        project = _get_owned_project_or_404(db, project_id, principal, write=True)
     finally:
         db.close()
     project_dir = media_paths.project_dir(project.id)
@@ -1446,7 +1539,7 @@ def post_plan_decision(project_id: str, body: PlanDecisionIn, principal=Depends(
 def approve_plan(project_id: str, principal=Depends(post_guard)):
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal)
+        project = _get_owned_project_or_404(db, project_id, principal, write=True)
         script = project.script
     finally:
         db.close()
@@ -1888,10 +1981,10 @@ def _versioning_call(fn, *args, **kwargs):
         raise ApiError(error.status_code, error.code, message) from error
 
 
-def _owned_project_dict(project_id: str, principal) -> dict:
+def _owned_project_dict(project_id: str, principal, *, write: bool = False) -> dict:
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal)
+        project = _get_owned_project_or_404(db, project_id, principal, write=write)
         return {
             "id": project.id,
             "script": project.script,
@@ -1941,7 +2034,7 @@ def get_script_version(
 def restore_script_version(
     project_id: str, script_hash: str, principal=Depends(post_guard)
 ):
-    project = _owned_project_dict(project_id, principal)
+    project = _owned_project_dict(project_id, principal, write=True)
     return _versioning_call(
         versioning.restore_script_version,
         project_id,
@@ -1969,7 +2062,7 @@ def create_snapshot(
     body: SnapshotCreateIn,
     principal=Depends(post_guard),
 ):
-    project = _owned_project_dict(project_id, principal)
+    project = _owned_project_dict(project_id, principal, write=True)
     return _versioning_call(
         versioning.create_snapshot,
         project_id,
@@ -1994,7 +2087,7 @@ def get_snapshot(
 def delete_snapshot(
     project_id: str, snapshot_id: str, principal=Depends(post_guard)
 ):
-    _owned_project_dict(project_id, principal)
+    _owned_project_dict(project_id, principal, write=True)
     return _versioning_call(
         versioning.delete_snapshot, project_id, snapshot_id
     )
@@ -2006,7 +2099,7 @@ def delete_snapshot(
 def restore_snapshot(
     project_id: str, snapshot_id: str, principal=Depends(post_guard)
 ):
-    project = _owned_project_dict(project_id, principal)
+    project = _owned_project_dict(project_id, principal, write=True)
     return _versioning_call(
         versioning.restore_snapshot,
         project_id,
@@ -2022,7 +2115,7 @@ def set_version_label(
     body: VersionLabelIn,
     principal=Depends(post_guard),
 ):
-    project = _owned_project_dict(project_id, principal)
+    project = _owned_project_dict(project_id, principal, write=True)
     return _versioning_call(
         versioning.set_label,
         project_id,
@@ -2054,10 +2147,10 @@ def _research_call(fn, *args, **kwargs):
         raise ApiError(error.status_code, error.code, message) from error
 
 
-def _require_owned_project(project_id: str, principal) -> None:
+def _require_owned_project(project_id: str, principal, *, write: bool = False) -> None:
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _get_owned_project_or_404(db, project_id, principal, write=write)
     finally:
         db.close()
 
@@ -2158,7 +2251,7 @@ def get_research_sources(
 def create_research_session(
     project_id: str, body: ResearchSessionIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     return _research_call(research_studio.run_session, project_id, body.topic)
 
 
@@ -2177,7 +2270,7 @@ def set_research_source_state(
     body: SourceStateIn,
     principal=Depends(post_guard),
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     return _research_call(
         research_studio.set_source_state, project_id, source_id, body.state
     )
@@ -2187,7 +2280,7 @@ def set_research_source_state(
 def add_research_external_source(
     project_id: str, body: ExternalSourceIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     return _research_call(
         research_studio.add_external_source,
         project_id,
@@ -2198,7 +2291,7 @@ def add_research_external_source(
 
 @router.post("/projects/{project_id}/research/fact-check")
 def run_research_fact_check(project_id: str, principal=Depends(post_guard)):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     return _research_call(research_studio.run_fact_check, project_id)
 
 
@@ -2206,7 +2299,7 @@ def run_research_fact_check(project_id: str, principal=Depends(post_guard)):
 def check_research_entity(
     project_id: str, entity_id: str, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     return _research_call(research_studio.check_entity, project_id, entity_id)
 
 
@@ -2214,7 +2307,7 @@ def check_research_entity(
 def create_research_correction(
     project_id: str, body: CorrectionIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     return _research_call(
         research_studio.add_correction,
         project_id,
@@ -2228,7 +2321,7 @@ def create_research_correction(
 def delete_research_correction(
     project_id: str, correction_id: str, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     _research_call(research_studio.delete_correction, project_id, correction_id)
     return {"deleted": True, "correction_id": correction_id}
 
@@ -2243,7 +2336,7 @@ def get_research_citations(project_id: str, principal=Depends(require_user)):
 def create_research_citation(
     project_id: str, body: CitationIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     return _research_call(
         research_studio.add_citation,
         project_id,
@@ -2258,7 +2351,7 @@ def create_research_citation(
 def delete_research_citation(
     project_id: str, citation_id: str, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     _research_call(research_studio.delete_citation, project_id, citation_id)
     return {"deleted": True, "citation_id": citation_id}
 
@@ -2273,7 +2366,7 @@ def get_research_bibliography(project_id: str, principal=Depends(require_user)):
 def create_research_timeline_event(
     project_id: str, body: TimelineEventIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     return _research_call(
         research_studio.add_timeline_event,
         project_id,
@@ -2290,7 +2383,7 @@ def update_research_timeline_event(
     body: TimelineEventUpdateIn,
     principal=Depends(post_guard),
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     return _research_call(
         research_studio.update_timeline_event,
         project_id,
@@ -2305,7 +2398,7 @@ def update_research_timeline_event(
 def delete_research_timeline_event(
     project_id: str, event_id: str, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     _research_call(research_studio.delete_timeline_event, project_id, event_id)
     return {"deleted": True, "event_id": event_id}
 
@@ -2320,7 +2413,7 @@ def get_research_summaries(project_id: str, principal=Depends(require_user)):
 def create_research_summary(
     project_id: str, body: SummaryIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal)
+    _require_owned_project(project_id, principal, write=True)
     return _research_call(
         research_studio.generate_summary, project_id, body.session_id
     )
@@ -2389,7 +2482,7 @@ def create_revision(
 ):
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _get_owned_project_or_404(db, project_id, principal, write=True)
     finally:
         db.close()
     view, _doc = _editor_call(
@@ -2434,7 +2527,7 @@ def apply_operations(
 ):
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _get_owned_project_or_404(db, project_id, principal, write=True)
     finally:
         db.close()
     view, _doc = _editor_call(
@@ -2459,7 +2552,7 @@ def render_revision(
 ):
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _get_owned_project_or_404(db, project_id, principal, write=True)
     finally:
         db.close()
     return _editor_call(
@@ -2489,7 +2582,7 @@ def upload_file(
 ):
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _get_owned_project_or_404(db, project_id, principal, write=True)
         # Per-plan upload cap replaces the global one where a plan
         # resolves (02 §5.3); editor.store_upload's global cap
         # remains as the second enforcement point downstream.
@@ -2832,7 +2925,7 @@ def upload_to_library(
 ):
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _get_owned_project_or_404(db, project_id, principal, write=True)
         # The same per-plan upload cap the project upload route
         # enforces; editor.store_upload's global cap remains the
         # second enforcement point downstream.
@@ -2848,5 +2941,261 @@ def upload_to_library(
             file.filename,
             file.file,
         )
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------
+# Collaboration (founder priority #11; gap-audit doc 04 §4)
+# ---------------------------------------------------------------------
+# Membership, invitations, comments and the activity feed. The
+# enforcement core is NOT here: it is the grant-aware choke point
+# above (_get_owned_project_or_404 with write=True on every
+# mutating route) plus services/collaboration.py's state machine.
+# These routes add the collaboration surfaces themselves.
+#
+# Invitations are IN-APP ONLY: there is no email service
+# configured, so inviting never sends (or claims to send) email —
+# the invitation waits in the invitee's account until they sign in
+# and accept or decline it (GET /invitations).
+
+
+def _collab_call(fn, *args, **kwargs):
+    """Run a collaboration service call, mapping CollaborationError
+    onto the v1 error shape."""
+    try:
+        return fn(*args, **kwargs)
+    except collaboration.CollaborationError as error:
+        raise ApiError(error.status_code, error.code, error.message) from error
+
+
+class MemberInviteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=320)
+    role: str
+
+
+class MemberRoleIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: str
+
+
+class InvitationRespondIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    accept: bool
+
+
+class CommentIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1, max_length=collaboration.MAX_COMMENT_CHARS)
+    revision_id: str | None = None
+
+
+class CommentEditIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: str = Field(min_length=1, max_length=collaboration.MAX_COMMENT_CHARS)
+
+
+@router.get("/projects/{project_id}/members")
+def get_project_members(project_id: str, principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(db, project_id, principal)
+        overview = collaboration.members_overview(db, project)
+        overview["your_role"] = collaboration.role_for(db, project, principal)
+        return overview
+    finally:
+        db.close()
+
+
+@router.post("/projects/{project_id}/members", status_code=201)
+def invite_project_member(
+    project_id: str, body: MemberInviteIn, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        # Ownership-level: the OWNER loader, not the grant loader.
+        project = _get_owner_project_or_404(db, project_id, principal)
+        row = _collab_call(
+            collaboration.invite_member,
+            db,
+            project,
+            inviter_id=principal.user_id,
+            email=body.email,
+            role=body.role,
+        )
+        return collaboration.member_view(db, row)
+    finally:
+        db.close()
+
+
+@router.patch("/projects/{project_id}/members/{user_id}")
+def change_project_member_role(
+    project_id: str,
+    user_id: str,
+    body: MemberRoleIn,
+    principal=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        project = _get_owner_project_or_404(db, project_id, principal)
+        row = _collab_call(
+            collaboration.change_member_role,
+            db,
+            project,
+            user_id=user_id,
+            role=body.role,
+        )
+        return collaboration.member_view(db, row)
+    finally:
+        db.close()
+
+
+@router.delete("/projects/{project_id}/members/{user_id}")
+def remove_project_member(
+    project_id: str, user_id: str, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(db, project_id, principal)
+        if user_id != principal.user_id:
+            # Removing SOMEONE ELSE is ownership-level.
+            _get_owner_project_or_404(db, project_id, principal)
+        row = _collab_call(
+            collaboration.remove_member,
+            db,
+            project,
+            user_id=user_id,
+            removed_by_id=principal.user_id,
+        )
+        return collaboration.member_view(db, row)
+    finally:
+        db.close()
+
+
+@router.get("/invitations")
+def list_invitations(principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        return {
+            "invitations": collaboration.pending_invitations(
+                db, principal.user_id
+            )
+        }
+    finally:
+        db.close()
+
+
+@router.post("/invitations/{project_id}/respond")
+def respond_to_invitation(
+    project_id: str,
+    body: InvitationRespondIn,
+    principal=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        row = _collab_call(
+            collaboration.respond_to_invitation,
+            db,
+            project_id,
+            principal,
+            accept=body.accept,
+        )
+        return collaboration.member_view(db, row)
+    finally:
+        db.close()
+
+
+@router.get("/projects/{project_id}/comments")
+def list_project_comments(project_id: str, principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(db, project_id, principal)
+        rows = collaboration.list_comments(db, project.id)
+        return {
+            "comments": [collaboration.comment_view(db, r) for r in rows]
+        }
+    finally:
+        db.close()
+
+
+@router.post("/projects/{project_id}/comments", status_code=201)
+def create_project_comment(
+    project_id: str, body: CommentIn, principal=Depends(post_guard)
+):
+    # Deliberately the READ form of the loader: discussion is open
+    # to every accepted member, viewers included (inviting a
+    # reviewer who cannot comment would be pointless). Production
+    # writes are what the viewer role makes read-only.
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(db, project_id, principal)
+        row = _collab_call(
+            collaboration.create_comment,
+            db,
+            project,
+            author_id=principal.user_id,
+            body=body.body,
+            revision_id=body.revision_id,
+        )
+        return collaboration.comment_view(db, row)
+    finally:
+        db.close()
+
+
+@router.put("/projects/{project_id}/comments/{comment_id}")
+def edit_project_comment(
+    project_id: str,
+    comment_id: str,
+    body: CommentEditIn,
+    principal=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(db, project_id, principal)
+        row = _collab_call(
+            collaboration.edit_comment,
+            db,
+            project,
+            comment_id=comment_id,
+            author_id=principal.user_id,
+            body=body.body,
+        )
+        return collaboration.comment_view(db, row)
+    finally:
+        db.close()
+
+
+@router.delete("/projects/{project_id}/comments/{comment_id}")
+def delete_project_comment(
+    project_id: str, comment_id: str, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(db, project_id, principal)
+        _collab_call(
+            collaboration.delete_comment,
+            db,
+            project,
+            comment_id=comment_id,
+            principal=principal,
+        )
+        return {"deleted": True, "comment_id": comment_id}
+    finally:
+        db.close()
+
+
+@router.get("/projects/{project_id}/activity")
+def get_project_activity(project_id: str, principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(db, project_id, principal)
+        project_dir = media_paths.project_dir(project.id)
+        return collaboration.build_activity(db, project, project_dir)
     finally:
         db.close()
