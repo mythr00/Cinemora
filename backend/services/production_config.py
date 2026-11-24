@@ -276,8 +276,8 @@ def clean_config(raw) -> dict:
     _check_retired_keys(raw)
     unknown = sorted(
         set(raw)
-        - {"preset", "motion_graphics", "theme", "music", "narration",
-           "captions"}
+        - {"version", "preset", "motion_graphics", "theme", "music",
+           "narration", "captions"}
     )
     if unknown:
         _refuse(
@@ -463,6 +463,17 @@ def matching_preset(config) -> str:
                if key not in ("version", "preset")):
             return preset_id
     return "custom"
+
+
+def with_honest_preset_label(config) -> dict:
+    """A copy of the configuration whose preset label states
+    what the fields actually are: the named preset while the
+    document equals its bundle verbatim, "custom" otherwise.
+    Applied at every store/resolve point so a label can never
+    claim a bundle the fields do not carry."""
+    labelled = dict(config)
+    labelled["preset"] = matching_preset(config)
+    return labelled
 
 
 # ---------------------------------------------------------------------
@@ -899,6 +910,7 @@ def resolve_run_options(project, merged_options) -> dict:
             "The production configuration cannot be honoured: "
             + "; ".join(e["message"] for e in validation["errors"]),
         )
+    config = with_honest_preset_label(config)
     resolved_theme = resolve_theme(config)
     merged = dict(merged_options)
     # The stored configuration is authoritative for the keys it
@@ -944,7 +956,7 @@ def save_project_config(db, project, raw_config) -> dict:
     the other. Refuses (422) on cleaning or validation errors —
     a configuration the pipeline cannot honour is never stored
     as if it were runnable."""
-    config = clean_config(raw_config)
+    config = with_honest_preset_label(clean_config(raw_config))
     validation = validate_config(config)
     if validation["errors"]:
         raise ConfigError(
@@ -991,7 +1003,7 @@ def save_defaults(db, user_id, raw_config) -> dict:
         )
     from models import UserPreference
 
-    config = clean_config(raw_config)
+    config = with_honest_preset_label(clean_config(raw_config))
     row = db.get(UserPreference, user_id)
     document = dict((row.document if row else None) or {})
     document[DEFAULTS_SECTION] = {"defaults": config}

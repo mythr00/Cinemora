@@ -1036,6 +1036,7 @@ def _prepare_creation_options(db, principal, options) -> dict:
         config = production_config.load_defaults(db, principal.user_id)
         if config is None:
             return options
+    config = production_config.with_honest_preset_label(config)
     prepared = dict(options or {})
     for key in production_config.PROJECTION_OWNED_KEYS:
         prepared.pop(key, None)

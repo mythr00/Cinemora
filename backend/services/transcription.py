@@ -54,6 +54,46 @@ def _is_unclear(segment) -> bool:
     return False
 
 
+def _decode_audio_array(audio_path: Path):
+    """Decode an audio file to the 16 kHz mono float32 array
+    the model consumes, through PyAV directly.
+
+    This mirrors faster-whisper's own decode_audio exactly
+    (s16 mono resample, /32768 float conversion) minus one
+    argument: the installed faster-whisper 1.2.1 passes
+    metadata_errors="ignore" to av.open, which the installed
+    PyAV 19 rejects (TypeError) — so the library's path-based
+    decode cannot run on this stack at all. Decoding here and
+    handing the model an array keeps the provider on the real
+    engine without patching site-packages."""
+    import gc
+    import io
+
+    import av
+    import numpy as np
+
+    resampler = av.audio.resampler.AudioResampler(
+        format="s16", layout="mono", rate=16000
+    )
+    raw_buffer = io.BytesIO()
+    dtype = None
+    with av.open(str(audio_path), mode="r") as container:
+        for frame in container.decode(audio=0):
+            for resampled in resampler.resample(frame):
+                array = resampled.to_ndarray()
+                dtype = array.dtype
+                raw_buffer.write(array)
+    del resampler
+    gc.collect()
+    if dtype is None:
+        raise TranscriptionError(
+            "transcription_failed",
+            f"No audio stream could be decoded from {audio_path}.",
+        )
+    audio = np.frombuffer(raw_buffer.getbuffer(), dtype=dtype)
+    return audio.astype(np.float32) / 32768.0
+
+
 def _transcribe_faster_whisper(audio_path: Path) -> dict:
     # The model singleton lives in services.captions (Stage 3I):
     # one WhisperModel per process, shared by caption timing and
@@ -62,7 +102,7 @@ def _transcribe_faster_whisper(audio_path: Path) -> dict:
 
     model = _get_whisper_model()
     segments_iter, info = model.transcribe(
-        str(audio_path),
+        _decode_audio_array(audio_path),
         beam_size=5,
         word_timestamps=True,
         vad_filter=True,
