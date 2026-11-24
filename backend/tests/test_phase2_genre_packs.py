@@ -28,7 +28,10 @@ from services import visual_director
 from services.asset_report import build_asset_report
 
 NEW_PACKS = ("engineering", "industrial")
-ALL_PACKS = ("general", "history", "true_crime") + NEW_PACKS
+# Phase M (founder #15) added biography / science / investigative
+# as data-authored packs; the full-set pin follows the pack system.
+PHASE_M_PACKS = ("biography", "science", "investigative")
+ALL_PACKS = ("general", "history", "true_crime") + NEW_PACKS + PHASE_M_PACKS
 
 NEUTRAL_SCRIPT = "A quiet film about bread making and village life."
 
@@ -37,7 +40,7 @@ NEUTRAL_SCRIPT = "A quiet film about bread making and village life."
 # Loading + validation
 # ---------------------------------------------------------------------------
 
-def test_all_five_packs_load_with_required_fields():
+def test_all_packs_load_with_required_fields():
     assert set(genre_packs.PACK_IDS) == set(ALL_PACKS)
     assert [p["id"] for p in genre_packs.available_packs()] == list(
         genre_packs.PACK_IDS

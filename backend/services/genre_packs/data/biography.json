@@ -1,0 +1,220 @@
+{
+ "description": "Documentaries about one person's life. The arc is a life, told in order: origins, turning points, work, legacy. Personal detail is held to the same evidence discipline as any fact — a life is not improved by inventing it.",
+ "entity_handling": [
+  "Never invent biographical detail — birthplaces, dates, relationships, motives or private conversations appear only when the script or a retrieved source states them.",
+  "Living subjects and their families are treated with care: contested claims about a living person are attributed to their source, never narrated as settled fact.",
+  "A subject's own words are quoted only from a retrieved source that carries them; paraphrase is labelled by its framing, never dressed as quotation."
+ ],
+ "expectations": {
+  "moving_share": {
+   "basis": "uncalibrated",
+   "range": null
+  },
+  "still_share": {
+   "basis": "uncalibrated",
+   "range": null
+  },
+  "document_share": {
+   "basis": "uncalibrated",
+   "range": null
+  },
+  "graphic_share": {
+   "basis": "uncalibrated",
+   "range": null
+  },
+  "uncovered_share": {
+   "basis": "uncalibrated",
+   "range": null
+  },
+  "broll_share": {
+   "basis": "founder_band_provisional",
+   "range": [
+    0.0,
+    0.4
+   ]
+  }
+ },
+ "format_preferences": {
+  "chart": 1,
+  "document": 2,
+  "footage": 1,
+  "graphic": 1,
+  "map": 1,
+  "photograph": 3
+ },
+ "graphics_motifs": [
+  "profile_reveal",
+  "photo_parallax",
+  "archival_title",
+  "document_presentation",
+  "newspaper_montage",
+  "milestone_waveform",
+  "bar_chart",
+  "stat_comparison",
+  "data_gauge",
+  "ring_badges",
+  "split_panel",
+  "territory_map",
+  "outcome_path",
+  "evidence_board",
+  "photo_node_diagram",
+  "cross_section",
+  "scan_grid",
+  "satellite_annotation",
+  "editorial_panel",
+  "line_chart",
+  "pie_chart",
+  "border_map",
+  "route_map",
+  "trade_route_map",
+  "military_map",
+  "exploded_view",
+  "mechanical_cutaway",
+  "blueprint_section",
+  "red_string_board",
+  "text_overlay",
+  "text_highlight",
+  "bubble_chart",
+  "population_pyramid",
+  "animated_dashboard",
+  "checklist_graphic",
+  "territory_expansion",
+  "satellite_zoom",
+  "heatmap",
+  "classified_file",
+  "newspaper_wall",
+  "crime_scene_diagram",
+  "construction_sequence",
+  "molecular_diagram",
+  "hud_overlay",
+  "holographic_panel",
+  "before_after",
+  "layered_reveal",
+  "object_labels"
+ ],
+ "id": "biography",
+ "label": "Biography",
+ "mix_preset": {
+  "duck_ratio": 8,
+  "fade_in_seconds": 1.5,
+  "fade_out_seconds": 2.5,
+  "music_volume": 0.1
+ },
+ "music_mood": "Warm, restrained piano and strings (metadata only — no music library is integrated; the soundtrack remains user-supplied or absent).",
+ "pacing": {
+  "notes": "Informational only — narration is not retimed to pacing targets.",
+  "target_seconds_per_sentence": 4.2
+ },
+ "research_query_templates": [
+  "{name} biography life story",
+  "{name} archive photographs records",
+  "{name} {era} historical record"
+ ],
+ "style_family": "history",
+ "visual_profile": {
+  "broll_vocabulary": {
+   "activities": [
+    "walking city streets",
+    "working at a desk",
+    "addressing a crowd",
+    "travelling by train"
+   ],
+   "settings": [
+    "family home interior",
+    "workshop",
+    "public hall",
+    "archive room"
+   ],
+   "place_types": [
+    "hometown street",
+    "school building",
+    "city square"
+   ],
+   "mood": [
+    "reflective",
+    "warm"
+   ]
+  },
+  "care_rules_ref": "entity_handling",
+  "category_priors": {
+   "evidence": 0.3,
+   "contextual": 0.3,
+   "environmental": 0.1,
+   "explanatory_graphic": 0.15,
+   "atmosphere": 0.15
+  },
+  "composition_affinities": {
+   "full_frame": 2,
+   "lower_third_card": 1,
+   "picture_in_picture": 1
+  },
+  "profile_version": 1,
+  "research_requirements": {
+   "min_sources_per_primary_subject": 2,
+   "prefer_primary_sources": true
+  },
+  "specificity_defaults": {
+   "contextual": "representative",
+   "environmental": "representative",
+   "evidence": "exact"
+  },
+  "template_affinities": {
+   "bar_chart": 2,
+   "data_gauge": 1,
+   "ring_badges": 1,
+   "stat_comparison": 2,
+   "line_chart": 2,
+   "pie_chart": 1,
+   "border_map": 2,
+   "route_map": 2,
+   "trade_route_map": 1,
+   "military_map": 1,
+   "exploded_view": 1,
+   "mechanical_cutaway": 1,
+   "blueprint_section": 1,
+   "red_string_board": 1,
+   "newspaper_montage": 2,
+   "profile_reveal": 3,
+   "document_presentation": 2,
+   "photo_parallax": 3,
+   "text_overlay": 1,
+   "text_highlight": 1,
+   "archival_title": 2,
+   "bubble_chart": 2,
+   "animated_dashboard": 2,
+   "holographic_panel": 1,
+   "milestone_waveform": 2,
+   "population_pyramid": 1,
+   "checklist_graphic": 1,
+   "territory_expansion": 1,
+   "satellite_zoom": 1,
+   "heatmap": 1,
+   "classified_file": 1,
+   "newspaper_wall": 1,
+   "crime_scene_diagram": 1,
+   "construction_sequence": 1,
+   "molecular_diagram": 1,
+   "hud_overlay": 1,
+   "before_after": 1,
+   "layered_reveal": 1,
+   "object_labels": 1
+  }
+ },
+ "visual_theme": "history",
+ "source_hints": {
+  "wikimedia_category": [
+   "{subject} portraits",
+   "{subject}"
+  ],
+  "wikimedia_query": [
+   "{subject} photograph"
+  ],
+  "archive": [
+   "creator:({subject})",
+   "title:({subject})"
+  ],
+  "web": [
+   "{subject} biography archive interview"
+  ]
+ }
+}

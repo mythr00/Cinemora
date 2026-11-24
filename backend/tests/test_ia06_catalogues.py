@@ -98,11 +98,13 @@ def test_genres_catalogue_matches_pack_data(client):
 
     # Exactly the real pack ids — no more, no fewer (five packs
     # since Transformation Phase 2.1/2.2 added engineering and
-    # industrial).
+    # industrial; eight since Phase M added biography, science
+    # and investigative as data-authored packs).
     assert {g["id"] for g in genres} == {
         "history", "true_crime", "general", "engineering", "industrial",
+        "biography", "science", "investigative",
     }
-    assert len(genres) == 5
+    assert len(genres) == 8
 
     for entry in genres:
         pack = genre_packs.load_pack(entry["id"])

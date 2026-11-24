@@ -102,7 +102,14 @@ from pathlib import Path
 
 _DATA_DIR = Path(__file__).resolve().parent / "data"
 
-PACK_IDS = ("general", "history", "true_crime", "engineering", "industrial")
+PACK_IDS = (
+    "general", "history", "true_crime", "engineering", "industrial",
+    # Phase M (Templates completion, founder #15): biography,
+    # science and investigative journalism join as data-authored
+    # packs on this same system — the gap audit's three named
+    # additions (doc 01 §5 / doc 06 Phase M).
+    "biography", "science", "investigative",
+)
 
 
 @lru_cache(maxsize=None)
