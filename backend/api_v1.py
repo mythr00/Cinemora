@@ -70,6 +70,7 @@ from services import (
     qa_report,
     research_studio,
     run_ledger,
+    script_studio,
     versioning,
 )
 from services.atomic_write import write_json_atomic
@@ -2416,6 +2417,205 @@ def create_research_summary(
     _require_owned_project(project_id, principal, write=True)
     return _research_call(
         research_studio.generate_summary, project_id, body.session_id
+    )
+
+
+# ---------------------------------------------------------------------------
+# YouTube Script Studio (founder priority #12) — the writing
+# workspace over services/script_studio.py: per-owner draft
+# documents, AI proposals through llm_client, the pipeline's own
+# analysis + fact check, and send-to-production through the normal
+# project creation path. Drafts live in the caller's own store, so
+# another user's draft id is simply absent — a 404, never a leak.
+# ---------------------------------------------------------------------------
+
+
+def _script_call(fn, *args, **kwargs):
+    """Run a script-studio service call, mapping ScriptError onto
+    the v1 error shape."""
+    try:
+        return fn(*args, **kwargs)
+    except script_studio.ScriptError as error:
+        message = error.message
+        if error.details:
+            message = f"{message} Details: {json.dumps(error.details)}"
+        raise ApiError(error.status_code, error.code, message) from error
+
+
+class ScriptSectionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str | None = None
+    heading: str | None = Field(default=None, max_length=200)
+    body: str | None = Field(default=None, max_length=60_000)
+
+
+class ScriptDraftIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=300)
+    category: str | None = Field(default=None, max_length=120)
+    target_minutes: float | None = None
+    sections: list[ScriptSectionIn] | None = None
+
+
+class ScriptDraftUpdateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=300)
+    category: str | None = Field(default=None, max_length=120)
+    target_minutes: float | None = None
+    clear_target: bool = False
+    sections: list[ScriptSectionIn] | None = None
+
+
+class ScriptGenerateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    topic: str = Field(min_length=1, max_length=2_000)
+    angle: str | None = Field(default=None, max_length=2_000)
+    category: str | None = Field(default=None, max_length=120)
+    target_minutes: float | None = None
+
+
+class ScriptTightenIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    section_id: str = Field(min_length=1)
+    text: str | None = Field(default=None, max_length=60_000)
+
+
+class ScriptAttachIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str = Field(min_length=1)
+
+
+def _sections_payload(sections):
+    if sections is None:
+        return None
+    return [s.model_dump() for s in sections]
+
+
+@router.get("/script-studio/scripts")
+def list_script_drafts(principal=Depends(require_user)):
+    return _script_call(script_studio.list_drafts, principal.user_id)
+
+
+@router.post("/script-studio/scripts", status_code=201)
+def create_script_draft(body: ScriptDraftIn, principal=Depends(post_guard)):
+    return _script_call(
+        script_studio.create_draft,
+        principal.user_id,
+        title=body.title,
+        category=body.category,
+        target_minutes=body.target_minutes,
+        sections=_sections_payload(body.sections),
+    )
+
+
+@router.get("/script-studio/scripts/{script_id}")
+def get_script_draft(script_id: str, principal=Depends(require_user)):
+    return _script_call(script_studio.get_draft, principal.user_id, script_id)
+
+
+@router.put("/script-studio/scripts/{script_id}")
+def update_script_draft(
+    script_id: str, body: ScriptDraftUpdateIn, principal=Depends(post_guard)
+):
+    target = None if body.clear_target else body.target_minutes
+    target_arg = target if (body.clear_target or body.target_minutes is not None) else "__unset__"
+    return _script_call(
+        script_studio.update_draft,
+        principal.user_id,
+        script_id,
+        title=body.title,
+        category=body.category,
+        target_minutes=target_arg,
+        sections=_sections_payload(body.sections),
+    )
+
+
+@router.delete("/script-studio/scripts/{script_id}")
+def delete_script_draft(script_id: str, principal=Depends(post_guard)):
+    return _script_call(script_studio.delete_draft, principal.user_id, script_id)
+
+
+@router.get("/script-studio/scripts/{script_id}/revisions")
+def list_script_revisions(script_id: str, principal=Depends(require_user)):
+    return _script_call(
+        script_studio.list_revisions, principal.user_id, script_id
+    )
+
+
+@router.post("/script-studio/scripts/{script_id}/revisions/{revision_id}/restore")
+def restore_script_revision(
+    script_id: str, revision_id: str, principal=Depends(post_guard)
+):
+    return _script_call(
+        script_studio.restore_revision, principal.user_id, script_id, revision_id
+    )
+
+
+@router.post("/script-studio/scripts/{script_id}/analysis")
+def run_script_analysis(script_id: str, principal=Depends(post_guard)):
+    return _script_call(script_studio.run_analysis, principal.user_id, script_id)
+
+
+@router.post("/script-studio/scripts/{script_id}/fact-check")
+def run_script_fact_check(script_id: str, principal=Depends(post_guard)):
+    return _script_call(script_studio.run_fact_check, principal.user_id, script_id)
+
+
+@router.post("/script-studio/ai/draft", status_code=201)
+def generate_script_draft(body: ScriptGenerateIn, principal=Depends(post_guard)):
+    return _script_call(
+        script_studio.generate_draft,
+        principal.user_id,
+        topic=body.topic,
+        angle=body.angle or "",
+        category=body.category or "",
+        target_minutes=body.target_minutes,
+    )
+
+
+@router.post("/script-studio/scripts/{script_id}/ai/expand")
+def expand_script_sections(script_id: str, principal=Depends(post_guard)):
+    return _script_call(
+        script_studio.expand_sections, principal.user_id, script_id
+    )
+
+
+@router.post("/script-studio/scripts/{script_id}/ai/tighten")
+def tighten_script_passage(
+    script_id: str, body: ScriptTightenIn, principal=Depends(post_guard)
+):
+    return _script_call(
+        script_studio.tighten_passage,
+        principal.user_id,
+        script_id,
+        section_id=body.section_id,
+        text=body.text,
+    )
+
+
+@router.post("/script-studio/scripts/{script_id}/send-to-production", status_code=201)
+def send_script_to_production(script_id: str, principal=Depends(post_guard)):
+    return _script_call(
+        script_studio.send_to_production, principal.user_id, script_id
+    )
+
+
+@router.post("/script-studio/scripts/{script_id}/attach")
+def attach_script_to_project(
+    script_id: str, body: ScriptAttachIn, principal=Depends(post_guard)
+):
+    _require_owned_project(body.project_id, principal, write=True)
+    return _script_call(
+        script_studio.attach_to_project,
+        principal.user_id,
+        script_id,
+        body.project_id,
     )
 
 
