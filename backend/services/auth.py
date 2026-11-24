@@ -79,7 +79,14 @@ class Principal:
     user_id: str
     email: str
     role: str
-    auth_method: str  # "session" | "operator_token"
+    auth_method: str  # "session" | "operator_token" | "api_key"
+
+    # Developer API (Phase N): set only when auth_method is
+    # "api_key" — the resolved key's id and its granted scopes, so
+    # route guards can enforce scope server-side. Sessions and the
+    # operator token carry no key and the full scope set implicitly.
+    api_key_id: str | None = None
+    scopes: tuple = ()
 
     @property
     def is_admin(self) -> bool:

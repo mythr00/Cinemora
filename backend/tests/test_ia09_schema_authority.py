@@ -58,7 +58,7 @@ from database import (
 )
 
 BACKEND = Path(__file__).resolve().parent.parent
-HEAD = "0010_collaboration"
+HEAD = "0011_developer_api"
 
 
 def _alembic_cfg():
@@ -117,7 +117,7 @@ def _project_rows(db_path):
 # ---------------------------------------------------------------------
 
 
-def test_migration_head_is_0010():
+def test_migration_head_is_0011():
     assert migration_head() == HEAD
 
 

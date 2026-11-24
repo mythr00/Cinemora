@@ -6,6 +6,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     text,
@@ -910,4 +911,152 @@ class ProjectComment(Base):
 
     edited_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class ApiKey(Base):
+    """A per-user Developer API key (founder priority #16;
+    gap-audit doc 06 Phase N).
+
+    Schema authority: migrations/versions/0011_developer_api.py.
+
+    The secret is shown to its owner exactly once, at creation.
+    Only its SHA-256 is stored (`key_hash`, the password-reset
+    token pattern in services/auth.py) plus a short non-secret
+    display prefix (`key_prefix`, also the lookup key). Revocation
+    is a timestamp, never a delete: the row is the recorded history
+    of the key's existence and use. `request_count` / `last_used_at`
+    are written by the public-API auth path from real traffic only.
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    # First 12 characters of the secret ("cmk_" + 8) — safe to
+    # display, and the indexed lookup key for resolution.
+    key_prefix: Mapped[str] = mapped_column(
+        String(16), nullable=False, index=True
+    )
+
+    # SHA-256 hex of the full secret. The secret itself is never
+    # stored, logged or returned after creation.
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # JSON list drawn from {"read", "write"}; enforced server-side
+    # on every public-API route.
+    scopes: Mapped[list] = mapped_column(JSONVariant, nullable=False)
+
+    # Per-key request budget per minute on /api/public/v1; NULL
+    # means the deployment default (CINEMORA_PUBLIC_API_RATE_LIMIT).
+    rate_limit_per_minute: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    revoked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    last_used_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    request_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+
+class WebhookEndpoint(Base):
+    """A user-registered webhook for run lifecycle events
+    (founder priority #16; gap-audit doc 06 Phase N).
+
+    Schema authority: migrations/versions/0011_developer_api.py.
+
+    The signing secret is shown once at creation; only its SHA-256
+    is stored. Deliveries are signed with HMAC-SHA256 keyed by that
+    stored hash (hex) — the receiver recomputes it from the secret
+    it was shown, so the plaintext secret never needs to persist
+    server-side (services/webhooks.py documents the scheme).
+    """
+
+    __tablename__ = "webhook_endpoints"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+
+    # JSON list drawn from {"run.completed", "run.failed"}.
+    events: Mapped[list] = mapped_column(JSONVariant, nullable=False)
+
+    # SHA-256 hex of the signing secret shown once at creation.
+    secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    disabled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class WebhookDelivery(Base):
+    """One recorded webhook delivery attempt (Phase N).
+
+    Schema authority: migrations/versions/0011_developer_api.py.
+
+    A row per attempt (retries are separate rows sharing
+    `delivery_group`), written from real delivery traffic only —
+    status code or transport error, never a fabricated outcome.
+    """
+
+    __tablename__ = "webhook_deliveries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    endpoint_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("webhook_endpoints.id"),
+        nullable=False,
+        index=True,
+    )
+
+    delivery_group: Mapped[str] = mapped_column(
+        String(36), nullable=False, index=True
+    )
+
+    event: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    run_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    project_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # HTTP status returned by the receiver; NULL when the attempt
+    # failed before a response (DNS, TLS, timeout, SSRF refusal).
+    response_status: Mapped[int] = mapped_column(Integer, nullable=True)
+
+    error: Mapped[str] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, index=True
     )
