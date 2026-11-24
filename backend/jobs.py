@@ -552,6 +552,35 @@ def build_production_scenes(script: str, project_id: str = "", project_dir=None,
         raise RuntimeError("Script analyzer returned zero sentences.")
 
     bible = analysis.get("bible") or {}
+
+    # Research Studio (Phase D): user entity corrections recorded
+    # in the studio store are applied to the analysed bible BEFORE
+    # the Case Bible and plan documents are written, so a correction
+    # demonstrably changes this plan and every downstream consumer
+    # of the bible. Fail-soft with the outcome printed — a studio
+    # artefact problem must never lose an analysis.
+    if project_id and isinstance(bible, dict) and bible.get("entities"):
+        try:
+            from services import research_studio as _research_studio
+
+            _applied = _research_studio.apply_entity_corrections(
+                project_id, bible
+            )
+            if _applied:
+                print(
+                    "Research Studio: entity corrections applied: "
+                    + ", ".join(
+                        f"{a.get('entity_id')}.{a.get('field')}"
+                        f"={'ok' if a.get('applied') else 'skipped'}"
+                        for a in _applied
+                    )
+                )
+        except Exception as _correction_error:  # recorded, not silent
+            print(
+                "Research Studio: entity corrections NOT applied: "
+                f"{type(_correction_error).__name__}: {_correction_error}"
+            )
+
     bible_path = None
     if project_dir:
         bible_path = write_case_bible(analysis, project_dir)

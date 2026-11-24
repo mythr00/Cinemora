@@ -64,6 +64,7 @@ from services import (
     media_paths,
     narration,
     plan_document,
+    research_studio,
     run_ledger,
 )
 from services.atomic_write import write_json_atomic
@@ -1730,6 +1731,298 @@ def get_certificate(project_id: str, principal=Depends(require_user)):
         project_id, run_id=latest["run_id"]
     )
     return certificate
+
+
+# ---------------------------------------------------------------------------
+# Research Studio (Phase D, founder priority #6) — the research
+# workspace over the existing engine (services/research_studio.py).
+# Every route loads the project through the Phase 8 owner choke
+# point first: another user's project is a 404 on reads AND writes.
+# ---------------------------------------------------------------------------
+
+
+def _research_call(fn, *args, **kwargs):
+    """Run a research-studio service call, mapping ResearchError
+    onto the v1 error shape."""
+    try:
+        return fn(*args, **kwargs)
+    except research_studio.ResearchError as error:
+        message = error.message
+        if error.details:
+            message = f"{message} Details: {json.dumps(error.details)}"
+        raise ApiError(error.status_code, error.code, message) from error
+
+
+def _require_owned_project(project_id: str, principal) -> None:
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal)
+    finally:
+        db.close()
+
+
+class ResearchSessionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    topic: str = Field(min_length=1, max_length=500)
+
+
+class SourceStateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: str
+
+
+class CorrectionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: str = Field(min_length=1)
+    field: str
+    value: str = Field(min_length=1)
+
+
+class ExternalSourceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    url: str = Field(min_length=1)
+
+
+class CitationClaimIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    fact_id: str | None = None
+    sentence_number: int | None = None
+    label: str | None = None
+
+
+class CitationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    claim: CitationClaimIn
+    source_id: str | None = None
+    external: ExternalSourceIn | None = None
+    note: str | None = None
+
+
+class TimelineEventIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    when: str = Field(min_length=1)
+    what: str = Field(min_length=1)
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class TimelineEventUpdateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    when: str | None = None
+    what: str | None = None
+    source_ids: list[str] | None = None
+
+
+class SummaryIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str | None = None
+
+
+@router.get("/projects/{project_id}/research")
+def get_research_overview(project_id: str, principal=Depends(require_user)):
+    _require_owned_project(project_id, principal)
+    return _research_call(research_studio.overview, project_id)
+
+
+@router.get("/projects/{project_id}/research/bible")
+def get_research_bible(project_id: str, principal=Depends(require_user)):
+    _require_owned_project(project_id, principal)
+    return _research_call(research_studio.bible_view, project_id)
+
+
+@router.get("/projects/{project_id}/research/sources")
+def get_research_sources(
+    project_id: str,
+    state: str | None = None,
+    q: str | None = None,
+    principal=Depends(require_user),
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(
+        research_studio.list_sources, project_id, state=state, query=q
+    )
+
+
+@router.post("/projects/{project_id}/research/sessions", status_code=201)
+def create_research_session(
+    project_id: str, body: ResearchSessionIn, principal=Depends(post_guard)
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(research_studio.run_session, project_id, body.topic)
+
+
+@router.get("/projects/{project_id}/research/sessions/{session_id}")
+def get_research_session(
+    project_id: str, session_id: str, principal=Depends(require_user)
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(research_studio.get_session, project_id, session_id)
+
+
+@router.post("/projects/{project_id}/research/sources/{source_id}/state")
+def set_research_source_state(
+    project_id: str,
+    source_id: str,
+    body: SourceStateIn,
+    principal=Depends(post_guard),
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(
+        research_studio.set_source_state, project_id, source_id, body.state
+    )
+
+
+@router.post("/projects/{project_id}/research/sources/external", status_code=201)
+def add_research_external_source(
+    project_id: str, body: ExternalSourceIn, principal=Depends(post_guard)
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(
+        research_studio.add_external_source,
+        project_id,
+        body.title or "",
+        body.url,
+    )
+
+
+@router.post("/projects/{project_id}/research/fact-check")
+def run_research_fact_check(project_id: str, principal=Depends(post_guard)):
+    _require_owned_project(project_id, principal)
+    return _research_call(research_studio.run_fact_check, project_id)
+
+
+@router.post("/projects/{project_id}/research/entities/{entity_id}/check")
+def check_research_entity(
+    project_id: str, entity_id: str, principal=Depends(post_guard)
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(research_studio.check_entity, project_id, entity_id)
+
+
+@router.post("/projects/{project_id}/research/corrections", status_code=201)
+def create_research_correction(
+    project_id: str, body: CorrectionIn, principal=Depends(post_guard)
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(
+        research_studio.add_correction,
+        project_id,
+        body.entity_id,
+        body.field,
+        body.value,
+    )
+
+
+@router.delete("/projects/{project_id}/research/corrections/{correction_id}")
+def delete_research_correction(
+    project_id: str, correction_id: str, principal=Depends(post_guard)
+):
+    _require_owned_project(project_id, principal)
+    _research_call(research_studio.delete_correction, project_id, correction_id)
+    return {"deleted": True, "correction_id": correction_id}
+
+
+@router.get("/projects/{project_id}/research/citations")
+def get_research_citations(project_id: str, principal=Depends(require_user)):
+    _require_owned_project(project_id, principal)
+    return {"citations": _research_call(research_studio.list_citations, project_id)}
+
+
+@router.post("/projects/{project_id}/research/citations", status_code=201)
+def create_research_citation(
+    project_id: str, body: CitationIn, principal=Depends(post_guard)
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(
+        research_studio.add_citation,
+        project_id,
+        body.claim.model_dump(),
+        source_id=body.source_id,
+        external=body.external.model_dump() if body.external else None,
+        note=body.note,
+    )
+
+
+@router.delete("/projects/{project_id}/research/citations/{citation_id}")
+def delete_research_citation(
+    project_id: str, citation_id: str, principal=Depends(post_guard)
+):
+    _require_owned_project(project_id, principal)
+    _research_call(research_studio.delete_citation, project_id, citation_id)
+    return {"deleted": True, "citation_id": citation_id}
+
+
+@router.get("/projects/{project_id}/research/bibliography")
+def get_research_bibliography(project_id: str, principal=Depends(require_user)):
+    _require_owned_project(project_id, principal)
+    return _research_call(research_studio.bibliography, project_id)
+
+
+@router.post("/projects/{project_id}/research/timeline-events", status_code=201)
+def create_research_timeline_event(
+    project_id: str, body: TimelineEventIn, principal=Depends(post_guard)
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(
+        research_studio.add_timeline_event,
+        project_id,
+        body.when,
+        body.what,
+        body.source_ids,
+    )
+
+
+@router.put("/projects/{project_id}/research/timeline-events/{event_id}")
+def update_research_timeline_event(
+    project_id: str,
+    event_id: str,
+    body: TimelineEventUpdateIn,
+    principal=Depends(post_guard),
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(
+        research_studio.update_timeline_event,
+        project_id,
+        event_id,
+        when=body.when,
+        what=body.what,
+        source_ids=body.source_ids,
+    )
+
+
+@router.delete("/projects/{project_id}/research/timeline-events/{event_id}")
+def delete_research_timeline_event(
+    project_id: str, event_id: str, principal=Depends(post_guard)
+):
+    _require_owned_project(project_id, principal)
+    _research_call(research_studio.delete_timeline_event, project_id, event_id)
+    return {"deleted": True, "event_id": event_id}
+
+
+@router.get("/projects/{project_id}/research/summaries")
+def get_research_summaries(project_id: str, principal=Depends(require_user)):
+    _require_owned_project(project_id, principal)
+    return {"summaries": _research_call(research_studio.list_summaries, project_id)}
+
+
+@router.post("/projects/{project_id}/research/summaries", status_code=201)
+def create_research_summary(
+    project_id: str, body: SummaryIn, principal=Depends(post_guard)
+):
+    _require_owned_project(project_id, principal)
+    return _research_call(
+        research_studio.generate_summary, project_id, body.session_id
+    )
 
 
 # ---------------------------------------------------------------------------
