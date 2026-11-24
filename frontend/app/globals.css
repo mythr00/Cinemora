@@ -1933,3 +1933,12 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 .thumb-swatch { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); }
 .thumb-swatch-chip { width: 18px; height: 18px; border: 1px solid var(--line-deep); border-radius: 4px; }
 .thumb-error { color: var(--danger); font-size: 14px; line-height: 1.55; }
+.loc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
+.loc-card { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); overflow: hidden; }
+.loc-card-body { padding: 14px 16px 16px; }
+.loc-card-body h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 4px; color: var(--ink-strong); font-size: 16px; }
+.loc-warnings { margin-top: 10px; }
+.loc-warnings h4 { margin: 0 0 4px; color: var(--ink-strong); font-size: 14px; }
+.loc-script-preview { margin-top: 10px; }
+.loc-script-preview summary { cursor: pointer; color: var(--ink-strong); font-size: 14px; }
+.loc-script-preview pre { margin-top: 8px; max-height: 320px; overflow: auto; white-space: pre-wrap; font-size: 13px; line-height: 1.6; color: var(--ink-soft); background: var(--surface-low); border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px 14px; }

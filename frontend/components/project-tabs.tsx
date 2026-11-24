@@ -25,6 +25,7 @@ const TABS = [
   { suffix: "/certificate", label: "Delivery" },
   { suffix: "/qa", label: "QA Report" },
   { suffix: "/thumbnails", label: "Thumbnails" },
+  { suffix: "/localization", label: "Localization" },
   { suffix: "/versions", label: "Versions" },
   { suffix: "/intelligence", label: "Intelligence" },
   { suffix: "/team", label: "Team" },

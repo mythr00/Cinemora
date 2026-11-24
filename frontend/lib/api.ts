@@ -1122,6 +1122,112 @@ export function thumbnailDownloadPath(projectId: string, thumbId: string) {
 }
 
 // ---------------------------------------------------------------------
+// Localization Studio (founder priority #14) — sub-phase 1 of the
+// audit's phasing (services/localization.py): the project's
+// recorded captions and its script translated through the LLM
+// layer, caption timings preserved exactly, the English narration
+// retained and labelled as retained. Dubbing is reported
+// unavailable with its reasons; there is no dub action.
+// ---------------------------------------------------------------------
+
+export type LocalizationLanguage = {
+  code: string;
+  name: string;
+};
+
+export type LocalizationWarning = {
+  segment_index: number;
+  start: number;
+  end: number;
+  source_characters: number;
+  translated_characters: number;
+  reason: string;
+  characters_per_second: number | null;
+};
+
+export type LocalizationArtefact = {
+  id: string;
+  kind: "captions" | "script";
+  language: string;
+  language_name: string;
+  source_language: string;
+  created_at: string;
+  source: {
+    kind: string;
+    revision_id?: string | null;
+    revision_number?: number | null;
+    script_sha256?: string;
+  };
+  warnings: LocalizationWarning[];
+  downloads: string[];
+  files_available: Record<string, boolean>;
+  segment_count?: number;
+  paragraph_count?: number;
+  script_draft_id?: string;
+  script_text?: string;
+};
+
+export type LocalizationStudioView = {
+  schema: string;
+  project_id: string;
+  project_title: string;
+  source_language: string;
+  source_language_name: string;
+  ai_available: boolean;
+  languages: LocalizationLanguage[];
+  source: {
+    captions: {
+      state: string;
+      source: string | null;
+      revision_number: number | null;
+      segment_count: number;
+      language: string | null;
+    };
+    script: {
+      state: string;
+      paragraph_count: number;
+      word_count: number;
+    };
+  };
+  dubbing: {
+    state: string;
+    narration_language: string;
+    voices: Array<{ voice_id: string; installed: boolean }>;
+    reason: string;
+  };
+  artefacts: LocalizationArtefact[];
+};
+
+export function getLocalization(projectId: string, signal?: AbortSignal) {
+  return apiRequest<LocalizationStudioView>(`/api/v1/projects/${projectId}/localization`, { signal });
+}
+
+export function localizeCaptions(projectId: string, language: string) {
+  return apiRequest<LocalizationArtefact>(`/api/v1/projects/${projectId}/localization/captions`, {
+    method: "POST",
+    body: JSON.stringify({ language }),
+  });
+}
+
+export function localizeScript(projectId: string, language: string) {
+  return apiRequest<LocalizationArtefact>(`/api/v1/projects/${projectId}/localization/script`, {
+    method: "POST",
+    body: JSON.stringify({ language }),
+  });
+}
+
+export function deleteLocalizationArtefact(projectId: string, artefactId: string) {
+  return apiRequest<{ deleted: string; kind: string; script_draft_kept?: boolean }>(
+    `/api/v1/projects/${projectId}/localization/${artefactId}`,
+    { method: "DELETE" },
+  );
+}
+
+export function localizationDownloadPath(projectId: string, artefactId: string, kind: string) {
+  return `/api/v1/projects/${projectId}/localization/${artefactId}/download?kind=${kind}`;
+}
+
+// ---------------------------------------------------------------------
 // Project Intelligence (founder priority #10) — the assembly layer
 // over the persistent project record (services/project_intelligence
 // .py). Recorded data passes through as recorded (bible entities,
