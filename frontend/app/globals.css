@@ -1816,3 +1816,24 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
   background: var(--surface-low); color: var(--ink-soft);
   font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere;
 }
+
+/* Collaboration (#11): Team page + invitations inbox. Pure white,
+   same tokens as the rest of the studio; no presence indicators
+   (presence is not recorded, so it is never implied). */
+.team-error { color: #b3261e; font-size: 14px; margin: 12px 0; }
+.team-people, .team-comments, .team-activity { list-style: none; margin: 12px 0 0; padding: 0; }
+.team-people li, .team-comments li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--ink-strong); }
+.team-comments li { display: block; }
+.team-comments p { margin: 4px 0; white-space: pre-wrap; }
+.team-role { color: var(--ink-soft); font-size: 13px; display: inline-flex; align-items: center; gap: 10px; }
+.team-actions { display: inline-flex; align-items: center; gap: 8px; }
+.team-actions button, .team-leave { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); color: var(--ink-strong); font: inherit; font-size: 13px; cursor: pointer; }
+.team-actions select, .team-invite select, .team-invite input { padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); color: var(--ink-strong); font: inherit; }
+.team-invite { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 10px; }
+.team-invite label, .team-comment-form label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--ink-soft); }
+.team-comment-form { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.team-comment-form textarea, .team-comments textarea { width: 100%; max-width: 640px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); color: var(--ink-strong); font: inherit; }
+.team-activity li { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--ink-soft); }
+.invitations-inbox { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 16px; margin: 0 0 20px; background: var(--paper); }
+.invitations-inbox ul { list-style: none; margin: 10px 0 0; padding: 0; }
+.invitations-inbox li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }

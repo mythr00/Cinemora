@@ -294,6 +294,10 @@ export type ProjectSummary = {
   current_stage?: string | null;
   video_url?: string | null;
   latest_run?: RunSummary | null;
+  /** Collaboration (#11): the caller's role on this project —
+   * "owner" for their own projects, the member role for shared
+   * ones; null where the backend did not resolve it. */
+  access_role?: string | null;
 };
 
 export type ProjectDetail = ProjectSummary & {
@@ -3548,5 +3552,149 @@ export function setVersionLabel(
   return apiRequest<{ entry_id: string; label: VersionLabel | null }>(
     `/api/v1/projects/${projectId}/versions/labels`,
     { method: "PUT", body: JSON.stringify({ entry_id: entryId, name, note }) },
+  );
+}
+
+// ---------------------------------------------------------------------
+// Collaboration (founder priority #11)
+// ---------------------------------------------------------------------
+// Membership, in-app invitations, comments and the activity feed.
+// Invitations are in-app only: no email is sent (none is configured),
+// so an invitation waits in the invitee's account until they sign
+// in and respond here.
+
+export type MemberUser = {
+  user_id: string;
+  email?: string | null;
+  display_name?: string | null;
+};
+
+export type ProjectMemberEntry = {
+  user: MemberUser | null;
+  role: string;
+  status: string;
+  invited_by?: MemberUser | null;
+  invited_at?: string | null;
+  responded_at?: string | null;
+  removed_at?: string | null;
+  removed_by?: MemberUser | null;
+};
+
+export type ProjectMembers = {
+  owner: MemberUser | null;
+  members: ProjectMemberEntry[];
+  invitations: ProjectMemberEntry[];
+  your_role?: string | null;
+};
+
+export type PendingInvitation = {
+  project_id: string;
+  project_title?: string | null;
+  project_category?: string | null;
+  role: string;
+  invited_by?: MemberUser | null;
+  invited_at?: string | null;
+};
+
+export type ProjectComment = {
+  comment_id: string;
+  project_id: string;
+  revision_id?: string | null;
+  author: MemberUser | null;
+  body: string;
+  created_at?: string | null;
+  edited_at?: string | null;
+};
+
+export type ActivityEvent = {
+  at?: string | null;
+  kind: string;
+  summary: string;
+  [key: string]: unknown;
+};
+
+export function getProjectMembers(projectId: string) {
+  return apiRequest<ProjectMembers>(`/api/v1/projects/${projectId}/members`);
+}
+
+export function inviteProjectMember(
+  projectId: string,
+  email: string,
+  role: string,
+) {
+  return apiRequest<ProjectMemberEntry>(
+    `/api/v1/projects/${projectId}/members`,
+    { method: "POST", body: JSON.stringify({ email, role }) },
+  );
+}
+
+export function changeProjectMemberRole(
+  projectId: string,
+  userId: string,
+  role: string,
+) {
+  return apiRequest<ProjectMemberEntry>(
+    `/api/v1/projects/${projectId}/members/${userId}`,
+    { method: "PATCH", body: JSON.stringify({ role }) },
+  );
+}
+
+export async function removeProjectMember(projectId: string, userId: string) {
+  await apiRequest(`/api/v1/projects/${projectId}/members/${userId}`, {
+    method: "DELETE",
+  });
+}
+
+export function listInvitations() {
+  return apiRequest<{ invitations: PendingInvitation[] }>("/api/v1/invitations");
+}
+
+export function respondToInvitation(projectId: string, accept: boolean) {
+  return apiRequest<ProjectMemberEntry>(
+    `/api/v1/invitations/${projectId}/respond`,
+    { method: "POST", body: JSON.stringify({ accept }) },
+  );
+}
+
+export function listProjectComments(projectId: string) {
+  return apiRequest<{ comments: ProjectComment[] }>(
+    `/api/v1/projects/${projectId}/comments`,
+  );
+}
+
+export function createProjectComment(
+  projectId: string,
+  body: string,
+  revisionId?: string | null,
+) {
+  return apiRequest<ProjectComment>(`/api/v1/projects/${projectId}/comments`, {
+    method: "POST",
+    body: JSON.stringify({ body, revision_id: revisionId ?? null }),
+  });
+}
+
+export function editProjectComment(
+  projectId: string,
+  commentId: string,
+  body: string,
+) {
+  return apiRequest<ProjectComment>(
+    `/api/v1/projects/${projectId}/comments/${commentId}`,
+    { method: "PUT", body: JSON.stringify({ body }) },
+  );
+}
+
+export async function deleteProjectComment(
+  projectId: string,
+  commentId: string,
+) {
+  await apiRequest(`/api/v1/projects/${projectId}/comments/${commentId}`, {
+    method: "DELETE",
+  });
+}
+
+export function getProjectActivity(projectId: string) {
+  return apiRequest<{ events: ActivityEvent[] }>(
+    `/api/v1/projects/${projectId}/activity`,
   );
 }

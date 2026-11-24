@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { PROJECT_STATUS_OPTIONS, StatusBadge } from "@/components/status-badge";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
-import { listProjects, type ProjectSummary } from "@/lib/api";
+import { listInvitations, listProjects, respondToInvitation, type PendingInvitation, type ProjectSummary } from "@/lib/api";
 import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
 import { ArrowUpRight, Search } from "lucide-react";
 
@@ -29,6 +29,10 @@ export default function ProjectsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortMode>("newest");
+  // Collaboration (#11): pending project invitations addressed to
+  // this account. Invitations are in-app only (no email service is
+  // configured), so this inbox is where they are answered.
+  const [invitations, setInvitations] = useState<PendingInvitation[]>([]);
 
   const trimmedQuery = query.trim().toLowerCase();
   const visibleProjects = projects
@@ -55,13 +59,35 @@ export default function ProjectsPage() {
     } catch (cause) {
       if (!signal?.aborted) setError(cause);
     } finally { if (!signal?.aborted) setBusy(false); }
+    try {
+      const inbox = await listInvitations();
+      if (!signal?.aborted) setInvitations(inbox.invitations || []);
+    } catch { /* the inbox is additive: its failure never hides the library */ }
   }, []);
+
+  const respond = useCallback(async (projectId: string, accept: boolean) => {
+    try {
+      await respondToInvitation(projectId, accept);
+    } catch { /* the reload below reflects the true state either way */ }
+    void load();
+  }, [load]);
   useEffect(() => { const controller = new AbortController(); const timer = setTimeout(() => { void load(controller.signal); }, 0); return () => { clearTimeout(timer); controller.abort(); }; }, [load]);
 
   return <main className="app-page projects-page">
     <AppNavigation />
     <section className="projects-content">
       <div className="projects-heading"><div><p className="eyebrow">PROJECT LIBRARY</p><h1>Every cut, in its place.</h1><p className="projects-intro">Your productions, their real status, and finished exports.</p></div><Link className="button button-primary" href="/create">New production <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>
+      {invitations.length > 0 && <section className="invitations-inbox" aria-label="Project invitations">
+        <h2>Project invitations</h2>
+        <p className="projects-intro">Invitations arrive here, in your account — Cinemora does not email them. Accepting gives you the stated role on that project.</p>
+        <ul>{invitations.map((invitation) => <li key={invitation.project_id}>
+          <span><strong>{invitation.project_title || "Untitled production"}</strong> — invited by {invitation.invited_by?.email || "the project owner"} as {invitation.role}</span>
+          <span className="library-actions">
+            <button type="button" className="button button-primary" onClick={() => { void respond(invitation.project_id, true); }}>Accept</button>
+            <button type="button" className="button button-secondary" onClick={() => { void respond(invitation.project_id, false); }}>Decline</button>
+          </span>
+        </li>)}</ul>
+      </section>}
       <div className="library-toolbar">
         <span>{busy ? "Loading projects…" : `${visibleProjects.length} ${visibleProjects.length === 1 ? "project" : "projects"}${filtered ? ` of ${projects.length}` : ""}`}</span>
         <div className="library-actions">
@@ -79,7 +105,7 @@ export default function ProjectsPage() {
           {project.video_url ? <AuthenticatedVideo src={project.video_url} preload="metadata" muted playsInline /> : <span className="preview-placeholder"><span className="reel-glyph" /><small>NO EXPORT YET</small></span>}
           <StatusBadge status={project.status} overlay />
         </Link>
-        <div className="library-card-content"><div className="library-meta"><span>{project.category}</span><time dateTime={project.created_at}>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(project.created_at))}</time></div><h2>{project.title || project.script_preview || "Untitled production"}</h2><p>{project.current_stage ? `Stage · ${project.current_stage.replaceAll("_", " ")}` : project.video_url ? "Finished export available" : "Project details and production status"}</p><div className="library-actions">{project.video_url && <AuthenticatedDownloadLink className="button button-secondary" path={project.video_url} filename="documentary_final_output.mp4">Download film</AuthenticatedDownloadLink>}<Link className="button button-text" href={`/projects/${project.id}`}>Open project <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div></div>
+        <div className="library-card-content"><div className="library-meta"><span>{project.category}</span>{project.access_role && project.access_role !== "owner" && <span>Shared with you · {project.access_role}</span>}<time dateTime={project.created_at}>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(project.created_at))}</time></div><h2>{project.title || project.script_preview || "Untitled production"}</h2><p>{project.current_stage ? `Stage · ${project.current_stage.replaceAll("_", " ")}` : project.video_url ? "Finished export available" : "Project details and production status"}</p><div className="library-actions">{project.video_url && <AuthenticatedDownloadLink className="button button-secondary" path={project.video_url} filename="documentary_final_output.mp4">Download film</AuthenticatedDownloadLink>}<Link className="button button-text" href={`/projects/${project.id}`}>Open project <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div></div>
       </article>)}</div>}
     </section>
     <footer className="app-footer"><span>CINEMORA / PROJECT LIBRARY</span><span>Project records are supplied by the connected API.</span></footer>
