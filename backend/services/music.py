@@ -291,6 +291,62 @@ def _validated_volume(options, key):
     return value
 
 
+def _validated_music_sections(options):
+    """Phase 9 (§13.2/§13.6): music placement — "throughout"
+    (the historical behaviour: the bed runs the whole film) or
+    "sections" with explicit time ranges in seconds. Returns
+    (placement, sections) with sections a cleaned list of
+    {"start": float, "end": float}, sorted and non-overlapping.
+    Raises ValueError on any malformed input — a placement the
+    mix cannot honour must fail loudly, never silently degrade
+    to throughout."""
+    options = options or {}
+    placement = options.get("music_placement")
+    if placement is None:
+        return "throughout", []
+    placement = str(placement).strip().lower()
+    if placement == "throughout":
+        return "throughout", []
+    if placement != "sections":
+        raise ValueError(
+            f"Option music_placement must be 'throughout' or "
+            f"'sections', got {options.get('music_placement')!r}."
+        )
+    raw = options.get("music_sections")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(
+            "Option music_sections must be a non-empty list of "
+            "{start, end} ranges when music_placement is 'sections'."
+        )
+    if len(raw) > 50:
+        raise ValueError("Option music_sections may carry at most 50 ranges.")
+    sections = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ValueError(f"Music section must be an object, got {entry!r}.")
+        try:
+            start = float(entry.get("start"))
+            end = float(entry.get("end"))
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Music section start/end must be numbers, got {entry!r}."
+            ) from None
+        if start < 0 or end <= start or end > 86400:
+            raise ValueError(
+                f"Music section must satisfy 0 <= start < end <= 86400, "
+                f"got {entry!r}."
+            )
+        sections.append({"start": start, "end": end})
+    sections.sort(key=lambda s: s["start"])
+    for previous, current in zip(sections, sections[1:]):
+        if current["start"] < previous["end"]:
+            raise ValueError(
+                f"Music sections must not overlap, got {previous!r} "
+                f"and {current!r}."
+            )
+    return "sections", sections
+
+
 def resolve_music_request(options, project_dir):
     """Resolve the ONE music contract (M1/M3) into an explicit
     decision. Returns a dict:
@@ -303,6 +359,9 @@ def resolve_music_request(options, project_dir):
       source_type  classification for the applied track
       music_volume validated options volume or None (default)
       narration_volume validated options volume or None
+      placement    Phase 9: "throughout" or "sections"
+      sections     Phase 9: validated [{start, end}] ranges
+                   (empty for "throughout")
 
     Rules (M1): an explicit disable beats EVERYTHING, including an
     explicit music_file and a stray background.mp3; an explicit
@@ -311,6 +370,7 @@ def resolve_music_request(options, project_dir):
     explicitly."""
     options = options or {}
     project_dir = Path(project_dir)
+    placement, sections = _validated_music_sections(options)
     decision = {
         "file": None,
         "requested": False,
@@ -319,6 +379,8 @@ def resolve_music_request(options, project_dir):
         "source_type": None,
         "music_volume": _validated_volume(options, "music_volume"),
         "narration_volume": _validated_volume(options, "narration_volume"),
+        "placement": placement,
+        "sections": sections,
     }
     enabled = options.get("music_enabled")
     if enabled is None and "music" in options:
@@ -859,6 +921,13 @@ def resolve_mix_config(options=None, genre_pack=None, music_volume=None):
             f"Mix parameter music_volume must be between 0.0 and 2.0, "
             f"got {config['music_volume']}."
         )
+    # Phase 9: placement rides the mix config so the ONE mix
+    # implementation (and its record) sees the same sections the
+    # request resolved. Invalid sections raise here, at resolve
+    # time, exactly as they do in resolve_music_request.
+    placement, sections = _validated_music_sections(options)
+    config["music_placement"] = placement
+    config["music_sections"] = sections
     normalise_env = os.environ.get("CINEMORA_MUSIC_NORMALISE")
     if options.get("music_normalise") is not None:
         normalise = bool(options["music_normalise"])
@@ -1166,6 +1235,25 @@ def _mix_to_file(narration_file, mix_file, music_file, mix_config,
             mix_config,
             bed_work_dir,
         )
+    # Phase 9 (§13.2): section placement gates the bed to the
+    # selected ranges — outside them the bed is silenced BEFORE
+    # ducking, so the sidechain and the sum only ever see music
+    # where the configuration placed it. The gate is a per-frame
+    # volume expression over the bed's own timestamps (asetpts
+    # above aligns t=0 with the film's start).
+    sections = mix_config.get("music_sections") or []
+    gate_filter = ""
+    music_label = "[music]"
+    if sections:
+        expression = "+".join(
+            f"between(t\\,{s['start']:g}\\,{s['end']:g})" for s in sections
+        )
+        gate_filter = (
+            "[music]"
+            f"volume='if({expression}\\,1\\,0)':eval=frame"
+            "[music_gated];"
+        )
+        music_label = "[music_gated]"
     filter_complex = (
         "[0:a]"
         "aresample=48000,"
@@ -1178,7 +1266,9 @@ def _mix_to_file(narration_file, mix_file, music_file, mix_config,
         "asetpts=N/SR/TB"
         "[music];"
 
-        "[music][voice]"
+        + gate_filter +
+
+        f"{music_label}[voice]"
         "sidechaincompress="
         f"threshold={ducking['threshold']}:"
         f"ratio={ducking['ratio']}:"
@@ -1373,6 +1463,11 @@ def prepare_soundtrack(
             loop_info.get("fade_out_seconds") if loop_info else None
         ),
         "loop_crossfade_seconds": mix_config["loop_crossfade_seconds"],
+        # Phase 9: the placement the mix actually applied —
+        # "throughout" or the exact section ranges the bed was
+        # gated to (empty list for throughout).
+        "placement": mix_config.get("music_placement") or "throughout",
+        "sections": mix_config.get("music_sections") or [],
         "loop": loop_info,
         "ducking": ducking if music_file else None,
         "gain_staging": {
