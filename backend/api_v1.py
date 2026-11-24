@@ -63,6 +63,7 @@ from services import (
     editor,
     editor_studio,
     genre_packs,
+    localization,
     media_paths,
     narration,
     plan_document,
@@ -2753,6 +2754,112 @@ def delete_thumbnail(project_id: str, thumb_id: str,
                      principal=Depends(post_guard)):
     _thumb_project(project_id, principal, write=True)
     return _thumb_call(thumbnail_studio.delete_variant, project_id, thumb_id)
+
+
+# ---------------------------------------------------------------------------
+# Localization Studio (founder priority #14) — sub-phase 1 of the
+# audit's phasing (services/localization.py): the project's
+# recorded captions and its script translated through llm_client,
+# timings preserved exactly and proven against the written file,
+# the English narration retained and labelled as retained. There
+# is deliberately NO dub route: the narration adapter's installed
+# voices are English-only, and the studio view states why. Every
+# route loads the project through the Phase 8 owner choke point
+# first — another user's project is a 404 on reads AND writes.
+# ---------------------------------------------------------------------------
+
+
+def _loc_call(fn, *args, **kwargs):
+    """Run a localization service call, mapping LocalizationError
+    onto the v1 error shape."""
+    try:
+        return fn(*args, **kwargs)
+    except localization.LocalizationError as error:
+        message = error.message
+        if error.details:
+            message = f"{message} Details: {json.dumps(error.details)}"
+        raise ApiError(error.status_code, error.code, message) from error
+
+
+def _loc_project(project_id: str, principal, *, write: bool = False):
+    db = SessionLocal()
+    try:
+        return _get_owned_project_or_404(db, project_id, principal, write=write)
+    finally:
+        db.close()
+
+
+class LocalizeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: str = Field(min_length=2, max_length=8)
+
+
+@router.get("/projects/{project_id}/localization")
+def get_localization(project_id: str, principal=Depends(require_user)):
+    project = _loc_project(project_id, principal)
+    return localization.studio_view(
+        project_id,
+        project_title=project.title,
+        script_text=project.script or "",
+    )
+
+
+@router.post("/projects/{project_id}/localization/captions", status_code=201)
+def localize_captions(project_id: str, body: LocalizeIn,
+                      principal=Depends(post_guard)):
+    _loc_project(project_id, principal, write=True)
+    return _loc_call(
+        localization.translate_captions, project_id, body.language
+    )
+
+
+@router.post("/projects/{project_id}/localization/script", status_code=201)
+def localize_script(project_id: str, body: LocalizeIn,
+                    principal=Depends(post_guard)):
+    project = _loc_project(project_id, principal, write=True)
+    return _loc_call(
+        localization.translate_script,
+        project_id,
+        principal.user_id,
+        body.language,
+        project_title=project.title,
+        project_category=project.category or "Documentary",
+        script_text=project.script or "",
+    )
+
+
+_LOC_FILE_MEDIA = {
+    "srt": "text/plain; charset=utf-8",
+    "vtt": "text/vtt; charset=utf-8",
+    "json": "application/json",
+    "txt": "text/plain; charset=utf-8",
+}
+
+_LOC_FILE_SUFFIX = {"srt": ".srt", "vtt": ".vtt", "json": ".json", "txt": ".txt"}
+
+
+@router.get("/projects/{project_id}/localization/{artefact_id}/download")
+def download_localization_artefact(project_id: str, artefact_id: str,
+                                   kind: str = "srt",
+                                   principal=Depends(require_user)):
+    _loc_project(project_id, principal)
+    path = _loc_call(
+        localization.artefact_file, project_id, artefact_id, kind
+    )
+    kind_key = str(kind or "").strip().lower()
+    return FileResponse(
+        path,
+        media_type=_LOC_FILE_MEDIA.get(kind_key, "application/octet-stream"),
+        filename=f"{artefact_id}{_LOC_FILE_SUFFIX.get(kind_key, '')}",
+    )
+
+
+@router.delete("/projects/{project_id}/localization/{artefact_id}")
+def delete_localization_artefact(project_id: str, artefact_id: str,
+                                 principal=Depends(post_guard)):
+    _loc_project(project_id, principal, write=True)
+    return _loc_call(localization.delete_artefact, project_id, artefact_id)
 
 
 # ---------------------------------------------------------------------------
