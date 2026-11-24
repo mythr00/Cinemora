@@ -111,7 +111,7 @@ def bubble_chart(data, style, out_path, duration=5.0, sentence_index=None, scene
     axis_y = top + lane_h * len(items) + 30
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("chart")
@@ -208,7 +208,7 @@ def population_pyramid(data, style, out_path, duration=5.0, sentence_index=None,
     row_h = min(76, (HEIGHT - top - 150) // len(groups))
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("pyramid")
@@ -302,7 +302,7 @@ def animated_dashboard(data, style, out_path, duration=5.0, sentence_index=None,
     colours = _series_palette(tokens, len(stats))
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("panel")
@@ -394,7 +394,7 @@ def checklist_graphic(data, style, out_path, duration=5.0, sentence_index=None, 
     done_count = sum(1 for i in items if i["state"] == "done")
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("list")
@@ -507,7 +507,7 @@ def milestone_waveform(data, style, out_path, duration=5.0, sentence_index=None,
         return pts
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("wave")
@@ -632,7 +632,7 @@ def territory_expansion(data, style, out_path, duration=5.0, sentence_index=None
         return [(p[0] * WIDTH, p[1] * HEIGHT) for p in points]
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("map")
@@ -730,7 +730,7 @@ def satellite_zoom(data, style, out_path, duration=5.0, sentence_index=None, sce
     fonts = {"label": load_font(tokens["font_bold"], 38)}
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("image")
         scale = 1.0 + (zoom - 1.0) * ease_in_out(clamp01(progress * 1.1))
         win_w = WIDTH / scale
@@ -882,7 +882,7 @@ def heatmap(data, style, out_path, duration=5.0, sentence_index=None, scene_numb
     }
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("heat")
@@ -986,7 +986,7 @@ def newspaper_wall(data, style, out_path, duration=5.0, sentence_index=None, sce
         ))
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("paper", parallax=0.3)
         base.image = paper.convert("RGBA")
         layer = canvas.new_layer("cards")
@@ -1075,7 +1075,7 @@ def crime_scene_diagram(data, style, out_path, duration=5.0, sentence_index=None
     plot = (90, 150, 1290, 950)
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("plan")
@@ -1197,7 +1197,7 @@ def construction_sequence(data, style, out_path, duration=5.0, sentence_index=No
     frame_x0, frame_x1 = 420, 1080
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("build")
@@ -1324,7 +1324,7 @@ def molecular_diagram(data, style, out_path, duration=5.0, sentence_index=None, 
         )
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("molecule")
@@ -1419,7 +1419,7 @@ def hud_overlay(data, style, out_path, duration=5.0, sentence_index=None, scene_
         d.line([x + w, y + h, x + w, y + h - arm], fill=fill, width=width)
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg_rgba.copy()
         layer = canvas.new_layer("hud")
@@ -1506,7 +1506,7 @@ def holographic_panel(data, style, out_path, duration=5.0, sentence_index=None, 
     accent = tokens["accent2"]
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg", parallax=0.25)
         base.image = bg.convert("RGBA")
         glow = canvas.new_layer("glow", parallax=0.55)
@@ -1575,7 +1575,7 @@ def before_after(data, style, out_path, duration=5.0, sentence_index=None, scene
     }
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("before")
         base.image = before_img.copy()
         wipe = ease_in_out(clamp01((progress - 0.12) * 1.35))
@@ -1668,7 +1668,7 @@ def layered_reveal(data, style, out_path, duration=5.0, sentence_index=None, sce
         cards.append((card, x - 12, y - 12, photo["caption"]))
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("base", parallax=0.4)
         base.image = base_img.convert("RGBA")
         layer = canvas.new_layer("cards", parallax=0.85)
@@ -1751,7 +1751,7 @@ def object_labels(data, style, out_path, duration=5.0, sentence_index=None, scen
     bg_rgba = bg_img.convert("RGBA")
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg_rgba.copy()
         layer = canvas.new_layer("labels")

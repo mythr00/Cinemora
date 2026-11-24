@@ -99,8 +99,16 @@ class Canvas:
     A layer's effective translation is camera x/y * its parallax.
     """
 
-    def __init__(self, bg=(0, 0, 0)):
+    def __init__(self, bg=(0, 0, 0), pattern=None, pattern_color=None):
         self.bg = bg
+        # Phase 9: an optional background pattern named by the
+        # active theme's tokens (today: "grid" — the founder Grid
+        # theme's fine lines, painted onto the base frame in
+        # composite() before any layer is drawn). None (every
+        # legacy style and non-Grid theme) paints the plain field
+        # exactly as before.
+        self.pattern = pattern
+        self.pattern_color = pattern_color
         self.layers = []
 
     def add(self, layer):
@@ -116,6 +124,16 @@ class Canvas:
         cam_x = float(camera.get("x", 0.0))
         cam_y = float(camera.get("y", 0.0))
         base = Image.new("RGBA", (WIDTH, HEIGHT), tuple(self.bg) + (255,))
+        if self.pattern == "grid":
+            # The founder Grid theme (§13.3): fine lines over the
+            # field, painted on the base so every layer composes
+            # over the same grid. Spacing 60px at 1920x1080.
+            line = tuple(self.pattern_color or (64, 64, 64)) + (255,)
+            draw = ImageDraw.Draw(base)
+            for gx in range(0, WIDTH, 60):
+                draw.line([gx, 0, gx, HEIGHT], fill=line, width=1)
+            for gy in range(0, HEIGHT, 60):
+                draw.line([0, gy, WIDTH, gy], fill=line, width=1)
         for layer in self.layers:
             img = layer.image
             if layer.opacity < 1.0:

@@ -129,7 +129,7 @@ def line_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_n
     probe = _probe_draw()
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("chart")
@@ -265,7 +265,7 @@ def pie_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_nu
         angle += sweep
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("pie")
@@ -361,7 +361,7 @@ def newspaper_montage(data, style, out_path, duration=5.0, sentence_index=None, 
     positions = [(100, 260), (680, 220), (1280, 260), (420, 600)][:len(built)]
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("paper", parallax=0.3)
         base.image = paper.convert("RGBA")
         layer = canvas.new_layer("cards")
@@ -424,7 +424,7 @@ def profile_reveal(data, style, out_path, duration=5.0, sentence_index=None, sce
     title_lines = wrap_text(probe, title, fonts["title"], 900)[:2]
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = _textured_dark(
             (WIDTH, HEIGHT), tokens["bg"], seed=67).convert("RGBA")
@@ -495,7 +495,7 @@ def archival_title(data, style, out_path, duration=5.0, sentence_index=None, sce
     title_lines = wrap_text(probe, title.upper(), fonts["title"], 1400)[:3]
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg", parallax=0.3)
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("title")
@@ -576,7 +576,7 @@ def text_overlay(data, style, out_path, duration=5.0, sentence_index=None, scene
     bg_rgba = bg_img.convert("RGBA")
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg_rgba.copy()
         layer = canvas.new_layer("overlay")
@@ -680,7 +680,7 @@ def text_highlight(data, style, out_path, duration=5.0, sentence_index=None, sce
                 break
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = _textured_dark(
             (WIDTH, HEIGHT), tokens["bg"], seed=79).convert("RGBA")
@@ -763,7 +763,7 @@ def photo_parallax(data, style, out_path, duration=5.0, sentence_index=None, sce
     }
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         far_layer = canvas.new_layer("far", parallax=0.25)
         far_layer.image = far.convert("RGBA")
         mid_layer = canvas.new_layer("mid", parallax=0.6)

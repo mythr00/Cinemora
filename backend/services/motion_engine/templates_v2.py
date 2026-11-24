@@ -83,7 +83,7 @@ def split_panel(data, style, out_path, duration=5.0, sentence_index=None, scene_
     ]
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         photo_layer = canvas.new_layer("photo")
         # Subtle Ken Burns: slow push-in on the still.
         zoom = 1.0 + 0.07 * ease_in_out(progress)
@@ -172,7 +172,7 @@ def scan_grid(data, style, out_path, duration=5.0, sentence_index=None, scene_nu
     title_lines = wrap_text(probe, title.upper(), fonts["title"], 900)[:2] if title else []
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("scan")
@@ -246,7 +246,7 @@ def photo_node_diagram(data, style, out_path, duration=5.0, sentence_index=None,
     centres = [int((i + 0.5) * WIDTH / n) for i in range(n)]
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("diagram")
@@ -470,7 +470,7 @@ def cross_section(data, style, out_path, duration=5.0, sentence_index=None, scen
     mid_band = (n_bands - 1) / 2.0
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         if variant == "blueprint":
             # Blueprint ground: the theme's own blue when the
@@ -717,7 +717,7 @@ def bar_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_nu
         fitted_labels.append((text, font))
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("chart")
@@ -800,7 +800,7 @@ def satellite_annotation(data, style, out_path, duration=5.0, sentence_index=Non
     title = _clean(data.get("title"))
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("image")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("annotation")

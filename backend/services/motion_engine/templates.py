@@ -308,7 +308,7 @@ def territory_map(data, style, out_path, duration=5.0, sentence_index=None, scen
         return [(p[0] * WIDTH, p[1] * HEIGHT) for p in points]
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("base")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("map")
@@ -600,7 +600,7 @@ def evidence_board(data, style, out_path, duration=5.0, sentence_index=None, sce
     positions = [(110, 300), (700, 280), (1290, 300), (420, 560)][:len(built)]
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("paper", parallax=0.3)
         base.image = paper.convert("RGBA")
         layer = canvas.new_layer("cards")
@@ -715,7 +715,7 @@ def editorial_panel(data, style, out_path, duration=5.0, sentence_index=None, sc
     bg_rgba = bg_img.convert("RGBA")
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("photo", parallax=0.4)
         base.image = bg_rgba.copy()
         layer = canvas.new_layer("panel")
@@ -779,7 +779,7 @@ def data_gauge(data, style, out_path, duration=5.0, sentence_index=None, scene_n
     bg_rgba = bg_img.convert("RGBA")
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg", parallax=0.4)
         base.image = bg_rgba.copy()
         layer = canvas.new_layer("gauge")
@@ -931,7 +931,7 @@ def stat_comparison(data, style, out_path, duration=5.0, sentence_index=None, sc
     }
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg")
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("bars")
@@ -1048,7 +1048,7 @@ def document_presentation(data, style, out_path, duration=5.0, sentence_index=No
     lines = lines[:13]
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg", parallax=0.2)
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("doc")
@@ -1211,7 +1211,7 @@ def closing_card(data, style, out_path, duration=5.0, sentence_index=None, scene
     block_h = line_h * len(lines)
 
     def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"])
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
         base = canvas.new_layer("bg", parallax=0.2)
         base.image = bg.convert("RGBA")
         layer = canvas.new_layer("card")
