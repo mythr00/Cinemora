@@ -87,6 +87,32 @@ def _api_env(monkeypatch, tmp_path):
                 )
             )
             db.commit()
+        # Hermeticity (shared suite DB): suites that submit runs
+        # through fake queues leave them active forever, and plan
+        # admission counts a principal's active runs — after enough
+        # predecessors, an unrelated suite's submissions are refused
+        # with plan_limit_concurrency. Those runs are abandoned
+        # leftovers of finished tests; terminate them, as the
+        # production reconciler would, so admission starts clean.
+        from datetime import datetime, timezone
+
+        from models import ProductionRun
+
+        leaked = (
+            db.query(ProductionRun)
+            .filter(
+                ProductionRun.status.in_(
+                    ("queued", "running", "awaiting_approval")
+                )
+            )
+            .all()
+        )
+        for row in leaked:
+            row.status = "failed"
+            row.error = "test-suite cleanup of a leaked active run"
+            row.finished_at = datetime.now(timezone.utc)
+        if leaked:
+            db.commit()
     finally:
         db.close()
     yield
@@ -129,7 +155,16 @@ def _submit_run_api(client, project_id, options=None):
         json={"options": options} if options else None,
     )
     assert response.status_code == 202, response.text
-    return response.json()["run"]["run_id"]
+    run_id = response.json()["run"]["run_id"]
+    # Hermeticity: the fake enqueue leaves the run active, and the
+    # shared suite DB accumulates other suites' active runs for
+    # the same principal — plan admission (max concurrent runs)
+    # would then refuse this test's NEXT submission for reasons
+    # unrelated to versioning. Finish each run immediately; the
+    # versioning assertions only need the submission recorded.
+    run_ledger.claim_run(run_id)
+    run_ledger.finish_run(run_id, "completed")
+    return run_id
 
 
 def _completed_run(project_id, script, options=None):
