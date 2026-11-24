@@ -133,7 +133,8 @@ export default function AccountIntelligencePage() {
               )}
               {view.providers.state === "recorded" && (
                 <>
-                  <table>
+                  <div className="plan-table-wrap">
+                    <table className="plan-table">
                     <thead>
                       <tr>
                         <th>Source (as recorded)</th>
@@ -158,7 +159,8 @@ export default function AccountIntelligencePage() {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                    </table>
+                  </div>
                   <p className="plan-meta">
                     Base: the latest production run of {view.providers.projects_with_funnel}{" "}
                     project(s). {view.providers.derivation}

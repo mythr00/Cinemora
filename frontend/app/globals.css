@@ -657,7 +657,7 @@ span.authenticated-media-state {
 .projects-error { color: var(--danger-deep); font-size: 14px; line-height: 1.6; }
 .projects-content section[aria-label="Production history"] { margin-top: 30px; }
 .projects-content section[aria-label="Production history"] > h2 { color: var(--ink-strong); font-size: var(--type-h2); font-weight: 650; }
-.hub-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; align-items: start; margin-top: 24px; }
+.hub-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 20px; align-items: start; margin-top: 24px; }
 .hub-panel { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); padding: 18px; }
 .hub-panel h2 { margin: 0 0 6px; color: var(--ink-strong); font-size: var(--type-h3); font-weight: 650; }
 .hub-panel-note { margin: 0 0 12px; color: var(--ink-muted); font-size: 13px; line-height: 1.6; }
@@ -1918,7 +1918,7 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 .thumb-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 .thumb-suggestion { margin: 0 4px 4px 0; }
 .thumb-variants-title { margin: 26px 0 12px; color: var(--ink-strong); }
-.thumb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
+.thumb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 18px; }
 .thumb-card { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); overflow: hidden; }
 .thumb-card-body { padding: 14px 16px 16px; }
 .thumb-card-body h3 { margin: 0 0 4px; color: var(--ink-strong); font-size: 16px; }
@@ -1933,7 +1933,7 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 .thumb-swatch { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); }
 .thumb-swatch-chip { width: 18px; height: 18px; border: 1px solid var(--line-deep); border-radius: 4px; }
 .thumb-error { color: var(--danger); font-size: 14px; line-height: 1.55; }
-.loc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
+.loc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); gap: 18px; }
 .loc-card { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); overflow: hidden; }
 .loc-card-body { padding: 14px 16px 16px; }
 .loc-card-body h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 4px; color: var(--ink-strong); font-size: 16px; }
@@ -2082,4 +2082,73 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 @media (max-width: 900px) {
   .p9-theme-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   .p9-section-row { flex-wrap: wrap; }
+}
+
+/* ============================================================
+   Responsive repair (2026-11-24, founder phone screenshots
+   2026-11-22): the app shell offsets every content child by
+   the rail width (margin-left: var(--rail-w) in §2.6), but the
+   content containers sized themselves with calc(100% - Npx)
+   against the FULL page width and centred with margin: 0 auto.
+   The forced rail margin wins over the shorthand, margin-right
+   resolves negative, and the page overflows horizontally by
+   (rail - inset) — 144px at laptop widths for the 64px-inset
+   containers, 208px at every width for .assistant-shell
+   (width: 100%). Verified in headless Chromium: a replica of
+   the pattern at 1024px measured scrollWidth 1168.
+   The rules below subtract the rail from the available width
+   only where the rail margin applies (≥641px); at ≤640px the
+   shell margin is 0 and the existing phone widths stand.
+   Geometry at widths that already worked (≥1472px for the
+   1200px containers, ≥1392px for the 1120px ones) is unchanged:
+   the min() cap, not the calc(), decides there.
+   ============================================================ */
+@media (min-width: 901px) {
+  .dashboard-content, .projects-content, .tool-page-content {
+    width: min(1120px, calc(100% - var(--rail-w) - 64px));
+  }
+  .plan-content, .content-wrap, .research-content {
+    width: min(var(--reading-width), calc(100% - var(--rail-w) - 64px));
+  }
+  .script-content, .templates-content {
+    width: min(1240px, calc(100% - var(--rail-w) - 64px));
+  }
+  .developers-content {
+    width: min(1060px, calc(100% - var(--rail-w) - 48px));
+  }
+  .project-tabs {
+    width: min(var(--reading-width), calc(100% - var(--rail-w) - 40px));
+  }
+  .editor-content {
+    width: min(var(--editor-width), calc(100% - var(--rail-w) - 40px));
+  }
+}
+@media (min-width: 641px) {
+  /* width: 100% in its base rule left no room for the rail
+     margin at any width; the rail is 64px in the 641–900 band
+     (--rail-w is redefined by the ≤900 query) and 208px above. */
+  .assistant-shell { width: calc(100% - var(--rail-w)); }
+}
+@media (min-width: 641px) and (max-width: 900px) {
+  /* These three pages carry their own ≤900 width override of
+     calc(100% - 32px), written before the rail margin was
+     accounted for: in the icon-rail band it overflowed by
+     32px. Subtract the (collapsed) rail as well. */
+  .script-content, .templates-content, .developers-content {
+    width: calc(100% - var(--rail-w) - 32px);
+  }
+}
+@media (max-width: 720px) {
+  /* Admin tables are rendered bare (no scroll wrapper in the
+     markup); with real rows their columns exceed a phone
+     viewport. Let the table box itself scroll horizontally —
+     desktop table layout is untouched. */
+  .admin-table { display: block; overflow-x: auto; }
+}
+@media (max-width: 640px) {
+  /* The account button sizes to the signed-in email (ellipsis
+     at max-width 260px); beside the brand lockup that can push
+     the top bar past a phone viewport. Cap it harder here —
+     the email still ellipsises inside. */
+  .account-menu-button { max-width: 148px; }
 }
