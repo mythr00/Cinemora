@@ -67,6 +67,7 @@ from services import (
     media_paths,
     narration,
     plan_document,
+    production_config,
     project_intelligence,
     qa_report,
     research_studio,
@@ -75,6 +76,7 @@ from services import (
     templates as templates_service,
     thumbnail_studio,
     versioning,
+    voice_documentary,
 )
 from services.atomic_write import write_json_atomic
 
@@ -675,6 +677,11 @@ class ProjectOptionsIn(BaseModel):
     duck_attack_ms: float | None = Field(default=None, ge=0.0, le=10000.0)
     duck_release_ms: float | None = Field(default=None, ge=0.0, le=60000.0)
     require_plan_approval: bool = False
+    # Phase 9 (§§13–17): the Pre-Production Configuration Studio
+    # document (services.production_config). Cleaned + projected
+    # onto the flat keys above at creation; re-resolved and
+    # validated at every run submission (§14.2).
+    production_config: dict | None = None
 
 
 class ProjectCreateIn(BaseModel):
@@ -1004,17 +1011,53 @@ def _create_project_record(db, principal, *, title, script, category, options):
     )
 
 
+def _config_call(fn, *args, **kwargs):
+    """Run a Phase 9 service call, mapping ConfigError onto the
+    v1 error shape."""
+    try:
+        return fn(*args, **kwargs)
+    except production_config.ConfigError as error:
+        raise ApiError(error.status_code, error.code, error.message) from error
+
+
+def _prepare_creation_options(db, principal, options) -> dict:
+    """Phase 9 at creation: a configuration submitted with the
+    project is cleaned (a malformed document refuses 422) and
+    projected onto the flat option keys beside it; with no
+    submitted configuration, the user's saved defaults (§15)
+    seed the project. Validation against the live system is NOT
+    run here — a project may legitimately be created before its
+    music upload exists; the run-submission gate is where an
+    unhonourable configuration refuses."""
+    raw = (options or {}).get("production_config")
+    if isinstance(raw, dict):
+        config = _config_call(production_config.clean_config, raw)
+    else:
+        config = production_config.load_defaults(db, principal.user_id)
+        if config is None:
+            return options
+    prepared = dict(options or {})
+    for key in production_config.PROJECTION_OWNED_KEYS:
+        prepared.pop(key, None)
+    prepared["production_config"] = config
+    prepared.update(production_config.flat_options(config))
+    return prepared
+
+
 @router.post("/projects", status_code=201)
 def create_project(body: ProjectCreateIn, principal=Depends(post_guard)):
     db = SessionLocal()
     try:
+        options = _prepare_creation_options(
+            db, principal, _options_dict(body.options)
+        )
         return _create_project_record(
             db,
             principal,
             title=body.title,
             script=body.script,
             category=body.category,
-            options=_options_dict(body.options),
+            options=options,
         )
     finally:
         db.close()
@@ -1127,6 +1170,16 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depen
     )
 
     merged = {**project_options, **((body.options if body else None) or {})}
+    # Phase 9 (§14.2/§15): the pre-generation configuration gate.
+    # When the merged options carry a production_config document
+    # it is re-cleaned, validated against the live system and
+    # resolved into the run's option snapshot here — a
+    # configuration the pipeline cannot honour refuses the run
+    # (422) before anything is queued, and the snapshot the run
+    # carries is exactly the configuration it will run with.
+    merged = _config_call(
+        production_config.resolve_run_options, project, merged
+    )
     script_hash = run_ledger.script_sha256(script)
 
     if merged.get("require_plan_approval"):
@@ -1599,6 +1652,19 @@ def approve_plan(project_id: str, principal=Depends(post_guard)):
     )
     if marks:
         options["regenerate_sentences"] = marks
+    # Phase 9 (§13.1): the plan gate surfaces the configuration's
+    # standing warnings at approval time — chiefly the coverage
+    # consequence of disabled motion graphics (beats retrieval
+    # cannot cover will be reported uncovered; no graphic
+    # fallback exists in this run).
+    config_warnings = []
+    _awaiting_config = production_config.stored_config(
+        awaiting.get("options")
+    )
+    if _awaiting_config is not None:
+        config_warnings = production_config.validate_config(
+            _awaiting_config
+        )["warnings"]
     job_id = jobs.enqueue_full_pipeline(
         project_id, script, options=options, run_id=awaiting["run_id"]
     )
@@ -1607,7 +1673,248 @@ def approve_plan(project_id: str, principal=Depends(post_guard)):
         "job_id": job_id,
         "released": True,
         "regenerate_sentences": marks,
+        "config_warnings": config_warnings,
     }
+
+
+# ---------------------------------------------------------------------
+# Phase 9 — Pre-Production Configuration Studio (§§13–17)
+# ---------------------------------------------------------------------
+
+
+class ProductionConfigIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    config: dict
+
+
+class VoiceTreatIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str
+    text: str | None = None
+
+
+class VoiceApplyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=MAX_SCRIPT_CHARS)
+
+
+@router.get("/config/catalogue")
+def get_config_catalogue(principal=Depends(require_user)):
+    return production_config.catalogue()
+
+
+@router.get("/config/defaults")
+def get_config_defaults(principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        return {
+            "defaults": production_config.load_defaults(db, principal.user_id)
+        }
+    finally:
+        db.close()
+
+
+@router.put("/config/defaults")
+def put_config_defaults(
+    body: ProductionConfigIn, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        saved = _config_call(
+            production_config.save_defaults, db, principal.user_id, body.config
+        )
+        return {"defaults": saved}
+    finally:
+        db.close()
+
+
+@router.delete("/config/defaults")
+def delete_config_defaults(principal=Depends(post_guard)):
+    db = SessionLocal()
+    try:
+        production_config.clear_defaults(db, principal.user_id)
+        return {"defaults": None}
+    finally:
+        db.close()
+
+
+@router.get("/projects/{project_id}/config")
+def get_project_config(project_id: str, principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(db, project_id, principal)
+        return production_config.project_config_view(project)
+    finally:
+        db.close()
+
+
+@router.put("/projects/{project_id}/config")
+def put_project_config(
+    project_id: str,
+    body: ProductionConfigIn,
+    principal=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(
+            db, project_id, principal, write=True
+        )
+        return _config_call(
+            production_config.save_project_config, db, project, body.config
+        )
+    finally:
+        db.close()
+
+
+@router.post("/projects/{project_id}/config/validate")
+def validate_project_config(
+    project_id: str,
+    body: ProductionConfigIn,
+    principal=Depends(require_user),
+):
+    """Pre-generation validation (§15) without storing: the
+    document is cleaned (a malformed document refuses 422) and
+    validated against the live system; honourability problems
+    are REPORTED in the result, not refused."""
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal)
+    finally:
+        db.close()
+    config = _config_call(production_config.clean_config, body.config)
+    return {
+        "config": config,
+        "flat_options": production_config.flat_options(config),
+        "validation": production_config.validate_config(config),
+    }
+
+
+@router.post("/projects/{project_id}/config/uploads", status_code=201)
+def upload_config_file(
+    project_id: str,
+    kind: str = Form(...),
+    file: UploadFile = File(...),
+    principal=Depends(post_guard),
+):
+    """§13.6/§13.4: the user's own music track or voice
+    recording, stored as project media (original preserved,
+    probed, hashed) and recorded on the configuration."""
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(
+            db, project_id, principal, write=True
+        )
+        record = _config_call(
+            production_config.store_config_upload,
+            project_id,
+            kind,
+            file.filename,
+            file.file,
+        )
+        view = _config_call(
+            production_config.attach_upload, db, project, kind, record
+        )
+        return {"upload": record, "config": view}
+    finally:
+        db.close()
+
+
+@router.delete("/projects/{project_id}/config/music-upload")
+def delete_config_music_upload(
+    project_id: str, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(
+            db, project_id, principal, write=True
+        )
+        return _config_call(
+            production_config.remove_music_upload, db, project
+        )
+    finally:
+        db.close()
+
+
+@router.get("/projects/{project_id}/config/voice/transcript")
+def get_voice_transcript(project_id: str, principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal)
+    finally:
+        db.close()
+    record = voice_documentary.load_transcript(project_id)
+    if record is None:
+        raise ApiError(
+            404,
+            "transcript_not_recorded",
+            "No voice transcript has been recorded for this project yet.",
+        )
+    return record
+
+
+@router.post("/projects/{project_id}/config/voice/transcribe")
+def transcribe_voice(project_id: str, principal=Depends(post_guard)):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(
+            db, project_id, principal, write=True
+        )
+        return _config_call(
+            voice_documentary.transcribe_project_voice, project
+        )
+    finally:
+        db.close()
+
+
+@router.post("/projects/{project_id}/config/voice/treat")
+def treat_voice_script(
+    project_id: str,
+    body: VoiceTreatIn,
+    principal=Depends(post_guard),
+):
+    """One conversion proposal (§13.4). Operates on the text
+    supplied (the review surface's current text) or, when none
+    is supplied, on the recorded transcript. Stores nothing."""
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal, write=True)
+    finally:
+        db.close()
+    text = body.text
+    if text is None:
+        record = voice_documentary.load_transcript(project_id)
+        if record is None:
+            raise ApiError(
+                404,
+                "transcript_not_recorded",
+                "No voice transcript has been recorded for this "
+                "project yet; transcribe the recording first.",
+            )
+        text = record.get("text") or ""
+    return _config_call(
+        voice_documentary.treat_transcript, text, body.mode
+    )
+
+
+@router.post("/projects/{project_id}/config/voice/apply")
+def apply_voice_script(
+    project_id: str,
+    body: VoiceApplyIn,
+    principal=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        project = _get_owned_project_or_404(
+            db, project_id, principal, write=True
+        )
+        return _config_call(
+            voice_documentary.apply_script, db, project, principal, body.text
+        )
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------

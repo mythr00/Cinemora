@@ -678,7 +678,14 @@ def flat_options(config) -> dict:
         if music["source"] == "upload" and music.get("upload"):
             flat["music_file"] = music["upload"]["file_path"]
         elif music["source"] == "library":
-            track, path = resolve_library_track(config)
+            # An unresolvable library selection projects no
+            # file; validate_config reports the reason. The
+            # projection itself never raises, so read views of a
+            # stored configuration stay readable.
+            try:
+                track, path = resolve_library_track(config)
+            except ConfigError:
+                track, path = None, None
             if track is not None:
                 flat["music_file"] = str(path)
                 flat["music_track_id"] = track.track_id

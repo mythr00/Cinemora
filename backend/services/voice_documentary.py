@@ -133,13 +133,33 @@ def treat_transcript(text, mode) -> dict:
         return {"mode": mode, "text": text, "source": "transcript_verbatim"}
     from services import llm_client
 
+    if not getattr(llm_client, "BREWKEG_API_KEY", None):
+        raise production_config.ConfigError(
+            503,
+            "script_ai_unavailable",
+            "Script conversion is unavailable: no LLM provider "
+            "is configured on this deployment. Preserve mode "
+            "needs no provider and always works.",
+        )
     system = (
         "You convert a spoken recording's transcript into a "
         "documentary script. " + _TREATMENT_INSTRUCTIONS[mode]
         + " Return only the converted script text — no "
         "commentary, no headings, no markdown."
     )
-    proposal = llm_client.llm_text(system, text)
+    try:
+        proposal = llm_client.llm_text(system, text)
+    except RuntimeError as error:
+        if "BREWKEG_API_KEY is not configured" in str(error):
+            raise production_config.ConfigError(
+                503,
+                "script_ai_unavailable",
+                "Script conversion is unavailable: no LLM "
+                "provider is configured on this deployment.",
+            ) from error
+        raise production_config.ConfigError(
+            502, "script_ai_failed", f"The AI provider failed: {error}"
+        ) from error
     return {"mode": mode, "text": proposal.strip(), "source": "llm_proposal"}
 
 
