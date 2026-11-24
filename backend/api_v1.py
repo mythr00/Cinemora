@@ -71,6 +71,7 @@ from services import (
     research_studio,
     run_ledger,
     script_studio,
+    thumbnail_studio,
     versioning,
 )
 from services.atomic_write import write_json_atomic
@@ -2617,6 +2618,141 @@ def attach_script_to_project(
         script_id,
         body.project_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Thumbnail Generator (founder priority #13) — compositional
+# thumbnails over the project's own recorded material
+# (services/thumbnail_studio.py): film frames, verified stills and
+# uploads composed at YouTube's 1280x720 spec with PIL. Every route
+# loads the project through the Phase 8 owner choke point first:
+# another user's project is a 404 on reads AND writes, and a viewer
+# member is refused writes with the choke point's read-only 403.
+# ---------------------------------------------------------------------------
+
+
+def _thumb_call(fn, *args, **kwargs):
+    """Run a thumbnail-studio service call, mapping ThumbnailError
+    onto the v1 error shape."""
+    try:
+        return fn(*args, **kwargs)
+    except thumbnail_studio.ThumbnailError as error:
+        message = error.message
+        if error.details:
+            message = f"{message} Details: {json.dumps(error.details)}"
+        raise ApiError(error.status_code, error.code, message) from error
+
+
+def _thumb_project(project_id: str, principal, *, write: bool = False):
+    db = SessionLocal()
+    try:
+        return _get_owned_project_or_404(db, project_id, principal, write=write)
+    finally:
+        db.close()
+
+
+class ThumbnailComposeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_id: str = Field(min_length=1, max_length=300)
+    headline: str | None = Field(default=None, max_length=200)
+    layout: str = "bottom_band"
+    accent: str = "amber"
+
+
+class ThumbnailVariantsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    headline: str | None = Field(default=None, max_length=200)
+
+
+class ThumbnailAnalyseIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    base_id: str = Field(min_length=1, max_length=300)
+
+
+@router.get("/projects/{project_id}/thumbnails")
+def get_thumbnails(project_id: str, principal=Depends(require_user)):
+    project = _thumb_project(project_id, principal)
+    return thumbnail_studio.studio_view(
+        project_id, project.title, project.category
+    )
+
+
+@router.post("/projects/{project_id}/thumbnails", status_code=201)
+def compose_thumbnail(project_id: str, body: ThumbnailComposeIn,
+                      principal=Depends(post_guard)):
+    project = _thumb_project(project_id, principal, write=True)
+    return _thumb_call(
+        thumbnail_studio.compose_thumbnail,
+        project_id,
+        body.base_id,
+        body.headline,
+        layout=body.layout,
+        accent=body.accent,
+        project_title=project.title,
+    )
+
+
+@router.post("/projects/{project_id}/thumbnails/variants", status_code=201)
+def generate_thumbnail_variants(project_id: str, body: ThumbnailVariantsIn,
+                                principal=Depends(post_guard)):
+    project = _thumb_project(project_id, principal, write=True)
+    return _thumb_call(
+        thumbnail_studio.generate_variants,
+        project_id,
+        headline=body.headline,
+        project_title=project.title,
+    )
+
+
+@router.post("/projects/{project_id}/thumbnails/analyse")
+def analyse_thumbnail_base(project_id: str, body: ThumbnailAnalyseIn,
+                           principal=Depends(require_user)):
+    _thumb_project(project_id, principal)
+    return _thumb_call(
+        thumbnail_studio.analyse_image, project_id, body.base_id
+    )
+
+
+@router.post("/projects/{project_id}/thumbnails/suggest-headlines")
+def suggest_thumbnail_headlines(project_id: str,
+                                principal=Depends(post_guard)):
+    project = _thumb_project(project_id, principal)
+    return _thumb_call(
+        thumbnail_studio.suggest_headlines_ai,
+        project_id,
+        project_title=project.title,
+        project_category=project.category,
+    )
+
+
+@router.get("/projects/{project_id}/thumbnails/{thumb_id}/image")
+def get_thumbnail_image(project_id: str, thumb_id: str,
+                        principal=Depends(require_user)):
+    _thumb_project(project_id, principal)
+    path = _thumb_call(thumbnail_studio.variant_path, project_id, thumb_id)
+    return FileResponse(path, media_type="image/png" if path.suffix == ".png" else "image/jpeg")
+
+
+@router.get("/projects/{project_id}/thumbnails/{thumb_id}/download")
+def download_thumbnail(project_id: str, thumb_id: str,
+                       principal=Depends(require_user)):
+    _thumb_project(project_id, principal)
+    path = _thumb_call(thumbnail_studio.variant_path, project_id, thumb_id)
+    return FileResponse(
+        path,
+        media_type="image/png" if path.suffix == ".png" else "image/jpeg",
+        filename=f"thumbnail-{thumb_id}{path.suffix}",
+    )
+
+
+@router.delete("/projects/{project_id}/thumbnails/{thumb_id}")
+def delete_thumbnail(project_id: str, thumb_id: str,
+                     principal=Depends(post_guard)):
+    _thumb_project(project_id, principal, write=True)
+    return _thumb_call(thumbnail_studio.delete_variant, project_id, thumb_id)
 
 
 # ---------------------------------------------------------------------------
