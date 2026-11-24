@@ -1,0 +1,14 @@
+# Build context = backend/. Keep runtime data and dev artefacts out of the
+# image. The Piper .onnx voice models at the backend root must NOT be
+# ignored — narration resolves them relative to the code.
+media/
+tests/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+*.mp4
+*.wav
+*.bak*
+youtube_smoke_test/
+test_apollo_clip/
