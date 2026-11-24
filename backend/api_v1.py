@@ -59,6 +59,7 @@ from services import auth as auth_service
 from services import plans as plans_service
 from services import (
     editor,
+    editor_studio,
     genre_packs,
     media_paths,
     narration,
@@ -1946,4 +1947,81 @@ def get_revision_certificate(
         # THIS revision's music (its own soundtrack record), never
         # the production's.
         music=editor.music_certificate_data(doc),
+    )
+
+
+# ---------------------------------------------------------------------
+# Editor Studio (founder priority #5): the multitrack projection of
+# a revision, its media pool, frame-accurate preview of the
+# unrendered document, and real audio waveforms. Reads only — edits
+# still flow through the operations endpoint above and renders
+# through the render endpoint. Ownership is checked exactly like
+# every other editor surface (cross-tenant = 404).
+# ---------------------------------------------------------------------
+
+
+def _studio_call(fn, project_id, *args, **kwargs):
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, kwargs.pop("principal"))
+    finally:
+        db.close()
+    return _editor_call(fn, project_id, *args, **kwargs)
+
+
+@router.get("/projects/{project_id}/revisions/{revision_id}/studio")
+def get_studio(project_id: str, revision_id: str, principal=Depends(require_user)):
+    return _studio_call(
+        editor_studio.studio_view, project_id, revision_id, principal=principal
+    )
+
+
+@router.get("/projects/{project_id}/revisions/{revision_id}/studio/pool")
+def get_studio_pool(
+    project_id: str,
+    revision_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    principal=Depends(require_user),
+):
+    return _studio_call(
+        editor_studio.media_pool,
+        project_id,
+        revision_id,
+        limit=limit,
+        offset=offset,
+        principal=principal,
+    )
+
+
+@router.get("/projects/{project_id}/revisions/{revision_id}/studio/frame")
+def get_studio_frame(
+    project_id: str,
+    revision_id: str,
+    t: float = 0.0,
+    principal=Depends(require_user),
+):
+    path, content_type = _studio_call(
+        editor_studio.preview_frame,
+        project_id,
+        revision_id,
+        t,
+        principal=principal,
+    )
+    return FileResponse(path, media_type=content_type)
+
+
+@router.get("/projects/{project_id}/revisions/{revision_id}/studio/waveform")
+def get_studio_waveform(
+    project_id: str,
+    revision_id: str,
+    track: str = "narration",
+    principal=Depends(require_user),
+):
+    return _studio_call(
+        editor_studio.waveform,
+        project_id,
+        revision_id,
+        track,
+        principal=principal,
     )
