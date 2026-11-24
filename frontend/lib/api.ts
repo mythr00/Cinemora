@@ -2572,3 +2572,237 @@ export function rejectAssistantAction(actionId: string) {
     { method: "POST" },
   );
 }
+
+// ---------------------------------------------------------------------
+// Asset Library (Phase E, founder priority #7): the account-level
+// library over the asset ledger. Items are keyed by content hash;
+// rights/verification are the ledger's records, carried verbatim.
+// ---------------------------------------------------------------------
+
+export type LibraryProjectRef = { id: string; title: string | null };
+
+export type LibraryAsset = {
+  id: string;
+  content_hash: string;
+  type: string;
+  title: string;
+  title_recorded: boolean;
+  file_name: string | null;
+  size_bytes: number | null;
+  available: boolean;
+  media_url: string | null;
+  providers: string[];
+  rights: Record<string, unknown> | null;
+  licence_state: "recorded" | "unknown";
+  verification_states: string[];
+  decision_types: string[];
+  usage_count: number;
+  projects: LibraryProjectRef[];
+  copies: number;
+  duplicate: boolean;
+  tags: string[];
+  folder_id: string | null;
+  first_seen: string | null;
+  last_seen: string | null;
+};
+
+export type LibraryUsage = {
+  decision_id: string;
+  project_id: string;
+  project: LibraryProjectRef;
+  run_id: string;
+  revision_id: string | null;
+  scene_number: number | null;
+  sentence_number: number | null;
+  decision_type: string;
+  evidence_class: string | null;
+  verification: Record<string, unknown> | null;
+  verification_state: string;
+  rights: Record<string, unknown> | null;
+  provider: string | null;
+  source_url: string | null;
+  previous_decision_id: string | null;
+  created_at: string | null;
+  file_path: string | null;
+  file_present: boolean;
+};
+
+export type LibraryUploadSighting = {
+  project_id: string;
+  project: LibraryProjectRef;
+  upload_id: string | null;
+  title: string | null;
+  file_name: string | null;
+  file_path: string | null;
+  type: string | null;
+  provider: string | null;
+  size_bytes: number | null;
+  decision_id: string | null;
+  rights: Record<string, unknown> | null;
+  library_provenance: Record<string, unknown> | null;
+};
+
+export type LibraryAssetDetail = LibraryAsset & {
+  usages: LibraryUsage[];
+  upload_sightings: LibraryUploadSighting[];
+  copies_detail: {
+    file_path: string;
+    project: LibraryProjectRef;
+    size_bytes: number | null;
+  }[];
+  duplicate_reclaimable_bytes: number;
+  home_project: LibraryProjectRef | null;
+  home_media_key: string | null;
+};
+
+export type LibraryList = {
+  total: number;
+  limit: number;
+  offset: number;
+  items: LibraryAsset[];
+  summary: {
+    library_items: number;
+    library_usages: number;
+    projects_covered: number;
+    unkeyed_records: { decisions: number; uploads: number };
+  };
+  folders: { id: string; name: string }[];
+};
+
+export type LibraryFolder = {
+  id: string;
+  name: string;
+  created_at?: string;
+  item_count: number;
+};
+
+export type LibraryDuplicates = {
+  duplicates: {
+    content_hash: string;
+    title: string;
+    type: string;
+    size_bytes: number | null;
+    copies: {
+      file_path: string;
+      project: LibraryProjectRef;
+      size_bytes: number | null;
+    }[];
+    extra_copies: number;
+    reclaimable_bytes: number;
+  }[];
+  total_items: number;
+  total_reclaimable_bytes: number;
+};
+
+export type LibraryStorage = {
+  media_root: string;
+  total_bytes: number;
+  total_files: number;
+  projects: {
+    project_id: string;
+    title: string | null;
+    status: string;
+    bytes: number;
+    files: number;
+    in_media_tree: boolean;
+  }[];
+  library_by_type: Record<string, { items: number; bytes: number }>;
+  duplicates: { items: number; reclaimable_bytes: number };
+};
+
+export type LibraryImportResult = {
+  import: Record<string, unknown> & {
+    upload_id: string;
+    file_name: string;
+    decision_id: string | null;
+    library_provenance?: Record<string, unknown>;
+  };
+  content_hash: string;
+  target_project_id: string;
+  revision_id: string | null;
+  pre_run: boolean;
+};
+
+export function listLibraryAssets(
+  params: {
+    q?: string;
+    project_id?: string;
+    type?: string;
+    provider?: string;
+    licence?: string;
+    verification?: string;
+    decision_type?: string;
+    folder?: string;
+    tag?: string;
+    duplicates_only?: boolean;
+    limit?: number;
+    offset?: number;
+  } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === "" || value === false) continue;
+    query.set(key, String(value));
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return apiRequest<LibraryList>(`/api/v1/library/assets${suffix}`, { signal });
+}
+
+export function getLibraryAsset(contentHash: string, signal?: AbortSignal) {
+  return apiRequest<LibraryAssetDetail>(`/api/v1/library/assets/${contentHash}`, {
+    signal,
+  });
+}
+
+export function setLibraryAssetOrganisation(
+  contentHash: string,
+  body: { tags?: string[]; folder_id?: string | null; folder_set?: boolean },
+) {
+  return apiRequest<LibraryAsset>(
+    `/api/v1/library/assets/${contentHash}/organisation`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+}
+
+export function importLibraryAsset(contentHash: string, projectId: string) {
+  return apiRequest<LibraryImportResult>(
+    `/api/v1/library/assets/${contentHash}/imports`,
+    { method: "POST", body: JSON.stringify({ project_id: projectId }) },
+  );
+}
+
+export function listLibraryDuplicates(signal?: AbortSignal) {
+  return apiRequest<LibraryDuplicates>(`/api/v1/library/duplicates`, { signal });
+}
+
+export function getLibraryStorage(signal?: AbortSignal) {
+  return apiRequest<LibraryStorage>(`/api/v1/library/storage`, { signal });
+}
+
+export function listLibraryFolders(signal?: AbortSignal) {
+  return apiRequest<{ folders: LibraryFolder[] }>(`/api/v1/library/folders`, {
+    signal,
+  });
+}
+
+export function createLibraryFolder(name: string) {
+  return apiRequest<LibraryFolder>(`/api/v1/library/folders`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deleteLibraryFolder(folderId: string) {
+  await apiRequest(`/api/v1/library/folders/${folderId}`, { method: "DELETE" });
+}
+
+export function uploadToLibrary(projectId: string, file: File) {
+  const form = new FormData();
+  form.set("project_id", projectId);
+  form.set("file", file);
+  return apiRequest<{ upload: Record<string, unknown>; content_hash: string | null }>(
+    `/api/v1/library/uploads`,
+    { method: "POST", body: form },
+  );
+}

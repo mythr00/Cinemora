@@ -7,7 +7,7 @@ import { AccountMenu } from "@/components/account-menu";
 import { BrandLockup } from "@/components/brand-lockup";
 import { ApiConnectionBadge } from "@/components/connection-status";
 import { getCurrentUser, listProjects, type AccountUser } from "@/lib/api";
-import { BellRing, CirclePlus, FolderOpen, LayoutDashboard, Sparkles } from "lucide-react";
+import { BellRing, CirclePlus, FolderOpen, LayoutDashboard, Library, Sparkles } from "lucide-react";
 
 // Brief Stage 3 (C-02): /channel-lab, /thumbnail and /viral-clips
 // were removed from navigation — their backends do not exist in
@@ -26,6 +26,7 @@ import { BellRing, CirclePlus, FolderOpen, LayoutDashboard, Sparkles } from "luc
 const links = [
   { href: "/studio", label: "Dashboard", Icon: LayoutDashboard },
   { href: "/projects", label: "Projects", Icon: FolderOpen },
+  { href: "/library", label: "Library", Icon: Library },
   { href: "/create", label: "New production", Icon: CirclePlus },
   { href: "/assistant", label: "Assistant", Icon: Sparkles },
 ] as const;
@@ -33,6 +34,7 @@ const links = [
 function activeFor(pathname: string | null): string {
   if (!pathname) return "";
   if (pathname === "/projects" || pathname.startsWith("/projects/")) return "/projects";
+  if (pathname === "/library" || pathname.startsWith("/library/")) return "/library";
   if (pathname === "/create") return "/create";
   if (pathname === "/assistant" || pathname.startsWith("/assistant")) return "/assistant";
   if (pathname === "/studio") return "/studio";
