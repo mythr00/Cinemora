@@ -801,3 +801,113 @@ class AssistantSecurityEvent(Base):
         default=_utcnow,
         index=True,
     )
+
+
+class ProjectMember(Base):
+    """One account's membership of one project (Collaboration,
+    founder priority #11; gap-audit doc 04 §4).
+
+    Schema authority: migrations/versions/0010_collaboration.py.
+
+    The access layer ABOVE ownership the audit prescribes: the
+    project keeps exactly one owner (`projects.owner_id`); everyone
+    else reaches it through a row here. `role` is editor | viewer
+    (the owner is never a row). `status` is the invitation
+    lifecycle — invited -> accepted | declined, and accepted ->
+    removed (by the owner) or left (by the member, recorded the
+    same way with `removed_by_id` = the member themselves). Rows
+    are never deleted: a removed/declined row is the recorded
+    history the activity feed assembles from, and re-inviting
+    revives the same row. Uniqueness of (project_id, user_id) is
+    the unique index below.
+    """
+
+    __tablename__ = "project_members"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id"), nullable=False, index=True
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    # editor | viewer
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # invited | accepted | declined | removed
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="invited"
+    )
+
+    invited_by_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    responded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    removed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    removed_by_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_project_members_project_user",
+            "project_id",
+            "user_id",
+            unique=True,
+        ),
+    )
+
+
+class ProjectComment(Base):
+    """A member's comment on a project (Collaboration, #11).
+
+    Schema authority: migrations/versions/0010_collaboration.py.
+
+    Anchored to the project, and optionally to one editor revision
+    (`revision_id` — the revision chain's id, validated against the
+    project's revisions at creation; kept as a plain column, not an
+    FK, because revision documents are artefact-backed and their
+    table is a chain index, mirroring how plan documents anchor
+    per-sentence rows). Author + timestamps are recorded on the
+    row; edits set `edited_at`. Deletion is a hard delete by the
+    author or the project owner — the comment's existence in the
+    activity feed is derived from live rows only.
+    """
+
+    __tablename__ = "project_comments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id"), nullable=False, index=True
+    )
+
+    revision_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    author_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, index=True
+    )
+
+    edited_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
