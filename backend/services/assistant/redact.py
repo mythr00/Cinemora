@@ -23,9 +23,15 @@ _SECRET_ENV_VARS = (
     "CINEMORA_ADMIN_TOKEN",
 )
 
+# The key side matches a full identifier CONTAINING a sensitive
+# term, so prefixed real-world names (SERPER_API_KEY,
+# MY_APP_ACCESS_TOKEN) are caught — a bare \b before "api" misses
+# them because "_" is a word character.
 _ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|"
-    r"password|passwd|credential)s?\b(\s*[:=]\s*)(\S+)"
+    r"(?i)\b([A-Za-z0-9_-]*?"
+    r"(?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|"
+    r"password|passwd|credential)"
+    r"[A-Za-z0-9_-]*?)(\s*[:=]\s*)(\S+)"
 )
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-]{8,}")
 REDACTED = "[redacted]"

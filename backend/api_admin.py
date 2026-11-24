@@ -30,12 +30,23 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 
 import api_v1
 import jobs
 from api_v1 import ApiError
 from database import SessionLocal
-from models import Plan, Project, User, UserSubscription
+from models import (
+    AssistantAction,
+    AssistantConversation,
+    AssistantMessage,
+    AssistantSecurityEvent,
+    AssistantToolOverride,
+    Plan,
+    Project,
+    User,
+    UserSubscription,
+)
 from services import (
     admin_audit,
     admin_health,
@@ -43,6 +54,7 @@ from services import (
     admin_stats,
     admin_storage,
 )
+from services.assistant import registry as assistant_registry
 from services import auth as auth_service
 from services import plans as plans_service
 from services import run_ledger
@@ -587,5 +599,196 @@ def projects(
                 }
             )
         return {"total": total, "projects": out}
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------
+# M9 — AI Assistant administration (Phase 6 hooks; admin design M9)
+# ---------------------------------------------------------------------
+
+
+class ToolToggleBody(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
+def _set_tool_override(
+    principal, name: str, enabled: bool, reason: str | None
+) -> dict:
+    if assistant_registry.get(name) is None:
+        raise ApiError(
+            404, "tool_not_found", f"No assistant tool named {name}."
+        )
+    api_v1.rate_limiter.check(principal.user_id)
+    db = SessionLocal()
+    try:
+        # One row per scope (the tool name, or "*" globally); the
+        # reason lives in the audit record, not on the row.
+        row = db.get(AssistantToolOverride, name)
+        if row is None:
+            row = AssistantToolOverride(scope=name)
+            db.add(row)
+        row.disabled = not enabled
+        row.updated_by = principal.user_id
+        db.commit()
+    finally:
+        db.close()
+    admin_audit.record(
+        principal,
+        "assistant.tool_enable" if enabled else "assistant.tool_disable",
+        target_type="assistant_tool",
+        target_id=name,
+        detail={"reason": reason},
+    )
+    states = {
+        state["name"]: state
+        for state in assistant_registry.tool_states()
+    }
+    return {"tool": states[name]}
+
+
+@router.get("/assistant/tools")
+def assistant_tools(principal=Depends(admin_guard)):
+    return {
+        "assistant_enabled": assistant_registry.assistant_enabled(),
+        "tools": assistant_registry.tool_states(),
+    }
+
+
+@router.post("/assistant/tools/{name}/disable")
+def assistant_tool_disable(
+    name: str,
+    body: ToolToggleBody | None = None,
+    principal=Depends(super_admin_guard),
+):
+    return _set_tool_override(
+        principal, name, False, body.reason if body else None
+    )
+
+
+@router.post("/assistant/tools/{name}/enable")
+def assistant_tool_enable(
+    name: str,
+    body: ToolToggleBody | None = None,
+    principal=Depends(super_admin_guard),
+):
+    return _set_tool_override(
+        principal, name, True, body.reason if body else None
+    )
+
+
+@router.get("/assistant/actions")
+def assistant_actions(
+    status: str | None = None,
+    limit: int = 100,
+    principal=Depends(admin_guard),
+):
+    """The assistant execution log (design admin M9): every tool
+    execution and every proposed/confirmed action, platform-wide."""
+    db = SessionLocal()
+    try:
+        query = db.query(AssistantAction)
+        if status:
+            query = query.filter(AssistantAction.status == status)
+        rows = (
+            query.order_by(AssistantAction.created_at.desc())
+            .limit(min(max(limit, 1), 500))
+            .all()
+        )
+        owners = {u.id: u.email for u in db.query(User).all()}
+        return {
+            "actions": [
+                {
+                    "id": row.id,
+                    "owner_id": row.owner_id,
+                    "owner_email": owners.get(row.owner_id),
+                    "conversation_id": row.conversation_id,
+                    "tool_name": row.tool_name,
+                    "action_class": row.action_class,
+                    "arguments": row.arguments,
+                    "status": row.status,
+                    # Failures are recorded inside result
+                    # ({"error": ..., "code": ...}) by the executor.
+                    "result": row.result,
+                    "created_at": row.created_at,
+                    "decided_at": row.decided_at,
+                    "executed_at": row.executed_at,
+                }
+                for row in rows
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.get("/assistant/conversations")
+def assistant_conversations(
+    limit: int = 100, principal=Depends(admin_guard)
+):
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(AssistantConversation)
+            .order_by(AssistantConversation.updated_at.desc())
+            .limit(min(max(limit, 1), 500))
+            .all()
+        )
+        owners = {u.id: u.email for u in db.query(User).all()}
+        message_counts = {
+            row[0]: row[1]
+            for row in db.query(
+                AssistantMessage.conversation_id,
+                func.count(AssistantMessage.id),
+            )
+            .group_by(AssistantMessage.conversation_id)
+            .all()
+        }
+        return {
+            "conversations": [
+                {
+                    "id": row.id,
+                    "owner_id": row.owner_id,
+                    "owner_email": owners.get(row.owner_id),
+                    "title": row.title,
+                    "project_id": row.project_id,
+                    "message_count": message_counts.get(row.id, 0),
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                }
+                for row in rows
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.get("/assistant/security-events")
+def assistant_security_events(
+    limit: int = 100, principal=Depends(admin_guard)
+):
+    """The prompt-injection / abuse feed (design admin M9)."""
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(AssistantSecurityEvent)
+            .order_by(AssistantSecurityEvent.created_at.desc())
+            .limit(min(max(limit, 1), 500))
+            .all()
+        )
+        owners = {u.id: u.email for u in db.query(User).all()}
+        return {
+            "events": [
+                {
+                    "id": row.id,
+                    "owner_id": row.owner_id,
+                    "owner_email": owners.get(row.owner_id),
+                    "kind": row.kind,
+                    "source": row.source,
+                    "detail": row.detail,
+                    "created_at": row.created_at,
+                }
+                for row in rows
+            ]
+        }
     finally:
         db.close()

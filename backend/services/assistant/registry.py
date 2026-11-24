@@ -117,6 +117,12 @@ def env_enabled() -> bool:
 def _disabled_scopes(db) -> set[str]:
     from models import AssistantToolOverride
 
+    own_session = False
+    if db is None:
+        from database import SessionLocal
+
+        db = SessionLocal()
+        own_session = True
     try:
         rows = (
             db.query(AssistantToolOverride)
@@ -127,11 +133,17 @@ def _disabled_scopes(db) -> set[str]:
     except Exception:
         # A missing overrides table (legacy fixture DBs) must not
         # take the assistant down; absence of rows = nothing disabled.
-        db.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return set()
+    finally:
+        if own_session:
+            db.close()
 
 
-def assistant_enabled(db) -> bool:
+def assistant_enabled(db=None) -> bool:
     """Env kill switch AND no global admin override."""
     if not env_enabled():
         return False
@@ -143,7 +155,7 @@ def tool_disabled(db, name: str) -> bool:
     return GLOBAL_SCOPE in scopes or name in scopes
 
 
-def tool_states(db) -> list[dict]:
+def tool_states(db=None) -> list[dict]:
     """Registry + live enablement, for the admin M9 inspection view
     and the assistant's own /tools endpoint."""
     scopes = _disabled_scopes(db)
@@ -155,6 +167,9 @@ def tool_states(db) -> list[dict]:
                 "family": spec.family,
                 "action_class": spec.action_class,
                 "label": spec.label,
+                "enabled": not (
+                    spec.name in scopes or GLOBAL_SCOPE in scopes
+                ),
                 "disabled": spec.name in scopes or GLOBAL_SCOPE in scopes,
                 "disabled_scope": (
                     GLOBAL_SCOPE
