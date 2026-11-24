@@ -2540,3 +2540,86 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 @media (max-width: 640px) {
   .landing-hero { margin-top: 16px; padding: 40px 22px; border-radius: var(--card-radius); }
 }
+
+/* ============================================================
+   Mobile reliability repair (AUD-35, 2026-11-24, founder
+   iPhone Safari screenshot of /create): three defects in the
+   phone band, each measured in a WebKit harness (Playwright
+   WebKit, iPhone viewports) and fixed here at the shared
+   level so every page benefits. This section is last in the
+   file, so its rules win the cascade at equal specificity.
+
+   (1) FLUSH-LEFT CONTENT. The §2.6 shell offsets every
+   content child past the rail with margin-left:
+   var(--rail-w), via the (0,3,0) selector
+   `.app-page > *:not(.app-topbar):not(.app-rail)`. Its ≤640px
+   override sets margin-left: 0 — which also defeats the LEFT
+   half of every container's `margin: 0 auto`, so
+   margin-right: auto absorbed the whole inset and content
+   sat flush against the left edge. Measured on /create
+   @390px: .content-wrap computed margin-left 0px /
+   margin-right 36px, box at x=0..354 in a 390px viewport;
+   the page eyebrow rendered at x=0. Restoring auto margins
+   at ≤640px re-centres every width-constrained container;
+   width:auto children are unaffected (their auto margins
+   compute to 0), and the rail offset is already 0 in this
+   band, so nothing else moves.
+
+   (2) BOTTOM TAB BAR OVERFLOW. The six bar items size to
+   min-content (labels are white-space: nowrap) and
+   justify-content: space-between cannot compress them:
+   measured .app-rail scrollWidth 374px inside a 340px pill
+   @360px, the More cluster ending at x=383.6 (a 360px
+   viewport) and x=383.7 @375px — cut off at the screen
+   edge, exactly as in the founder's screenshot. The items
+   now share the bar equally (flex: 1 1 0, min-width: 0)
+   with tighter padding and ellipsised labels, so the bar
+   fits at every phone width.
+
+   (3) SAFE AREA + DYNAMIC VIEWPORT. layout.tsx now exports
+   viewportFit: "cover" (without it env(safe-area-inset-*)
+   is 0 on iOS). The bar's offsets and the page bottom
+   clearance grow by the insets, and the shell min-heights
+   use dvh (with the earlier 100vh rules as the fallback)
+   so Safari's collapsing toolbar cannot stretch the page.
+   ============================================================ */
+@media (max-width: 640px) {
+  .app-page > *:not(.app-topbar):not(.app-rail),
+  .project-editor-page > *:not(.app-topbar):not(.app-rail) {
+    margin-left: auto; margin-right: auto;
+  }
+  .app-page, .project-editor-page {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+  html { scroll-padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .app-topbar {
+    padding-left: calc(16px + env(safe-area-inset-left));
+    padding-right: calc(16px + env(safe-area-inset-right));
+  }
+  .app-rail {
+    left: calc(10px + env(safe-area-inset-left));
+    right: calc(10px + env(safe-area-inset-right));
+    bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+  .app-rail a {
+    flex: 1 1 auto; min-width: 0; align-items: center; padding: 6px 5px;
+  }
+  .app-rail-label { overflow: hidden; max-width: 100%; text-overflow: ellipsis; }
+  .app-more { flex: 1 1 auto; min-width: 0; }
+  .app-more-button { width: 100%; padding: 6px 5px; }
+  /* Script card proportions on phone (AUD-35): the desktop
+     300px textarea consumed the first screen and the step
+     head's character count squeezed into a two-line wrap
+     beside the title. Shorter field; the count wraps under
+     the title block instead. */
+  .script-panel textarea { min-height: 220px; }
+  .create-step-head { flex-wrap: wrap; row-gap: 8px; }
+}
+/* Dynamic viewport units: where dvh is supported it wins
+   over the 100vh declarations above (same specificity, later
+   in the file); where it is not, the declaration is dropped
+   and 100vh stands. */
+body { min-height: 100dvh; }
+.app-page, .project-editor-page { min-height: 100dvh; }
+.auth-page { min-height: 100dvh; }
+.admin-frame { min-height: 100dvh; }
