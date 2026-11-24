@@ -2312,6 +2312,7 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 .script-panel textarea { border-radius: var(--card-radius-sm); }
 .voice-catalog-list { border-radius: var(--card-radius-sm); }
 .motion-toggle { border-radius: var(--card-radius-sm); }
+.motion-toggle > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 
 /* ---------- Rows become card-rows ---------- */
 .dashboard-project-card {
@@ -2520,4 +2521,22 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
   .create-step { padding: 20px 18px; }
   .signal-strip { width: calc(100% - 40px); }
   .auth-card { padding: 26px 20px; }
+}
+
+/* ---------- Landing hero: one centred app card (founder
+   confirmation 2026-11-24: the landing is a first-class part
+   of the rebuild). The create action is the centre of the
+   card; every control on it is a real route link. ---------- */
+.landing-hero {
+  background: var(--paper); border-radius: 32px; box-shadow: var(--shadow-card);
+  margin-top: 28px; padding: 64px 40px; text-align: center;
+  justify-content: center; justify-items: center;
+}
+.hero-copy .eyebrow { justify-content: center; }
+.hero-deck { margin-inline: auto; }
+.hero-actions { justify-content: center; }
+.hero-actions .button { min-height: 52px; padding: 0 24px; font-size: 15px; }
+.hero-proof { justify-content: center; }
+@media (max-width: 640px) {
+  .landing-hero { margin-top: 16px; padding: 40px 22px; border-radius: var(--card-radius); }
 }

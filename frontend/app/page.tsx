@@ -35,7 +35,7 @@ export default function Home() {
   return <main className="landing-page">
     <MarketingNavigation />
     <section className="landing-hero" aria-labelledby="hero-title">
-      <div className="hero-copy"><p className="eyebrow"><span className="eyebrow-mark" /> DOCUMENTARY PRODUCTION, IN ONE WORKSPACE</p><h1 id="hero-title">A clearer path from script to screen.</h1><p className="hero-deck">Develop the story, review the plan sentence by sentence, and follow the cut — in one connected studio.</p><div className="hero-actions"><Link className="button button-primary" href="/create">Create a video <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link><Link className="button button-quiet" href="/studio">Open the studio</Link></div><p className="hero-proof"><span /> YOUR STORY · YOUR EDITORIAL CHOICES</p></div>
+      <div className="hero-copy"><p className="eyebrow"><span className="eyebrow-mark" /> DOCUMENTARY PRODUCTION, IN ONE WORKSPACE</p><h1 id="hero-title">Start with a script. Finish with a film.</h1><p className="hero-deck">Develop the story, review the plan sentence by sentence, and follow the cut — in one connected studio.</p><div className="hero-actions"><Link className="button button-primary" href="/create">Create a video <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link><Link className="button button-quiet" href="/studio">Open the studio</Link></div><p className="hero-proof"><span /> YOUR STORY · YOUR EDITORIAL CHOICES</p></div>
     </section>
 
     <section className="signal-strip" aria-label="Production stages">{productionRoles.map((role, index) => <span key={role}><i>0{index + 1}</i>{role}</span>)}</section>
