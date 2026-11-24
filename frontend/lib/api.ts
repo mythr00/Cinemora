@@ -1899,3 +1899,115 @@ export function listAdminAuditLog(
 export function getAdminSettings(signal?: AbortSignal) {
   return apiRequest<AdminSettings>("/api/v1/admin/settings", { signal });
 }
+
+// ---------------------------------------------------------------------
+// AI Product Assistant (Phase 6)
+// ---------------------------------------------------------------------
+
+export type AssistantConversation = {
+  id: string;
+  title: string | null;
+  project_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type AssistantToolTraceEntry = {
+  tool: string;
+  label: string;
+  status: string;
+  injection_patterns_detected?: string[];
+};
+
+export type AssistantMessage = {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant";
+  content: string;
+  tool_trace: {
+    state?: string;
+    tools?: AssistantToolTraceEntry[];
+    unavailable_reason?: string | null;
+  } | null;
+  created_at: string | null;
+};
+
+export type AssistantAction = {
+  id: string;
+  conversation_id: string;
+  message_id: string | null;
+  tool_name: string;
+  action_class: "read" | "write" | "consequential";
+  label: string;
+  arguments: Record<string, unknown>;
+  status: string;
+  result: Record<string, unknown> | null;
+  created_at: string | null;
+  decided_at: string | null;
+  executed_at: string | null;
+  expires_at: string | null;
+};
+
+export type AssistantConversationDetail = {
+  conversation: AssistantConversation;
+  messages: AssistantMessage[];
+  pending_actions: AssistantAction[];
+};
+
+export type AssistantTurnResult = {
+  state: string;
+  message: AssistantMessage;
+  pending_action: AssistantAction | null;
+  tool_results: Record<string, unknown>;
+};
+
+export function listAssistantConversations(signal?: AbortSignal) {
+  return apiRequest<{ conversations: AssistantConversation[] }>(
+    "/api/v1/assistant/conversations",
+    { signal },
+  );
+}
+
+export function createAssistantConversation(projectId?: string) {
+  return apiRequest<AssistantConversation>("/api/v1/assistant/conversations", {
+    method: "POST",
+    body: JSON.stringify(projectId ? { project_id: projectId } : {}),
+  });
+}
+
+export function getAssistantConversation(
+  conversationId: string,
+  signal?: AbortSignal,
+) {
+  return apiRequest<AssistantConversationDetail>(
+    `/api/v1/assistant/conversations/${conversationId}`,
+    { signal },
+  );
+}
+
+export async function deleteAssistantConversation(conversationId: string) {
+  await apiRequest(`/api/v1/assistant/conversations/${conversationId}`, {
+    method: "DELETE",
+  });
+}
+
+export function postAssistantMessage(conversationId: string, content: string) {
+  return apiRequest<AssistantTurnResult>(
+    `/api/v1/assistant/conversations/${conversationId}/messages`,
+    { method: "POST", body: JSON.stringify({ content }) },
+  );
+}
+
+export function confirmAssistantAction(actionId: string) {
+  return apiRequest<{ action: AssistantAction }>(
+    `/api/v1/assistant/actions/${actionId}/confirm`,
+    { method: "POST" },
+  );
+}
+
+export function rejectAssistantAction(actionId: string) {
+  return apiRequest<{ action: AssistantAction }>(
+    `/api/v1/assistant/actions/${actionId}/reject`,
+    { method: "POST" },
+  );
+}

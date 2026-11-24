@@ -8,7 +8,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { ProjectTabs } from "@/components/project-tabs";
 import { StageProgress } from "@/components/stage-progress";
 import { ErrorState, LoadingState } from "@/components/states";
-import { ArrowLeft, ArrowUpRight } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Sparkles } from "lucide-react";
 import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
 import {
   cancelRun,
@@ -174,6 +174,7 @@ export default function ProjectPage() {
         <p className="eyebrow">PROJECT OVERVIEW</p>
         <h1>{overview.status.title || `${overview.status.category} production`}</h1>
         <p className="overview-status-line">Status: <StatusBadge status={overview.status.status} />{overview.status.current_stage ? ` · Stage: ${overview.status.current_stage.replaceAll("_", " ")}` : ""}</p>
+        <p><Link className="button" href={`/assistant?project=${projectId}`}><Sparkles size={14} strokeWidth={2} aria-hidden /> Ask the assistant</Link></p>
       </div>
       {overview.status.error && <p className="projects-error" role="alert">{overview.status.error}</p>}
 
