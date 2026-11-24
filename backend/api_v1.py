@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -58,6 +58,7 @@ from services import admin_audit
 from services import auth as auth_service
 from services import plans as plans_service
 from services import (
+    asset_library,
     editor,
     editor_studio,
     genre_packs,
@@ -2318,3 +2319,234 @@ def get_studio_waveform(
         track,
         principal=principal,
     )
+
+
+# ---------------------------------------------------------------------------
+# Asset Library (Phase E, founder priority #7) — the account-level
+# media library over the asset ledger + upload indexes
+# (services/asset_library.py). Every route is principal-scoped: the
+# library is built from the caller's own projects only, and another
+# user's asset answers 404 exactly like a nonexistent one.
+# ---------------------------------------------------------------------------
+
+
+def _library_call(fn, *args, **kwargs):
+    """Run an asset-library service call, mapping LibraryError —
+    and the EditorError the import path can raise while seeding a
+    target revision — onto the v1 error shape."""
+    try:
+        return fn(*args, **kwargs)
+    except asset_library.LibraryError as error:
+        message = error.message
+        if error.details:
+            message = f"{message} Details: {json.dumps(error.details)}"
+        raise ApiError(error.status_code, error.code, message) from error
+    except editor.EditorError as error:
+        message = error.message
+        if error.details:
+            message = f"{message} Details: {json.dumps(error.details)}"
+        raise ApiError(error.status_code, error.code, message) from error
+
+
+class LibraryFolderIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+
+
+class LibraryOrganisationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tags: list[str] | None = None
+    folder_id: str | None = None
+    folder_set: bool = False
+
+
+class LibraryImportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str = Field(min_length=1)
+
+
+@router.get("/library/assets")
+def list_library_assets(
+    q: str | None = None,
+    project_id: str | None = None,
+    type: str | None = None,
+    provider: str | None = None,
+    licence: str | None = None,
+    verification: str | None = None,
+    decision_type: str | None = None,
+    folder: str | None = None,
+    tag: str | None = None,
+    duplicates_only: bool = False,
+    limit: int = 100,
+    offset: int = 0,
+    principal=Depends(require_user),
+):
+    db = SessionLocal()
+    try:
+        return _library_call(
+            asset_library.list_assets,
+            db,
+            principal,
+            q=q,
+            project_id=project_id,
+            type=type,
+            provider=provider,
+            licence=licence,
+            verification=verification,
+            decision_type=decision_type,
+            folder=folder,
+            tag=tag,
+            duplicates_only=duplicates_only,
+            limit=limit,
+            offset=offset,
+        )
+    finally:
+        db.close()
+
+
+@router.get("/library/assets/{content_hash}")
+def get_library_asset(content_hash: str, principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        return _library_call(
+            asset_library.get_asset, db, principal, content_hash
+        )
+    finally:
+        db.close()
+
+
+@router.get("/library/assets/{content_hash}/media")
+def serve_library_media(content_hash: str, principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        path = _library_call(
+            asset_library.resolve_media_path, db, principal, content_hash
+        )
+    finally:
+        db.close()
+    return FileResponse(
+        path,
+        media_type=asset_library.media_content_type(path),
+        filename=Path(path).name,
+    )
+
+
+@router.put("/library/assets/{content_hash}/organisation")
+def set_library_asset_organisation(
+    content_hash: str,
+    body: LibraryOrganisationIn,
+    principal=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        return _library_call(
+            asset_library.set_item_organisation,
+            db,
+            principal,
+            content_hash,
+            tags=body.tags,
+            folder_id=body.folder_id if body.folder_set else ...,
+        )
+    finally:
+        db.close()
+
+
+@router.post("/library/assets/{content_hash}/imports", status_code=201)
+def import_library_asset(
+    content_hash: str,
+    body: LibraryImportIn,
+    principal=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        return _library_call(
+            asset_library.import_asset,
+            db,
+            principal,
+            content_hash,
+            body.project_id,
+        )
+    finally:
+        db.close()
+
+
+@router.get("/library/duplicates")
+def list_library_duplicates(principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        return _library_call(asset_library.list_duplicates, db, principal)
+    finally:
+        db.close()
+
+
+@router.get("/library/storage")
+def get_library_storage(principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        return _library_call(asset_library.storage_view, db, principal)
+    finally:
+        db.close()
+
+
+@router.get("/library/folders")
+def list_library_folders(principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        return _library_call(asset_library.list_folders, db, principal)
+    finally:
+        db.close()
+
+
+@router.post("/library/folders", status_code=201)
+def create_library_folder(
+    body: LibraryFolderIn, principal=Depends(post_guard)
+):
+    db = SessionLocal()
+    try:
+        return _library_call(
+            asset_library.create_folder, db, principal, body.name
+        )
+    finally:
+        db.close()
+
+
+@router.delete("/library/folders/{folder_id}")
+def delete_library_folder(folder_id: str, principal=Depends(post_guard)):
+    db = SessionLocal()
+    try:
+        return _library_call(
+            asset_library.delete_folder, db, principal, folder_id
+        )
+    finally:
+        db.close()
+
+
+@router.post("/library/uploads", status_code=201)
+def upload_to_library(
+    project_id: str = Form(...),
+    file: UploadFile = File(...),
+    principal=Depends(post_guard),
+):
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal)
+        # The same per-plan upload cap the project upload route
+        # enforces; editor.store_upload's global cap remains the
+        # second enforcement point downstream.
+        file.file.seek(0, 2)
+        upload_size = file.file.tell()
+        file.file.seek(0)
+        plans_service.enforce_upload_size(db, principal.user_id, upload_size)
+        return _library_call(
+            asset_library.library_upload,
+            db,
+            principal,
+            project_id,
+            file.filename,
+            file.file,
+        )
+    finally:
+        db.close()

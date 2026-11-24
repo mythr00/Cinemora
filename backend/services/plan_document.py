@@ -847,7 +847,24 @@ def build_certificate(project, run, decisions, counts, planner=None):
                     else None,
                 }
                 if decision.get("decision_type")
-                in ("selected", "still", "swapped_in", "rotated", "generated")
+                in (
+                    "selected",
+                    "still",
+                    "swapped_in",
+                    "rotated",
+                    "generated",
+                    # Phase E: assets a person deliberately placed
+                    # into the project — an editor upload
+                    # (user_supplied, licence recorded as unknown)
+                    # and a library import (library_reuse, rights
+                    # carried from the source decision) — record
+                    # real rights dicts in the ledger, and the
+                    # certificate must surface them: provenance and
+                    # licence visible in the certificate is the
+                    # Asset Library's acceptance criterion.
+                    "user_supplied",
+                    "library_reuse",
+                )
                 else None,
                 "previous_decision_id": decision.get("previous_decision_id"),
                 "recorded_at": decision.get("created_at"),
