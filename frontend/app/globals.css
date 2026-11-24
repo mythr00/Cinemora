@@ -1911,3 +1911,25 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 .invitations-inbox { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 16px; margin: 0 0 20px; background: var(--paper); }
 .invitations-inbox ul { list-style: none; margin: 10px 0 0; padding: 0; }
 .invitations-inbox li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+
+/* Thumbnail Generator (priority #13): variant cards, previews at
+   full and small scale, palette swatches. Pure white surfaces,
+   Lucide icons only — colours below are the app's own tokens. */
+.thumb-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.thumb-suggestion { margin: 0 4px 4px 0; }
+.thumb-variants-title { margin: 26px 0 12px; color: var(--ink-strong); }
+.thumb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; }
+.thumb-card { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); overflow: hidden; }
+.thumb-card-body { padding: 14px 16px 16px; }
+.thumb-card-body h3 { margin: 0 0 4px; color: var(--ink-strong); font-size: 16px; }
+.thumb-img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--surface-low); }
+.thumb-img-small { width: 160px; aspect-ratio: 16 / 9; }
+.thumb-preview { display: flex; align-items: center; gap: 8px; width: 100%; aspect-ratio: 16 / 9; padding: 14px; background: var(--surface-low); color: var(--ink-muted); font-size: 13px; }
+.thumb-small-row { display: flex; align-items: flex-start; gap: 12px; margin: 10px 0; }
+.thumb-checks { list-style: none; margin: 10px 0; padding: 0; font-size: 13px; color: var(--ink-soft); }
+.thumb-checks li { padding: 3px 0; border-top: 1px solid var(--line); }
+.thumb-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.thumb-palette { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 12px; }
+.thumb-swatch { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); }
+.thumb-swatch-chip { width: 18px; height: 18px; border: 1px solid var(--line-deep); border-radius: 4px; }
+.thumb-error { color: var(--danger); font-size: 14px; line-height: 1.55; }

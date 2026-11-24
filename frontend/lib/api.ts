@@ -973,6 +973,155 @@ export function qaReportExportPath(projectId: string, runId: string) {
 }
 
 // ---------------------------------------------------------------------
+// Thumbnail Generator (founder priority #13) — compositional
+// thumbnails over the project's own recorded material
+// (services/thumbnail_studio.py): film frames, verified stills and
+// uploads composed at YouTube's 1280x720 spec. The checks are
+// mechanical measurements of the finished file — there is no
+// performance prediction anywhere in this surface.
+// ---------------------------------------------------------------------
+
+export type ThumbnailBase = {
+  base_id: string;
+  kind: "film_frame" | "asset_still" | "upload";
+  label: string;
+  run_id?: string | null;
+  timestamp_seconds?: number | null;
+  decision_id?: string | null;
+  upload_id?: string | null;
+  file_name?: string | null;
+  provider?: string | null;
+  scene_number?: number | null;
+  sentence_number?: number | null;
+};
+
+export type ThumbnailChecks = {
+  dimensions: [number, number];
+  format: string;
+  file_size_bytes: number;
+  under_youtube_size_limit: boolean;
+  headline_words: number;
+  headline_characters: number;
+  headline_contrast_ratio: number;
+  headline_font_height_px_at_10_percent_scale: number;
+};
+
+export type ThumbnailVariant = {
+  id: string;
+  created_at: string;
+  file_name: string;
+  base: {
+    kind: string;
+    run_id?: string | null;
+    timestamp_seconds?: number | null;
+    decision_id?: string | null;
+    upload_id?: string | null;
+    file_name?: string | null;
+    provider?: string | null;
+  };
+  base_id: string;
+  headline: string;
+  layout: string;
+  accent: string;
+  checks: ThumbnailChecks;
+  available: boolean;
+};
+
+export type ThumbnailStudioView = {
+  schema: string;
+  project_id: string;
+  spec: {
+    width: number;
+    height: number;
+    max_bytes: number;
+    layouts: string[];
+    accents: string[];
+    max_headline_words: number;
+    max_headline_characters: number;
+  };
+  brief: {
+    title?: string | null;
+    category?: string | null;
+    story_type?: string | null;
+    case_bible_state: string;
+    primary_subject: { name?: string | null; type?: string | null; role?: string | null } | null;
+    recorded_facts: Array<{ kind: string; display: string; sentence_number?: number | null }>;
+    headline_suggestions: string[];
+  };
+  bases: {
+    film: {
+      state: string;
+      run_id?: string | null;
+      duration_seconds?: number | null;
+      timestamps_source: string;
+      frames: ThumbnailBase[];
+    };
+    stills: ThumbnailBase[];
+    uploads: ThumbnailBase[];
+  };
+  variants: ThumbnailVariant[];
+};
+
+export type ThumbnailAnalysis = {
+  base: Record<string, unknown>;
+  base_id: string;
+  label: string;
+  dimensions: [number, number];
+  ocr: { engine?: string | null; state: string; lines: string[]; word_count: number };
+  palette: Array<{ hex: string; share: number }>;
+  luminance: { mean: number; spread: number };
+};
+
+export function getThumbnails(projectId: string, signal?: AbortSignal) {
+  return apiRequest<ThumbnailStudioView>(`/api/v1/projects/${projectId}/thumbnails`, { signal });
+}
+
+export function composeThumbnail(
+  projectId: string,
+  body: { base_id: string; headline?: string; layout: string; accent: string },
+) {
+  return apiRequest<ThumbnailVariant>(`/api/v1/projects/${projectId}/thumbnails`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function generateThumbnailVariants(projectId: string, headline?: string) {
+  return apiRequest<{ created: ThumbnailVariant[]; skipped: Array<{ base_id: string; layout: string; code: string; message: string }> }>(
+    `/api/v1/projects/${projectId}/thumbnails/variants`,
+    { method: "POST", body: JSON.stringify({ headline: headline ?? null }) },
+  );
+}
+
+export function analyseThumbnailBase(projectId: string, baseId: string) {
+  return apiRequest<ThumbnailAnalysis>(`/api/v1/projects/${projectId}/thumbnails/analyse`, {
+    method: "POST",
+    body: JSON.stringify({ base_id: baseId }),
+  });
+}
+
+export function suggestThumbnailHeadlines(projectId: string) {
+  return apiRequest<{ proposals: string[]; basis: string }>(
+    `/api/v1/projects/${projectId}/thumbnails/suggest-headlines`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+export function deleteThumbnail(projectId: string, thumbId: string) {
+  return apiRequest<{ deleted: string }>(`/api/v1/projects/${projectId}/thumbnails/${thumbId}`, {
+    method: "DELETE",
+  });
+}
+
+export function thumbnailImagePath(projectId: string, thumbId: string) {
+  return `/api/v1/projects/${projectId}/thumbnails/${thumbId}/image`;
+}
+
+export function thumbnailDownloadPath(projectId: string, thumbId: string) {
+  return `/api/v1/projects/${projectId}/thumbnails/${thumbId}/download`;
+}
+
+// ---------------------------------------------------------------------
 // Project Intelligence (founder priority #10) — the assembly layer
 // over the persistent project record (services/project_intelligence
 // .py). Recorded data passes through as recorded (bible entities,
