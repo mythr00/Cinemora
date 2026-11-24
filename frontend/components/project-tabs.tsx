@@ -20,6 +20,7 @@ const TABS = [
   { suffix: "/assets", label: "Assets" },
   { suffix: "/graphics", label: "Graphics" },
   { suffix: "/edit", label: "Editor" },
+  { suffix: "/studio", label: "Editor Studio" },
   { suffix: "/certificate", label: "Delivery" },
 ] as const;
 

@@ -1392,7 +1392,7 @@ export type AssetSpec =
   | { library_decision_id: string }
   | { source_url: string };
 
-/** The 12 editor operations, with the backend's exact payload
+/** The 14 editor operations, with the backend's exact payload
  * fields (services/editor.py `_OP_HANDLERS`). */
 export type EditorOperation =
   | { type: "remove_clip"; item_id: string; gap_policy: "leave_gap" | "close_gap" }
@@ -1417,7 +1417,21 @@ export type EditorOperation =
       voice_id?: string;
     }
   | { type: "set_music"; music_file?: string | null; upload_id?: string }
-  | { type: "set_volumes"; narration?: number; music?: number };
+  | { type: "set_volumes"; narration?: number; music?: number }
+  | {
+      type: "set_transition";
+      item_id: string;
+      transition: string;
+      reason?: string;
+      window_frames?: number;
+    }
+  | {
+      type: "assign_graphic";
+      item_id: string;
+      template?: string;
+      inputs?: Record<string, unknown>;
+      style?: string;
+    };
 
 export type RevisionRenderResult = {
   revision_id: string;
@@ -1502,6 +1516,199 @@ export function requestRevisionRender(projectId: string, revisionId: string, all
   return apiRequest<RevisionRenderResult>(
     `/api/v1/projects/${projectId}/revisions/${revisionId}/render`,
     { method: "POST", body: JSON.stringify({ allow_gaps: allowGaps }) },
+  );
+}
+
+// ---------------------------------------------------------------------
+// Editor Studio (founder priority #5) — the multitrack projection
+// of a revision (services/editor_studio.py). Reads only: edits go
+// through applyEditorOperations, renders through
+// requestRevisionRender, exactly like the classic editor.
+// ---------------------------------------------------------------------
+
+export type StudioItemAsset = {
+  file_path: string | null;
+  file_name: string | null;
+  type: string | null;
+  title?: string | null;
+  source?: string | null;
+  source_url?: string | null;
+  clip_start: number;
+  source_duration?: number | null;
+  decision_id?: string | null;
+  media_key: string | null;
+};
+
+export type StudioItem = {
+  item_id: string;
+  kind: "clip" | "graphic" | "gap";
+  sentence_number: number;
+  scene_number: number;
+  start: number;
+  end: number;
+  duration: number;
+  transition: string;
+  transition_reason?: string | null;
+  transition_window_frames?: number | null;
+  assignment?: string | null;
+  classification: string;
+  flags: string[];
+  graphic: {
+    template?: string | null;
+    family?: string | null;
+    style?: string | null;
+    inputs?: Record<string, unknown> | null;
+    has_recipe: boolean;
+  } | null;
+  asset: StudioItemAsset;
+};
+
+export type StudioTrack =
+  | { id: "video"; kind: "video"; name: string; items: StudioItem[] }
+  | { id: "graphics"; kind: "graphics"; name: string; items: StudioItem[] }
+  | {
+      id: "captions";
+      kind: "captions";
+      name: string;
+      segments: Array<{
+        segment_index: number;
+        start: number;
+        end: number;
+        text: string;
+        edited: boolean;
+      }>;
+      stale: boolean;
+      stale_reason?: string | null;
+    }
+  | {
+      id: "narration";
+      kind: "audio";
+      name: string;
+      volume: number;
+      voice_id?: string | null;
+      media_key: string | null;
+      sentences: Array<{
+        sentence_number: number;
+        scene_number: number;
+        start: number;
+        end: number;
+        text: string;
+        dirty: boolean;
+      }>;
+    }
+  | {
+      id: "music";
+      kind: "audio";
+      name: string;
+      volume: number;
+      state?: string | null;
+      file_name: string | null;
+      media_key: string | null;
+    };
+
+export type StudioView = RevisionView & {
+  duration_seconds: number;
+  volumes: { narration: number; music: number };
+  render_state: EditorDocument["render_state"];
+  last_render_error: string | null;
+  exports: RevisionExport[];
+  tracks: StudioTrack[];
+  catalogues: {
+    transitions: string[];
+    transition_reasons: string[];
+    graphic_templates: string[];
+  };
+};
+
+export function getStudioView(projectId: string, revisionId: string, signal?: AbortSignal) {
+  return apiRequest<StudioView>(
+    `/api/v1/projects/${projectId}/revisions/${revisionId}/studio`,
+    { signal },
+  );
+}
+
+export type StudioPoolEntry = {
+  pool_id: string;
+  origin: "ledger" | "upload";
+  decision_id: string | null;
+  upload_id: string | null;
+  file_path: string;
+  file_name: string;
+  type: string;
+  classification: string;
+  provider?: string | null;
+  source_url?: string | null;
+  scene_number?: number | null;
+  sentence_number?: number | null;
+  revision_id?: string | null;
+  decision_type?: string | null;
+  source_duration?: number | null;
+  media_key: string | null;
+  available: boolean;
+  in_timeline: boolean;
+};
+
+export type StudioPool = {
+  revision_id: string;
+  run_id: string;
+  total: number;
+  limit: number;
+  offset: number;
+  items: StudioPoolEntry[];
+};
+
+export function getStudioPool(
+  projectId: string,
+  revisionId: string,
+  limit = 100,
+  offset = 0,
+  signal?: AbortSignal,
+) {
+  return apiRequest<StudioPool>(
+    `/api/v1/projects/${projectId}/revisions/${revisionId}/studio/pool?limit=${limit}&offset=${offset}`,
+    { signal },
+  );
+}
+
+export type StudioWaveform = {
+  track: string;
+  duration_seconds: number;
+  bucket_count: number;
+  bucket_seconds: number;
+  peak: number;
+  peaks: number[];
+};
+
+export function getStudioWaveform(
+  projectId: string,
+  revisionId: string,
+  track: "narration" | "music",
+  signal?: AbortSignal,
+) {
+  return apiRequest<StudioWaveform>(
+    `/api/v1/projects/${projectId}/revisions/${revisionId}/studio/waveform?track=${track}`,
+    { signal },
+  );
+}
+
+/**
+ * The Studio viewer's frame at a timeline instant: the REAL frame
+ * the current (unrendered) revision document shows there, cut by
+ * the backend from the covering item's source media. Fetched as an
+ * object URL through the authenticated path (a bare <img> cannot
+ * send credentials); callers own revoking the URL. Rejects when
+ * the backend cannot produce the frame — the viewer then says so
+ * instead of showing a placeholder.
+ */
+export function fetchStudioFrameObjectUrl(
+  projectId: string,
+  revisionId: string,
+  t: number,
+  signal?: AbortSignal,
+): Promise<{ url: string; contentType: string }> {
+  return fetchAuthenticatedMediaObjectUrl(
+    `/api/v1/projects/${projectId}/revisions/${revisionId}/studio/frame?t=${t.toFixed(3)}`,
+    signal,
   );
 }
 
