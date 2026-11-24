@@ -54,6 +54,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 import jobs
 from database import SessionLocal
 from models import Plan, Project, User, UserPreference, UserSubscription
+from services import admin_audit
 from services import auth as auth_service
 from services import plans as plans_service
 from services import (
@@ -501,6 +502,15 @@ def login(body: LoginIn, request: Request, response: Response):
         user.last_login_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(user)
+        if user.role in ("admin", "super_admin"):
+            # Phase 7: administrator sign-ins are audit events
+            # (best-effort — the audit writer never fails a login).
+            admin_audit.record(
+                auth_service.principal_for_user(user, "session"),
+                "admin.sign_in",
+                target_type="account",
+                target_id=user.id,
+            )
         token = auth_service.create_session(user.id)
         _set_session_cookie(response, token)
         return {"user": _user_view(user), "session_token": token}
@@ -600,78 +610,10 @@ def account_usage(
         db.close()
 
 
-class PlanAssignIn(BaseModel):
-    plan_name: str = Field(min_length=1, max_length=50)
-
-
-@router.post("/admin/users/{user_id}/plan")
-def admin_assign_plan(
-    user_id: str,
-    body: PlanAssignIn,
-    principal: auth_service.Principal = Depends(require_admin),
-):
-    """Founder operation: move a user onto another plan (02 §5.3).
-    The previous active subscription is cancelled, a new one starts
-    now. (The Phase 7 admin audit log will record these; until it
-    lands, the subscription history itself is the record.)"""
-    db = SessionLocal()
-    try:
-        user = db.get(User, str(user_id))
-        if user is None:
-            raise ApiError(404, "user_not_found", f"No user {user_id}.")
-        plan = (
-            db.query(Plan).filter(Plan.name == body.plan_name).one_or_none()
-        )
-        if plan is None:
-            raise ApiError(
-                404, "plan_not_found", f"No plan named {body.plan_name}."
-            )
-        current = plans_service.get_active_subscription(db, user.id)
-        if current is not None:
-            current.status = "cancelled"
-        subscription = UserSubscription(
-            id=str(uuid4()),
-            user_id=user.id,
-            plan_id=plan.id,
-            status="active",
-            current_period_start=datetime.now(timezone.utc),
-        )
-        db.add(subscription)
-        db.commit()
-        return {"user": _user_view(user), "plan": plan.name}
-    finally:
-        db.close()
-
-
-@router.get("/admin/users")
-def admin_list_users(
-    principal: auth_service.Principal = Depends(require_admin),
-):
-    """Minimal admin surface (Phase 7 builds the full console on
-    this dependency): every account with its active plan name."""
-    db = SessionLocal()
-    try:
-        users = db.query(User).order_by(User.created_at).all()
-        subs = {
-            s.user_id: s
-            for s in db.query(UserSubscription)
-            .filter(UserSubscription.status == "active")
-            .all()
-        }
-        plans = {p.id: p.name for p in db.query(Plan).all()}
-        return {
-            "users": [
-                {
-                    **_user_view(u),
-                    "plan": plans.get(subs[u.id].plan_id)
-                    if u.id in subs
-                    else None,
-                }
-                for u in users
-            ]
-        }
-    finally:
-        db.close()
+# The Phase 8 account-admin endpoints that used to live here
+# (GET /admin/users, POST /admin/users/{user_id}/plan) moved to
+# api_admin.py in Phase 7 — same paths and shapes, now behind the
+# admin router's guard and recorded in the admin audit log.
 
 
 # ---------------------------------------------------------------------

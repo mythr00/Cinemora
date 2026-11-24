@@ -1,0 +1,591 @@
+"""Administration API (Phase 7) — mounted at /api/v1/admin.
+
+Every route is gated by the admin guard below: the caller must be
+an authenticated principal on the Phase 7 role ladder (role
+`admin` or `super_admin`, services/auth.Principal.is_admin). This
+is a separate, backend-enforced scope — admin endpoints see across
+tenants by design, so they are NOT sprinkled into the user API:
+they live here, behind this guard, and the two account-admin
+endpoints Phase 8 landed in api_v1 moved here with them (same
+paths, same shapes).
+
+Sensitive operations write to the append-only admin audit log
+(services/admin_audit) in the same flow as their effect:
+- run.cancel / run.submit_replacement (M2 writes),
+- user.status_change (suspend / reactivate; super_admin),
+- user.plan_assign (super_admin; Phase 8 founder operation),
+- admin.sign_in (recorded by the login route in api_v1),
+- admin.auth_denied (failed authorisation attempts, logged by the
+  guard so probing is visible).
+
+Reads aggregate the platform's real records only (services/
+admin_stats, admin_storage, admin_health, admin_settings): no
+figure is fabricated, and monetary cost stays None — no price
+table exists (services/run_metrics design rule).
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, Field
+
+import api_v1
+import jobs
+from api_v1 import ApiError
+from database import SessionLocal
+from models import Plan, Project, User, UserSubscription
+from services import (
+    admin_audit,
+    admin_health,
+    admin_settings,
+    admin_stats,
+    admin_storage,
+)
+from services import auth as auth_service
+from services import plans as plans_service
+from services import run_ledger
+
+router = APIRouter(prefix="/admin", tags=["admin"])
+
+# Role ladder for this router's writes. Reads: any admin principal.
+# Production writes: any admin principal. Account-consequential
+# writes (suspend/reactivate, plan assignment): super_admin — the
+# founder role, matching the Phase 8 "founder operation" contract.
+SUPER_ADMIN = "super_admin"
+
+
+def admin_guard(
+    request: Request,
+    principal: auth_service.Principal = Depends(api_v1.require_user),
+) -> auth_service.Principal:
+    """require_user + the Phase 7 role ladder, with denied attempts
+    recorded in the audit log (design admin/03 §3)."""
+    if not principal.is_admin:
+        admin_audit.record(
+            principal,
+            "admin.auth_denied",
+            target_type="route",
+            target_id=request.url.path,
+            result="failure",
+            error="authenticated principal is not an administrator",
+        )
+        raise ApiError(
+            403, "forbidden", "This endpoint requires an administrator."
+        )
+    return principal
+
+
+def super_admin_guard(
+    principal: auth_service.Principal = Depends(admin_guard),
+) -> auth_service.Principal:
+    if principal.role != SUPER_ADMIN:
+        raise ApiError(
+            403,
+            "forbidden",
+            "This operation requires the super_admin (founder) role.",
+        )
+    return principal
+
+
+def _write_guard(
+    principal: auth_service.Principal = Depends(admin_guard),
+) -> auth_service.Principal:
+    api_v1.rate_limiter.check(principal.user_id)
+    return principal
+
+
+# ---------------------------------------------------------------------
+# M1 — overview; M5 — composite health; M3 — workers & queues
+# ---------------------------------------------------------------------
+
+
+@router.get("/overview")
+def overview(days: int = 30, principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        return admin_stats.overview(db, days=days)
+    finally:
+        db.close()
+
+
+@router.get("/health")
+def health(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        return admin_health.composite_health(db)
+    finally:
+        db.close()
+
+
+@router.get("/workers")
+def workers(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        return admin_health.worker_overview(db)
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------
+# M2 — production monitoring (+ the two audited writes)
+# ---------------------------------------------------------------------
+
+
+@router.get("/runs")
+def runs(
+    status: str | None = None,
+    project_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    principal=Depends(admin_guard),
+):
+    db = SessionLocal()
+    try:
+        return admin_stats.list_runs(
+            db, status=status, project_id=project_id,
+            limit=limit, offset=offset,
+        )
+    finally:
+        db.close()
+
+
+@router.get("/runs/{run_id}")
+def run_detail(run_id: str, principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        detail = admin_stats.run_detail(db, run_id)
+    finally:
+        db.close()
+    if detail is None:
+        raise ApiError(404, "run_not_found", f"No run {run_id}.")
+    return detail
+
+
+@router.post("/runs/{run_id}/cancel")
+def cancel_run(run_id: str, principal=Depends(_write_guard)):
+    run = run_ledger.get_run(run_id)
+    if run is None:
+        raise ApiError(404, "run_not_found", f"No run {run_id}.")
+    accepted = run_ledger.request_cancel(run_id)
+    admin_audit.record(
+        principal,
+        "run.cancel",
+        target_type="run",
+        target_id=run_id,
+        detail={
+            "project_id": run["project_id"],
+            "previous_status": run["status"],
+            "cancel_requested": accepted,
+        },
+        result="success" if accepted else "failure",
+        error=None if accepted else "run was not in a cancellable state",
+    )
+    return {
+        "run_id": run_id,
+        "cancel_requested": accepted,
+        "run": _run_summary(run_id),
+    }
+
+
+def _run_summary(run_id: str):
+    db = SessionLocal()
+    try:
+        detail = admin_stats.run_detail(db, run_id)
+        if detail is None:
+            return None
+        return {
+            key: detail[key]
+            for key in ("run_id", "project_id", "status", "stage",
+                        "cancel_requested")
+        }
+    finally:
+        db.close()
+
+
+@router.post("/runs/{run_id}/replacement")
+def submit_replacement(run_id: str, principal=Depends(_write_guard)):
+    """Submit a NEW run for a terminal run's project (the studio
+    submission path, minus tenant checks — the run's owner is
+    stamped from the project by the ledger choke point). Stage
+    resume adopts completed stages when the script is unchanged.
+    This never resurrects the old run."""
+    run = run_ledger.get_run(run_id)
+    if run is None:
+        raise ApiError(404, "run_not_found", f"No run {run_id}.")
+    if run["status"] in run_ledger.ACTIVE_STATUSES + ("awaiting_approval",):
+        raise ApiError(
+            409,
+            "run_still_active",
+            "The run is still active; a replacement is only for "
+            "terminal runs.",
+        )
+    db = SessionLocal()
+    try:
+        project = db.get(Project, run["project_id"])
+    finally:
+        db.close()
+    if project is None:
+        raise ApiError(
+            404, "project_not_found", f"No project {run['project_id']}."
+        )
+    options = dict(run.get("options") or {})
+    options.pop("dispatched_job_id", None)
+    options.pop("dispatched_at", None)
+    job_or_run = jobs.enqueue_full_pipeline(
+        project.id, project.script, options=options or None
+    )
+    new_run = run_ledger.latest_run_for(
+        project.id, run_ledger.script_sha256(project.script)
+    )
+    admin_audit.record(
+        principal,
+        "run.submit_replacement",
+        target_type="run",
+        target_id=new_run["run_id"] if new_run else None,
+        detail={
+            "replaces_run_id": run_id,
+            "project_id": project.id,
+            "deduplicated": bool(new_run and new_run["run_id"] == job_or_run),
+        },
+    )
+    return {
+        "run": _run_summary(new_run["run_id"]) if new_run else None,
+        "replaces_run_id": run_id,
+    }
+
+
+# ---------------------------------------------------------------------
+# M4 — provider usage; M6 — storage; M8 — settings; M7 — audit log
+# ---------------------------------------------------------------------
+
+
+@router.get("/providers/usage")
+def providers_usage(days: int = 30, principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        return admin_stats.provider_usage(db, days=days)
+    finally:
+        db.close()
+
+
+@router.get("/storage")
+def storage(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        return admin_storage.summary(db)
+    finally:
+        db.close()
+
+
+@router.get("/storage/orphans")
+def storage_orphans(
+    old_terminal_days: int = 30, principal=Depends(admin_guard)
+):
+    db = SessionLocal()
+    try:
+        return admin_storage.orphans(db, old_terminal_days=old_terminal_days)
+    finally:
+        db.close()
+
+
+@router.get("/settings")
+def settings(principal=Depends(admin_guard)):
+    return admin_settings.effective_settings()
+
+
+@router.get("/audit-log")
+def audit_log(
+    actor: str | None = None,
+    action: str | None = None,
+    target_id: str | None = None,
+    result: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    principal=Depends(admin_guard),
+):
+    db = SessionLocal()
+    try:
+        return admin_audit.query(
+            db, actor=actor, action=action, target_id=target_id,
+            result=result, limit=limit, offset=offset,
+        )
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------
+# Users & accounts (Phase 8 endpoints, moved here; suspend /
+# reactivate is the Phase 7 addition — super_admin, audited)
+# ---------------------------------------------------------------------
+
+
+def _admin_user_view(db, user: User) -> dict:
+    subscription = plans_service.get_active_subscription(db, user.id)
+    plan_name = None
+    if subscription is not None:
+        plan = db.get(Plan, subscription.plan_id)
+        plan_name = plan.name if plan else None
+    from models import ProductionRun
+
+    return {
+        **api_v1._user_view(user),
+        "plan": plan_name,
+        "project_count": db.query(Project)
+        .filter(Project.owner_id == user.id)
+        .count(),
+        "run_count": db.query(ProductionRun)
+        .filter(ProductionRun.owner_id == user.id)
+        .count(),
+    }
+
+
+@router.get("/users")
+def list_users(
+    q: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    principal=Depends(admin_guard),
+):
+    db = SessionLocal()
+    try:
+        query = db.query(User).order_by(User.created_at)
+        if q:
+            query = query.filter(User.email.ilike(f"%{q.strip()}%"))
+        total = query.count()
+        users = (
+            query.offset(max(0, offset)).limit(max(1, min(limit, 200))).all()
+        )
+        return {
+            "total": total,
+            "users": [_admin_user_view(db, user) for user in users],
+        }
+    finally:
+        db.close()
+
+
+@router.get("/users/{user_id}")
+def get_user(user_id: str, principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        user = db.get(User, str(user_id))
+        if user is None:
+            raise ApiError(404, "user_not_found", f"No user {user_id}.")
+        view = _admin_user_view(db, user)
+        view["usage"] = plans_service.usage_summary(db, user.id)
+        return view
+    finally:
+        db.close()
+
+
+class UserStatusIn(BaseModel):
+    status: str = Field(pattern="^(active|disabled)$")
+
+
+@router.post("/users/{user_id}/status")
+def set_user_status(
+    user_id: str,
+    body: UserStatusIn,
+    principal=Depends(super_admin_guard),
+):
+    """Suspend (disabled) or reactivate an account. Disabling
+    revokes every session immediately (services/auth); the data is
+    retained. The founder cannot disable their own account through
+    this surface — a self-lockout guard."""
+    db = SessionLocal()
+    try:
+        user = db.get(User, str(user_id))
+        if user is None:
+            raise ApiError(404, "user_not_found", f"No user {user_id}.")
+        if user.id == principal.user_id and body.status == "disabled":
+            raise ApiError(
+                409,
+                "cannot_disable_self",
+                "You cannot disable your own account.",
+            )
+        previous = user.status
+        user.status = body.status
+        db.commit()
+        if body.status == "disabled":
+            auth_service.revoke_all_sessions(user.id)
+        admin_audit.record(
+            principal,
+            "user.status_change",
+            target_type="user",
+            target_id=user.id,
+            detail={"from": previous, "to": body.status},
+        )
+        return {"user": _admin_user_view(db, user)}
+    finally:
+        db.close()
+
+
+class PlanAssignIn(BaseModel):
+    plan_name: str = Field(min_length=1, max_length=50)
+
+
+@router.post("/users/{user_id}/plan")
+def assign_plan(
+    user_id: str,
+    body: PlanAssignIn,
+    principal=Depends(super_admin_guard),
+):
+    """Founder operation (Phase 8): move a user onto another plan.
+    The previous active subscription is cancelled, a new one starts
+    now. No payment is collected — plans are operator-granted
+    records."""
+    from uuid import uuid4
+
+    db = SessionLocal()
+    try:
+        user = db.get(User, str(user_id))
+        if user is None:
+            raise ApiError(404, "user_not_found", f"No user {user_id}.")
+        plan = (
+            db.query(Plan).filter(Plan.name == body.plan_name).one_or_none()
+        )
+        if plan is None:
+            raise ApiError(
+                404, "plan_not_found", f"No plan named {body.plan_name}."
+            )
+        current = plans_service.get_active_subscription(db, user.id)
+        previous_name = None
+        if current is not None:
+            previous = db.get(Plan, current.plan_id)
+            previous_name = previous.name if previous else None
+            current.status = "cancelled"
+        subscription = UserSubscription(
+            id=str(uuid4()),
+            user_id=user.id,
+            plan_id=plan.id,
+            status="active",
+            current_period_start=datetime.now(timezone.utc),
+        )
+        db.add(subscription)
+        db.commit()
+        admin_audit.record(
+            principal,
+            "user.plan_assign",
+            target_type="user",
+            target_id=user.id,
+            detail={"from_plan": previous_name, "to_plan": plan.name},
+        )
+        return {"user": api_v1._user_view(user), "plan": plan.name}
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------
+# Subscriptions & plans (records only — no payment collection)
+# ---------------------------------------------------------------------
+
+
+@router.get("/subscriptions")
+def subscriptions(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        plans = db.query(Plan).order_by(Plan.name).all()
+        subs = (
+            db.query(UserSubscription)
+            .order_by(UserSubscription.created_at.desc())
+            .all()
+        )
+        users = {u.id: u.email for u in db.query(User).all()}
+        plan_names = {p.id: p.name for p in plans}
+        active_counts: dict[str, int] = {}
+        for sub in subs:
+            if sub.status == "active":
+                active_counts[sub.plan_id] = (
+                    active_counts.get(sub.plan_id, 0) + 1
+                )
+        return {
+            "plans": [
+                {
+                    "id": plan.id,
+                    "name": plan.name,
+                    "max_concurrent_runs": plan.max_concurrent_runs,
+                    "max_runs_per_period": plan.max_runs_per_period,
+                    "period": plan.period,
+                    "max_script_chars": plan.max_script_chars,
+                    "max_storage_bytes": plan.max_storage_bytes,
+                    "max_upload_bytes": plan.max_upload_bytes,
+                    "priority_tier": plan.priority_tier,
+                    "is_default": plan.is_default,
+                    "active_subscribers": active_counts.get(plan.id, 0),
+                }
+                for plan in plans
+            ],
+            "subscriptions": [
+                {
+                    "id": sub.id,
+                    "user_id": sub.user_id,
+                    "user_email": users.get(sub.user_id),
+                    "plan": plan_names.get(sub.plan_id),
+                    "status": sub.status,
+                    "current_period_start": sub.current_period_start,
+                    "current_period_end": sub.current_period_end,
+                    "billing_provider": sub.billing_provider,
+                    "created_at": sub.created_at,
+                }
+                for sub in subs
+            ],
+            "billing_note": (
+                "Plans and subscriptions are operator-granted "
+                "records. No payment provider is connected and no "
+                "payment is collected by the platform."
+            ),
+        }
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------
+# Projects (cross-tenant metadata view; content stays in the studio)
+# ---------------------------------------------------------------------
+
+
+@router.get("/projects")
+def projects(
+    limit: int = 100,
+    offset: int = 0,
+    principal=Depends(admin_guard),
+):
+    db = SessionLocal()
+    try:
+        total = db.query(Project).count()
+        rows = (
+            db.query(Project)
+            .order_by(Project.created_at.desc())
+            .offset(max(0, offset))
+            .limit(max(1, min(limit, 200)))
+            .all()
+        )
+        owners = {u.id: u.email for u in db.query(User).all()}
+        out = []
+        for project in rows:
+            latest = run_ledger.latest_run_for(project.id)
+            out.append(
+                {
+                    "id": project.id,
+                    "title": project.title,
+                    "category": project.category,
+                    "status": project.status,
+                    "owner_id": project.owner_id,
+                    "owner_email": owners.get(project.owner_id),
+                    "created_at": project.created_at,
+                    "latest_run": (
+                        {
+                            "run_id": latest["run_id"],
+                            "status": latest["status"],
+                            "stage": latest["stage"],
+                        }
+                        if latest
+                        else None
+                    ),
+                    "studio_path": f"/projects/{project.id}",
+                }
+            )
+        return {"total": total, "projects": out}
+    finally:
+        db.close()

@@ -25,6 +25,7 @@ from services import media_paths
 # route can answer in the v1 error shape.
 from api_v1 import ApiError, register_error_handlers, require_api_token
 from api_v1 import router as api_v1_router
+from api_admin import router as api_admin_router
 
 
 @asynccontextmanager
@@ -76,6 +77,9 @@ app.add_middleware(
 # requires the same X-API-Key auth as v1 (require_api_token);
 # GET / and GET /health stay open (no project data, like v1 health).
 app.include_router(api_v1_router, prefix="/api/v1")
+# Phase 7: the administration API lives under the same /api/v1
+# prefix (its router adds /admin), gated by its own role guard.
+app.include_router(api_admin_router, prefix="/api/v1")
 register_error_handlers(app)
 
 
