@@ -5,15 +5,23 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import {
   createProject as apiCreateProject,
+  getConfigCatalogue,
+  getConfigDefaults,
   getGenreCatalogue,
   getProjectStatus,
   getVoiceCatalogue,
   submitRun,
   type ApiConnectionStatus,
+  type ConfigCatalogue,
   type GenreCatalogueEntry,
+  type ProductionConfig,
   type ProjectStatus,
   type VoiceCatalogueEntry,
 } from "@/lib/api";
+import {
+  ProductionConfigForm,
+  emptyProductionConfig,
+} from "@/components/production-config-form";
 import { ApiConnectionBadge } from "@/components/connection-status";
 import { StageProgress } from "@/components/stage-progress";
 import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
@@ -126,12 +134,15 @@ const MAX_SCRIPT_CHARS = 60000;
 // Redesign F1 (plan §3.3): the form is a stepped production
 // brief — one page, sectioned, no wizard hiding state:
 // 1 Script · 2 Story (genre + voice from the real catalogues) ·
-// 3 Visual approach (the plan-approval toggle; Visual Director
-// controls appear only when their backend inputs exist) ·
-// 4 Sound (captions toggle; the truthful no-music-picker note
-// stays until the P3 catalogue exists) · 5 Review & start
-// (exactly what will be submitted + submit). Post-submit status
-// with StageProgress + 3s polling is preserved verbatim.
+// 3 Visual approach (the plan-approval toggle) ·
+// 4 Configuration (Phase 9: the pre-production configuration —
+// presets, motion graphics, theme, music, voice, captions —
+// seeded from the user's saved defaults and submitted as the
+// project's production_config, which the backend cleans,
+// validates and projects onto the consumed option keys) ·
+// 5 Review & start (exactly what will be submitted + submit).
+// Post-submit status with StageProgress + 3s polling is
+// preserved verbatim.
 export default function Home() {
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
@@ -146,7 +157,12 @@ export default function Home() {
   const [status, setStatus] = useState<ProjectStatus | null>(null);
   const [message, setMessage] = useState("");
   const [connection, setConnection] = useState<ApiConnectionStatus | null>(null);
-  const [includeCaptions, setIncludeCaptions] = useState(true);
+  // Phase 9: the pre-production configuration document. Seeded
+  // from the user's saved defaults when they exist; submitted
+  // as options.production_config.
+  const [configCatalogue, setConfigCatalogue] = useState<ConfigCatalogue | null>(null);
+  const [productionConfig, setProductionConfig] = useState<ProductionConfig>(emptyProductionConfig());
+  const [configSeeded, setConfigSeeded] = useState(false);
 
   const words = useMemo(() => script.trim().split(/\s+/).filter(Boolean).length, [script]);
   const duration = words ? Math.max(1, Math.round(words / 145)) : 0;
@@ -169,8 +185,44 @@ export default function Home() {
           if (genreData.genres?.length) setGenres(genreData.genres);
           if (voiceData.voices?.length) setVoices(voiceData.voices);
           setCatalogueState("api");
+          // Phase 9: the configuration catalogue + the user's
+          // saved defaults seed step 4. A failure here only
+          // disables the configuration step (labelled as such);
+          // it never blocks project creation.
+          try {
+            const [configData, defaultsData] = await Promise.all([
+              getConfigCatalogue(controller.signal),
+              getConfigDefaults(controller.signal),
+            ]);
+            if (controller.signal.aborted) return;
+            setConfigCatalogue(configData);
+            // Seed from the saved defaults (or the empty
+            // document) and name the canonical voice explicitly
+            // unless a choice already exists, so the voice the
+            // Story step marks "In use" is the voice the
+            // configuration submits.
+            const seed = defaultsData.defaults
+              ? structuredClone(defaultsData.defaults)
+              : emptyProductionConfig();
+            if (!seed.narration.voice_id) {
+              const fetchedCanonical =
+                voiceData.voices?.find((voice) => !voice.alias_of) ||
+                voiceData.voices?.[0];
+              seed.narration = {
+                ...seed.narration,
+                voice_id: fetchedCanonical?.id || NARRATION_VOICE_ID,
+              };
+            }
+            setProductionConfig(seed);
+            setConfigSeeded(true);
+          } catch {
+            if (!controller.signal.aborted) setConfigSeeded(true);
+          }
         } catch {
-          if (!controller.signal.aborted) setCatalogueState("fallback");
+          if (!controller.signal.aborted) {
+            setCatalogueState("fallback");
+            setConfigSeeded(true);
+          }
         }
       })();
     }, 0);
@@ -183,6 +235,8 @@ export default function Home() {
   const selectedGenre = genres.find((genre) => genre.id === genreId) || genres[0];
   const canonicalVoice = voices.find((voice) => !voice.alias_of) || voices[0];
   const narrationVoiceId = canonicalVoice?.id || NARRATION_VOICE_ID;
+
+
 
   // Brief Stage 5 (C-06): the connection badge is the authenticated
   // connection check (ApiConnectionBadge performs one authenticated
@@ -261,6 +315,12 @@ export default function Home() {
       // voice_id, captions), so their controls are gone. Music
       // reaches a production only via the operator-level music_file
       // option, which has no control on this form.
+      // Phase 9: the configuration document rides along when
+      // its catalogue loaded — the backend cleans it, stores it
+      // on the project and projects it onto the flat keys the
+      // pipeline consumes (voice, captions, music, graphics,
+      // theme), overriding the flat fallbacks below. Without a
+      // configuration the flat keys behave exactly as before.
       const created = await apiCreateProject({
         title: title.trim() || undefined,
         script: script.trim(),
@@ -268,8 +328,13 @@ export default function Home() {
         options: {
           genre: selectedGenre?.id || genreId,
           voice_id: narrationVoiceId,
-          captions: includeCaptions ? "burn" : "off",
+          captions: configCatalogue
+            ? productionConfig.captions.mode
+            : "burn",
           require_plan_approval: requirePlanApproval,
+          ...(configCatalogue
+            ? { production_config: productionConfig }
+            : {}),
         },
       });
 
@@ -330,7 +395,7 @@ export default function Home() {
           <section className="create-step" aria-labelledby="story-title">
             <div className="create-step-head">
               <div className="step-marker">2</div>
-              <div><h2 id="story-title">Story</h2><p>Title, genre pack, and the narration voice — from the studio's real catalogues.</p></div>
+              <div><h2 id="story-title">Story</h2><p>Title, genre pack, and the narration voice — from the studio&rsquo;s real catalogues.</p></div>
             </div>
             <div className="form-fields">
               <label className="field-label" htmlFor="project-title">TITLE
@@ -345,7 +410,7 @@ export default function Home() {
             <div className="voice-catalog-list">{voices.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.id}</strong><small>{voice.alias_of ? `Default alias of ${voice.alias_of} · Same installed Piper model` : "English (US) · Built-in Piper voice"} · {voice.installed ? "Model installed" : "Model not installed"}</small></div>{!voice.alias_of && <span>In use</span>}{voice.is_default && <span>Default</span>}</div>)}</div>
             {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The genre and voice catalogues could not be reached, so this form is showing the fallback facts — the three real genre packs and the one installed voice listed above — labelled as a fallback. Nothing else has been added.</p>}
             {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the genre and voice catalogues from the studio API…</p>}
-            <p className="voice-note">Narration language is English (US) — the language of the installed voice. There is no voice picker because the catalogue above is everything that is installed: the form sends exactly the voice marked “In use”, so the voice named here is the voice your film will use.</p>
+            <p className="voice-note">Narration language is English (US) — the language of the installed voices. The catalogue above is everything that is installed; the Configuration step below offers every installed voice, starting from the one marked “In use” here.</p>
             <div className="workflow-includes"><span className="include-label">INCLUDED IN YOUR WORKFLOW</span><div className="include-chips"><span><Search size={18} strokeWidth={1.7} aria-hidden /> Story research</span><span><Film size={18} strokeWidth={1.7} aria-hidden /> Matched visuals</span><span><Mic size={18} strokeWidth={1.7} aria-hidden /> Narration + captions</span></div></div>
           </section>
 
@@ -357,13 +422,25 @@ export default function Home() {
             <label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis. You review the per-sentence plan — proposed visuals, evidence and rights — and approve it before any footage is retrieved or rendered.</small></span></label>
           </section>
 
-          <section className="create-step" aria-labelledby="sound-title">
+          <section className="create-step" aria-labelledby="config-title">
             <div className="create-step-head">
               <div className="step-marker">4</div>
-              <div><h2 id="sound-title">Sound</h2><p>Captions today; music only when the pipeline can actually apply it.</p></div>
+              <div><h2 id="config-title">Configuration</h2><p>The pre-production configuration — every setting here is enforced by the pipeline stage that consumes it, and validated before the run starts.</p></div>
             </div>
-            <label className="motion-toggle"><input type="checkbox" checked={includeCaptions} onChange={(event) => setIncludeCaptions(event.target.checked)} /><span><strong>Captions</strong><small>Burn timed captions into the finished video. Turn off to render without burned-in captions.</small></span></label>
-            <p className="music-license-note"><strong>Background music</strong> is not part of productions in this build: there is no music picker because the pipeline applies music only from an operator-supplied file, which this form does not collect. Films render with narration and captions only.</p>
+            {configCatalogue ? (
+              <ProductionConfigForm
+                catalogue={configCatalogue}
+                value={productionConfig}
+                onChange={setProductionConfig}
+                mode="create"
+              />
+            ) : (
+              <p className="voice-note" role="status">
+                {configSeeded
+                  ? "The configuration catalogue could not be reached, so this project will be created with the pipeline\u2019s standard settings. The full configuration studio is available afterwards in the project\u2019s Configuration tab."
+                  : "Loading the configuration catalogue…"}
+              </p>
+            )}
             <div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy. A downloaded asset is not automatically cleared for publication; review its source and license before publishing.</p></div>
           </section>
 
@@ -373,7 +450,7 @@ export default function Home() {
               <div><h2 id="review-title">Review &amp; start</h2><p>Exactly what will be submitted — nothing else is sent.</p></div>
             </div>
             <div className="summary-card">
-              <div className="summary-rows"><div><span>Genre pack</span><strong>{selectedGenre?.label || selectedGenre?.name || genreId}</strong></div><div><span>Narration voice</span><strong>{narrationVoiceId} · English (US)</strong></div><div><span>Captions</span><strong>{includeCaptions ? "Burned in" : "Off"}</strong></div><div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
+              <div className="summary-rows"><div><span>Genre pack</span><strong>{selectedGenre?.label || selectedGenre?.name || genreId}</strong></div><div><span>Narration voice</span><strong>{(configCatalogue ? productionConfig.narration.voice_id : null) || narrationVoiceId} · English (US)</strong></div><div><span>Captions</span><strong>{configCatalogue ? (productionConfig.captions.mode === "burn" ? "Burned in" : productionConfig.captions.mode === "sidecar" ? "Sidecar files" : "Off") : "Burned in"}</strong></div>{configCatalogue && <><div><span>Preset</span><strong>{productionConfig.preset === "custom" ? "Custom" : productionConfig.preset[0].toUpperCase() + productionConfig.preset.slice(1)}</strong></div><div><span>Motion graphics</span><strong>{productionConfig.motion_graphics.enabled ? productionConfig.motion_graphics.intensity[0].toUpperCase() + productionConfig.motion_graphics.intensity.slice(1) : "Off"}</strong></div><div><span>Visual theme</span><strong>{productionConfig.theme.id ? (productionConfig.theme.id === "custom" ? "Custom" : productionConfig.theme.id[0].toUpperCase() + productionConfig.theme.id.slice(1)) : "Genre pack default"}</strong></div><div><span>Music</span><strong>{!productionConfig.music.enabled ? "Off" : productionConfig.music.source === "upload" ? "Your upload (add it in the project's Configuration tab)" : productionConfig.music.source === "library" ? "Studio library" : "On — no track selected yet"}</strong></div></>}<div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
               <div className="summary-footnote"><Info size={18} strokeWidth={1.7} aria-hidden /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
               <p className="status-message"><ApiConnectionBadge onStatus={setConnection} /></p>
               <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiBlocked}>
