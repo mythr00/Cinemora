@@ -2052,6 +2052,216 @@ def _op_regenerate_graphic(doc, op, ctx):
     return f"Regenerated graphic {item['item_id']} from its recorded inputs ({label})."
 
 
+def _op_set_transition(doc, op, ctx):
+    """Set the transition INTO an item (Editor Studio; gap-audit
+    §3 improvement (a)). The renderer plans transitions on the
+    flattened film (services/transitions.plan_transitions), so the
+    value is stored on the item itself and honoured at render time
+    — downgrades the planner records (e.g. overlapping windows)
+    stay the planner's recorded business, never silent here.
+
+    match_cut is refused: it is a rule over production-recorded
+    continuity evidence on BOTH neighbouring items, and editor
+    items carry no such record — accepting it would guarantee a
+    silent downgrade to cut at render. The first visual item has
+    no incoming boundary at all."""
+    from services import transitions as transitions_service
+
+    item = _find_item(doc, op.get("item_id"))
+    if item["kind"] == "gap":
+        raise EditorError(
+            422, "cannot_set_transition_on_gap",
+            "A gap item has no boundary of its own; set the "
+            "transition on the next genuine visual instead.",
+        )
+    kind = str(op.get("transition") or "").strip().lower()
+    if kind == "match_cut":
+        raise EditorError(
+            422, "transition_needs_evidence",
+            "A match cut needs production-recorded continuity "
+            "evidence on both neighbouring items; editor items "
+            "carry none, so the render planner would downgrade it "
+            "to a cut. Choose a rendered transition instead.",
+        )
+    if kind not in transitions_service.VALID_TRANSITIONS:
+        raise EditorError(
+            422, "unknown_transition",
+            f"Unknown transition {kind!r}. Valid: "
+            + ", ".join(sorted(transitions_service.VALID_TRANSITIONS))
+            + ".",
+        )
+    reason = op.get("reason")
+    if reason is not None:
+        reason = str(reason).strip().lower()
+        if reason not in transitions_service.VALID_REASONS:
+            raise EditorError(
+                422, "unknown_transition_reason",
+                f"Unknown transition reason {reason!r}. Valid: "
+                + ", ".join(sorted(transitions_service.VALID_REASONS))
+                + ".",
+            )
+    window = op.get("window_frames")
+    if window is not None:
+        try:
+            window = int(window)
+        except (TypeError, ValueError):
+            raise EditorError(
+                422, "window_frames_invalid",
+                "window_frames must be an integer number of frames.",
+            ) from None
+        if not (1 <= window <= 90):
+            raise EditorError(
+                422, "window_frames_out_of_range",
+                "window_frames must be between 1 and 90 frames "
+                "(0.03s-3s at the project frame rate).",
+            )
+    if kind != "cut" and _visual(doc).index(item) == 0:
+        raise EditorError(
+            422, "no_incoming_boundary",
+            "The first visual item has no incoming boundary; a "
+            "transition into it cannot be rendered.",
+        )
+    item["transition"] = kind
+    if reason is not None:
+        item["transition_reason"] = reason
+    if kind == "cut":
+        item.pop("transition_window_frames", None)
+    elif window is not None:
+        item["transition_window_frames"] = window
+    return (
+        f"Transition into {item['item_id']} set to {kind}"
+        + (f" ({window} frames)" if kind != "cut" and window else "")
+        + "."
+    )
+
+
+def _op_assign_graphic(doc, op, ctx):
+    """Change a graphic item's assignment — template, inputs
+    and/or style (Editor Studio) — and re-render it from the new
+    assignment. The render itself rides _op_regenerate_graphic's
+    transactional path (render to temp, validate, promote only on
+    success): the item's graphic record is swapped for the new
+    assignment first, and because apply_operations is atomic, a
+    refused render discards the swap with the rest of the batch —
+    the previous graphic is never left half-replaced.
+
+    Native recipe families (stat / timeline / process /
+    event_schematic) have no template choice: their recipe IS the
+    assignment, so only their inputs may change. A recipe marked
+    non-regenerable keeps its refusal unless the op supplies a
+    wholly new engine assignment (new template AND new inputs),
+    which is a different graphic, not a regeneration."""
+    from services.motion_engine import templates as engine
+
+    item = _find_item(doc, op.get("item_id"))
+    if item["kind"] != "graphic":
+        raise EditorError(
+            422, "not_a_graphic", "assign_graphic applies to graphics only."
+        )
+    has_template = op.get("template") is not None
+    has_inputs = op.get("inputs") is not None
+    has_style = op.get("style") is not None
+    if not (has_template or has_inputs or has_style):
+        raise EditorError(
+            422, "nothing_to_assign",
+            "assign_graphic needs a template, inputs or style to change.",
+        )
+    if has_inputs and not isinstance(op["inputs"], dict):
+        raise EditorError(
+            422, "graphic_inputs_invalid", "Graphic inputs must be an object."
+        )
+    if has_template and (
+        not isinstance(op["template"], str) or not op["template"].strip()
+    ):
+        raise EditorError(
+            422, "unknown_template", "A template name is required."
+        )
+
+    graphic = copy.deepcopy(item.get("graphic") or {})
+    recipe = graphic.get("recipe") if isinstance(graphic.get("recipe"), dict) else None
+    family = (recipe or {}).get("family") or (
+        "motion_engine" if (graphic.get("template") or has_template) else None
+    )
+    if has_template and family not in (None, "motion_engine"):
+        raise EditorError(
+            422, "template_not_assignable",
+            f"Graphics of the {family} family are rendered from "
+            "their recorded recipe and have no template choice; "
+            "change their inputs instead.",
+        )
+    if has_style and family not in (None, "motion_engine"):
+        raise EditorError(
+            422, "style_not_applicable",
+            f"Style applies to motion-engine graphics; this "
+            f"graphic's family is {family}.",
+        )
+    if has_template and engine.TEMPLATES.get(op["template"]) is None:
+        raise EditorError(
+            422, "unknown_template", f"No template {op['template']}."
+        )
+    effective_template = (
+        op.get("template")
+        or (recipe or {}).get("template")
+        or graphic.get("template")
+    )
+    if recipe is None and not effective_template:
+        raise EditorError(
+            422, "graphic_inputs_not_recorded",
+            "This graphic has no recorded template or recipe, so "
+            "there is nothing to render a new assignment from. "
+            "Replace it or leave it as rendered.",
+        )
+
+    new_inputs = op["inputs"] if has_inputs else None
+    if recipe is not None:
+        new_recipe = dict(recipe)
+        if has_inputs:
+            new_recipe["inputs"] = copy.deepcopy(new_inputs)
+        if has_template:
+            new_recipe["template"] = op["template"]
+        if has_style:
+            new_recipe["style"] = op["style"]
+        if (
+            recipe.get("regenerable") is False
+            and has_template
+            and has_inputs
+            and family == "motion_engine"
+        ):
+            # A wholly new engine assignment is a different
+            # graphic; the old graphic's non-regenerable mark does
+            # not describe it.
+            new_recipe.pop("regenerable", None)
+            new_recipe.pop("non_regenerable_reason", None)
+        graphic["recipe"] = new_recipe
+    if has_inputs:
+        graphic["inputs"] = copy.deepcopy(new_inputs)
+    if has_template:
+        graphic["template"] = op["template"]
+    if has_style:
+        graphic["style"] = op["style"]
+
+    item["graphic"] = graphic
+    summary = _op_regenerate_graphic(
+        doc,
+        {"type": "regenerate_graphic", "item_id": item["item_id"]},
+        ctx,
+    )
+    item.setdefault("flags", []).append("graphic_assigned")
+    changed = [
+        name
+        for name, present in (
+            ("template", has_template),
+            ("inputs", has_inputs),
+            ("style", has_style),
+        )
+        if present
+    ]
+    return (
+        f"Graphic {item['item_id']} assignment changed "
+        f"({', '.join(changed)}). " + summary
+    )
+
+
 def _op_edit_caption(doc, op, ctx):
     captions = doc["tracks"]["captions"]
     segments = captions.get("segments") or []
@@ -2180,6 +2390,8 @@ _OP_HANDLERS = {
     "split_clip": _op_split_clip,
     "set_graphic_duration": _op_set_graphic_duration,
     "regenerate_graphic": _op_regenerate_graphic,
+    "assign_graphic": _op_assign_graphic,
+    "set_transition": _op_set_transition,
     "edit_caption": _op_edit_caption,
     "regenerate_narration_sentence": _op_regenerate_narration,
     "set_music": _op_set_music,
