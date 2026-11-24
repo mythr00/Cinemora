@@ -382,11 +382,7 @@ export default function PlanReviewPage() {
         <p className="eyebrow">VISUAL PLAN REVIEW</p>
         <h1>{plan?.title || plan?.bible.title || "Production plan"}</h1>
         <p className="plan-intro">
-          One entry per script sentence, grouped by scene: the script on the left; on the
-          right, the proposed visual from story analysis, the visual a run actually chose,
-          its evidence class, its rights classification, and its coverage state. Decisions
-          you record here are kept with the production — replacements are re-probed and
-          re-verified, never inherited from the original.
+          One entry per script sentence: the proposed visual, its evidence and rights, and your decision.
         </p>
 
         {status && (

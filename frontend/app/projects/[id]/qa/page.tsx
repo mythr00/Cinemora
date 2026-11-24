@@ -123,10 +123,7 @@ export default function QaReportPage() {
         <p className="eyebrow">QUALITY ASSURANCE</p>
         <h1>QA report</h1>
         <p className="plan-intro">
-          Every check the production recorded for this run — verdicts, quality metrics with the
-          thresholds they were judged against, coverage, frame verification, defects, audio,
-          captions and technical delivery — assembled from the run&apos;s own records. Nothing
-          here is recomputed, and a check that did not run shows as not recorded.
+          Every check the production recorded for this run — a check that did not run shows as not recorded.
         </p>
 
         {busy && <LoadingState className="plan-message" label="Loading the QA report…" />}

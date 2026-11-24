@@ -109,13 +109,9 @@ export default function ProjectGraphicsPage() {
     <p className="eyebrow">GRAPHICS REVIEW</p>
     <h1>Motion graphics</h1>
     <p className="asset-evidence-intro">
-      The graphics on the current revision's timeline, with the template, family and
-      regeneration recipe recorded for each. A graphic reaches the timeline only after
-      it is delivered and validated, so every item below is in the cut. Graphics that
-      were generated but not delivered — and the recorded reasons — live in the
-      production's asset report, downloadable from the{" "}
-      <Link className="text-link" href={`/projects/${projectId}/certificate`}>Delivery tab</Link>.
-      To regenerate a graphic, use the{" "}
+      The graphics in the cut, each with its recorded template and recipe. Undelivered graphics live in the asset report on the{" "}
+      <Link className="text-link" href={`/projects/${projectId}/certificate`}>Delivery tab</Link>;
+      regenerate from the{" "}
       <Link className="text-link" href={`/projects/${projectId}/edit`}>Editor</Link>.
     </p>
 

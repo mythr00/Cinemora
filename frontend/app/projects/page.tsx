@@ -76,10 +76,10 @@ export default function ProjectsPage() {
   return <main className="app-page projects-page">
     <AppNavigation />
     <section className="projects-content">
-      <div className="projects-heading"><div><p className="eyebrow">PROJECT LIBRARY</p><h1>Every cut, in its place.</h1><p className="projects-intro">Your productions, their real status, and finished exports.</p></div><Link className="button button-primary" href="/create">New production <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>
+      <div className="projects-heading"><div><p className="eyebrow">PROJECT LIBRARY</p><h1>Projects</h1></div><Link className="button button-primary" href="/create">New production <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>
       {invitations.length > 0 && <section className="invitations-inbox" aria-label="Project invitations">
         <h2>Project invitations</h2>
-        <p className="projects-intro">Invitations arrive here, in your account — Cinemora does not email them. Accepting gives you the stated role on that project.</p>
+        <p className="projects-intro">Accepting gives you the stated role on that project.</p>
         <ul>{invitations.map((invitation) => <li key={invitation.project_id}>
           <span><strong>{invitation.project_title || "Untitled production"}</strong> — invited by {invitation.invited_by?.email || "the project owner"} as {invitation.role}</span>
           <span className="library-actions">

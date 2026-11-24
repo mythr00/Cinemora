@@ -119,9 +119,7 @@ export default function CertificatePage() {
         <p className="eyebrow">DELIVERY &amp; PROVENANCE</p>
         <h1>{certificate?.project.title || "Delivery & provenance"}</h1>
         <p className="plan-intro">
-          Generated from the production run&apos;s decision ledger — the authoritative record of
-          what was selected, verified, generated, rotated, replaced, or left missing. It records
-          what the system recorded; it is not a licence and not a legal opinion.
+          The run&apos;s decision ledger, exactly as recorded — it is not a licence or a legal opinion.
         </p>
 
         {busy && <LoadingState className="plan-message" label="Loading the certificate…" />}

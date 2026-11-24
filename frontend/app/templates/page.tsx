@@ -396,11 +396,7 @@ export default function TemplatesPage() {
         <p className="eyebrow">TEMPLATES &amp; PRESETS</p>
         <h1>Templates</h1>
         <p className="templates-intro">
-          A template is a starting configuration: a category, an optional target
-          length, a script section structure, and a bundle of production options.
-          Built-in templates come straight from the genre packs — nothing here is
-          a setting the pipeline ignores, and applying a template goes through
-          the same creation paths (and validation) as starting by hand.
+          Starting configurations from the genre packs — every setting here is one the pipeline applies.
         </p>
 
         {busy && (

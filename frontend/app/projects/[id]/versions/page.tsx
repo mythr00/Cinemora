@@ -474,13 +474,7 @@ export default function VersionsPage() {
         <p className="eyebrow">VERSIONING &amp; RECOVERY</p>
         <h1>Versions</h1>
         <p className="plan-intro">
-          Every version of this film that the system recorded — production runs
-          with their verdicts, editor revisions with the operations that created
-          them, script versions, plan decisions and snapshots — in one story.
-          A script version&apos;s text is shown only where it was recorded
-          (snapshotted when a project is created and when a run is submitted,
-          or the project&apos;s current script); a version known only by its
-          run-record hash says so, and nothing here is reconstructed.
+          Every recorded version of this film in one story — nothing here is reconstructed.
         </p>
 
         {busy && <LoadingState className="plan-message" label="Loading the version history…" />}

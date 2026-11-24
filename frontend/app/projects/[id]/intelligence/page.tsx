@@ -93,11 +93,7 @@ export default function ProjectIntelligencePage() {
         <p className="eyebrow">PROJECT INTELLIGENCE</p>
         <h1>Intelligence</h1>
         <p className="plan-intro">
-          What Cinemora has recorded about this project, assembled: its Case Bible
-          entities, production history and latest quality verdicts, the entity
-          connections the records support, and recommendations computed from the
-          recorded figures — each one shown with its evidence. Derived links are
-          labelled with how they were derived; nothing here is estimated.
+          What Cinemora has recorded about this project, assembled — nothing here is estimated.
         </p>
 
         {busy && <LoadingState className="plan-message" label="Assembling the project record…" />}

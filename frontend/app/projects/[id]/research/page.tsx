@@ -298,11 +298,7 @@ export default function ResearchStudioPage() {
         <p className="eyebrow">RESEARCH STUDIO</p>
         <h1>Research</h1>
         <p className="research-intro">
-          Research for this project, as recorded: topic sessions and their sources, the Case
-          Bible from story analysis, the script&apos;s facts with their basis stamps, and
-          citations tying claims to sources. Nothing here is generated presentation — an
-          empty section means the research does not exist yet, and an unverified fact is
-          labelled unverified.
+          This project&apos;s research, as recorded — an unverified fact is labelled unverified.
         </p>
 
         {message && <p className="research-message" role="status">{message}</p>}

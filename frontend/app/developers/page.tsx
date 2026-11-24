@@ -254,13 +254,9 @@ export default function DevelopersPage() {
       <div className="developers-content">
         <header className="developers-header">
           <p className="eyebrow">DEVELOPER API</p>
-          <h1>Build on Cinemora with your own API keys.</h1>
+          <h1>Developer API</h1>
           <p className="developers-intro">
-            Keys authenticate the public API at{" "}
-            <code>/api/public/v1</code> with an{" "}
-            <code>X-API-Key</code> header. A key only ever reaches
-            your own projects, its scopes are enforced on every
-            route, and its usage below is counted from real requests.
+            Keys for the public API at <code>/api/public/v1</code> — a key only ever reaches your own projects.
           </p>
         </header>
 

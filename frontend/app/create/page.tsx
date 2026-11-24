@@ -374,7 +374,6 @@ export default function Home() {
         <div className="page-heading">
           <p className="eyebrow">NEW PRODUCTION</p>
           <h1>New documentary</h1>
-          <p>Script, visual research, narration, and final edit — five steps, all on one page.</p>
         </div>
 
         <form className="create-steps" onSubmit={createProject}>
@@ -395,7 +394,7 @@ export default function Home() {
           <section className="create-step" aria-labelledby="story-title">
             <div className="create-step-head">
               <div className="step-marker">2</div>
-              <div><h2 id="story-title">Story</h2><p>Title, genre pack, and the narration voice — from the studio&rsquo;s real catalogues.</p></div>
+              <div><h2 id="story-title">Story</h2><p>Title, genre pack and narration voice.</p></div>
             </div>
             <div className="form-fields">
               <label className="field-label" htmlFor="project-title">TITLE
@@ -410,22 +409,22 @@ export default function Home() {
             <div className="voice-catalog-list">{voices.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.id}</strong><small>{voice.alias_of ? `Default alias of ${voice.alias_of} · Same installed Piper model` : "English (US) · Built-in Piper voice"} · {voice.installed ? "Model installed" : "Model not installed"}</small></div>{!voice.alias_of && <span>In use</span>}{voice.is_default && <span>Default</span>}</div>)}</div>
             {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The genre and voice catalogues could not be reached, so this form is showing the fallback facts — the three real genre packs and the one installed voice listed above — labelled as a fallback. Nothing else has been added.</p>}
             {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the genre and voice catalogues from the studio API…</p>}
-            <p className="voice-note">Narration language is English (US) — the language of the installed voices. The catalogue above is everything that is installed; the Configuration step below offers every installed voice, starting from the one marked “In use” here.</p>
+            <p className="voice-note">Narration language is English (US) — the language of the installed voices.</p>
             <div className="workflow-includes"><span className="include-label">INCLUDED IN YOUR WORKFLOW</span><div className="include-chips"><span><Search size={18} strokeWidth={1.7} aria-hidden /> Story research</span><span><Film size={18} strokeWidth={1.7} aria-hidden /> Matched visuals</span><span><Mic size={18} strokeWidth={1.7} aria-hidden /> Narration + captions</span></div></div>
           </section>
 
           <section className="create-step" aria-labelledby="visual-title">
             <div className="create-step-head">
               <div className="step-marker">3</div>
-              <div><h2 id="visual-title">Visual approach</h2><p>Only options the production pipeline actually applies — nothing here is decorative.</p></div>
+              <div><h2 id="visual-title">Visual approach</h2><p>Options the pipeline actually applies.</p></div>
             </div>
-            <label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis. You review the per-sentence plan — proposed visuals, evidence and rights — and approve it before any footage is retrieved or rendered.</small></span></label>
+            <label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis — you approve the per-sentence plan before any footage is retrieved or rendered.</small></span></label>
           </section>
 
           <section className="create-step" aria-labelledby="config-title">
             <div className="create-step-head">
               <div className="step-marker">4</div>
-              <div><h2 id="config-title">Configuration</h2><p>The pre-production configuration — every setting here is enforced by the pipeline stage that consumes it, and validated before the run starts.</p></div>
+              <div><h2 id="config-title">Configuration</h2><p>Presets, graphics, theme, music, voice and captions.</p></div>
             </div>
             {configCatalogue ? (
               <ProductionConfigForm
@@ -441,7 +440,7 @@ export default function Home() {
                   : "Loading the configuration catalogue…"}
               </p>
             )}
-            <div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy. A downloaded asset is not automatically cleared for publication; review its source and license before publishing.</p></div>
+            <div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy — a downloaded asset is not automatically cleared for publication.</p></div>
           </section>
 
           <section className="create-step" aria-labelledby="review-title">

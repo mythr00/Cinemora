@@ -127,12 +127,7 @@ export default function ProjectTeamPage() {
         <p className="eyebrow">COLLABORATION</p>
         <h1>Team</h1>
         <p className="plan-intro">
-          The people who can work on this project, the discussion, and the
-          activity the system has recorded. Editors can produce and edit;
-          viewers can look and comment. Only the owner manages membership.
-          Invitations are not emailed — Cinemora has no email service
-          configured — so an invited person sees the invitation in their
-          account when they sign in.
+          The people on this project — invitations appear in the invited person&apos;s account, never by email.
         </p>
 
         {busy && (

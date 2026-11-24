@@ -50,11 +50,7 @@ export default function AccountIntelligencePage() {
         <p className="eyebrow">PROJECT INTELLIGENCE</p>
         <h1>Intelligence</h1>
         <p className="plan-intro">
-          Patterns across your productions, computed from the records themselves:
-          what you have made by category, how the latest productions scored on
-          their recorded quality verdicts, which sources actually delivered
-          verified assets, and which entities connect your films. Every number
-          is a count of records — nothing is estimated, trended or predicted.
+          Patterns across your productions, counted from the records themselves — nothing estimated or predicted.
         </p>
 
         {busy && <LoadingState className="plan-message" label="Assembling your catalogue…" />}

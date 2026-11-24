@@ -203,13 +203,7 @@ export default function LocalizationPage() {
         <p className="eyebrow">LOCALIZATION</p>
         <h1>Localization</h1>
         <p className="plan-intro">
-          Translate this film&apos;s text into another language: its recorded captions
-          (with their timings preserved exactly — only the words change) and its script
-          (which also becomes an editable Script Studio draft). The narration stays
-          English, and every artefact says so: these are translated text assets, not a
-          dubbed film. Translations are produced by the AI provider in verified
-          batches; if a batch comes back incomplete or unchanged, it is refused rather
-          than labelled a translation.
+          Translated captions and script in another language — the narration stays English; these are text assets, not a dub.
         </p>
 
         {busy && <LoadingState className="plan-message" label="Loading the localization studio…" />}

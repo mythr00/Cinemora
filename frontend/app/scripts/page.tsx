@@ -287,12 +287,7 @@ export default function ScriptStudioPage() {
         <p className="eyebrow">YOUTUBE SCRIPT STUDIO</p>
         <h1>Script Studio</h1>
         <p className="script-intro">
-          Write the film before you make it. A draft is a set of sections —
-          headings organise your writing, and the narration script a
-          production receives is the section bodies in order. Runtime is
-          estimated at about 145 spoken words per minute, the same rate the
-          production form uses. AI help is always a proposal: it never
-          replaces your words until you apply it.
+          Write the film before you make it — drafts are sections, produced in order.
         </p>
 
         {busy && <LoadingState className="script-message" label="Loading your drafts…" />}

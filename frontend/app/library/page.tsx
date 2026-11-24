@@ -332,12 +332,7 @@ export default function AssetLibraryPage() {
         <p className="eyebrow">ASSET LIBRARY</p>
         <h1>Asset Library</h1>
         <p className="research-intro">
-          Every asset your productions have recorded — footage, stills, generated
-          graphics, music and your uploads — gathered from the asset ledger across
-          all your projects. Verification verdicts and rights are shown exactly as
-          recorded; an unknown licence stays unknown. Reuse carries the source
-          record with it: importing an asset into another project records where it
-          came from and the licence it was verified under.
+          Every recorded asset across your projects, with its verdicts and rights exactly as recorded.
         </p>
         {message && <p className="research-message">{message}</p>}
         {error && <p className="research-message research-error">{error}</p>}

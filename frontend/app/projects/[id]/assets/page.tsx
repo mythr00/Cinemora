@@ -195,12 +195,7 @@ export default function ProjectAssetsPage() {
     <p className="eyebrow">ASSET REVIEW</p>
     <h1>Asset decisions</h1>
     <p className="asset-evidence-intro">
-      The decision ledger for the latest run: every visual the production selected,
-      rotated, generated, replaced, rejected, or left missing — with the verification
-      outcome and rights classification recorded at decision time. A licence recorded
-      as <strong>unknown</strong> is not cleared for publication. The ledger is
-      evidence, so it carries no override controls; to change a visual, replace it
-      from the Visual Plan tab before approval.
+      The latest run&apos;s decision ledger — a licence recorded as <strong>unknown</strong> is not cleared for publication.
     </p>
 
     <h2>Sentence coverage</h2>

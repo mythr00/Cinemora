@@ -276,13 +276,7 @@ export default function ThumbnailsPage() {
         <p className="eyebrow">PACKAGING</p>
         <h1>Thumbnails</h1>
         <p className="plan-intro">
-          Thumbnails composed from this film&apos;s own material — frames from the finished
-          production, its verified stills, and your uploads — rendered at YouTube&apos;s exact
-          1280×720 specification. Headlines are kept to a few words by design: a thumbnail
-          names the film, it does not carry a sentence. The figures shown for each variant are
-          mechanical measurements of the file (size, format, headline contrast, small-scale
-          legibility) — nothing here predicts clicks or performance, and no imagery is
-          generated that the film does not contain.
+          Thumbnails from this film&apos;s own material, at YouTube&apos;s exact 1280×720 — measured, never scored for clicks.
         </p>
 
         {busy && <LoadingState className="plan-message" label="Loading the thumbnail studio…" />}

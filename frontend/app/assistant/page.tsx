@@ -242,9 +242,7 @@ function Workspace() {
             <LoadingState label="Loading conversations…" />
           ) : conversations.length === 0 ? (
             <p className="assistant-sidebar-note">
-              No conversations yet. Start one — the assistant answers from
-              your real projects, runs and search results, and asks before
-              it changes anything.
+              No conversations yet. The assistant answers from your real projects, and asks before it changes anything.
             </p>
           ) : (
             <ul className="assistant-conversation-list">

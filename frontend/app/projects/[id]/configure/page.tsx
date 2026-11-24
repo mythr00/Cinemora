@@ -294,12 +294,7 @@ export default function ConfigurePage() {
         <p className="eyebrow">PRE-PRODUCTION CONFIGURATION</p>
         <h1>Configuration</h1>
         <p className="plan-intro">
-          What this production will run with — motion graphics, visual theme,
-          music, narration voice and captions, set before generation and
-          enforced by every pipeline stage. The configuration is stored on
-          the project, snapshotted onto each run, and validated before a run
-          can start: a setting the pipeline cannot honour refuses the run
-          with the reason, rather than being silently ignored.
+          What this production runs with — set before generation, enforced by every stage.
         </p>
 
         {busy && (
