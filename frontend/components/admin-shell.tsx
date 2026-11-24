@@ -31,6 +31,7 @@ const ADMIN_LINKS: Array<{ href: string; label: string }> = [
   { href: "/admin/users", label: "Users" },
   { href: "/admin/subscriptions", label: "Subscriptions" },
   { href: "/admin/projects", label: "Projects" },
+  { href: "/admin/developer", label: "Developer API" },
   { href: "/admin/audit", label: "Audit log" },
   { href: "/admin/settings", label: "Settings" },
 ];

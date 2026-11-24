@@ -1994,3 +1994,45 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
   .templates-layout { grid-template-columns: 1fr; }
   .templates-content { width: calc(100% - 32px); }
 }
+
+/* Developers (Phase N): API keys, webhooks, generated docs. */
+.developers-content { width: min(1060px, calc(100% - 48px)); margin: 0 auto; padding: 28px 0 64px; }
+.developers-header h1 { margin: 6px 0 10px; color: var(--ink-strong); font-size: 30px; font-weight: 700; letter-spacing: -0.01em; }
+.developers-intro { color: var(--ink-soft); font-size: 15px; line-height: 1.65; max-width: 720px; }
+.developers-intro code, .developers-note code { font-size: 0.92em; }
+.developers-panel { margin-top: 22px; padding: 20px 22px 22px; }
+.developers-section-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.developers-section-row h2 { display: inline-flex; align-items: center; gap: 8px; margin: 0; color: var(--ink-strong); font-size: 18px; font-weight: 650; }
+.developers-subtitle { margin: 20px 0 6px; color: var(--ink-strong); font-size: 15px; font-weight: 650; }
+.developers-note { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.developers-message { margin: 16px 0 0; padding: 10px 14px; border: 1px solid var(--line-deep); border-radius: var(--radius-control); color: var(--ink-soft); background: var(--surface-low); font-size: 13.5px; }
+.developers-form { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; align-items: flex-end; }
+.developers-field { display: flex; flex-direction: column; gap: 5px; color: var(--ink-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; flex: 1 1 200px; border: 0; padding: 0; margin: 0; }
+.developers-field input {
+  min-height: 38px; padding: 0 10px; border: 1px solid var(--line-deep);
+  border-radius: var(--radius-control); color: var(--ink-strong); background: var(--paper);
+  font-size: 14px; font-weight: 500; letter-spacing: 0;
+}
+.developers-field legend { color: var(--ink-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; margin-bottom: 5px; }
+.developers-check { display: inline-flex; align-items: center; gap: 6px; margin-right: 14px; color: var(--ink-soft); font-size: 13.5px; font-weight: 500; letter-spacing: 0; min-height: 38px; }
+.developers-check input { min-height: 0; }
+.developers-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.developers-card { padding: 13px 15px 15px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); }
+.developers-card-main { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--ink-strong); font-size: 14.5px; }
+.developers-card-main code { font-size: 13px; overflow-wrap: anywhere; }
+.developers-status { padding: 2px 8px; border: 1px solid var(--line-deep); border-radius: 999px; color: var(--ink-muted); font-size: 11.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; }
+.developers-status.is-active { color: var(--ink-strong); border-color: var(--ink-muted); }
+.developers-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.developers-secret { margin: 14px 0; padding: 14px 16px; border: 1px solid var(--ink-muted); border-radius: var(--radius-panel); background: var(--surface-low); }
+.developers-secret p { color: var(--ink-soft); font-size: 13.5px; line-height: 1.6; margin: 8px 0 10px; }
+.developers-secret-head { display: flex; align-items: center; gap: 8px; color: var(--ink-strong); font-size: 14.5px; }
+.developers-secret-row { display: flex; align-items: flex-start; gap: 10px; margin: 10px 0; }
+.developers-secret-row code {
+  flex: 1 1 auto; padding: 9px 11px; border: 1px solid var(--line-deep); border-radius: var(--radius-control);
+  background: var(--paper); color: var(--ink-strong); font-size: 13px; line-height: 1.55;
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.developers-deliveries { margin-top: 10px; border-top: 1px solid var(--line-soft); padding-top: 8px; }
+@media (max-width: 900px) {
+  .developers-content { width: calc(100% - 32px); }
+}

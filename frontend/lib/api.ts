@@ -4338,3 +4338,161 @@ export function applyTemplateToProject(
     body: JSON.stringify(body),
   });
 }
+
+// ---------------------------------------------------------------------
+// Developer API (Phase N, founder #16): per-user API keys, webhooks
+// and the generated documentation. Key and signing secrets exist
+// ONLY in the create responses below — no read function can return
+// one, because the backend stores only their hashes.
+// ---------------------------------------------------------------------
+
+export type DeveloperApiKey = {
+  id: string;
+  name: string;
+  key_prefix: string;
+  scopes: string[];
+  rate_limit_per_minute: number;
+  rate_limit_is_default: boolean;
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+  request_count: number;
+  status: "active" | "revoked" | "expired";
+};
+
+export type CreatedApiKey = DeveloperApiKey & { secret: string };
+
+export type ApiKeyList = {
+  keys: DeveloperApiKey[];
+  max_keys_per_user: number;
+  default_rate_limit_per_minute: number;
+};
+
+export function listApiKeys(signal?: AbortSignal) {
+  return apiRequest<ApiKeyList>("/api/v1/account/api-keys", { signal });
+}
+
+export function createApiKey(body: {
+  name: string;
+  scopes: string[];
+  expires_at?: string | null;
+  rate_limit_per_minute?: number | null;
+}) {
+  return apiRequest<CreatedApiKey>("/api/v1/account/api-keys", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function revokeApiKey(keyId: string) {
+  return apiRequest<DeveloperApiKey>(`/api/v1/account/api-keys/${keyId}`, {
+    method: "DELETE",
+  });
+}
+
+export type WebhookEndpointView = {
+  id: string;
+  url: string;
+  events: string[];
+  created_at: string;
+  disabled_at: string | null;
+  status: "active" | "disabled";
+};
+
+export type CreatedWebhook = WebhookEndpointView & {
+  signing_secret: string;
+};
+
+export type WebhookDeliveryView = {
+  id: string;
+  endpoint_id: string;
+  delivery_group: string;
+  event: string;
+  run_id: string | null;
+  project_id: string | null;
+  attempt: number;
+  response_status: number | null;
+  error: string | null;
+  created_at: string;
+};
+
+export function listWebhooks(signal?: AbortSignal) {
+  return apiRequest<{ endpoints: WebhookEndpointView[]; events: string[] }>(
+    "/api/v1/account/webhooks",
+    { signal },
+  );
+}
+
+export function createWebhook(body: { url: string; events: string[] }) {
+  return apiRequest<CreatedWebhook>("/api/v1/account/webhooks", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function disableWebhook(endpointId: string) {
+  return apiRequest<WebhookEndpointView>(
+    `/api/v1/account/webhooks/${endpointId}`,
+    { method: "DELETE" },
+  );
+}
+
+export function listWebhookDeliveries(endpointId: string) {
+  return apiRequest<{ deliveries: WebhookDeliveryView[] }>(
+    `/api/v1/account/webhooks/${endpointId}/deliveries`,
+  );
+}
+
+export type DeveloperDocEndpoint = {
+  method: string;
+  path: string;
+  scope: string;
+  summary: string;
+  curl: string;
+};
+
+export type DeveloperDocs = {
+  base_path: string;
+  auth: { header: string; format: string; notes: string };
+  scopes: Array<{ name: string; description: string }>;
+  rate_limit: {
+    default_per_minute: number;
+    window_seconds: number;
+    per_key_override: string;
+    overage: string;
+  };
+  errors: { shape: unknown; codes: string[] };
+  endpoints: DeveloperDocEndpoint[];
+  webhooks: {
+    events: string[];
+    headers: Record<string, string>;
+    signature: string;
+    retries: string;
+    payload_example: unknown;
+  };
+};
+
+export function getDeveloperDocs(signal?: AbortSignal) {
+  return apiRequest<DeveloperDocs>("/api/v1/developer/docs", { signal });
+}
+
+export type AdminDeveloperOverview = {
+  api_keys: Array<DeveloperApiKey & { owner_email: string | null }>;
+  webhooks: Array<
+    WebhookEndpointView & { owner_email: string | null; delivery_count: number }
+  >;
+  totals: {
+    api_keys: number;
+    active_api_keys: number;
+    api_requests_recorded: number;
+    webhooks: number;
+    webhook_deliveries: number;
+  };
+};
+
+export function getAdminDeveloperOverview(signal?: AbortSignal) {
+  return apiRequest<AdminDeveloperOverview>("/api/v1/admin/developer", {
+    signal,
+  });
+}
