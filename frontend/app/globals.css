@@ -1270,3 +1270,71 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 @media (max-width: 390px) {
   .marketing-nav-cta { display: none; }
 }
+
+/* ------------------------------------------------------------------
+   Administration (Phase 7). Same design tokens as the studio:
+   pure-white paper, ink text, one accent. Admin surfaces are
+   reached by direct URL only and rendered solely for admin
+   sessions (components/admin-shell.tsx).
+   ------------------------------------------------------------------ */
+.admin-frame { min-height: 100vh; background: var(--paper); color: var(--ink); }
+.admin-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 32px; border-bottom: 1px solid var(--line); }
+.admin-header-brand { display: flex; align-items: center; gap: 20px; }
+.admin-header-title { display: inline-flex; align-items: center; gap: 7px; font-size: var(--type-h3); font-weight: 600; color: var(--ink); }
+.admin-header-identity { margin: 0; color: var(--ink-muted); font-size: var(--type-small); }
+.admin-nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 32px; border-bottom: 1px solid var(--line-soft); }
+.admin-nav-link { padding: 6px 12px; border-radius: var(--radius-control); color: var(--ink-soft); font-size: var(--type-small); text-decoration: none; }
+.admin-nav-link:hover { color: var(--accent-deep); background: var(--accent-soft); }
+.admin-nav-link.is-active { color: var(--accent-deep); background: var(--accent-soft); font-weight: 600; }
+.admin-page { max-width: 1180px; margin: 0 auto; padding: 32px; }
+.admin-heading { margin-bottom: 24px; }
+.admin-heading .eyebrow { margin: 0 0 8px; }
+.admin-heading h1 { margin: 0; font-size: var(--type-h1); }
+.admin-intro { margin: 10px 0 0; color: var(--ink-soft); font-size: 15px; line-height: 1.65; max-width: 72ch; }
+.admin-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin-bottom: 28px; }
+.admin-card { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 16px; background: var(--paper); }
+.admin-card-label { margin: 0 0 6px; color: var(--ink-muted); font-size: var(--type-micro); text-transform: uppercase; letter-spacing: 0.06em; }
+.admin-card-value { margin: 0; font-size: var(--type-h2); font-weight: 650; }
+.admin-card-hint { margin: 6px 0 0; color: var(--ink-muted); font-size: var(--type-small); line-height: 1.5; }
+.admin-health-status { margin: 0; font-size: var(--type-h2); font-weight: 650; text-transform: capitalize; }
+.admin-health-status.is-ok { color: var(--positive); }
+.admin-health-status.is-error { color: var(--danger); }
+.admin-health-status.is-absent, .admin-health-status.is-not_configured { color: var(--warning); }
+.admin-section-title { margin: 30px 0 12px; font-size: var(--type-h2); }
+.admin-subtitle { margin: 20px 0 8px; font-size: var(--type-h3); }
+.admin-table { width: 100%; border-collapse: collapse; font-size: var(--type-body); }
+.admin-table th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-deep); color: var(--ink-muted); font-size: var(--type-micro); text-transform: uppercase; letter-spacing: 0.05em; }
+.admin-table td { padding: 8px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+.admin-table a { color: var(--accent-deep); text-decoration: none; }
+.admin-table a:hover { text-decoration: underline; }
+.admin-cell-error, .admin-cell-detail { color: var(--ink-soft); max-width: 420px; overflow-wrap: anywhere; }
+.admin-cell-path { font-family: var(--font-mono); font-size: var(--type-small); overflow-wrap: anywhere; }
+.admin-cell-sub { color: var(--ink-muted); font-size: var(--type-small); }
+.admin-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; color: var(--ink-muted); font-size: var(--type-small); }
+.admin-filters, .admin-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.admin-filter { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-soft); }
+.admin-filter select, .admin-filter input { padding: 6px 8px; border: 1px solid var(--line-deep); border-radius: var(--radius-control); background: var(--paper); color: var(--ink); font: inherit; }
+.admin-search { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--line-deep); border-radius: var(--radius-control); color: var(--ink-muted); }
+.admin-search input { border: 0; outline: 0; font: inherit; color: var(--ink); background: transparent; }
+.admin-detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; margin: 0 0 8px; }
+.admin-detail-grid > div { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px 14px; }
+.admin-detail-grid dt { color: var(--ink-muted); font-size: var(--type-micro); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 5px; }
+.admin-detail-grid dd { margin: 0; font-size: var(--type-body); overflow-wrap: anywhere; }
+.admin-error-block { border: 1px solid var(--danger); background: var(--danger-soft); border-radius: var(--radius-panel); padding: 14px 16px; margin: 18px 0; }
+.admin-error-block h2 { margin: 0 0 6px; font-size: var(--type-h3); color: var(--danger-deep); }
+.admin-error-block p { margin: 0; overflow-wrap: anywhere; }
+.admin-notice { border: 1px solid var(--positive); background: var(--positive-soft); border-radius: var(--radius-panel); padding: 12px 14px; margin: 16px 0; }
+.admin-note, .admin-empty { color: var(--ink-muted); line-height: 1.6; }
+.admin-list { margin: 0; padding-left: 20px; line-height: 1.7; overflow-wrap: anywhere; }
+.button-danger { border-color: var(--danger); background: var(--danger); color: var(--on-accent); }
+.button-danger:hover:not(:disabled) { border-color: var(--danger-deep); background: var(--danger-deep); }
+.admin-notfound { max-width: 640px; margin: 0 auto; padding: 96px 32px; text-align: left; }
+.admin-notfound-code { font-size: 64px; font-weight: 700; margin: 0 0 8px; color: var(--ink); }
+.admin-notfound h1 { margin: 0 0 10px; font-size: var(--type-h1); }
+.admin-notfound p { color: var(--ink-soft); line-height: 1.65; }
+.admin-notfound a { color: var(--accent-deep); }
+@media (max-width: 720px) {
+  .admin-header, .admin-nav { padding-left: 16px; padding-right: 16px; }
+  .admin-page { padding: 20px 16px; }
+  .admin-header { flex-direction: column; align-items: flex-start; }
+}

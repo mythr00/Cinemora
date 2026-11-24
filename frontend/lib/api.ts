@@ -1553,3 +1553,349 @@ async function sha256Hex20(value: string): Promise<string> {
     .join("");
   return hex.slice(0, 20);
 }
+
+// ---------------------------------------------------------------------
+// Administration (Phase 7) — /api/v1/admin/*
+//
+// Every helper below talks to the admin router, which enforces the
+// role ladder on the backend; the /admin pages additionally gate
+// rendering on the signed-in user's role (components/admin-shell).
+// Figures are the platform's real records — the backend fabricates
+// nothing, and monetary cost is null (not instrumented), never 0.
+// ---------------------------------------------------------------------
+
+export type AdminOverview = {
+  generated_at: string;
+  window_days: number;
+  projects_total: number;
+  users_total: number;
+  users_by_status: Record<string, number>;
+  runs_total: number;
+  runs_by_status: Record<string, number>;
+  runs_window_by_status: Record<string, number>;
+  completion_rate_window: number | null;
+  median_wall_seconds: number | null;
+  median_wall_seconds_window: number | null;
+  serper_calls_window: number;
+  llm_calls_window: number;
+  active_runs: number;
+  latest_failures: Array<{
+    run_id: string;
+    project_id: string;
+    status: string;
+    stage: string | null;
+    error: string | null;
+    created_at: string | null;
+  }>;
+};
+
+export type AdminRunListEntry = {
+  run_id: string;
+  project_id: string;
+  project_title: string | null;
+  owner_id: string | null;
+  status: string;
+  stage: string | null;
+  error: string | null;
+  cancel_requested: boolean;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  wall_seconds: number | null;
+  presence: {
+    worker_id: string | null;
+    heartbeat_at: string | null;
+    age_seconds: number | null;
+    live: boolean;
+  } | null;
+};
+
+export type AdminRunDetail = AdminRunListEntry & {
+  options: Record<string, unknown> | null;
+  script_hash: string | null;
+  execution: Record<string, unknown> | null;
+  asset_report: Record<string, unknown> | null;
+  production_state: {
+    current_stage: string | null;
+    stages: Record<string, string | null>;
+  } | null;
+  studio_project_path: string;
+};
+
+export type AdminHealth = {
+  generated_at: string;
+  components: Record<
+    string,
+    { status: string } & Record<string, unknown>
+  >;
+};
+
+export type AdminProviderUsage = {
+  generated_at: string;
+  window_days: number;
+  runs_with_execution: number;
+  totals: {
+    serper_calls: { total: number; web: number; images: number; video: number };
+    llm_calls: { total: number; total_tokens: number };
+    archive_org_searches: number;
+    wikimedia_searches: number;
+    candidates_discovered: number;
+    downloads: {
+      attempted: number;
+      succeeded: number;
+      failed: number;
+      bytes_downloaded: number;
+    };
+  };
+  per_run: Array<Record<string, unknown>>;
+  monetary_cost_usd: null;
+  monetary_cost_note: string;
+};
+
+export type AdminStorage = {
+  generated_at: string;
+  media_root: string;
+  total_bytes: number;
+  total_files: number;
+  projects: Array<{
+    project_id: string;
+    title: string | null;
+    status: string | null;
+    in_database: boolean;
+    bytes: number;
+    files: number;
+    runs: Array<{ run_id: string; bytes: number }>;
+  }>;
+  projects_missing_media: Array<{
+    project_id: string;
+    title: string | null;
+    status: string | null;
+  }>;
+  largest_artefacts: Array<{
+    path: string;
+    project_id: string;
+    bytes: number;
+  }>;
+};
+
+export type AdminOrphans = {
+  generated_at: string;
+  media_directories_without_project: Array<{
+    project_id: string;
+    path: string;
+    bytes: number;
+  }>;
+  projects_without_media_directory: string[];
+  old_terminal_run_directories: Array<{
+    run_id: string;
+    project_id: string;
+    status: string;
+    finished_at: string;
+    path: string;
+    bytes: number;
+  }>;
+  old_terminal_threshold_days: number;
+};
+
+export type AdminUser = AccountUser & {
+  plan: string | null;
+  project_count: number;
+  run_count: number;
+};
+
+export type AdminSubscriptions = {
+  plans: Array<{
+    id: string;
+    name: string;
+    max_concurrent_runs: number;
+    max_runs_per_period: number | null;
+    period: string;
+    max_script_chars: number | null;
+    max_storage_bytes: number | null;
+    max_upload_bytes: number | null;
+    priority_tier: number;
+    is_default: boolean;
+    active_subscribers: number;
+  }>;
+  subscriptions: Array<{
+    id: string;
+    user_id: string;
+    user_email: string | null;
+    plan: string | null;
+    status: string;
+    current_period_start: string | null;
+    current_period_end: string | null;
+    billing_provider: string | null;
+    created_at: string;
+  }>;
+  billing_note: string;
+};
+
+export type AdminAuditEntry = {
+  id: string;
+  actor_identity: string;
+  actor_role: string;
+  auth_method: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  detail: Record<string, unknown> | null;
+  result: string;
+  error: string | null;
+  created_at: string | null;
+};
+
+export type AdminSettings = {
+  generated_at: string;
+  note: string;
+  groups: Record<
+    string,
+    Array<{
+      name: string;
+      value?: unknown;
+      configured: boolean;
+      secret: boolean;
+      applies_on_restart: boolean;
+      note?: string;
+    }>
+  >;
+};
+
+export function getAdminOverview(signal?: AbortSignal) {
+  return apiRequest<AdminOverview>("/api/v1/admin/overview", { signal });
+}
+
+export function getAdminHealth(signal?: AbortSignal) {
+  return apiRequest<AdminHealth>("/api/v1/admin/health", { signal });
+}
+
+export function getAdminWorkers(signal?: AbortSignal) {
+  return apiRequest<{
+    generated_at: string;
+    workers: Record<string, unknown>;
+    queues: Record<string, unknown>;
+    providers: Record<string, unknown>;
+  }>("/api/v1/admin/workers", { signal });
+}
+
+export function listAdminRuns(
+  params: { status?: string; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.limit) query.set("limit", String(params.limit));
+  if (params.offset) query.set("offset", String(params.offset));
+  const suffix = query.toString() ? `?${query}` : "";
+  return apiRequest<{ total: number; runs: AdminRunListEntry[] }>(
+    `/api/v1/admin/runs${suffix}`,
+    { signal },
+  );
+}
+
+export function getAdminRun(runId: string, signal?: AbortSignal) {
+  return apiRequest<AdminRunDetail>(`/api/v1/admin/runs/${runId}`, {
+    signal,
+  });
+}
+
+export function cancelAdminRun(runId: string) {
+  return apiRequest<{ run_id: string; cancel_requested: boolean }>(
+    `/api/v1/admin/runs/${runId}/cancel`,
+    { method: "POST" },
+  );
+}
+
+export function submitAdminReplacement(runId: string) {
+  return apiRequest<{ run: { run_id: string; status: string } | null }>(
+    `/api/v1/admin/runs/${runId}/replacement`,
+    { method: "POST" },
+  );
+}
+
+export function getAdminProviderUsage(signal?: AbortSignal) {
+  return apiRequest<AdminProviderUsage>("/api/v1/admin/providers/usage", {
+    signal,
+  });
+}
+
+export function getAdminStorage(signal?: AbortSignal) {
+  return apiRequest<AdminStorage>("/api/v1/admin/storage", { signal });
+}
+
+export function getAdminOrphans(signal?: AbortSignal) {
+  return apiRequest<AdminOrphans>("/api/v1/admin/storage/orphans", {
+    signal,
+  });
+}
+
+export function listAdminUsers(q?: string, signal?: AbortSignal) {
+  const suffix = q ? `?q=${encodeURIComponent(q)}` : "";
+  return apiRequest<{ total: number; users: AdminUser[] }>(
+    `/api/v1/admin/users${suffix}`,
+    { signal },
+  );
+}
+
+export function getAdminUser(userId: string, signal?: AbortSignal) {
+  return apiRequest<AdminUser & { usage: AccountUsage }>(
+    `/api/v1/admin/users/${userId}`,
+    { signal },
+  );
+}
+
+export function setAdminUserStatus(userId: string, status: string) {
+  return apiRequest<{ user: AdminUser }>(
+    `/api/v1/admin/users/${userId}/status`,
+    { method: "POST", body: JSON.stringify({ status }) },
+  );
+}
+
+export function assignAdminUserPlan(userId: string, planName: string) {
+  return apiRequest<{ user: AccountUser; plan: string }>(
+    `/api/v1/admin/users/${userId}/plan`,
+    { method: "POST", body: JSON.stringify({ plan_name: planName }) },
+  );
+}
+
+export function getAdminSubscriptions(signal?: AbortSignal) {
+  return apiRequest<AdminSubscriptions>("/api/v1/admin/subscriptions", {
+    signal,
+  });
+}
+
+export function listAdminProjects(signal?: AbortSignal) {
+  return apiRequest<{
+    total: number;
+    projects: Array<{
+      id: string;
+      title: string | null;
+      category: string;
+      status: string;
+      owner_id: string | null;
+      owner_email: string | null;
+      created_at: string;
+      latest_run: { run_id: string; status: string; stage: string | null } | null;
+      studio_path: string;
+    }>;
+  }>("/api/v1/admin/projects", { signal });
+}
+
+export function listAdminAuditLog(
+  params: { action?: string; actor?: string; target_id?: string } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (params.action) query.set("action", params.action);
+  if (params.actor) query.set("actor", params.actor);
+  if (params.target_id) query.set("target_id", params.target_id);
+  const suffix = query.toString() ? `?${query}` : "";
+  return apiRequest<{ total: number; entries: AdminAuditEntry[] }>(
+    `/api/v1/admin/audit-log${suffix}`,
+    { signal },
+  );
+}
+
+export function getAdminSettings(signal?: AbortSignal) {
+  return apiRequest<AdminSettings>("/api/v1/admin/settings", { signal });
+}
