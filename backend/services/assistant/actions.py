@@ -21,6 +21,7 @@ returns the recorded result without re-executing (idempotent-safe).
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -40,6 +41,17 @@ FAILED = "failed"
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _json_safe(value):
+    """Normalise a tool result for the JSON audit columns. Tool
+    handlers return the same dicts the v1 API returns, which can
+    carry datetimes FastAPI would encode at response time; the
+    audit store needs the encoded form."""
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except (TypeError, ValueError):
+        return {"unserialisable_result": str(value)[:500]}
 
 
 def ttl_seconds() -> int:
@@ -142,7 +154,11 @@ def record_read(
         arguments=arguments,
         status=EXECUTED if error is None else FAILED,
     )
-    row.result = redact_value(result) if result is not None else {"error": error}
+    row.result = (
+        _json_safe(redact_value(result))
+        if result is not None
+        else {"error": error}
+    )
     row.executed_at = _now()
     db.commit()
     db.refresh(row)
@@ -303,7 +319,9 @@ def confirm_and_execute(db, action, principal):
         db.refresh(action)
         return action
     action.status = EXECUTED
-    action.result = redact_value(result if isinstance(result, dict) else {"result": result})
+    action.result = _json_safe(
+        redact_value(result if isinstance(result, dict) else {"result": result})
+    )
     action.executed_at = _now()
     db.commit()
     db.refresh(action)
