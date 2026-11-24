@@ -7,7 +7,7 @@ import { AccountMenu } from "@/components/account-menu";
 import { BrandLockup } from "@/components/brand-lockup";
 import { ApiConnectionBadge } from "@/components/connection-status";
 import { getCurrentUser, listProjects, type AccountUser } from "@/lib/api";
-import { BellRing, CirclePlus, FolderOpen, LayoutDashboard, Library, Network, ScrollText, Sparkles } from "lucide-react";
+import { BellRing, CirclePlus, FolderOpen, LayoutDashboard, LayoutTemplate, Library, Network, ScrollText, Sparkles } from "lucide-react";
 
 // Brief Stage 3 (C-02): /channel-lab, /thumbnail and /viral-clips
 // were removed from navigation — their backends do not exist in
@@ -27,6 +27,7 @@ const links = [
   { href: "/studio", label: "Dashboard", Icon: LayoutDashboard },
   { href: "/projects", label: "Projects", Icon: FolderOpen },
   { href: "/scripts", label: "Scripts", Icon: ScrollText },
+  { href: "/templates", label: "Templates", Icon: LayoutTemplate },
   { href: "/library", label: "Library", Icon: Library },
   { href: "/intelligence", label: "Intelligence", Icon: Network },
   { href: "/create", label: "New production", Icon: CirclePlus },
@@ -37,6 +38,7 @@ function activeFor(pathname: string | null): string {
   if (!pathname) return "";
   if (pathname === "/projects" || pathname.startsWith("/projects/")) return "/projects";
   if (pathname === "/scripts" || pathname.startsWith("/scripts/")) return "/scripts";
+  if (pathname === "/templates" || pathname.startsWith("/templates/")) return "/templates";
   if (pathname === "/library" || pathname.startsWith("/library/")) return "/library";
   if (pathname === "/create") return "/create";
   if (pathname === "/assistant" || pathname.startsWith("/assistant")) return "/assistant";

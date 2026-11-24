@@ -4206,3 +4206,135 @@ export function attachScriptToProject(scriptId: string, projectId: string) {
     { method: "POST", body: JSON.stringify({ project_id: projectId }) },
   );
 }
+
+// ---------------------------------------------------------------------
+// Templates & production presets (founder priority #15) — named
+// bundles over the backend's template service. Built-ins are
+// derived from the real genre packs (read-only; copy to edit);
+// user templates live in the caller's own account. The options a
+// template may carry are exactly the options the production
+// pipeline consumes — the backend refuses anything else, and
+// there is deliberately no narration-speed field anywhere.
+// ---------------------------------------------------------------------
+
+export type TemplateOptions = {
+  genre?: string;
+  voice_id?: string;
+  captions?: "burn" | "sidecar" | "off";
+  caption_sync?: "word" | "syllable" | "off";
+  music_file?: string;
+  music_enabled?: boolean;
+  music_volume?: number;
+  narration_volume?: number;
+  music_fade_in_seconds?: number;
+  music_fade_out_seconds?: number;
+  music_loop_crossfade_seconds?: number;
+  duck_threshold?: number;
+  duck_ratio?: number;
+  duck_attack_ms?: number;
+  duck_release_ms?: number;
+  require_plan_approval?: boolean;
+};
+
+export type TemplateRecord = {
+  id: string;
+  kind: "builtin" | "user";
+  name: string;
+  category: string;
+  target_minutes: number | null;
+  options: TemplateOptions;
+  sections: { heading: string | null }[];
+  source: {
+    kind: string;
+    pack_id?: string;
+    label?: string | null;
+    description?: string | null;
+    style_family?: string | null;
+    visual_theme?: string | null;
+    project_id?: string;
+    script_id?: string;
+  } | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type TemplateDroppedOption = { key: string; reason: string };
+
+export function listTemplates(signal?: AbortSignal) {
+  return apiRequest<{ templates: TemplateRecord[]; builtins: TemplateRecord[] }>(
+    "/api/v1/templates",
+    { signal },
+  );
+}
+
+export function createTemplate(body: {
+  name?: string;
+  category?: string;
+  target_minutes?: number | null;
+  options?: TemplateOptions;
+  sections?: { heading?: string }[];
+}) {
+  return apiRequest<TemplateRecord>("/api/v1/templates", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateTemplate(
+  templateId: string,
+  body: {
+    name?: string;
+    category?: string;
+    target_minutes?: number | null;
+    clear_target?: boolean;
+    options?: TemplateOptions;
+    sections?: { heading?: string }[];
+  },
+) {
+  return apiRequest<TemplateRecord>(`/api/v1/templates/${templateId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteTemplate(templateId: string) {
+  await apiRequest(`/api/v1/templates/${templateId}`, { method: "DELETE" });
+}
+
+export function copyBuiltinTemplate(packId: string, name?: string) {
+  return apiRequest<TemplateRecord>(`/api/v1/templates/builtins/${packId}/copy`, {
+    method: "POST",
+    body: JSON.stringify({ name: name ?? null }),
+  });
+}
+
+export function createTemplateFromProject(projectId: string, name?: string) {
+  return apiRequest<{ template: TemplateRecord; dropped_options: TemplateDroppedOption[] }>(
+    "/api/v1/templates/from-project",
+    { method: "POST", body: JSON.stringify({ project_id: projectId, name: name ?? null }) },
+  );
+}
+
+export function createTemplateFromDraft(scriptId: string, name?: string) {
+  return apiRequest<TemplateRecord>("/api/v1/templates/from-draft", {
+    method: "POST",
+    body: JSON.stringify({ script_id: scriptId, name: name ?? null }),
+  });
+}
+
+export function applyTemplateToDraft(templateId: string, title?: string) {
+  return apiRequest<ScriptDraft>(`/api/v1/templates/${templateId}/apply-draft`, {
+    method: "POST",
+    body: JSON.stringify({ title: title ?? null }),
+  });
+}
+
+export function applyTemplateToProject(
+  templateId: string,
+  body: { title?: string; script: string },
+) {
+  return apiRequest<ProjectDetail>(`/api/v1/templates/${templateId}/apply-project`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}

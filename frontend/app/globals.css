@@ -1942,3 +1942,55 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 .loc-script-preview { margin-top: 10px; }
 .loc-script-preview summary { cursor: pointer; color: var(--ink-strong); font-size: 14px; }
 .loc-script-preview pre { margin-top: 8px; max-height: 320px; overflow: auto; white-space: pre-wrap; font-size: 13px; line-height: 1.6; color: var(--ink-soft); background: var(--surface-low); border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px 14px; }
+
+/* ============================================================
+   Templates & production presets (founder priority #15)
+   ============================================================ */
+.templates-content { width: min(1240px, calc(100% - 64px)); margin: 0 auto; padding: 32px 0 72px; }
+.templates-content h1 {
+  margin: 10px 0 12px; color: var(--ink-strong); font-size: var(--type-h1);
+  font-weight: 650; letter-spacing: -0.025em; line-height: 1.15;
+}
+.templates-intro { max-width: 820px; margin: 0 0 18px; color: var(--muted); font-size: 15px; line-height: 1.7; }
+.templates-message { margin: 10px 0; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
+.templates-panel { margin: 22px 0; }
+.templates-panel h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--ink-strong); font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.templates-panel h3 { margin: 18px 0 8px; color: var(--ink-strong); font-size: 15px; font-weight: 650; }
+.templates-note { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.templates-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 14px; }
+.template-card { padding: 14px 16px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); }
+.template-card h3 { margin: 0 0 6px; color: var(--ink-strong); font-size: 16px; font-weight: 650; }
+.templates-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.templates-layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 28px; align-items: start; margin-top: 18px; }
+.templates-sidebar-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.templates-sidebar-head h2 { margin: 0; color: var(--ink-strong); font-size: 17px; font-weight: 650; }
+.templates-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 22px; }
+.template-row {
+  display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 11px 13px;
+  border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper);
+  color: var(--ink-soft); font-size: 13.5px; cursor: pointer;
+}
+.template-row-name { color: var(--ink-strong); font-weight: 620; font-size: 14.5px; }
+.template-row-meta { color: var(--muted); font-size: 12.5px; }
+.template-row--active { border-color: var(--line-deep); background: var(--surface-low); }
+.templates-form { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; align-items: flex-end; }
+.templates-field { display: flex; flex-direction: column; gap: 5px; color: var(--ink-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; flex: 1 1 200px; }
+.templates-field input, .templates-field select, .templates-field textarea {
+  min-height: 38px; padding: 0 10px; border: 1px solid var(--line-deep);
+  border-radius: var(--radius-control); color: var(--ink-strong); background: var(--paper);
+  font-size: 14px; font-weight: 500; letter-spacing: 0;
+}
+.templates-field textarea { padding: 10px 12px; line-height: 1.6; resize: vertical; width: 100%; }
+.templates-sections { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.templates-section-row { display: flex; gap: 8px; align-items: center; }
+.templates-section-row input {
+  flex: 1 1 auto; min-height: 38px; padding: 0 10px; border: 1px solid var(--line-deep);
+  border-radius: var(--radius-control); color: var(--ink-strong); background: var(--paper);
+  font-size: 14px; font-weight: 500;
+}
+.templates-dropped { margin: 10px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 13px; line-height: 1.7; }
+.templates-summary { margin: 8px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 14px; line-height: 1.75; }
+@media (max-width: 900px) {
+  .templates-layout { grid-template-columns: 1fr; }
+  .templates-content { width: calc(100% - 32px); }
+}
