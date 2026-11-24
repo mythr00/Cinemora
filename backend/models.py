@@ -550,3 +550,56 @@ class ProjectRevision(Base):
             postgresql_where=text("parent_revision_id IS NULL"),
         ),
     )
+
+class AdminAuditLog(Base):
+    """Append-only record of platform-administration actions
+    (Phase 7; design admin/03 §3).
+
+    Written by services/admin_audit.py for every WRITE/CONSEQUENTIAL
+    admin action, admin sign-ins, and failed admin authorisation
+    attempts. There is deliberately no update or delete path in
+    application code and the admin viewer is read-only: this table
+    is the platform's administrative memory, kept separate from the
+    production `asset_decisions` ledger (different domain).
+    Schema authority: migrations/versions/0008_admin_audit_log.py.
+    """
+
+    __tablename__ = "admin_audit_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    actor_identity: Mapped[str] = mapped_column(
+        String(320), nullable=False, index=True
+    )
+
+    actor_role: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # "session" | "operator_token" (services.auth Principal).
+    auth_method: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    # Typed verb: admin.sign_in, admin.auth_denied, run.cancel,
+    # run.submit_replacement, user.status_change, user.plan_assign.
+    action: Mapped[str] = mapped_column(
+        String(60), nullable=False, index=True
+    )
+
+    target_type: Mapped[str] = mapped_column(String(40), nullable=True)
+
+    target_id: Mapped[str] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+
+    # Action parameters / before-after (never secrets).
+    detail: Mapped[dict] = mapped_column(JSONVariant, nullable=True)
+
+    # "success" | "failure"
+    result: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    error: Mapped[str] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=_utcnow,
+        index=True,
+    )
