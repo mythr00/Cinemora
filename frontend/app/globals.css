@@ -2157,3 +2157,71 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
      the email still ellipsises inside. */
   .account-menu-button { max-width: 148px; }
 }
+
+/* ============================================================
+   Proportion pass (2026-11-24, founder phone review): the
+   overflow fix above made every page FIT; this pass makes each
+   device class feel DESIGNED. The base type scale is fixed px
+   at every width — the dashboard hero h1 was 40px on a 390px
+   phone (four lines, the whole first screen), the metrics
+   numbers 28px, and every page h1 the desktop 32/28px, with
+   desktop spacing rhythm retained. Below, the large tiers of
+   the scale step down per device class: tablet (≤900px, icon
+   rail) gets a real intermediate step, phone (≤640px, bottom
+   bar) a compact one. Desktop (>900px) is untouched — every
+   rule lives inside the two queries. Body/small/micro sizes
+   never shrink (readability floor); tap targets rise to 44px
+   on phone.
+   ============================================================ */
+@media (max-width: 900px) {
+  :root {
+    --type-display: 28px;
+    --type-h1: 25px;
+    --type-h2: 19px;
+  }
+  .dashboard-welcome { padding-bottom: 28px; }
+  .dashboard-welcome h1 { font-size: 33px; }
+  .dashboard-metrics > div strong { font-size: 25px; }
+  .section-heading h2 { font-size: 22px; }
+  .developers-header h1 { font-size: 27px; }
+}
+@media (max-width: 640px) {
+  :root {
+    --type-display: 25px;
+    --type-h1: 23px;
+    --type-h2: 18px;
+  }
+  /* Content starts sooner and breathes: the desktop 32–34px
+     top padding plus a 40px hero left almost no first screen. */
+  .dashboard-content, .projects-content, .tool-page-content,
+  .plan-content, .research-content, .content-wrap,
+  .script-content, .templates-content { padding-top: 26px; }
+  .developers-content { padding-top: 24px; }
+  /* Dashboard hero: a headline, not a poster. */
+  .dashboard-welcome { padding: 2px 0 22px; gap: 16px; }
+  .dashboard-welcome h1 { font-size: 26px; line-height: 1.16; letter-spacing: -0.025em; }
+  .dashboard-welcome > div > p:last-child { margin-top: 12px; font-size: 15px; line-height: 1.65; }
+  .dashboard-welcome > .button { width: 100%; min-height: 48px; }
+  /* Metrics: same 2-up grid, calmer numbers and rhythm. */
+  .dashboard-metrics { padding: 18px 0; }
+  .dashboard-metrics > div strong { font-size: 23px; }
+  .dashboard-projects { padding-top: 28px; }
+  .dashboard-project-info h3 { font-size: 17px; }
+  .dashboard-empty h3, .library-empty h2 { font-size: 22px; }
+  .section-heading { margin-bottom: 16px; }
+  .section-heading h2 { font-size: 20px; }
+  .projects-heading h1 { font-size: 23px; }
+  /* Landing hero steps down with the same rhythm. */
+  .hero-copy h1 { font-size: 33px; line-height: 1.14; }
+  .hero-deck { font-size: 15px; line-height: 1.65; }
+  /* Developers: panels use the phone width instead of
+     sitting inside desktop padding. */
+  .developers-header h1 { font-size: 24px; }
+  .developers-panel { padding: 16px 16px 18px; }
+  /* Assistant: tighter shell padding on phone (its own ≤860
+     query already stacks the layout). */
+  .assistant-shell { padding: 12px; }
+  .assistant-thread { padding: 12px; }
+  /* Every button is a comfortable tap target on phone. */
+  .button { min-height: 44px; }
+}
