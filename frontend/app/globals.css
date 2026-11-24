@@ -55,9 +55,17 @@
   --type-small: 12.5px;
   --type-micro: 11px;
   /* Spacing / radius / layout (§2.4) */
-  --radius-control: 6px;
-  --radius-panel: 8px;
-  --radius-media: 10px;
+  --radius-control: 12px;
+  --radius-panel: 20px;
+  --radius-media: 16px;
+  /* GoMotion redesign (2026-11-24): app-idiom surfaces — a soft
+     lavender-grey backdrop, large-radius floating cards, pill
+     controls. The accent token above stays the one accent. */
+  --backdrop: #eceef6;
+  --card-radius: 24px;
+  --card-radius-sm: 16px;
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.05), 0 12px 32px -12px rgb(16 24 40 / 0.12);
+  --shadow-accent: 0 6px 16px rgb(49 92 255 / 0.32);
   --gutter: clamp(20px, 4vw, 48px);
   --reading-width: 1200px;
   --editor-width: 1440px;
@@ -2224,4 +2232,292 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
   .assistant-thread { padding: 12px; }
   /* Every button is a comfortable tap target on phone. */
   .button { min-height: 44px; }
+}
+
+/* ============================================================
+   GoMotion redesign (2026-11-24, founder direction: "rebuild
+   all the frontend just like gomotion — everything need to
+   feel real, not just like reading boring documents"). The
+   editorial document look (white pages, hairline-ruled lists)
+   becomes a mobile-app product UI: a soft lavender-grey
+   backdrop (--backdrop), large-radius white cards floating on
+   it with soft shadows (--card-radius / --shadow-card), pill
+   buttons and segmented controls, a floating rail on desktop
+   and a floating bottom tab bar on phone. Every rule below is
+   presentation only — no route, control or data path changes.
+   Editor Studio keeps its dark theme (scoped tokens) and only
+   adopts the radius/spacing language. This section is last in
+   the file so its rules win the cascade over the sections
+   above at equal specificity.
+   ============================================================ */
+
+/* ---------- Backdrop: pages sit on the app backdrop ---------- */
+.app-page, .project-editor-page { background: var(--backdrop); }
+.landing-page { background: var(--backdrop); }
+.auth-page { background: var(--backdrop); }
+.admin-frame { background: var(--backdrop); }
+
+/* ---------- Shell: blended top bar, floating rail ---------- */
+.app-topbar { background: var(--backdrop); border-bottom: 0; }
+.app-rail {
+  top: calc(var(--topbar-h) + 10px); left: 10px; bottom: 10px;
+  width: calc(var(--rail-w) - 20px); padding: 14px 10px;
+  border: 0; border-radius: var(--card-radius); background: var(--paper);
+  box-shadow: var(--shadow-card);
+}
+.app-rail a { border-radius: 999px; padding: 10px 12px; }
+.account-menu-button { border-radius: 999px; }
+.account-menu-panel { border-radius: var(--card-radius-sm); }
+.app-footer { border-top: 0; }
+.app-approvals { background: var(--paper); border-radius: 999px; padding: 6px 12px; box-shadow: var(--shadow-card); }
+
+/* Pill buttons everywhere (the reference idiom). */
+.button { border-radius: 999px; }
+.generate-button { border-radius: 999px; }
+
+/* The phone "More" cluster lives in the rail markup; it is
+   hidden wherever the full rail shows. */
+.app-more { display: none; }
+
+/* ---------- Cards: the one surface language ---------- */
+.panel, .hub-panel, .status-card, .video-card, .template-card,
+.thumb-card, .loc-card, .developers-card, .version-entry,
+.version-compare, .invitations-inbox, .p9-group, .plan-empty,
+.readiness-header, .editor-panel, .editor-preview, .editor-timeline,
+.assistant-sidebar, .assistant-thread, .assistant-composer,
+.script-section, .script-proposal, .research-bibliography,
+.not-recorded, .plan-table-wrap, .developers-secret,
+.editor-certificate, .graphics-card, .summary-card,
+.plan-summary > div, .research-summary > div, .script-summary > div,
+.admin-detail-grid > div {
+  border-radius: var(--card-radius);
+  box-shadow: var(--shadow-card);
+}
+.panel { padding: 22px; }
+.state-error { border-radius: var(--card-radius-sm); box-shadow: var(--shadow-card); }
+.next-action { border-radius: var(--card-radius); box-shadow: var(--shadow-card); }
+.admin-card { border-radius: var(--card-radius-sm); box-shadow: var(--shadow-card); border-color: var(--line-soft); }
+.admin-error-block, .admin-notice { border-radius: var(--card-radius-sm); box-shadow: var(--shadow-card); }
+.assistant-card, .assistant-action-card { border-radius: var(--card-radius-sm); }
+.assistant-conversation-row { border-radius: 14px; }
+.assistant-example { box-shadow: var(--shadow-card); border-color: var(--line-soft); }
+
+/* The create flow's steps become floating cards (was: ruled
+   sections on the page). */
+.create-step {
+  border: 0; border-radius: var(--card-radius); background: var(--paper);
+  box-shadow: var(--shadow-card); padding: 24px;
+}
+.create-steps { gap: 16px; }
+.script-panel textarea { border-radius: var(--card-radius-sm); }
+.voice-catalog-list { border-radius: var(--card-radius-sm); }
+.motion-toggle { border-radius: var(--card-radius-sm); }
+
+/* ---------- Rows become card-rows ---------- */
+.dashboard-project-card {
+  background: var(--paper); border: 0; border-radius: var(--card-radius);
+  box-shadow: var(--shadow-card); padding: 16px;
+}
+.dashboard-project-grid { gap: 14px; }
+.dashboard-projects { padding-top: 28px; }
+.library-grid { gap: 14px; }
+.library-card {
+  display: flex; flex-direction: column; gap: 12px;
+  background: var(--paper); border: 0; border-radius: var(--card-radius);
+  box-shadow: var(--shadow-card); padding: 14px;
+}
+.library-card-content { padding: 0; }
+.approval-queue li {
+  border-radius: var(--card-radius-sm); box-shadow: var(--shadow-card);
+  padding: 16px 18px;
+}
+.research-row, .script-row {
+  border-radius: var(--card-radius-sm); box-shadow: var(--shadow-card);
+  border-color: var(--line-soft); padding: 16px 18px;
+}
+.script-draft-row, .template-row {
+  border-radius: var(--card-radius-sm); box-shadow: var(--shadow-card);
+  border-color: var(--line-soft);
+}
+.editor-asset-row, .editor-library-row, .editor-export-card { border-radius: var(--card-radius-sm); }
+.editor-revision-list li { border-radius: var(--card-radius-sm); }
+.version-diff { border-radius: var(--card-radius-sm); }
+.run-detail { border-radius: var(--card-radius-sm); }
+
+/* Dashboard metrics: five compact stat cards, note underneath. */
+.dashboard-metrics {
+  grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: stretch;
+  gap: 12px; padding: 20px 0 4px; border-bottom: 0;
+}
+.dashboard-metrics > div {
+  background: var(--paper); border-radius: var(--card-radius-sm);
+  box-shadow: var(--shadow-card); padding: 14px 16px;
+}
+.dashboard-metrics > p { grid-column: 1 / -1; max-width: none; }
+
+/* ---------- Project tabs: a pill bar in a floating card ---------- */
+.project-tabs {
+  border: 0; border-radius: 999px; background: var(--paper);
+  box-shadow: var(--shadow-card); padding: 6px; gap: 2px;
+}
+.project-tabs a { border-bottom: 0; border-radius: 999px; padding: 8px 13px; }
+.project-tabs a[aria-current="page"] { background: var(--accent); color: var(--on-accent); }
+
+/* ---------- Landing: sections become card stacks ---------- */
+.marketing-nav-wrap { background: var(--backdrop); border-bottom: 0; }
+.landing-footer { background: transparent; border-top: 0; }
+.capability-section, .editorial-section, .faq-section { border-top: 0; }
+.signal-strip {
+  width: min(1120px, calc(100% - 64px)); margin: 0 auto;
+  background: var(--paper); border: 0; border-radius: var(--card-radius);
+  box-shadow: var(--shadow-card); padding: 18px 24px;
+}
+.workflow-list { border-top: 0; display: grid; gap: 12px; }
+.workflow-row {
+  background: var(--paper); border: 0; border-radius: var(--card-radius);
+  box-shadow: var(--shadow-card); padding: 20px;
+}
+.capability-list { border-top: 0; display: grid; gap: 10px; }
+.capability-list > a {
+  min-height: 0; background: var(--paper); border: 0;
+  border-radius: var(--card-radius); box-shadow: var(--shadow-card);
+  padding: 16px 18px;
+}
+.capability-list > a:hover { background: var(--paper); }
+.faq-list { display: grid; gap: 10px; }
+.faq-list details {
+  background: var(--paper); border: 0; border-radius: var(--card-radius-sm);
+  box-shadow: var(--shadow-card); padding: 0 18px;
+}
+.faq-list details:last-child { border-bottom: 0; }
+.closing-cta { border: 0; border-radius: var(--card-radius); box-shadow: var(--shadow-card); }
+
+/* ---------- Auth: one floating card on the backdrop ---------- */
+.auth-card {
+  background: var(--paper); border-radius: var(--card-radius);
+  box-shadow: var(--shadow-card); padding: 30px 28px;
+}
+
+/* ---------- Editor Studio (dark, scoped): radius language ---------- */
+.editor-studio .studio-pool-card { border-radius: 14px; }
+.editor-studio .studio-screen { border-radius: 16px; }
+.editor-studio .studio-btn, .editor-studio .studio-select,
+.editor-studio .studio-input, .editor-studio .studio-textarea { border-radius: 10px; }
+.editor-studio .studio-clip { border-radius: 8px; }
+.editor-studio .studio-brand { border-radius: 12px; }
+.editor-studio .studio-mini { border-radius: 8px; }
+.editor-studio .studio-icon-btn { border-radius: 8px; }
+.editor-studio .studio-pane { padding: 14px; }
+.editor-studio .studio-pool-list { gap: 10px; }
+
+/* ---------- Dashboard create-first flow (gm- classes) ---------- */
+.dashboard-content { padding-top: 32px; }
+.dash-head h1 {
+  margin: 0; color: var(--ink-strong); font-size: 24px; font-weight: 650;
+  letter-spacing: -0.02em; line-height: 1.2;
+}
+.dash-create { display: flex; flex-direction: column; gap: 16px; margin-top: 18px; }
+.gm-card {
+  background: var(--paper); border-radius: var(--card-radius);
+  box-shadow: var(--shadow-card); padding: 22px;
+}
+.gm-step-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.gm-step-num {
+  display: grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center;
+  border-radius: 10px; background: var(--accent-soft); color: var(--accent-deep);
+  font-size: 14px; font-weight: 700;
+}
+.gm-step-head h2 { margin: 0; color: var(--ink-strong); font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.gm-step-head .required-tag { margin-left: auto; }
+.gm-segmented {
+  display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line-soft);
+  border-radius: 999px; background: var(--surface-low);
+}
+.gm-segmented button {
+  flex: 1 1 0; min-height: 44px; padding: 0 12px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--ink-muted); font-family: inherit;
+  font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.gm-segmented button[aria-pressed="true"] {
+  background: var(--accent); color: var(--on-accent); box-shadow: var(--shadow-accent);
+}
+.gm-textarea {
+  display: block; width: 100%; min-height: 190px; margin-top: 14px;
+  resize: vertical; padding: 16px; border: 1px solid var(--line);
+  border-radius: var(--card-radius-sm); background: var(--paper);
+  color: var(--ink-strong); font-family: inherit; font-size: 15px; line-height: 1.65;
+}
+.gm-textarea::placeholder { color: var(--ink-muted); }
+.gm-textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.gm-count {
+  display: flex; justify-content: flex-end; margin-top: 8px;
+  color: var(--ink-muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.gm-ai-card {
+  display: flex; align-items: center; gap: 10px; margin-top: 14px;
+  padding: 14px 16px; border: 1.5px dashed var(--line-deep);
+  border-radius: var(--card-radius-sm); background: var(--accent-soft);
+  color: var(--ink-soft); font-size: 14px; text-decoration: none;
+}
+.gm-ai-card > svg { flex: 0 0 auto; color: var(--accent-deep); }
+.gm-ai-card strong { color: var(--accent-deep); font-weight: 650; }
+.gm-ai-card .gm-ai-arrow { margin-left: auto; }
+.gm-upload-panel {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
+  margin-top: 14px; padding: 18px; border: 1.5px dashed var(--line-deep);
+  border-radius: var(--card-radius-sm); color: var(--ink-soft);
+  font-size: 14px; line-height: 1.6;
+}
+.gm-upload-panel p { margin: 0; }
+.gm-upload-panel > svg { color: var(--accent-deep); }
+.gm-fields { margin-top: 2px; }
+.gm-summary-line { margin: 0 0 12px; color: var(--ink-muted); font-size: 13.5px; line-height: 1.6; }
+.gm-summary-line strong { color: var(--ink-strong); font-weight: 600; }
+.dash-created { background: var(--positive-soft); box-shadow: none; border: 1px solid var(--positive); }
+.dash-created p { margin: 0 0 10px; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
+.dash-section { margin-top: 28px; }
+
+/* ---------- GoMotion responsive steps ---------- */
+@media (max-width: 900px) {
+  .dashboard-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dashboard-metrics > p { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  /* Floating bottom tab bar: five primary destinations plus
+     More; the rest of the rail lives in the More panel. */
+  .app-page, .project-editor-page { padding-bottom: 96px; }
+  .app-rail {
+    top: auto; left: 10px; right: 10px; bottom: 10px; width: auto; height: 64px;
+    flex-direction: row; justify-content: space-between; align-items: center;
+    padding: 6px 8px; border: 0; border-radius: 999px; box-shadow: var(--shadow-pop);
+  }
+  .app-rail a { padding: 6px 9px; }
+  .app-rail a[href="/create"] { order: -1; }
+  .app-rail a.rail-secondary { display: none; }
+  .app-rail a[aria-current="page"] { background: var(--accent-soft); }
+  .app-more { display: block; position: relative; }
+  .app-more-button {
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 6px 10px; border: 0; background: none; color: var(--ink-soft);
+    font-family: inherit; font-size: 11px; font-weight: 550; cursor: pointer;
+  }
+  .app-more-button[aria-expanded="true"], .app-more-button.has-active { color: var(--accent-deep); }
+  .app-more-panel {
+    position: absolute; right: 0; bottom: calc(100% + 14px); z-index: 50;
+    display: flex; width: 224px; flex-direction: column; gap: 2px;
+    padding: 8px; border-radius: var(--card-radius-sm);
+    background: var(--paper); box-shadow: var(--shadow-pop);
+  }
+  .app-more .app-more-panel a {
+    display: flex; flex-direction: row; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 12px; color: var(--ink-soft);
+    font-size: 14px; font-weight: 550; white-space: nowrap;
+  }
+  .app-more .app-more-panel a[aria-current="page"] { background: var(--accent-soft); color: var(--accent-deep); }
+  .dashboard-content { padding-top: 22px; }
+  .dashboard-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gm-card { padding: 18px; }
+  .create-step { padding: 20px 18px; }
+  .signal-strip { width: calc(100% - 40px); }
+  .auth-card { padding: 26px 20px; }
 }

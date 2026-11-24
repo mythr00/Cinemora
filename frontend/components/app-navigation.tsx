@@ -7,7 +7,7 @@ import { AccountMenu } from "@/components/account-menu";
 import { BrandLockup } from "@/components/brand-lockup";
 import { ApiConnectionBadge } from "@/components/connection-status";
 import { getCurrentUser, listProjects, type AccountUser } from "@/lib/api";
-import { BellRing, CirclePlus, FolderOpen, KeyRound, LayoutDashboard, LayoutTemplate, Library, Network, ScrollText, Sparkles } from "lucide-react";
+import { BellRing, CirclePlus, Ellipsis, FolderOpen, KeyRound, LayoutDashboard, LayoutTemplate, Library, Network, ScrollText, Sparkles } from "lucide-react";
 
 // Brief Stage 3 (C-02): /channel-lab, /thumbnail and /viral-clips
 // were removed from navigation — their backends do not exist in
@@ -23,16 +23,22 @@ import { BellRing, CirclePlus, FolderOpen, KeyRound, LayoutDashboard, LayoutTemp
 // The active item is derived from the pathname (project detail,
 // plan, assets, graphics, editor and certificate routes belong
 // to Projects) instead of being passed in by each caller.
+//
+// GoMotion redesign (2026-11-24): the phone bottom bar carries
+// five primary destinations (Create first, then Projects,
+// Scripts, Templates, Library — the `phone` flag); the remaining
+// sections live in the bar's More panel, rendered below. Desktop
+// and tablet rails show every link exactly as before.
 const links = [
-  { href: "/studio", label: "Dashboard", Icon: LayoutDashboard },
-  { href: "/projects", label: "Projects", Icon: FolderOpen },
-  { href: "/scripts", label: "Scripts", Icon: ScrollText },
-  { href: "/templates", label: "Templates", Icon: LayoutTemplate },
-  { href: "/library", label: "Library", Icon: Library },
-  { href: "/intelligence", label: "Intelligence", Icon: Network },
-  { href: "/create", label: "New production", Icon: CirclePlus },
-  { href: "/assistant", label: "Assistant", Icon: Sparkles },
-  { href: "/developers", label: "Developers", Icon: KeyRound },
+  { href: "/studio", label: "Dashboard", Icon: LayoutDashboard, phone: false },
+  { href: "/projects", label: "Projects", Icon: FolderOpen, phone: true },
+  { href: "/scripts", label: "Scripts", Icon: ScrollText, phone: true },
+  { href: "/templates", label: "Templates", Icon: LayoutTemplate, phone: true },
+  { href: "/library", label: "Library", Icon: Library, phone: true },
+  { href: "/intelligence", label: "Intelligence", Icon: Network, phone: false },
+  { href: "/create", label: "Create", Icon: CirclePlus, phone: true },
+  { href: "/assistant", label: "Assistant", Icon: Sparkles, phone: false },
+  { href: "/developers", label: "Developers", Icon: KeyRound, phone: false },
 ] as const;
 
 function activeFor(pathname: string | null): string {
@@ -60,6 +66,14 @@ export function AppNavigation({
   const pathname = usePathname();
   const active = activeFor(pathname);
   const router = useRouter();
+
+  // Phone bottom bar: the More panel (Dashboard, Intelligence,
+  // Assistant, Developers) opens from the bar and closes on any
+  // navigation. It is markup-identical links — the same routes,
+  // never a second navigation system.
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => { setMoreOpen(false); }, [pathname]);
+  const moreActive = links.some((link) => !link.phone && active === link.href);
 
   // Session gate (Phase 8.5): every studio surface is per-user,
   // so an unresolved session means sign-in comes first. Only a
@@ -129,12 +143,34 @@ export function AppNavigation({
         </div>
       </header>
       <nav className="app-rail" aria-label="Studio navigation">
-        {links.map(({ href, label, Icon }) => (
-          <Link key={href} href={href} aria-current={active === href ? "page" : undefined}>
+        {links.map(({ href, label, Icon, phone }) => (
+          <Link key={href} href={href} className={phone ? "rail-primary" : "rail-secondary"} aria-current={active === href ? "page" : undefined}>
             <Icon size={18} strokeWidth={1.8} aria-hidden />
             <span className="app-rail-label">{label}</span>
           </Link>
         ))}
+        <div className="app-more">
+          <button
+            type="button"
+            className={`app-more-button${moreActive ? " has-active" : ""}`}
+            aria-expanded={moreOpen}
+            aria-haspopup="true"
+            onClick={() => setMoreOpen((open) => !open)}
+          >
+            <Ellipsis size={18} strokeWidth={1.8} aria-hidden />
+            <span className="app-rail-label">More</span>
+          </button>
+          {moreOpen && (
+            <div className="app-more-panel">
+              {links.filter((link) => !link.phone).map(({ href, label, Icon }) => (
+                <Link key={href} href={href} aria-current={active === href ? "page" : undefined} onClick={() => setMoreOpen(false)}>
+                  <Icon size={18} strokeWidth={1.8} aria-hidden />
+                  <span>{label}</span>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
       </nav>
     </>
   );
