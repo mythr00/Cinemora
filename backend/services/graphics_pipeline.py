@@ -2341,6 +2341,16 @@ def build_motion_graphics_assets(
             )
             if theme is not None:
                 return theme
+            # Phase 9: a custom theme's token dict cannot be
+            # re-resolved from its name ("custom") — when the
+            # entry's theme IS the production theme, the
+            # production token dict itself is the style.
+            if (
+                _production_theme is not None
+                and (target.get("theme") or _production_theme_name)
+                == _production_theme_name
+            ):
+                return _production_theme
         return default
 
     assets = []

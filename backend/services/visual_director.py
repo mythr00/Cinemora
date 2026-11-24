@@ -618,14 +618,25 @@ def _footage_window_decision(row, outcome, pack, scene_window_used):
 
 
 def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
-                          evidence=None, production_context=None):
+                          evidence=None, production_context=None,
+                          compositions=True):
     """Pass-2 reconciliation. Pure: takes plain dicts, returns
     (plan_v2, graphics_manifest) as plain dicts.
 
     `evidence` maps sentence_number -> {"evidence_ref": {...},
     "verified_data": {...}} for AM-009; an entry stamps its
     graphic verified ONLY when evidence_ref carries an asset_id
-    and verified_data carries a display value."""
+    and verified_data carries a display value.
+
+    `compositions` (Phase 9): when False, the composition
+    decisions over COVERED beats (split screen, lower-third,
+    footage window — the enhancement layer) are not issued at
+    all: covered beats stay plain footage treatments. This is
+    the Subtle motion-graphics intensity: graphics are still
+    directed for starved beats (the coverage floor), but no
+    decorative composition is layered over footage that already
+    answers its sentence. Default True — the historical
+    behaviour, unchanged for every existing caller."""
     from services.motion_engine import themes as _themes
 
     plan_v1 = plan_v1 if isinstance(plan_v1, dict) else {}
@@ -671,26 +682,28 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
             # each pattern is capped at one per scene by its own
             # rule.
             scene_number = outcome.get("scene_number")
-            composition = _split_screen_decision(
-                row, outcome, pack,
-                scene_split_used=scene_number in split_scenes,
-            )
-            if composition is not None:
-                split_scenes.add(scene_number)
-            if composition is None:
-                composition = _composition_decision(
+            composition = None
+            if compositions:
+                composition = _split_screen_decision(
                     row, outcome, pack,
-                    scene_labelled=scene_number in labelled_scenes,
+                    scene_split_used=scene_number in split_scenes,
                 )
                 if composition is not None:
-                    labelled_scenes.add(scene_number)
-            if composition is None:
-                composition = _footage_window_decision(
-                    row, outcome, pack,
-                    scene_window_used=scene_number in windowed_scenes,
-                )
-                if composition is not None:
-                    windowed_scenes.add(scene_number)
+                    split_scenes.add(scene_number)
+                if composition is None:
+                    composition = _composition_decision(
+                        row, outcome, pack,
+                        scene_labelled=scene_number in labelled_scenes,
+                    )
+                    if composition is not None:
+                        labelled_scenes.add(scene_number)
+                if composition is None:
+                    composition = _footage_window_decision(
+                        row, outcome, pack,
+                        scene_window_used=scene_number in windowed_scenes,
+                    )
+                    if composition is not None:
+                        windowed_scenes.add(scene_number)
             if composition is not None:
                 decision["composition"] = composition
             counts[TREATMENT_FOOTAGE] += 1
@@ -816,6 +829,10 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                 1 for r in rows
                 if (r.get("decision") or {}).get("composition")
             ),
+            # Phase 9: whether the composition layer was enabled
+            # for this reconciliation (Subtle intensity disables
+            # it); recorded so a zero count is explainable.
+            "compositions_enabled": bool(compositions),
             "pack_fields_consumed": [
                 "template_affinities", "composition_affinities",
                 "visual_theme",
