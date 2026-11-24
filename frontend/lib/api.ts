@@ -3029,3 +3029,386 @@ export function uploadToLibrary(projectId: string, file: File) {
     { method: "POST", body: form },
   );
 }
+
+// ---------------------------------------------------------------------
+// Versioning (Phase G, founder priority #9) — the unified version
+// story over services/versioning.py. Every type mirrors the
+// recorded shapes the service returns; a script text or a diff
+// exists here only where the backend recorded one.
+// ---------------------------------------------------------------------
+
+export type VersionLabel = {
+  name?: string | null;
+  note?: string | null;
+  updated_at?: string | null;
+  updated_by?: string | null;
+};
+
+export type TextDiff = {
+  state: string;
+  reason?: string;
+  added_lines?: number | null;
+  removed_lines?: number | null;
+  diff?: string | null;
+  diff_truncated?: boolean;
+  diff_line_count?: number | null;
+};
+
+export type VersionOpSummary = {
+  op_id?: string | null;
+  type?: string | null;
+  actor?: string | null;
+  at?: string | null;
+  summary?: string | null;
+};
+
+export type RunVerdicts = {
+  state: string;
+  integrity?: string | null;
+  quality?: string | null;
+  reliability?: string | null;
+  delivery_state?: string | null;
+  delivery_status?: string | null;
+};
+
+export type VersionEntryDetail = {
+  // run entries
+  run_id?: string | null;
+  status?: string | null;
+  stage?: string | null;
+  script_hash?: string | null;
+  error?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  options?: Record<string, unknown> | null;
+  execution?: {
+    wall_time_seconds?: number | null;
+    stage_durations_seconds?: Record<string, number> | null;
+  };
+  verdicts?: RunVerdicts;
+  // revision entries
+  revision_id?: string | null;
+  revision_number?: number | null;
+  parent_revision_id?: string | null;
+  document_hash?: string | null;
+  created_from?: string | null;
+  duration_seconds?: number | null;
+  visual_items?: number | null;
+  export_count?: number | null;
+  // script entries
+  is_current?: boolean;
+  run_ids?: string[];
+  run_count?: number;
+  first_submitted_at?: string | null;
+  last_submitted_at?: string | null;
+  text_state?: string;
+  text_source?: string | null;
+  char_count?: number | null;
+  // plan decision entries
+  decision?: {
+    sentence_number?: number | null;
+    action?: string | null;
+    outcome?: string | null;
+    recorded_at?: string | null;
+  };
+  // current plan entry
+  plan_source?: string | null;
+  analysis_mode?: string | null;
+  generated_at?: string | null;
+  scene_count?: number | null;
+  sentence_count?: number | null;
+  bible_title?: string | null;
+  bible_story_type?: string | null;
+  // snapshot entries (the snapshot summary shape)
+  id?: string;
+  name?: string | null;
+  note?: string | null;
+  created_at?: string | null;
+  created_by?: string | null;
+  script?: { script_hash?: string | null };
+  plan?: {
+    state?: string | null;
+    sha256?: string | null;
+    generated_at?: string | null;
+    decisions_recorded?: number | null;
+  };
+  revision?: {
+    state?: string | null;
+    revision_id?: string | null;
+    revision_number?: number | null;
+    document_hash?: string | null;
+    run_id?: string | null;
+    status?: string | null;
+  };
+};
+
+export type VersionEntryChanges = {
+  vs_entry_id?: string | null;
+  script_changed?: boolean | null;
+  options_changed?: string[] | null;
+  operations_applied?: VersionOpSummary[];
+  text_diff?: TextDiff;
+};
+
+export type VersionEntry = {
+  entry_id: string;
+  kind: string;
+  at?: string | null;
+  title: string;
+  label?: VersionLabel | null;
+  detail: VersionEntryDetail;
+  changes?: VersionEntryChanges | null;
+};
+
+export type ScriptVersion = {
+  script_hash: string;
+  is_current: boolean;
+  run_ids: string[];
+  run_count: number;
+  first_submitted_at?: string | null;
+  last_submitted_at?: string | null;
+  first_seen_at?: string | null;
+  text_state: string;
+  text_source?: string | null;
+  char_count?: number | null;
+};
+
+export type ScriptVersionDetail = ScriptVersion & {
+  project_id: string;
+  text?: string | null;
+};
+
+export type SnapshotSummary = {
+  id: string;
+  name?: string | null;
+  note?: string | null;
+  created_at?: string | null;
+  created_by?: string | null;
+  script: { script_hash?: string | null };
+  plan: {
+    state?: string | null;
+    sha256?: string | null;
+    generated_at?: string | null;
+    decisions_recorded?: number | null;
+  };
+  revision: {
+    state?: string | null;
+    revision_id?: string | null;
+    revision_number?: number | null;
+    document_hash?: string | null;
+    run_id?: string | null;
+    status?: string | null;
+  };
+};
+
+export type RecordedPlanDocument = {
+  generated_at?: string | null;
+  analysis_mode?: string | null;
+  bible?: { title?: string | null; story_type?: string | null } | null;
+  scenes?: Array<Record<string, unknown>>;
+  sentences?: Array<{
+    sentence_number?: number | null;
+    text?: string | null;
+  }>;
+  [key: string]: unknown;
+};
+
+export type SnapshotDetail = SnapshotSummary & {
+  project_id: string;
+  plan_document?: RecordedPlanDocument | null;
+};
+
+export type RestoreOutcome = {
+  snapshot_id: string;
+  snapshot_name?: string | null;
+  restored_at: string;
+  restored_by?: string | null;
+  script: { state: string; script_hash?: string | null; reason?: string };
+  plan: { state: string; sha256?: string | null };
+  revision: {
+    state: string;
+    from_revision_id?: string;
+    new_revision_id?: string;
+    new_revision_number?: number;
+  };
+  not_restored: string[];
+};
+
+export type RestoreRecord = {
+  kind?: string | null;
+  snapshot_id?: string | null;
+  script_hash?: string | null;
+  new_revision_id?: string | null;
+  at?: string | null;
+  by?: string | null;
+};
+
+export type VersionsView = {
+  schema: string;
+  project_id: string;
+  current_script_hash?: string | null;
+  entries: VersionEntry[];
+  script_versions: ScriptVersion[];
+  snapshots: SnapshotSummary[];
+  restores: RestoreRecord[];
+};
+
+export type VersionPlanDiff = {
+  state: string;
+  reason?: string;
+  scene_count?: { a: number; b: number } | null;
+  sentence_count?: { a: number; b: number } | null;
+  bible?: {
+    title: { a?: string | null; b?: string | null };
+    story_type: { a?: string | null; b?: string | null };
+  };
+  sentence_text_changes?:
+    | Array<{
+        sentence_number: number;
+        a_text?: string | null;
+        b_text?: string | null;
+      }>
+    | null;
+  sentences_only_in_a?: number[] | null;
+  sentences_only_in_b?: number[] | null;
+};
+
+export type VersionDiff = {
+  kind: string;
+  state?: string;
+  reason?: string;
+  // script_text
+  added_lines?: number | null;
+  removed_lines?: number | null;
+  diff?: string | null;
+  diff_truncated?: boolean;
+  diff_line_count?: number | null;
+  // revision_ops
+  common_ancestor_revision_id?: string | null;
+  document_hash?: {
+    a?: string | null;
+    b?: string | null;
+    equal?: boolean;
+  };
+  ops_only_in_a?: VersionOpSummary[];
+  ops_only_in_b?: VersionOpSummary[];
+  // run_fields
+  fields?: Record<string, { a?: unknown; b?: unknown }>;
+  options_changed?: string[] | null;
+  options?: {
+    a?: Record<string, unknown> | null;
+    b?: Record<string, unknown> | null;
+  };
+  execution?: {
+    a?: VersionEntryDetail["execution"];
+    b?: VersionEntryDetail["execution"];
+  };
+  verdicts?: { a?: RunVerdicts; b?: RunVerdicts };
+  // snapshot_components
+  script?: {
+    a_hash?: string | null;
+    b_hash?: string | null;
+    hash_equal?: boolean;
+    text_diff?: TextDiff;
+  };
+  plan?: VersionPlanDiff;
+  revision?: {
+    a?: SnapshotSummary["revision"];
+    b?: SnapshotSummary["revision"];
+  };
+  // plan_document
+  scene_count?: { a: number; b: number } | null;
+  sentence_count?: { a: number; b: number } | null;
+  bible?: VersionPlanDiff["bible"];
+  sentence_text_changes?: VersionPlanDiff["sentence_text_changes"];
+  sentences_only_in_a?: number[] | null;
+  sentences_only_in_b?: number[] | null;
+  // side_by_side
+  script_hash?: { a: string; b: string; equal: boolean };
+};
+
+export type VersionCompare = {
+  schema: string;
+  project_id: string;
+  a: { entry: VersionEntry };
+  b: { entry: VersionEntry };
+  diff: VersionDiff;
+};
+
+export function getVersions(projectId: string, signal?: AbortSignal) {
+  return apiRequest<VersionsView>(`/api/v1/projects/${projectId}/versions`, {
+    signal,
+  });
+}
+
+export function getScriptVersion(
+  projectId: string,
+  scriptHash: string,
+  signal?: AbortSignal,
+) {
+  return apiRequest<ScriptVersionDetail>(
+    `/api/v1/projects/${projectId}/versions/scripts/${scriptHash}`,
+    { signal },
+  );
+}
+
+export function restoreScriptVersion(projectId: string, scriptHash: string) {
+  return apiRequest<{
+    script_hash: string;
+    restored_at: string;
+    char_count: number;
+    text_source?: string | null;
+  }>(`/api/v1/projects/${projectId}/versions/scripts/${scriptHash}/restore`, {
+    method: "POST",
+  });
+}
+
+export function compareVersions(projectId: string, a: string, b: string) {
+  const query = `a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`;
+  return apiRequest<VersionCompare>(
+    `/api/v1/projects/${projectId}/versions/compare?${query}`,
+  );
+}
+
+export function createSnapshot(
+  projectId: string,
+  name: string,
+  note?: string | null,
+) {
+  return apiRequest<SnapshotSummary>(
+    `/api/v1/projects/${projectId}/versions/snapshots`,
+    { method: "POST", body: JSON.stringify({ name, note: note ?? null }) },
+  );
+}
+
+export function getSnapshot(projectId: string, snapshotId: string) {
+  return apiRequest<SnapshotDetail>(
+    `/api/v1/projects/${projectId}/versions/snapshots/${snapshotId}`,
+  );
+}
+
+export async function deleteSnapshot(projectId: string, snapshotId: string) {
+  await apiRequest(
+    `/api/v1/projects/${projectId}/versions/snapshots/${snapshotId}`,
+    { method: "DELETE" },
+  );
+}
+
+export function restoreSnapshot(projectId: string, snapshotId: string) {
+  return apiRequest<RestoreOutcome>(
+    `/api/v1/projects/${projectId}/versions/snapshots/${snapshotId}/restore`,
+    { method: "POST" },
+  );
+}
+
+export function setVersionLabel(
+  projectId: string,
+  entryId: string,
+  name: string | null,
+  note: string | null,
+) {
+  return apiRequest<{ entry_id: string; label: VersionLabel | null }>(
+    `/api/v1/projects/${projectId}/versions/labels`,
+    { method: "PUT", body: JSON.stringify({ entry_id: entryId, name, note }) },
+  );
+}

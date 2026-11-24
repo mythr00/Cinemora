@@ -859,6 +859,22 @@ span.authenticated-media-state {
 @media print {
   .qa-controls, .app-topbar, .app-rail, .project-tabs { display: none; }
 }
+
+/* Versioning (Phase G): snapshot/label/compare controls, the
+   unified timeline list and recorded-text/diff blocks. */
+.versions-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 14px 0 4px; font-size: 14px; color: var(--ink-soft); }
+.versions-controls input[type="text"], .versions-controls input:not([type]) { margin-left: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); color: var(--ink-strong); font: inherit; }
+.versions-controls button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); color: var(--ink-strong); font: inherit; cursor: pointer; }
+.versions-controls button:disabled { opacity: 0.5; cursor: default; }
+.version-list { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.version-entry { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 14px 16px; background: var(--paper); }
+.version-entry-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.version-kind { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-deep); background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 999px; padding: 2px 8px; }
+.version-select input { width: 16px; height: 16px; accent-color: var(--accent); }
+.version-compare { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 16px; margin: 16px 0; background: var(--paper); }
+.version-compare ul, .versions-page section ul { margin: 10px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 14px; line-height: 1.75; }
+.version-diff { margin: 12px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface-soft, #fafafa); color: var(--ink-strong); font-size: 12.5px; line-height: 1.55; overflow-x: auto; white-space: pre-wrap; word-break: break-word; max-height: 480px; overflow-y: auto; }
+.version-action-error { color: var(--danger, #b3261e); font-weight: 600; }
 .download-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .download-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 14px; color: var(--ink-soft); }
 
