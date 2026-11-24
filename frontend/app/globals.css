@@ -849,6 +849,16 @@ span.authenticated-media-state {
 .certificate-disclaimers ul { margin: 10px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 14px; line-height: 1.75; }
 .certificate-quality { margin-top: 30px; max-width: 900px; }
 .certificate-quality ul { margin: 10px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 14px; line-height: 1.75; }
+
+/* QA Report (Phase F): run picker + export/print controls above
+   the verdict header; the page itself is the printable view. */
+.qa-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin: 18px 0 4px; font-size: 14px; color: var(--ink-soft); }
+.qa-controls select { margin-left: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); color: var(--ink-strong); font: inherit; }
+.qa-controls button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); color: var(--ink-strong); font: inherit; cursor: pointer; }
+.qa-page section ul { margin: 10px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 14px; line-height: 1.75; }
+@media print {
+  .qa-controls, .app-topbar, .app-rail, .project-tabs { display: none; }
+}
 .download-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .download-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 14px; color: var(--ink-soft); }
 

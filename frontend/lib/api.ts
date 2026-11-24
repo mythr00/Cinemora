@@ -746,6 +746,229 @@ export function getCertificate(projectId: string, signal?: AbortSignal) {
 }
 
 // ---------------------------------------------------------------------
+// QA Report (Phase F, founder priority #8) — the unified Documentary
+// Quality Report over the artefacts a production recorded
+// (services/qa_report.py). Assembly only: every value is the
+// recorded value, every section carries its state
+// ("recorded" / "not_recorded" / "unavailable"), and a metric that
+// was not recorded is null — the UI shows those states honestly
+// and never renders an absence as a pass.
+// ---------------------------------------------------------------------
+
+export type QaMetric = {
+  value?: number | null;
+  band?: string | null;
+  basis?: string | null;
+  thresholds?: string | null;
+};
+
+export type QaVerdicts = {
+  integrity?: (QualityVerdict & Record<string, unknown>) | null;
+  quality?:
+    | (QualityVerdict & { metrics?: Record<string, QaMetric> | null })
+    | null;
+  reliability?:
+    | { verdict?: string | null; basis?: Record<string, unknown> | null; facts?: Record<string, unknown> | null }
+    | null;
+};
+
+export type QaSection = { state: string };
+
+export type QaReport = {
+  schema: string;
+  project_id: string;
+  run: {
+    run_id: string | null;
+    status?: string | null;
+    stage?: string | null;
+    error?: string | null;
+    created_at?: string | null;
+    started_at?: string | null;
+    finished_at?: string | null;
+  };
+  artefacts: Record<string, string>;
+  verdicts: QaSection & { schema?: string | null; verdicts?: QaVerdicts | null };
+  reconciliation: QaSection & {
+    all_reconciled?: boolean | null;
+    failures?: string[] | null;
+    checks?:
+      | Array<{
+          name?: string | null;
+          status?: string | null;
+          detail?: string | null;
+          values?: Record<string, unknown> | null;
+        }>
+      | null;
+  };
+  questions: QaSection & {
+    questions?:
+      | Array<{
+          id?: string | null;
+          question?: string | null;
+          answer?: unknown;
+          state?: string | null;
+        }>
+      | null;
+  };
+  coverage: QaSection & {
+    sentence_outcomes?:
+      | {
+          sentence_count?: number | null;
+          buckets?: Record<string, number> | null;
+          shares?: Record<string, number | null> | null;
+          reconciles?: boolean | null;
+          sentences_without_verified_visual?: number | null;
+        }
+      | null;
+    asset_report_coverage?:
+      | {
+          total_sentences?: number | null;
+          covered_sentences?: number | null;
+          uncovered_sentences?: number[] | null;
+          complete?: boolean | null;
+        }
+      | null;
+    uncovered_beats?:
+      | { count?: number | null; sentence_numbers?: number[] | null }
+      | null;
+  };
+  tiers: QaSection & {
+    tier_accounting?:
+      | {
+          state?: string | null;
+          by_tier?: Record<
+            string,
+            { count?: number | null; runtime_seconds?: number | null; runtime_share?: number | null }
+          > | null;
+          broll_runtime_seconds?: number | null;
+          broll_share?: number | null;
+          unstamped_items?: number | null;
+          band?:
+            | {
+                state?: string | null;
+                genre_pack?: string | null;
+                max?: number | null;
+                basis?: string | null;
+                measured?: number | null;
+                evaluation?: string | null;
+              }
+            | null;
+        }
+      | null;
+  };
+  diversity: QaSection & { diversity?: Record<string, number | string | null> | null };
+  relevance: QaSection & { relevance?: Record<string, unknown> | null };
+  genre_expectations: QaSection & { genre_expectations?: Record<string, unknown> | null };
+  runtime_share: QaSection & {
+    runtime_share?: Record<string, { seconds?: number | null; fraction?: number | null }> | null;
+    runtime_share_by_format?: Record<string, unknown> | null;
+  };
+  frame_verification: QaSection & {
+    summary?:
+      | {
+          evaluated_assets?: number | null;
+          rejected_events?: number | null;
+          watermarked_preview_detected?: number | null;
+          ocr_engine?: string | null;
+        }
+      | null;
+    integrity_categories?: Record<string, unknown> | null;
+    rejections?:
+      | Array<{
+          candidate_id?: string | null;
+          scene?: number | null;
+          sentence_number?: number | null;
+          provider?: string | null;
+          kind?: string | null;
+          url?: string | null;
+          outcome?: string | null;
+          reason?: string | null;
+          primary_rejection_reason?: string | null;
+          verdict_reasons?: string[] | null;
+        }>
+      | null;
+  };
+  sentences: QaSection & {
+    sentences: Array<{
+      sentence_number: number;
+      scene_number?: number | null;
+      outcome?: string | null;
+      tier?: string | null;
+      missing_visual?:
+        | { reason?: string | null; role?: string | null; graphics_outcome?: Record<string, unknown> | null }
+        | null;
+    }>;
+  };
+  candidates: QaSection & {
+    totals?: Record<string, number | null> | null;
+    funnel?: {
+      by_outcome?: Record<string, number> | null;
+      by_stage?: Record<string, number> | null;
+      rejection_funnel?: Record<string, unknown> | null;
+    } | null;
+    rejection_reasons?:
+      | { distribution?: Record<string, number> | null; total?: number | null }
+      | null;
+  };
+  defects: QaSection & {
+    substitutions?: Record<string, number> | null;
+    authenticity?: Record<string, unknown> | null;
+    visual_quality_error?: unknown;
+    run_failure?: unknown;
+  };
+  audio_captions: QaSection & {
+    final_audio?:
+      | {
+          integrated_lufs?: number | null;
+          true_peak_dbtp?: number | null;
+          target_lufs?: number | null;
+          normalised?: boolean | null;
+        }
+      | null;
+    timing_consistency?:
+      | {
+          divergence_seconds?: number | null;
+          tolerance_seconds?: number | null;
+          within_tolerance?: boolean | null;
+          timing_source?: string | null;
+        }
+      | null;
+    captions_alignment?:
+      | { aligned?: number | null; low_alignment?: number | null; alignment_failed?: number | null }
+      | null;
+  };
+  rights: QaSection & {
+    recorded?: { recorded_licences?: number | null; unknown_licences?: number | null } | null;
+    unknown_licensing?: number | null;
+    note?: string | null;
+  };
+  delivery: QaSection & {
+    status?: string | null;
+    decode_validated?: boolean | null;
+    duration_seconds?: number | null;
+    profile?: string | null;
+    master_bitrate_kbps?: number | null;
+    delivery_bitrate_kbps?: number | null;
+    size_ratio?: number | null;
+  };
+};
+
+export function getQaReport(projectId: string, signal?: AbortSignal) {
+  return apiRequest<QaReport>(`/api/v1/projects/${projectId}/qa-report`, { signal });
+}
+
+export function getRunQaReport(projectId: string, runId: string, signal?: AbortSignal) {
+  return apiRequest<QaReport>(
+    `/api/v1/projects/${projectId}/runs/${runId}/qa-report`,
+    { signal },
+  );
+}
+
+export function qaReportExportPath(projectId: string, runId: string) {
+  return `/api/v1/projects/${projectId}/runs/${runId}/qa-report/export`;
+}
+
+// ---------------------------------------------------------------------
 // Research Studio (Phase D, founder priority #6) — the workspace
 // over services/research_studio.py. Every type mirrors the recorded
 // shapes the service returns; nothing here invents a field.
