@@ -2116,18 +2116,23 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
   .developers-content {
     width: min(1060px, calc(100% - var(--rail-w) - 48px));
   }
-  .project-tabs {
-    width: min(var(--reading-width), calc(100% - var(--rail-w) - 40px));
-  }
-  .editor-content {
-    width: min(var(--editor-width), calc(100% - var(--rail-w) - 40px));
-  }
 }
 @media (min-width: 641px) {
   /* width: 100% in its base rule left no room for the rail
      margin at any width; the rail is 64px in the 641–900 band
      (--rail-w is redefined by the ≤900 query) and 208px above. */
   .assistant-shell { width: calc(100% - var(--rail-w)); }
+  /* The two 40px-inset children of the shell: in the icon-rail
+     band their base widths (calc(100% - 40px)) plus the 64px
+     rail margin spilled 24px past the viewport (measured on
+     every project subpage at 768px). Above 900px the block
+     above applies the same subtraction. */
+  .project-tabs {
+    width: min(var(--reading-width), calc(100% - var(--rail-w) - 40px));
+  }
+  .editor-content {
+    width: min(var(--editor-width), calc(100% - var(--rail-w) - 40px));
+  }
 }
 @media (min-width: 641px) and (max-width: 900px) {
   /* These three pages carry their own ≤900 width override of
