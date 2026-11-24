@@ -3698,3 +3698,256 @@ export function getProjectActivity(projectId: string) {
     `/api/v1/projects/${projectId}/activity`,
   );
 }
+
+// ---------------------------------------------------------------------
+// YouTube Script Studio (founder priority #12)
+// ---------------------------------------------------------------------
+
+export type ScriptSection = {
+  id: string;
+  heading: string;
+  body: string;
+  metrics?: ScriptMetrics;
+};
+
+export type ScriptMetrics = {
+  word_count: number;
+  sentence_count: number;
+  estimated_minutes: number;
+  words_per_minute?: number;
+  target_minutes?: number | null;
+  target_words?: number | null;
+  words_vs_target?: number | null;
+};
+
+export type ScriptAnalysisSentence = {
+  sentence_number: number;
+  text: string;
+  role: string | null;
+  subject_id: string | null;
+  degraded: boolean;
+};
+
+export type ScriptAnalysis = {
+  mode: string;
+  sentence_count: number;
+  sentences: ScriptAnalysisSentence[];
+  scenes: {
+    scene_number: number;
+    sentence_count: number;
+    sentence_numbers: (number | null)[];
+    text: string;
+  }[];
+  bible: {
+    title: string | null;
+    story_type: string | null;
+    tone: string | null;
+    primary_subject_id: string | null;
+    entities: { canonical: string; type: string; aliases: string[] }[];
+  };
+  entities: string[];
+  locations: string[];
+  dates: string[];
+  at: string;
+};
+
+export type ScriptFact = {
+  fact_id: string;
+  kind: string;
+  basis: string;
+  sentence_number?: number;
+  when?: string;
+  what?: string;
+  display?: string;
+  year?: number;
+  subjects?: string[];
+  source?: Record<string, unknown>;
+  kb_check?: { query: string; status: string | null; source: string | null } | null;
+};
+
+export type ScriptFactCheck = {
+  at: string;
+  mode: string;
+  record: {
+    sentences: number;
+    facts: number;
+    dated_events: number;
+    dates: number;
+    quantities: number;
+  };
+  corroboration: {
+    facts_considered: number;
+    checked: number;
+    corroborated: number;
+    not_corroborated: number;
+    skipped_no_subject_or_year: number;
+    lookups: number;
+  };
+  facts: ScriptFact[];
+};
+
+export type ScriptDraft = {
+  id: string;
+  title: string;
+  category: string;
+  target_minutes: number | null;
+  project_id: string | null;
+  productions: { project_id: string; at: string; via: string }[];
+  created_at: string;
+  updated_at: string;
+  metrics: ScriptMetrics;
+  section_count: number;
+  has_analysis: boolean;
+  has_fact_check: boolean;
+  sections?: ScriptSection[];
+  script_text?: string;
+  generation?: {
+    topic: string;
+    angle: string;
+    outline: { heading: string; intent: string; word_budget: number }[];
+    basis: string;
+    at: string;
+  } | null;
+  analysis?: ScriptAnalysis | null;
+  fact_check?: ScriptFactCheck | null;
+  revision_count?: number;
+};
+
+export type ScriptRevision = {
+  id: string;
+  at: string;
+  source: string;
+  title: string;
+  category: string;
+  target_minutes: number | null;
+  metrics: ScriptMetrics;
+};
+
+export type ScriptExpandProposal = {
+  script_id: string;
+  proposal: { sections: (ScriptSection & { word_budget: number })[] };
+  basis: string;
+};
+
+export type ScriptTightenProposal = {
+  script_id: string;
+  proposal: {
+    section_id: string;
+    original: string;
+    tightened: string;
+    original_words: number;
+    tightened_words: number;
+  };
+  basis: string;
+};
+
+export function listScriptDrafts(signal?: AbortSignal) {
+  return apiRequest<{ scripts: ScriptDraft[] }>("/api/v1/script-studio/scripts", { signal });
+}
+
+export function createScriptDraft(body: {
+  title?: string;
+  category?: string;
+  target_minutes?: number | null;
+  sections?: { heading?: string; body?: string }[];
+}) {
+  return apiRequest<ScriptDraft>("/api/v1/script-studio/scripts", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function getScriptDraft(scriptId: string, signal?: AbortSignal) {
+  return apiRequest<ScriptDraft>(`/api/v1/script-studio/scripts/${scriptId}`, { signal });
+}
+
+export function updateScriptDraft(
+  scriptId: string,
+  body: {
+    title?: string;
+    category?: string;
+    target_minutes?: number | null;
+    clear_target?: boolean;
+    sections?: { id?: string; heading?: string; body?: string }[];
+  },
+) {
+  return apiRequest<ScriptDraft>(`/api/v1/script-studio/scripts/${scriptId}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteScriptDraft(scriptId: string) {
+  await apiRequest(`/api/v1/script-studio/scripts/${scriptId}`, { method: "DELETE" });
+}
+
+export function listScriptRevisions(scriptId: string, signal?: AbortSignal) {
+  return apiRequest<{ revisions: ScriptRevision[] }>(
+    `/api/v1/script-studio/scripts/${scriptId}/revisions`,
+    { signal },
+  );
+}
+
+export function restoreScriptRevision(scriptId: string, revisionId: string) {
+  return apiRequest<ScriptDraft>(
+    `/api/v1/script-studio/scripts/${scriptId}/revisions/${revisionId}/restore`,
+    { method: "POST" },
+  );
+}
+
+export function runScriptAnalysis(scriptId: string) {
+  return apiRequest<{ script_id: string; analysis: ScriptAnalysis }>(
+    `/api/v1/script-studio/scripts/${scriptId}/analysis`,
+    { method: "POST" },
+  );
+}
+
+export function runScriptFactCheck(scriptId: string) {
+  return apiRequest<{ script_id: string; fact_check: ScriptFactCheck }>(
+    `/api/v1/script-studio/scripts/${scriptId}/fact-check`,
+    { method: "POST" },
+  );
+}
+
+export function generateScriptDraft(body: {
+  topic: string;
+  angle?: string;
+  category?: string;
+  target_minutes?: number | null;
+}) {
+  return apiRequest<ScriptDraft>("/api/v1/script-studio/ai/draft", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function expandScriptSections(scriptId: string) {
+  return apiRequest<ScriptExpandProposal>(
+    `/api/v1/script-studio/scripts/${scriptId}/ai/expand`,
+    { method: "POST" },
+  );
+}
+
+export function tightenScriptPassage(
+  scriptId: string,
+  body: { section_id: string; text?: string },
+) {
+  return apiRequest<ScriptTightenProposal>(
+    `/api/v1/script-studio/scripts/${scriptId}/ai/tighten`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export function sendScriptToProduction(scriptId: string) {
+  return apiRequest<{ script_id: string; project_id: string; draft: ScriptDraft }>(
+    `/api/v1/script-studio/scripts/${scriptId}/send-to-production`,
+    { method: "POST" },
+  );
+}
+
+export function attachScriptToProject(scriptId: string, projectId: string) {
+  return apiRequest<{ script_id: string; project_id: string; draft: ScriptDraft }>(
+    `/api/v1/script-studio/scripts/${scriptId}/attach`,
+    { method: "POST", body: JSON.stringify({ project_id: projectId }) },
+  );
+}

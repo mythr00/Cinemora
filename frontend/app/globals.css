@@ -837,6 +837,80 @@ span.authenticated-media-state {
 }
 
 /* ============================================================
+   YouTube Script Studio (founder priority #12)
+   ============================================================ */
+.script-content { width: min(1240px, calc(100% - 64px)); margin: 0 auto; padding: 32px 0 72px; }
+.script-content h1 {
+  margin: 10px 0 12px; color: var(--ink-strong); font-size: var(--type-h1);
+  font-weight: 650; letter-spacing: -0.025em; line-height: 1.15;
+}
+.script-intro { max-width: 820px; margin: 0 0 18px; color: var(--muted); font-size: 15px; line-height: 1.7; }
+.script-message { margin: 10px 0; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
+.script-layout { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 28px; align-items: start; margin-top: 18px; }
+.script-sidebar-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.script-sidebar-head h2 { margin: 0; color: var(--ink-strong); font-size: 17px; font-weight: 650; }
+.script-draft-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 22px; }
+.script-draft-row {
+  display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 11px 13px;
+  border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper);
+  color: var(--ink-soft); font-size: 13.5px; cursor: pointer;
+}
+.script-draft-row strong { color: var(--ink-strong); font-weight: 620; font-size: 14.5px; }
+.script-draft-row--active { border-color: var(--line-deep); background: var(--surface-low); }
+.script-panel { margin: 22px 0; }
+.script-panel h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--ink-strong); font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.script-panel h3 { margin: 18px 0 8px; color: var(--ink-strong); font-size: 15px; font-weight: 650; }
+.script-note { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.script-meta { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.script-form { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; align-items: flex-end; }
+.script-form input, .script-form select {
+  min-height: 40px; padding: 0 10px; border: 1px solid var(--line-deep);
+  border-radius: var(--radius-control); color: var(--ink-strong); background: var(--paper);
+  font-size: 14px; font-weight: 500;
+}
+.script-form-stack { flex-direction: column; align-items: stretch; }
+.script-field { display: flex; flex-direction: column; gap: 5px; color: var(--ink-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; flex: 1 1 200px; }
+.script-field input, .script-field select {
+  min-height: 38px; padding: 0 10px; border: 1px solid var(--line-deep);
+  border-radius: var(--radius-control); color: var(--ink-strong); background: var(--paper);
+  font-size: 14px; font-weight: 500; letter-spacing: 0;
+}
+.script-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0 10px; }
+.script-summary > div { min-width: 118px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); }
+.script-summary span { display: block; color: var(--muted); font-size: var(--type-micro); font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.script-summary strong { display: block; margin-top: 4px; color: var(--ink-strong); font-size: 19px; font-weight: 620; }
+.script-section { margin: 18px 0; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); }
+.script-section-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.script-section-heading {
+  flex: 1 1 220px; min-height: 38px; padding: 0 10px; border: 1px solid var(--line-deep);
+  border-radius: var(--radius-control); color: var(--ink-strong); background: var(--paper);
+  font-size: 14.5px; font-weight: 620;
+}
+.script-section-meta { color: var(--muted); font-size: 12.5px; }
+.script-section-body {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--line-deep);
+  border-radius: var(--radius-control); color: var(--ink-strong); background: var(--paper);
+  font-size: 14.5px; line-height: 1.65; resize: vertical;
+}
+.script-proposal { margin: 14px 0; padding: 14px; border: 1px solid var(--line-deep); border-radius: var(--radius-panel); background: var(--surface-low); }
+.script-proposal-text { margin: 8px 0; color: var(--ink-soft); font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+.script-proposal-section { margin: 12px 0; }
+.script-list { margin: 8px 0 0; padding-left: 20px; color: var(--ink-soft); font-size: 14px; line-height: 1.75; }
+.script-role { color: var(--accent-deep); font-weight: 600; }
+.script-list-rows { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.script-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 13px 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper);
+}
+.script-row-main { min-width: 0; display: flex; flex-direction: column; gap: 4px; color: var(--ink-soft); font-size: 14px; }
+.script-row-main strong { color: var(--ink-strong); font-weight: 620; }
+.script-attach-field { flex: 1 1 260px; }
+@media (max-width: 900px) {
+  .script-layout { grid-template-columns: 1fr; }
+  .script-content { width: calc(100% - 32px); }
+}
+
+/* ============================================================
    Delivery & Provenance (§3.10)
    ============================================================ */
 .readiness-header {
