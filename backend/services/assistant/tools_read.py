@@ -21,7 +21,7 @@ from api_v1 import ApiError
 from database import SessionLocal
 from models import ProductionRun, Project, User, UserPreference
 from services import editor, media_paths, plan_document, plans as plans_service
-from services import run_ledger
+from services import project_intelligence, run_ledger
 from services.assistant.registry import READ, EmptyArgs, ToolSpec, register
 
 
@@ -457,7 +457,10 @@ def _project_certificate(principal, args):
 def _project_recommendations(principal, args):
     """The deterministic recommendations reader (design 02 §H):
     findings are computed from the run's own asset_report figures —
-    the model narrates and prioritises, it does not detect."""
+    the model narrates and prioritises, it does not detect. The
+    computation itself lives in services.project_intelligence
+    (run_findings) so the Assistant and Project Intelligence share
+    ONE implementation of the rules."""
     db, _project = _owned_project(principal, args.project_id)
     db.close()
     latest = _latest_production_run(args.project_id)
@@ -477,106 +480,9 @@ def _project_recommendations(principal, args):
             "recommendations": [],
             "note": "The latest run recorded no asset report, so no evidence-based recommendations can be made.",
         }
-    findings = []
-    coverage = report.get("coverage") or {}
-    total_sentences = coverage.get("total_sentences")
-    covered = coverage.get("covered_sentences")
-    if (
-        isinstance(total_sentences, int)
-        and isinstance(covered, int)
-        and total_sentences > 0
-        and covered < total_sentences
-    ):
-        findings.append(
-            {
-                "finding": "Incomplete visual coverage",
-                "evidence": {
-                    "covered_sentences": covered,
-                    "total_sentences": total_sentences,
-                    "uncovered_sentences": coverage.get("uncovered_sentences"),
-                },
-                "suggestion": (
-                    "Review the uncovered sentences in the Asset "
-                    "Manager and consider a re-run; uncovered beats "
-                    "fall back to generated graphics."
-                ),
-                "link": f"/projects/{args.project_id}/assets",
-            }
-        )
-    missing = report.get("missing_visual_count")
-    if isinstance(missing, int) and missing > 0:
-        findings.append(
-            {
-                "finding": "Sentences with no verified visual",
-                "evidence": {"missing_visual_count": missing},
-                "suggestion": (
-                    "Open the plan view to see which sentences lack "
-                    "a verified visual and record decisions for them."
-                ),
-                "link": f"/projects/{args.project_id}/plan",
-            }
-        )
-    repeated = report.get("repeated_footage")
-    if isinstance(repeated, int) and repeated > 0:
-        findings.append(
-            {
-                "finding": "Repeated footage",
-                "evidence": {
-                    "repeated_footage": repeated,
-                    "source_reuse": report.get("source_reuse"),
-                },
-                "suggestion": (
-                    "The same footage serves multiple sentences; a "
-                    "re-run with more retrieval, or plan decisions "
-                    "replacing the repeats, would improve variety."
-                ),
-                "link": f"/projects/{args.project_id}/assets",
-            }
-        )
-    unverified = report.get("unverified_assets")
-    if isinstance(unverified, int) and unverified > 0:
-        findings.append(
-            {
-                "finding": "Unverified assets in the cut",
-                "evidence": {"unverified_assets": unverified},
-                "suggestion": (
-                    "Check the verification verdicts in the Asset "
-                    "Manager before publishing."
-                ),
-                "link": f"/projects/{args.project_id}/assets",
-            }
-        )
-    low_confidence = report.get("low_confidence_selections")
-    if isinstance(low_confidence, int) and low_confidence > 0:
-        findings.append(
-            {
-                "finding": "Low-confidence visual selections",
-                "evidence": {"low_confidence_selections": low_confidence},
-                "suggestion": (
-                    "Review the low-confidence picks in the plan and "
-                    "replace the weakest ones."
-                ),
-                "link": f"/projects/{args.project_id}/plan",
-            }
-        )
-    download_failures = report.get("download_failures") or []
-    discovery_failures = report.get("discovery_failures") or []
-    if download_failures or discovery_failures:
-        findings.append(
-            {
-                "finding": "Retrieval failures during production",
-                "evidence": {
-                    "download_failures": len(download_failures),
-                    "discovery_failures": len(discovery_failures),
-                },
-                "suggestion": (
-                    "Some sources could not be retrieved; a re-run "
-                    "may succeed now, or the plan can be adjusted "
-                    "for the affected sentences."
-                ),
-                "link": f"/projects/{args.project_id}/assets",
-            }
-        )
+    findings = project_intelligence.run_findings(
+        args.project_id, latest["run_id"], report
+    )
     return {
         "project_id": args.project_id,
         "run_id": latest["run_id"],

@@ -65,6 +65,7 @@ from services import (
     media_paths,
     narration,
     plan_document,
+    project_intelligence,
     qa_report,
     research_studio,
     run_ledger,
@@ -1830,6 +1831,37 @@ def export_run_qa_report(
             )
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Project Intelligence (founder priority #10) — the assembly layer
+# over the persistent project record (services/project_intelligence
+# .py): entity connections derived from the Case Bibles with their
+# derivations labelled, recorded provider/quality patterns across
+# the caller's own projects, and deterministic recommendations
+# carrying their evidence. The per-project route loads the project
+# through the Phase 8 owner choke point first (another user's
+# project is a 404); the account route is principal-scoped and
+# reads only the caller's own projects, so no other user's data
+# can enter any aggregate — not even a count.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/projects/{project_id}/intelligence")
+def get_project_intelligence(project_id: str, principal=Depends(require_user)):
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal)
+    finally:
+        db.close()
+    return project_intelligence.build_project_intelligence(
+        project_id, principal.user_id
+    )
+
+
+@router.get("/intelligence")
+def get_account_intelligence(principal=Depends(require_user)):
+    return project_intelligence.build_account_intelligence(principal.user_id)
 
 
 # ---------------------------------------------------------------------------
