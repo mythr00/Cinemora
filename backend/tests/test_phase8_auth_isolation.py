@@ -76,8 +76,14 @@ def _auth_env(monkeypatch, tmp_path):
     # Leave the shared suite database as the module found it: a
     # default plan left behind would silently subject every later
     # module's principals to plan enforcement (Phase 8 gate find).
+    # Case 8's assistant rows must go too — left behind, their
+    # owner FKs would dangle once the users are deleted and trip
+    # the data-layer orphan battery.
     db = SessionLocal()
     try:
+        db.query(AssistantAction).delete()
+        db.query(AssistantMessage).delete()
+        db.query(AssistantConversation).delete()
         db.query(UserSubscription).delete()
         db.query(User).delete()
         db.query(Plan).delete()
