@@ -17,6 +17,7 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { suffix: "", label: "Overview" },
   { suffix: "/plan", label: "Visual Plan" },
+  { suffix: "/research", label: "Research" },
   { suffix: "/assets", label: "Assets" },
   { suffix: "/graphics", label: "Graphics" },
   { suffix: "/edit", label: "Editor" },

@@ -778,6 +778,65 @@ span.authenticated-media-state {
 .plan-sentence-decision .plan-row-actions { min-width: 0; flex-direction: row; flex-wrap: wrap; }
 
 /* ============================================================
+   Research Studio (Phase D, founder priority #6)
+   ============================================================ */
+.research-content { width: min(var(--reading-width), calc(100% - 64px)); margin: 0 auto; padding: 32px 0 72px; }
+.research-content h1 {
+  margin: 10px 0 12px; color: var(--ink-strong); font-size: var(--type-h1);
+  font-weight: 650; letter-spacing: -0.025em; line-height: 1.15;
+}
+.research-intro { max-width: 760px; margin: 0 0 18px; color: var(--muted); font-size: 15px; line-height: 1.7; }
+.research-message { margin: 10px 0; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
+.research-error { color: var(--danger-deep); }
+.research-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0 10px; }
+.research-summary > div { min-width: 118px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); }
+.research-summary span { display: block; color: var(--muted); font-size: var(--type-micro); font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.research-summary strong { display: block; margin-top: 4px; color: var(--ink-strong); font-size: 21px; font-weight: 620; }
+.research-panel { margin: 22px 0; }
+.research-panel h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--ink-strong); font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.research-panel h3 { margin: 18px 0 8px; color: var(--ink-strong); font-size: 15px; font-weight: 650; }
+.research-note { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.research-form { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+.research-form input, .research-form select {
+  min-height: 40px; padding: 0 10px; border: 1px solid var(--line-deep);
+  border-radius: var(--radius-control); color: var(--ink-strong); background: var(--paper);
+  font-size: 14px; font-weight: 500;
+}
+.research-form input { flex: 1 1 220px; }
+.research-form-stack { flex-direction: column; align-items: stretch; max-width: 640px; }
+.research-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.research-row {
+  display: flex; justify-content: space-between; gap: 18px; padding: 13px 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper);
+}
+.research-row-main { min-width: 0; display: flex; flex-direction: column; gap: 6px; color: var(--ink-soft); font-size: 14px; line-height: 1.55; }
+.research-row-main strong { color: var(--ink-strong); font-weight: 620; }
+.research-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--muted); font-size: 12.5px; }
+.research-snippet { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.research-conflict { display: flex; align-items: flex-start; gap: 6px; margin: 0; color: var(--warning); font-size: 13px; line-height: 1.6; }
+.research-row-actions { display: flex; flex: 0 0 auto; flex-direction: column; gap: 8px; min-width: 210px; }
+.research-field { display: flex; flex-direction: column; gap: 5px; color: var(--ink-muted); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; }
+.research-field input, .research-field select {
+  min-height: 38px; padding: 0 10px; border: 1px solid var(--line-deep);
+  border-radius: var(--radius-control); color: var(--ink-strong); background: var(--paper);
+  font-size: 14px; font-weight: 500; letter-spacing: 0;
+}
+.research-inline-button {
+  margin-left: 8px; padding: 0; border: 0; background: none; color: var(--accent-deep);
+  font-size: 12.5px; font-weight: 600; cursor: pointer; text-decoration: underline;
+}
+.research-bibliography {
+  padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-panel);
+  background: var(--surface-low); color: var(--ink-soft); font-size: 12.5px; line-height: 1.7;
+  white-space: pre-wrap; word-break: break-word;
+}
+.research-summary-text { margin: 0; color: var(--ink-soft); font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+@media (max-width: 760px) {
+  .research-row { flex-direction: column; }
+  .research-row-actions { min-width: 0; }
+}
+
+/* ============================================================
    Delivery & Provenance (§3.10)
    ============================================================ */
 .readiness-header {
@@ -1250,7 +1309,7 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
   .landing-footer { grid-template-columns: 1fr auto; padding: 16px 0 22px; gap: 12px; }
   .landing-footer > p { display: none; }
   .landing-footer nav { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; }
-  .dashboard-content, .projects-content, .tool-page-content, .plan-content, .content-wrap { width: calc(100% - 36px); padding-top: 34px; }
+  .dashboard-content, .projects-content, .tool-page-content, .plan-content, .research-content, .content-wrap { width: calc(100% - 36px); padding-top: 34px; }
   .project-tabs { width: calc(100% - 36px); }
   .dashboard-metrics { grid-template-columns: repeat(2, 1fr); gap: 12px; }
   .dashboard-metrics > p { grid-column: 1 / -1; max-width: none; }

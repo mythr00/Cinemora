@@ -745,6 +745,360 @@ export function getCertificate(projectId: string, signal?: AbortSignal) {
   return apiRequest<Certificate>(`/api/v1/projects/${projectId}/certificate`, { signal });
 }
 
+// ---------------------------------------------------------------------
+// Research Studio (Phase D, founder priority #6) — the workspace
+// over services/research_studio.py. Every type mirrors the recorded
+// shapes the service returns; nothing here invents a field.
+// ---------------------------------------------------------------------
+
+export type ResearchSourceState = "candidate" | "kept" | "discarded";
+
+export type ResearchSource = {
+  id: string;
+  session_ids: string[];
+  title: string;
+  url: string;
+  snippet: string;
+  provider: string;
+  research_type?: string | null;
+  query?: string | null;
+  domain?: string | null;
+  tier: string;
+  state: ResearchSourceState;
+  created_at: string;
+};
+
+export type ResearchSession = {
+  id: string;
+  topic: string;
+  created_at: string;
+  queries: { type: string; query: string }[];
+  source_ids: string[];
+  sources: ResearchSource[];
+  kept_count: number;
+  kb_verdict: {
+    status?: string | null;
+    type?: string | null;
+    confidence?: number | null;
+    type_source?: string | null;
+    description?: string | null;
+    evidence?: string | null;
+  } | null;
+  record: {
+    results: number;
+    new_sources: number;
+    reused_sources: number;
+    query_errors: { query?: string; error?: string }[];
+  };
+};
+
+export type ResearchGap = { count: number; basis: string } & Record<string, unknown>;
+
+export type ResearchOverview = {
+  project_id: string;
+  bible_recorded: boolean;
+  counts: {
+    sessions: number;
+    sources: number;
+    sources_kept: number;
+    citations: number;
+    corrections: number;
+    summaries: number;
+    entities: number;
+    facts: number;
+    facts_research_supported: number;
+  };
+  sessions: ResearchSession[];
+  gaps: Record<string, ResearchGap>;
+  tier_rubric: Record<string, string>;
+};
+
+export type ResearchEntityCheck = {
+  id: string;
+  entity_id: string;
+  canonical?: string | null;
+  bible_type?: string | null;
+  kb: {
+    status?: string | null;
+    type?: string | null;
+    confidence?: number | null;
+    type_source?: string | null;
+    description?: string | null;
+    evidence?: string | null;
+  };
+  conflict: boolean;
+  created_at: string;
+};
+
+export type ResearchCorrection = {
+  id: string;
+  entity_id: string;
+  canonical?: string | null;
+  field: "type" | "canonical";
+  original?: string | null;
+  corrected: string;
+  created_at: string;
+  applied_at?: string | null;
+  applications: number;
+};
+
+export type ResearchEntity = {
+  id: string;
+  canonical?: string | null;
+  type?: string | null;
+  role?: string | null;
+  aliases?: string[];
+  description?: string | null;
+  type_confidence?: number | null;
+  type_source?: string | null;
+  type_low_confidence?: boolean | null;
+  effective_type?: string | null;
+  effective_canonical?: string | null;
+  corrections: ResearchCorrection[];
+  kb_check?: ResearchEntityCheck | null;
+};
+
+export type ResearchTimelineEvent = {
+  origin: "case_bible" | "studio";
+  id?: string;
+  when?: string | null;
+  what?: string | null;
+  support?: string | null;
+  fact_basis?: string | null;
+  fact_id?: string | null;
+  sentence_number?: number | null;
+  source_ids?: string[];
+  created_at?: string;
+};
+
+export type ResearchFact = {
+  fact_id: string;
+  kind: string;
+  when?: string | null;
+  what?: string | null;
+  display?: string | null;
+  year?: number | null;
+  sentence_number?: number | null;
+  basis: string;
+  source?: Record<string, unknown> | null;
+  kb_check?: {
+    query?: string;
+    status?: string | null;
+    source?: string | null;
+    confidence?: number | null;
+  } | null;
+};
+
+export type ResearchBible = {
+  recorded: boolean;
+  note?: string;
+  title?: string | null;
+  story_type?: string | null;
+  story_era?: string | null;
+  mode?: string | null;
+  primary_subject_id?: string | null;
+  entities: ResearchEntity[];
+  timeline: ResearchTimelineEvent[];
+  facts: ResearchFact[];
+  fact_record?: Record<string, number> | null;
+};
+
+export type ResearchCitation = {
+  id: string;
+  claim: {
+    kind: string;
+    fact_id?: string | null;
+    sentence_number?: number | null;
+    label: string;
+  };
+  source_id: string;
+  source?: ResearchSource | null;
+  note?: string | null;
+  created_at: string;
+};
+
+export type ResearchSummary = {
+  id: string;
+  scope: string;
+  session_id?: string | null;
+  topic: string;
+  text: string;
+  source_ids: string[];
+  sources: ResearchSource[];
+  created_at: string;
+};
+
+export function getResearchOverview(projectId: string, signal?: AbortSignal) {
+  return apiRequest<ResearchOverview>(`/api/v1/projects/${projectId}/research`, { signal });
+}
+
+export function getResearchBible(projectId: string, signal?: AbortSignal) {
+  return apiRequest<ResearchBible>(`/api/v1/projects/${projectId}/research/bible`, { signal });
+}
+
+export function listResearchSources(
+  projectId: string,
+  params: { state?: string; q?: string } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (params.state) query.set("state", params.state);
+  if (params.q) query.set("q", params.q);
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return apiRequest<{
+    sources: ResearchSource[];
+    counts: Record<ResearchSourceState, number>;
+    tiers: Record<string, number>;
+    total: number;
+  }>(`/api/v1/projects/${projectId}/research/sources${suffix}`, { signal });
+}
+
+export function createResearchSession(projectId: string, topic: string) {
+  return apiRequest<ResearchSession>(`/api/v1/projects/${projectId}/research/sessions`, {
+    method: "POST",
+    body: JSON.stringify({ topic }),
+  });
+}
+
+export function setResearchSourceState(
+  projectId: string,
+  sourceId: string,
+  state: ResearchSourceState,
+) {
+  return apiRequest<ResearchSource>(
+    `/api/v1/projects/${projectId}/research/sources/${sourceId}/state`,
+    { method: "POST", body: JSON.stringify({ state }) },
+  );
+}
+
+export function addResearchExternalSource(
+  projectId: string,
+  body: { title?: string; url: string },
+) {
+  return apiRequest<ResearchSource>(`/api/v1/projects/${projectId}/research/sources/external`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function runResearchFactCheck(projectId: string) {
+  return apiRequest<{
+    run: { id: string; created_at: string; record: Record<string, number> };
+    facts: ResearchFact[];
+    bases: Record<string, number>;
+  }>(`/api/v1/projects/${projectId}/research/fact-check`, { method: "POST" });
+}
+
+export function checkResearchEntity(projectId: string, entityId: string) {
+  return apiRequest<ResearchEntityCheck>(
+    `/api/v1/projects/${projectId}/research/entities/${entityId}/check`,
+    { method: "POST" },
+  );
+}
+
+export function createResearchCorrection(
+  projectId: string,
+  body: { entity_id: string; field: "type" | "canonical"; value: string },
+) {
+  return apiRequest<ResearchCorrection>(`/api/v1/projects/${projectId}/research/corrections`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteResearchCorrection(projectId: string, correctionId: string) {
+  return apiRequest<{ deleted: boolean }>(
+    `/api/v1/projects/${projectId}/research/corrections/${correctionId}`,
+    { method: "DELETE" },
+  );
+}
+
+export function listResearchCitations(projectId: string, signal?: AbortSignal) {
+  return apiRequest<{ citations: ResearchCitation[] }>(
+    `/api/v1/projects/${projectId}/research/citations`,
+    { signal },
+  );
+}
+
+export function createResearchCitation(
+  projectId: string,
+  body: {
+    claim: { kind: string; fact_id?: string; sentence_number?: number; label?: string };
+    source_id?: string;
+    external?: { title?: string; url: string };
+    note?: string;
+  },
+) {
+  return apiRequest<ResearchCitation>(`/api/v1/projects/${projectId}/research/citations`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteResearchCitation(projectId: string, citationId: string) {
+  return apiRequest<{ deleted: boolean }>(
+    `/api/v1/projects/${projectId}/research/citations/${citationId}`,
+    { method: "DELETE" },
+  );
+}
+
+export function getResearchBibliography(projectId: string, signal?: AbortSignal) {
+  return apiRequest<{
+    entries: {
+      number: number;
+      claim_label: string;
+      claim_kind: string;
+      source_title?: string | null;
+      source_url?: string | null;
+      provider?: string | null;
+      tier?: string | null;
+    }[];
+    text: string;
+  }>(`/api/v1/projects/${projectId}/research/bibliography`, { signal });
+}
+
+export function createResearchTimelineEvent(
+  projectId: string,
+  body: { when: string; what: string; source_ids?: string[] },
+) {
+  return apiRequest<ResearchTimelineEvent>(
+    `/api/v1/projects/${projectId}/research/timeline-events`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export function updateResearchTimelineEvent(
+  projectId: string,
+  eventId: string,
+  body: { when?: string; what?: string; source_ids?: string[] },
+) {
+  return apiRequest<ResearchTimelineEvent>(
+    `/api/v1/projects/${projectId}/research/timeline-events/${eventId}`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+}
+
+export function deleteResearchTimelineEvent(projectId: string, eventId: string) {
+  return apiRequest<{ deleted: boolean }>(
+    `/api/v1/projects/${projectId}/research/timeline-events/${eventId}`,
+    { method: "DELETE" },
+  );
+}
+
+export function listResearchSummaries(projectId: string, signal?: AbortSignal) {
+  return apiRequest<{ summaries: ResearchSummary[] }>(
+    `/api/v1/projects/${projectId}/research/summaries`,
+    { signal },
+  );
+}
+
+export function createResearchSummary(projectId: string, sessionId?: string) {
+  return apiRequest<ResearchSummary>(`/api/v1/projects/${projectId}/research/summaries`, {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId ?? null }),
+  });
+}
+
 /** Absolute URL for a project's recorded media key. */
 export function mediaUrl(projectId: string, mediaKey: string): string {
   return apiUrl(`/api/v1/projects/${projectId}/media/${mediaKey}`);
