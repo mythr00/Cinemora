@@ -244,6 +244,13 @@ class UserSubscription(Base):
         String(200), nullable=True
     )
 
+    # The plan a scheduled change (downgrade) takes effect with
+    # at the next benefit-period boundary; applied and cleared by
+    # the lifecycle job. NULL = no change scheduled (§15).
+    pending_plan_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("plans.id"), nullable=True
+    )
+
     __table_args__ = (
         Index(
             "uq_user_subscriptions_one_active",

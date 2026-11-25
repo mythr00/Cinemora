@@ -547,6 +547,49 @@ def spend(
     return split
 
 
+def expire_amount(
+    db,
+    user_id: str,
+    bucket: str,
+    amount: int,
+    *,
+    idempotency_key: str,
+    source: str = "system",
+    reason: str | None = None,
+    billing_period_id: str | None = None,
+) -> int:
+    """Expire up to `amount` of a bucket's AVAILABLE balance
+    (partial expiry — purchased/promo lot expiry). Never touches
+    reserved value. Returns the amount actually expired (0 when
+    the key already applied or nothing is available)."""
+    if bucket not in BUCKETS:
+        raise BillingError(f"unknown bucket {bucket!r}")
+    if amount <= 0:
+        return 0
+    if _existing_by_key(db, idempotency_key) is not None:
+        return 0
+    account = _lock_account(db, user_id)
+    actual = min(amount, available(account, bucket))
+    if actual <= 0:
+        return 0
+    setattr(
+        account, f"{bucket}_available",
+        available(account, bucket) - actual,
+    )
+    _append_entry(
+        db,
+        account,
+        entry_type="expire",
+        bucket=bucket,
+        amount=-actual,
+        idempotency_key=idempotency_key,
+        source=source,
+        reason=reason,
+        billing_period_id=billing_period_id,
+    )
+    return actual
+
+
 def expire_bucket(
     db,
     user_id: str,
@@ -558,30 +601,22 @@ def expire_bucket(
     billing_period_id: str | None = None,
 ) -> int:
     """Zero a bucket's AVAILABLE balance with an expire entry
-    (period-end subscription expiry; purchased-lot expiry).
-    Reserved value is never expired — it belongs to in-flight
-    generations. Returns the amount expired (0 = no entry)."""
+    (period-end subscription expiry). Reserved value is never
+    expired — it belongs to in-flight generations. Returns the
+    amount expired (0 = no entry)."""
     if bucket not in BUCKETS:
         raise BillingError(f"unknown bucket {bucket!r}")
-    if _existing_by_key(db, idempotency_key) is not None:
-        return 0
-    account = _lock_account(db, user_id)
-    amount = available(account, bucket)
-    if amount <= 0:
-        return 0
-    setattr(account, f"{bucket}_available", 0)
-    _append_entry(
+    account = get_or_create_account(db, user_id)
+    return expire_amount(
         db,
-        account,
-        entry_type="expire",
-        bucket=bucket,
-        amount=-amount,
+        user_id,
+        bucket,
+        available(account, bucket),
         idempotency_key=idempotency_key,
         source=source,
         reason=reason,
         billing_period_id=billing_period_id,
     )
-    return amount
 
 
 def adjust(

@@ -493,6 +493,11 @@ def watchdog_sweep() -> list[str]:
 LEADER_KEY = "cinemora:dispatcher:leader"
 LEADER_TTL_SECONDS = 45
 
+# Phase 8: the subscription lifecycle job runs hourly, only on
+# the leader, throttled here (the loop itself cycles in seconds).
+_BILLING_TICK_INTERVAL_SECONDS = 3600
+_last_billing_tick = 0.0
+
 
 def run_dispatcher_loop(stop_event: threading.Event | None = None):
     """The dispatcher's periodic loop, run as a thread in ONE
@@ -523,6 +528,22 @@ def run_dispatcher_loop(stop_event: threading.Event | None = None):
                 watchdog_sweep()
             except Exception:
                 logger.warning("dispatcher loop cycle failed", exc_info=True)
+            global _last_billing_tick
+            now_mono = time.monotonic()
+            if now_mono - _last_billing_tick >= _BILLING_TICK_INTERVAL_SECONDS:
+                _last_billing_tick = now_mono
+                try:
+                    from services.billing import lifecycle
+
+                    summary = lifecycle.run_lifecycle_tick()
+                    if summary.get("errors"):
+                        logger.warning(
+                            "billing lifecycle tick errors: %s", summary
+                        )
+                except Exception:
+                    logger.warning(
+                        "billing lifecycle tick failed", exc_info=True
+                    )
         stop_event.wait(15)
 
 
