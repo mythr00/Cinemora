@@ -83,8 +83,79 @@ def _write_password_file(path: Path, email: str, password: str) -> None:
     os.chmod(path, 0o600)
 
 
-def ensure_plans(db) -> dict[str, models.Plan]:
-    plans: dict[str, models.Plan] = {}
+def _billing_schema_ready(db) -> bool:
+    """True when the database has the Phase 8 monetization schema
+    (migration 0013+: commercial plan columns + topup_packages).
+
+    This script is an operator step in the 0006 -> seed ->
+    backfill -> 0007 upgrade path (see
+    tests/test_phase8_data_layer.py), so it MUST run against a
+    pre-0013 database: the current ORM models carry columns that
+    do not exist there yet, and the billing catalogue sync can
+    only run once 0013 has landed. On a legacy-schema database
+    the seed therefore uses reflected Core tables (only the
+    columns that actually exist) and skips the catalogue sync;
+    re-running the seed after the upgrade to head performs it.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    inspector = sa_inspect(db.bind)
+    if not inspector.has_table("topup_packages"):
+        return False
+    plan_columns = {c["name"] for c in inspector.get_columns("plans")}
+    return "price_monthly_cents" in plan_columns
+
+
+def ensure_plans(db, *, billing_ready: bool = True):
+    """Ensure the four legacy plan rows exist.
+
+    Returns a name -> plan mapping (ORM objects on a current
+    schema; id-only namespaces on a pre-0013 schema, where the
+    ORM would select/insert columns the database does not have).
+    """
+    plans = {}
+    if not billing_ready:
+        from types import SimpleNamespace
+
+        from sqlalchemy import MetaData, Table
+
+        plans_table = Table(
+            "plans", MetaData(), autoload_with=db.bind
+        )
+        for (
+            name,
+            concurrent,
+            per_period,
+            script_chars,
+            storage,
+            upload,
+            tier,
+            is_default,
+        ) in PLANS:
+            row = db.execute(
+                plans_table.select().where(plans_table.c.name == name)
+            ).first()
+            if row is None:
+                plan_id = str(uuid.uuid4())
+                db.execute(
+                    plans_table.insert().values(
+                        id=plan_id,
+                        name=name,
+                        max_concurrent_runs=concurrent,
+                        max_runs_per_period=per_period,
+                        period="month",
+                        max_script_chars=script_chars,
+                        max_storage_bytes=storage,
+                        max_upload_bytes=upload,
+                        priority_tier=tier,
+                        is_default=is_default,
+                    )
+                )
+                db.flush()
+            else:
+                plan_id = row.id
+            plans[name] = SimpleNamespace(id=plan_id)
+        return plans
     for (
         name,
         concurrent,
@@ -115,6 +186,55 @@ def ensure_plans(db) -> dict[str, models.Plan]:
     return plans
 
 
+def _ensure_founder_subscription(db, founder_id: str, plan_id: str,
+                                 *, billing_ready: bool) -> None:
+    """Ensure the founder has an active subscription, on either
+    schema generation (see _billing_schema_ready)."""
+    if not billing_ready:
+        from sqlalchemy import MetaData, Table
+
+        subs_table = Table(
+            "user_subscriptions", MetaData(), autoload_with=db.bind
+        )
+        row = db.execute(
+            subs_table.select().where(
+                subs_table.c.user_id == founder_id,
+                subs_table.c.status == "active",
+            )
+        ).first()
+        if row is None:
+            db.execute(
+                subs_table.insert().values(
+                    id=str(uuid.uuid4()),
+                    user_id=founder_id,
+                    plan_id=plan_id,
+                    status="active",
+                    current_period_start=datetime.now(timezone.utc),
+                    current_period_end=None,
+                    created_at=datetime.now(timezone.utc),
+                )
+            )
+            db.flush()
+        return
+    sub = (
+        db.query(models.UserSubscription)
+        .filter_by(user_id=founder_id, status="active")
+        .one_or_none()
+    )
+    if sub is None:
+        now = datetime.now(timezone.utc)
+        db.add(
+            models.UserSubscription(
+                id=str(uuid.uuid4()),
+                user_id=founder_id,
+                plan_id=plan_id,
+                status="active",
+                current_period_start=now,
+                current_period_end=None,
+            )
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reset-password", action="store_true")
@@ -135,14 +255,24 @@ def main() -> int:
     hasher = PasswordHasher()
     db = SessionLocal()
     try:
-        plans = ensure_plans(db)
+        billing_ready = _billing_schema_ready(db)
+        plans = ensure_plans(db, billing_ready=billing_ready)
 
         # Phase 8: the founder-priced billing catalogue (metered
         # plans + top-up packages). Idempotent; updates commercial
-        # fields only (services/billing/catalogue.py).
-        from services.billing import catalogue as billing_catalogue
+        # fields only (services/billing/catalogue.py). Only on a
+        # post-0013 schema — on the pre-0013 upgrade path the
+        # catalogue tables/columns do not exist yet, and the sync
+        # happens when the seed is re-run after the upgrade.
+        if billing_ready:
+            from services.billing import catalogue as billing_catalogue
 
-        catalogue_report = billing_catalogue.ensure_billing_catalogue(db)
+            catalogue_report = billing_catalogue.ensure_billing_catalogue(db)
+        else:
+            catalogue_report = {
+                "plans_created": [], "packages_created": [],
+                "plans_updated": [], "packages_updated": [],
+            }
 
         founder = (
             db.query(models.User).filter_by(email=email).one_or_none()
@@ -178,23 +308,10 @@ def main() -> int:
             except ImportError:
                 pass
 
-        sub = (
-            db.query(models.UserSubscription)
-            .filter_by(user_id=founder.id, status="active")
-            .one_or_none()
+        _ensure_founder_subscription(
+            db, founder.id, plans["founder"].id,
+            billing_ready=billing_ready,
         )
-        if sub is None:
-            now = datetime.now(timezone.utc)
-            db.add(
-                models.UserSubscription(
-                    id=str(uuid.uuid4()),
-                    user_id=founder.id,
-                    plan_id=plans["founder"].id,
-                    status="active",
-                    current_period_start=now,
-                    current_period_end=None,
-                )
-            )
 
         prefs = (
             db.query(models.UserPreference)
@@ -214,11 +331,17 @@ def main() -> int:
         db.close()
 
     print(f"plans ensured: {', '.join(sorted(plans))}")
-    print(
-        "billing catalogue: "
-        f"created={catalogue_report['plans_created'] + catalogue_report['packages_created']} "
-        f"updated={len(catalogue_report['plans_updated']) + len(catalogue_report['packages_updated'])}"
-    )
+    if billing_ready:
+        print(
+            "billing catalogue: "
+            f"created={catalogue_report['plans_created'] + catalogue_report['packages_created']} "
+            f"updated={len(catalogue_report['plans_updated']) + len(catalogue_report['packages_updated'])}"
+        )
+    else:
+        print(
+            "billing catalogue: skipped (pre-0013 schema; "
+            "re-run this seed after upgrading to head)"
+        )
     print(f"founder: {email} ({'created' if created else 'already existed'})")
     if password_changed:
         print(f"initial password written to: {password_file} (mode 0600)")
