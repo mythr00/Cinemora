@@ -75,6 +75,19 @@ def worker_count_from_env(env=None):
     return parse_worker_count(env.get("CINEMORA_WORKER_COUNT"))
 
 
+def _record_lifecycle(event, **fields):
+    """C-15 forensics: write a worker lifecycle event to the durable
+    store (services.worker_events) — what died, when, and the exit
+    code/signal the supervisor saw. Best-effort only: the import or
+    the write failing must never affect supervision."""
+    try:
+        from services import worker_events
+
+        worker_events.record_event(event, **fields)
+    except Exception:
+        pass
+
+
 def web_command(env=None):
     env = os.environ if env is None else env
     port = env.get("PORT") or "8000"
@@ -118,6 +131,12 @@ class WorkerPool:
     def start(self):
         self.workers = [self._spawn_worker() for _ in range(self.count)]
         self.restart_counts = [0] * self.count
+        for index, proc in enumerate(self.workers):
+            _record_lifecycle(
+                "worker_spawned",
+                slot=index,
+                child_pid=getattr(proc, "pid", None),
+            )
         return self.workers
 
     def restart_dead(self):
@@ -125,9 +144,21 @@ class WorkerPool:
         restarted in this pass."""
         restarted = 0
         for index, proc in enumerate(self.workers):
-            if proc.poll() is not None:
-                self.workers[index] = self._spawn_worker()
+            exit_code = proc.poll()
+            if exit_code is not None:
+                # C-15: record the death BEFORE respawning over it —
+                # exit_code is the supervisor's only witness (a
+                # negative value means killed by that signal, e.g.
+                # -9 SIGKILL / -15 SIGTERM).
                 self.restart_counts[index] += 1
+                _record_lifecycle(
+                    "worker_died",
+                    slot=index,
+                    child_pid=getattr(proc, "pid", None),
+                    exit_code=exit_code,
+                    restart_count=self.restart_counts[index],
+                )
+                self.workers[index] = self._spawn_worker()
                 restarted += 1
         return restarted
 
@@ -234,6 +265,11 @@ class Supervisor:
             if web_code is not None:
                 # Web death propagates: a deployment unit without its
                 # API must exit so the host restarts the whole unit.
+                _record_lifecycle(
+                    "web_died",
+                    child_pid=getattr(self.web, "pid", None),
+                    exit_code=web_code,
+                )
                 self.pool.terminate_all()
                 return web_code
         self.pool.restart_dead()

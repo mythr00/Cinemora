@@ -184,5 +184,33 @@ if __name__ == "__main__":
     # transient-failure retries, stuck-stage watchdog.
     _start_dispatcher()
 
-    worker = build_worker()
-    worker.work(with_scheduler=False)
+    # C-15 forensics: a durable lifecycle record for THIS worker
+    # process. start is always recorded; exit is recorded when
+    # work() returns or raises. A hard kill (SIGKILL/OOM) cannot
+    # record its own exit — that death is instead evidenced by the
+    # supervisor's "worker_died" event (exit code/signal) and the
+    # reconciler's "heartbeat_loss" event (last heartbeat).
+    from services import run_ledger as _ledger
+    from services import worker_events
+
+    worker_events.record_event(
+        "worker_start",
+        worker_id=_ledger.current_worker_id(),
+        queues=[queue.name for queue in queues],
+    )
+    try:
+        worker = build_worker()
+        worker.work(with_scheduler=False)
+    except BaseException as error:  # recorded, then re-raised
+        worker_events.record_event(
+            "worker_exit",
+            worker_id=_ledger.current_worker_id(),
+            exit_kind="exception",
+            exception=f"{type(error).__name__}: {error}",
+        )
+        raise
+    worker_events.record_event(
+        "worker_exit",
+        worker_id=_ledger.current_worker_id(),
+        exit_kind="returned",
+    )

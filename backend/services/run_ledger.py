@@ -102,12 +102,26 @@ _WORKER_ID_LOCK = threading.Lock()
 # Defaults: a beat every 30s; a run is stale after 180s without one
 # (six missed beats). Both are environment-tunable for tests and for
 # deployments on slower storage.
-HEARTBEAT_INTERVAL_SECONDS = float(
-    os.getenv("CINEMORA_RUN_HEARTBEAT_SECONDS", "30") or 30
+def _env_float(name, default):
+    """Parse a float env var, falling back to the default on ANY
+    malformed value. C-15 review fix: the previous bare float(...)
+    at import time meant one typo'd env value crashed the import of
+    this module — and with it every process that touches the ledger
+    (worker AND API) — with no record of why the process died."""
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return float(default)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+    return value if value > 0 else float(default)
+
+
+HEARTBEAT_INTERVAL_SECONDS = _env_float(
+    "CINEMORA_RUN_HEARTBEAT_SECONDS", 30
 )
-STALE_AFTER_SECONDS = float(
-    os.getenv("CINEMORA_RUN_STALE_SECONDS", "180") or 180
-)
+STALE_AFTER_SECONDS = _env_float("CINEMORA_RUN_STALE_SECONDS", 180)
 
 
 def current_worker_id() -> str:
@@ -940,6 +954,7 @@ def reconcile_stale_runs(stale_after_seconds=None):
                 .all()
             )
             stale_ids = []
+            stale_details = []
             for row in rows:
                 presence = run_presence(
                     {
@@ -951,6 +966,18 @@ def reconcile_stale_runs(stale_after_seconds=None):
                 age = presence["age_seconds"]
                 if age is None or age > float(stale_after_seconds):
                     stale_ids.append(row.id)
+                    # C-15: keep the death circumstances for the
+                    # forensic record written after the update —
+                    # which worker owned the run and when its heart
+                    # last beat.
+                    stale_details.append({
+                        "run_id": row.id,
+                        "project_id": row.project_id,
+                        "worker_id": presence["worker_id"],
+                        "last_heartbeat_at": presence["heartbeat_at"],
+                        "heartbeat_age_seconds": age,
+                        "stage": row.stage,
+                    })
             if not stale_ids:
                 return 0
             result = db.execute(
@@ -969,7 +996,23 @@ def reconcile_stale_runs(stale_after_seconds=None):
                 )
             )
             db.commit()
-            return int(result.rowcount or 0)
+            reconciled_count = int(result.rowcount or 0)
+            if reconciled_count:
+                # C-15 forensics: the NEXT worker death must be
+                # diagnosable from records. This event is the
+                # durable evidence that these runs' heartbeats were
+                # lost — what died (run + owning worker), when its
+                # heart last beat, and how stale it was. Fail-soft
+                # (record_event never raises).
+                from services import worker_events
+
+                worker_events.record_event(
+                    "heartbeat_loss",
+                    stale_after_seconds=float(stale_after_seconds),
+                    reconciled_count=reconciled_count,
+                    runs=stale_details,
+                )
+            return reconciled_count
         finally:
             db.close()
     except Exception as error:
