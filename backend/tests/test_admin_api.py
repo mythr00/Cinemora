@@ -145,6 +145,7 @@ def _audit_rows(action=None):
 ADMIN_ROUTES = [
     ("GET", "/api/v1/admin/overview", None),
     ("GET", "/api/v1/admin/health", None),
+    ("GET", "/api/v1/admin/readiness", None),
     ("GET", "/api/v1/admin/workers", None),
     ("GET", "/api/v1/admin/runs", None),
     ("GET", "/api/v1/admin/runs/some-run", None),

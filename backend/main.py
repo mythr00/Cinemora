@@ -224,6 +224,16 @@ def health():
     }
 
 
+@app.get("/health/live")
+def health_live():
+    """B-15 public liveness: exactly {"status": "ok"} and nothing
+    else (the historical /health shape above is kept compatible;
+    readiness detail is admin-only at /api/v1/admin/readiness)."""
+    from services import readiness as readiness_service
+
+    return readiness_service.liveness()
+
+
 # =========================================================
 # CREATE PROJECT
 # =========================================================

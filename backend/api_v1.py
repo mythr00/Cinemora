@@ -1159,6 +1159,16 @@ def health():
     return {"status": "ok", "service": "cinemora-api", "version": "v1"}
 
 
+@router.get("/health/live")
+def health_live():
+    """B-15 public liveness: exactly {"status": "ok"} — no
+    dependency state or diagnostics (FS rules; readiness detail
+    is admin-only at /admin/readiness)."""
+    from services import readiness as readiness_service
+
+    return readiness_service.liveness()
+
+
 # ---------------------------------------------------------------------
 # Catalogues (IA-06) — read-only views over the REAL sources of truth
 # ---------------------------------------------------------------------

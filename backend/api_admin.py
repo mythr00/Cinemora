@@ -134,6 +134,21 @@ def health(principal=Depends(admin_guard)):
         db.close()
 
 
+@router.get("/readiness")
+def readiness_check(principal=Depends(admin_guard)):
+    """B-15: admin-only readiness — real per-dependency probes
+    (DB SELECT 1, Redis ping, worker heartbeat evidence, version)
+    each with latency; overall degraded/not_ready when a check
+    fails. Detail stays behind this guard (FS rules)."""
+    from services import readiness as readiness_service
+
+    db = SessionLocal()
+    try:
+        return readiness_service.readiness(db)
+    finally:
+        db.close()
+
+
 @router.get("/workers")
 def workers(principal=Depends(admin_guard)):
     db = SessionLocal()
