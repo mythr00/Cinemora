@@ -146,6 +146,10 @@ ADMIN_ROUTES = [
     ("GET", "/api/v1/admin/overview", None),
     ("GET", "/api/v1/admin/health", None),
     ("GET", "/api/v1/admin/readiness", None),
+    ("GET", "/api/v1/admin/failed-jobs", None),
+    ("GET", "/api/v1/admin/failed-jobs/some-job", None),
+    ("POST", "/api/v1/admin/failed-jobs/some-job/requeue", None),
+    ("DELETE", "/api/v1/admin/failed-jobs/some-job", None),
     ("GET", "/api/v1/admin/workers", None),
     ("GET", "/api/v1/admin/runs", None),
     ("GET", "/api/v1/admin/runs/some-run", None),
@@ -184,10 +188,11 @@ def test_route_table_matches_registered_admin_routes(client):
     for route in api_admin.router.routes:
         path = "/api/v1" + getattr(route, "path", "")
         for method in route.methods or set():
-            if method in ("GET", "POST"):
+            if method in ("GET", "POST", "DELETE"):
                 registered.add((method, path))
     expected = {
-        (method, path.replace("some-run", "{run_id}")
+        (method, path.replace("some-job", "{job_id}")
+         .replace("some-run", "{run_id}")
          .replace("some-user", "{user_id}")
          .replace("some-tool", "{name}"))
         for method, path, _ in ADMIN_ROUTES

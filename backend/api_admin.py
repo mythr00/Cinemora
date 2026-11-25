@@ -287,6 +287,132 @@ def submit_replacement(run_id: str, principal=Depends(_write_guard)):
 
 
 # ---------------------------------------------------------------------
+# B-11 — failed / dead job management (services/admin_jobs)
+# ---------------------------------------------------------------------
+
+
+@router.get("/failed-jobs")
+def failed_jobs(
+    limit: int = 50,
+    offset: int = 0,
+    principal=Depends(admin_guard),
+):
+    from services import admin_jobs
+
+    db = SessionLocal()
+    try:
+        return admin_jobs.list_failed_jobs(db, limit=limit, offset=offset)
+    finally:
+        db.close()
+
+
+@router.get("/failed-jobs/{job_id}")
+def failed_job_detail(job_id: str, principal=Depends(admin_guard)):
+    from services import admin_jobs
+
+    db = SessionLocal()
+    try:
+        entry = admin_jobs.get_failed_job(db, job_id)
+    finally:
+        db.close()
+    if entry is None:
+        raise ApiError(
+            404, "failed_job_not_found", f"No failed job {job_id}."
+        )
+    return entry
+
+
+@router.post("/failed-jobs/{job_id}/requeue")
+def requeue_failed_job(job_id: str, principal=Depends(_write_guard)):
+    """Requeue a FAILED production run through the existing
+    dispatch path (jobs.enqueue_full_pipeline -> ledger +
+    dispatcher admission). Idempotent for active runs. Audited."""
+    from services import admin_jobs
+
+    run_id = job_id
+    run = run_ledger.get_run(run_id)
+    if run is None:
+        # The identifier may be an RQ job id whose kwargs carry
+        # the run id.
+        db = SessionLocal()
+        try:
+            entry = admin_jobs.get_failed_job(db, job_id)
+        finally:
+            db.close()
+        if entry is not None and entry.get("run_id"):
+            run_id = entry["run_id"]
+            run = run_ledger.get_run(run_id)
+    if run is None:
+        raise ApiError(404, "run_not_found", f"No run {job_id}.")
+    try:
+        result = admin_jobs.requeue_failed_run(run_id)
+    except LookupError as exc:
+        raise ApiError(404, "run_not_found", str(exc)) from exc
+    except ValueError as exc:
+        admin_audit.record(
+            principal,
+            "job.requeue",
+            target_type="run",
+            target_id=run_id,
+            result="failure",
+            error=str(exc),
+        )
+        raise ApiError(409, "run_not_requeueable", str(exc)) from exc
+    admin_audit.record(
+        principal,
+        "job.requeue",
+        target_type="run",
+        target_id=run_id,
+        detail={
+            "project_id": run["project_id"],
+            "previous_status": run["status"],
+            "requeued": result["requeued"],
+            "already_active": result["already_active"],
+            "new_run_id": result.get("new_run_id"),
+        },
+        result="success",
+    )
+    return result
+
+
+@router.delete("/failed-jobs/{job_id}")
+def purge_failed_job(job_id: str, principal=Depends(_write_guard)):
+    """Purge a dead job's QUEUE record only (RQ failed registry).
+    Project data and the ledger run row are never touched.
+    Audited."""
+    from services import admin_jobs
+
+    db = SessionLocal()
+    try:
+        result = admin_jobs.purge_dead_job(job_id, db=db)
+    finally:
+        db.close()
+    if result is None:
+        admin_audit.record(
+            principal,
+            "job.purge",
+            target_type="job",
+            target_id=job_id,
+            result="failure",
+            error="no queue record found for this job",
+        )
+        raise ApiError(
+            404,
+            "queue_record_not_found",
+            f"No dead queue record for {job_id}.",
+        )
+    admin_audit.record(
+        principal,
+        "job.purge",
+        target_type="job",
+        target_id=result["job_id"],
+        detail={"queue": result["queue"], "requested_id": job_id},
+        result="success",
+    )
+    return result
+
+
+# ---------------------------------------------------------------------
 # M4 — provider usage; M6 — storage; M8 — settings; M7 — audit log
 # ---------------------------------------------------------------------
 
