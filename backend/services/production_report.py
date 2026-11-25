@@ -7,9 +7,11 @@ observability questions, with unknown/unavailable where a source is
 absent instead of zero or silence.
 
 The report carries three SEPARATE verdicts (integrity, quality,
-reliability) from services.quality_verdict. A quality FAIL is
-reported here; it does not change jobs.py run-completion semantics
-(that decision is the founder's — see the Phase 3 scope note).
+reliability) from services.quality_verdict. This module only
+REPORTS: since Phase 3b (C-06), jobs.py's completion gate
+(_honour_quality_verdict) consumes the quality verdict this report
+computes — a quality FAIL there fails the run. The verdicts
+themselves are unchanged by that gating.
 """
 
 from __future__ import annotations

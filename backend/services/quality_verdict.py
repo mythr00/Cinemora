@@ -8,7 +8,11 @@ into three SEPARATE verdicts:
                metric bands (see THRESHOLDS). Degraded mode stays
                RETIRED: these bands only REPORT; nothing here relaxes
                a threshold, substitutes media, or changes how a run
-               completes.
+               completes. (Phase 3b / C-06: jobs.py's completion gate
+               consumes this module's quality FAIL — a run whose
+               composite quality verdict is FAIL is recorded failed.
+               The bands and verdict semantics here are unchanged;
+               the gating lives in jobs._honour_quality_verdict.)
 - integrity  — a restatement of the final auditor's hard verdict
                (services.final_video_auditor._audit_verdict): FAIL
                when it recorded failures, PASS when it evaluated

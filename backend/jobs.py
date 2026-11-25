@@ -1189,6 +1189,62 @@ def _honour_final_audit(final_audit):
         )
 
 
+def _honour_quality_verdict(quality_verdicts, state=None):
+    """C-06 (Master Project Directive Phase 3b): the completion gate
+    over the composite QUALITY verdict (services.quality_verdict).
+
+    Before this gate, a quality FAIL was only attached to the
+    production report — a film whose measured quality verdict was
+    FAIL (e.g. the Hyatt shape: direct_share 0.16, graphics-dominated
+    timeline) was still recorded "completed"; only the final
+    auditor's integrity verdict could fail a run. Now:
+
+    - quality verdict FAIL -> RuntimeError carrying the verdict's
+      fail reasons, routed through the stage's normal fail path
+      (fail_pipeline): the run's final status is FAILED. The full
+      quality verdict is first stamped onto the run state
+      (state["quality_verdict"]) so it survives in
+      production_state.json, and it already rides the asset report /
+      production report written before this gate runs — the verdict
+      stays preserved and visible on the failed run.
+    - PASS / QUALITY_WARNING -> return; the run proceeds exactly as
+      before (warnings have never failed a run).
+    - verdict absent / None / unmeasured (measurement failed and was
+      recorded as visual_quality_error, or a legacy report shape)
+      -> return; absence behaves exactly as it did before this gate.
+
+    No verdict types are added and no band or threshold changes:
+    this consumes quality_verdict.FAIL exactly as
+    composite_quality_verdict computes it. There is no override —
+    no code path (admin or otherwise) existed that allowed a
+    quality FAIL to be waived, and none is added here.
+
+    Accepts either the production report's verdicts dict
+    ({"quality": {...}, "integrity": ..., "reliability": ...}) or a
+    bare quality-verdict dict ({"verdict": ...}). Returns the
+    quality verdict dict it inspected, or None.
+    """
+    quality = None
+    if isinstance(quality_verdicts, dict):
+        nested = quality_verdicts.get("quality")
+        if isinstance(nested, dict):
+            quality = nested
+        elif "verdict" in quality_verdicts:
+            quality = quality_verdicts
+    if quality is None:
+        return None
+    if quality.get("verdict") != "FAIL":
+        return quality
+    if isinstance(state, dict):
+        state["quality_verdict"] = quality
+    reasons = quality.get("fail_reasons") or ["unspecified"]
+    raise RuntimeError(
+        "Quality verdict FAILED (C-06): this production cannot be "
+        "recorded as completed while its measured quality verdict "
+        "is FAIL: " + "; ".join(str(r) for r in reasons)
+    )
+
+
 def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=None):
     print()
     print("=" * 70)
@@ -2631,9 +2687,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         # never break a render — but a failure to measure is VISIBLE
         # in the report (visual_quality_error), never silent. The
         # single write_asset_report for this run happens after the
-        # embedding so asset_report.json carries the new keys. A
-        # quality FAIL is reported, not converted into a run
-        # failure (run-completion semantics are unchanged).
+        # embedding so asset_report.json carries the new keys. The
+        # verdicts are REPORTED here; the completion gate that
+        # honours a quality FAIL is _honour_quality_verdict, called
+        # after the final audit below (C-06, Phase 3b — previously a
+        # quality FAIL was reported but a run could still complete).
         # ----------------------------------------------
         try:
             _mg_record = None
@@ -2714,6 +2772,15 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         # it is never interpreted as a successful audit. Warnings
         # alone never fail a run.
         _honour_final_audit(final_audit)
+
+        # C-06 (Phase 3b): honour the composite QUALITY verdict the
+        # same way — a quality FAIL fails the production through the
+        # normal fail path, with the verdict preserved on the run
+        # state and in the reports written above. PASS /
+        # QUALITY_WARNING / absent verdicts proceed unchanged.
+        _honour_quality_verdict(
+            asset_report.get("quality_verdicts"), state=state
+        )
 
         print(
             "Final video audit complete: "
