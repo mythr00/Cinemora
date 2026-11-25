@@ -6,7 +6,6 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import Base, check_schema, engine, get_db
@@ -17,14 +16,25 @@ from jobs import enqueue_full_pipeline
 from services import media_paths
 
 # IA-08: the legacy routes below reuse API v1's auth verbatim —
-# require_api_token is imported (api_v1 does not import main, so
-# there is no cycle) so legacy and v1 share the ONE token, the ONE
-# env var (CINEMORA_API_TOKEN) and the ONE fail-closed semantics
-# (503 unconfigured / 401 missing-or-wrong). No second token or
-# config exists. ApiError is imported so the deprecated test-job
-# route can answer in the v1 error shape.
-from api_v1 import ApiError, register_error_handlers, require_api_token
+# require_api_token / require_user are imported (api_v1 does not
+# import main, so there is no cycle) so legacy and v1 share the
+# ONE token, the ONE env var (CINEMORA_API_TOKEN) and the ONE
+# fail-closed semantics (503 unconfigured / 401 missing-or-wrong).
+# No second token or config exists. ApiError is imported so the
+# deprecated test-job route can answer in the v1 error shape.
+# E-03: the project-data routes additionally resolve the full
+# principal (require_user) and enforce v1 ownership — see
+# _legacy_project_or_404 below.
+from api_v1 import (
+    ApiError,
+    _get_owned_project_or_404,
+    register_error_handlers,
+    require_api_token,
+    require_user,
+)
 from api_v1 import router as api_v1_router
+from services import auth as auth_service
+from services import plans as plans_service
 from api_admin import router as api_admin_router
 from api_assistant import router as api_assistant_router
 from api_developer import router as api_developer_router
@@ -79,6 +89,8 @@ app.add_middleware(
 # shapes, but every route that reads or writes project data now
 # requires the same X-API-Key auth as v1 (require_api_token);
 # GET / and GET /health stay open (no project data, like v1 health).
+# E-03: project-data routes also enforce v1 OWNERSHIP (the
+# require_user principal through _get_owned_project_or_404).
 app.include_router(api_v1_router, prefix="/api/v1")
 # Phase 7: the administration API lives under the same /api/v1
 # prefix (its router adds /admin), gated by its own role guard.
@@ -104,6 +116,59 @@ register_error_handlers(app)
 # Serving startup verifies the schema instead — see _lifespan
 # above and database.check_schema. (Base/engine stay imported for
 # compatibility with anything that reaches them via this module.)
+
+
+# =========================================================
+# LEGACY OWNERSHIP (E-03 / B-16)
+# =========================================================
+# IA-08 unified legacy AUTHENTICATION on require_user but not
+# AUTHORISATION: the handlers below loaded any project by id for
+# any valid principal, and legacy creation set no owner_id. Every
+# project load on the legacy surface now goes through the SAME
+# choke point as v1 (api_v1._get_owned_project_or_404 — owner, or
+# accepted project member, or the operator principal for legacy
+# NULL-owner rows; everyone else 404, never 403, so existence
+# stays tenant-private). Only the ERROR SHAPE is translated back
+# to the legacy contract ({"detail": ...}); the status semantics
+# are v1's exactly, including a viewer member's 403
+# project_read_only on the mutating route.
+
+def _legacy_project_or_404(
+    db: Session,
+    project_id: str,
+    principal,
+    *,
+    write: bool = False,
+) -> Project:
+    if not isinstance(principal, auth_service.Principal):
+        # Direct in-process call (tests / internal callers):
+        # FastAPI dependencies are not evaluated off-HTTP, so no
+        # principal exists — the pre-existing contract for such
+        # callers (see test_stage0_observability, which calls
+        # get_project_status with an explicit session). Over HTTP
+        # this branch is unreachable: require_user always resolves
+        # a real Principal or rejects the request first.
+        project = db.get(Project, str(project_id))
+        if project is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Project not found",
+            )
+        return project
+    try:
+        return _get_owned_project_or_404(
+            db, project_id, principal, write=write
+        )
+    except ApiError as error:
+        if error.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail="Project not found",
+            ) from error
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=error.message,
+        ) from error
 
 
 # =========================================================
@@ -166,12 +231,22 @@ def health():
 def create_project(
     project_data: ProjectCreate,
     db: Session = Depends(get_db),
-    _auth: str = Depends(require_api_token),
+    principal: auth_service.Principal = Depends(require_user),
 ):
     project_id = str(uuid4())
 
+    # B-16: the project belongs to its creator (v1 parity — the
+    # row is visible in the creator's v1 list and covered by the
+    # ownership choke point), and v1's creation admission rule
+    # (plan script-length) applies here too. Fail-soft when no
+    # plan system is seeded, exactly as in v1.
+    plans_service.enforce_script_length(
+        db, principal.user_id, project_data.script
+    )
+
     project = Project(
         id=project_id,
+        owner_id=principal.user_id,
         script=project_data.script,
         category=project_data.category,
         status="created",
@@ -196,19 +271,10 @@ def create_project(
 def get_project(
     project_id: str,
     db: Session = Depends(get_db),
-    _auth: str = Depends(require_api_token),
+    principal: auth_service.Principal = Depends(require_user),
 ):
-    statement = select(Project).where(
-        Project.id == project_id
-    )
-
-    project = db.execute(statement).scalar_one_or_none()
-
-    if project is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Project not found",
-        )
+    # E-03: ownership enforced via the v1 choke point.
+    project = _legacy_project_or_404(db, project_id, principal)
 
     return {
         "id": project.id,
@@ -230,19 +296,11 @@ def get_project_status(
     # IA-08: auth is a dependency only — direct in-process callers
     # (tests calling this handler with an explicit db session) are
     # unaffected, since the dependency is not evaluated off-HTTP.
-    _auth: str = Depends(require_api_token),
+    # E-03: over HTTP the resolved principal is ownership-checked
+    # via the v1 choke point (see _legacy_project_or_404).
+    principal: auth_service.Principal = Depends(require_user),
 ):
-    statement = select(Project).where(
-        Project.id == project_id
-    )
-
-    project = db.execute(statement).scalar_one_or_none()
-
-    if project is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Project not found",
-        )
+    project = _legacy_project_or_404(db, project_id, principal)
 
     # The DB row carries the run's headline status (written back by
     # jobs as the pipeline transitions); the persisted production
@@ -317,7 +375,7 @@ def enqueue_full_pipeline_legacy(
     project_id: str,
     response: Response,
     db: Session = Depends(get_db),
-    _auth: str = Depends(require_api_token),
+    principal: auth_service.Principal = Depends(require_user),
 ):
     """Enqueue the FULL documentary production pipeline for a project.
 
@@ -325,17 +383,15 @@ def enqueue_full_pipeline_legacy(
     a complete production run (voice, assets, motion, sound, edit),
     exactly like POST /api/v1/projects/{project_id}/runs.
     """
-    statement = select(Project).where(
-        Project.id == project_id
+    # E-03: enqueueing is a mutation — the v1 choke point in its
+    # write form (a viewer member is refused 403 project_read_only,
+    # a non-member 404), then v1's run-admission rules (plan
+    # concurrency / quota / storage) before anything is queued.
+    project = _legacy_project_or_404(
+        db, project_id, principal, write=True
     )
-
-    project = db.execute(statement).scalar_one_or_none()
-
-    if project is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Project not found",
-        )
+    if isinstance(principal, auth_service.Principal):
+        plans_service.enforce_run_admission(db, principal.user_id)
 
     # Start the REAL production pipeline.
     #
