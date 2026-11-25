@@ -31,6 +31,7 @@ from api_v1 import (
     register_error_handlers,
     require_api_token,
     require_user,
+    sanitize_failure_detail,
 )
 from api_v1 import router as api_v1_router
 from services import auth as auth_service
@@ -321,13 +322,22 @@ def get_project_status(
         except (OSError, ValueError):
             progress = None
 
-    return {
-        "id": project.id,
-        "status": project.status,
-        "category": project.category,
-        "created_at": project.created_at,
-        "progress": progress,
-    }
+    # FS-4 / FS-A: the embedded production state carries the raw
+    # stage failure text (state.error, stages[*].error) — pass the
+    # payload through the SAME v1 response-layer sanitizer so the
+    # legacy surface cannot re-leak what v1 withholds. Admins and
+    # the operator principal keep the full detail; direct
+    # in-process callers (no Principal) are sanitized fail-closed.
+    return sanitize_failure_detail(
+        {
+            "id": project.id,
+            "status": project.status,
+            "category": project.category,
+            "created_at": project.created_at,
+            "progress": progress,
+        },
+        principal if isinstance(principal, auth_service.Principal) else None,
+    )
 
 
 # =========================================================

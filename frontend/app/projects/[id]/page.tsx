@@ -12,6 +12,7 @@ import { ArrowLeft, ArrowUpRight, Sparkles } from "lucide-react";
 import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
 import {
   cancelRun,
+  getCurrentUser,
   getOutputs,
   getProjectStatus,
   getRun,
@@ -26,7 +27,8 @@ import {
  *
  * Persistent project header + tabs (ProjectTabs); body: Status
  * panel (status, StageProgress, latest run summary, the run's
- * two-step cancel, run error verbatim), Delivery panel (final
+ * two-step cancel, run failure status — FS-4: simple generic
+ * message for ordinary users, full detail only for admins), Delivery panel (final
  * film + film/SRT/VTT downloads — reports and manifests live on
  * the Delivery tab), Runs panel (history with expandable run
  * detail), and a Next action area computed from real state.
@@ -48,6 +50,19 @@ import {
 
 type Overview = { status: ProjectStatus; outputs: ProjectOutputs | null; runs: RunSummary[] };
 
+// FS-4: ordinary users see a simple, truthful failure status —
+// never internal failure detail (exception / stage / provider /
+// worker text). The API already sanitizes its responses for
+// non-admin principals; this is the presentation-side guard so no
+// residual detail field is ever rendered verbatim for them.
+// Admins (whose API responses carry the full detail) still see it.
+const GENERIC_FAILURE_MESSAGE = "Video generation failed";
+
+function failureDisplay(error: string | null | undefined, isAdmin: boolean): string | null {
+  if (!error) return null;
+  return isAdmin ? error : GENERIC_FAILURE_MESSAGE;
+}
+
 const TERMINAL_STATUSES = ["completed", "failed", "cancelled"];
 // Backend semantics (services/run_ledger.request_cancel): any
 // non-terminal run accepts a cancellation request — a queued run
@@ -62,6 +77,21 @@ export default function ProjectPage() {
   const projectId = params.id;
   const [overview, setOverview] = useState<Overview | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
+  // FS-4: only admin principals may see full failure detail; the
+  // role comes from /auth/me (the same source AdminShell uses).
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getCurrentUser()
+      .then((user) => {
+        if (!cancelled) setIsAdmin(user?.role === "admin" || user?.role === "super_admin");
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // C-07 run details + cancellation.
   const [openRunId, setOpenRunId] = useState<string | null>(null);
@@ -176,7 +206,7 @@ export default function ProjectPage() {
         <p className="overview-status-line">Status: <StatusBadge status={overview.status.status} />{overview.status.current_stage ? ` · Stage: ${overview.status.current_stage.replaceAll("_", " ")}` : ""}</p>
         <p><Link className="button" href={`/assistant?project=${projectId}`}><Sparkles size={14} strokeWidth={2} aria-hidden /> Ask the assistant</Link></p>
       </div>
-      {overview.status.error && <p className="projects-error" role="alert">{overview.status.error}</p>}
+      {failureDisplay(overview.status.error, isAdmin) && <p className="projects-error" role="alert">{failureDisplay(overview.status.error, isAdmin)}</p>}
 
       {nextAction && <div className="next-action"><p><strong>Next step.</strong> {nextAction.text}</p><Link className="button button-primary" href={nextAction.href}>{nextAction.label} <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></div>}
 
@@ -212,7 +242,7 @@ export default function ProjectPage() {
           const detailError = runDetailErrors[run.run_id];
           return <li key={run.run_id} className="overview-run">
             <div className="overview-run-line">
-              <StatusBadge status={run.status} /> · started {run.created_at ? new Date(run.created_at).toLocaleString() : "—"}{run.finished_at ? ` · finished ${new Date(run.finished_at).toLocaleString()}` : ""}{run.cancel_requested ? " · cancellation requested" : ""}{run.error ? ` · ${run.error}` : ""}
+              <StatusBadge status={run.status} /> · started {run.created_at ? new Date(run.created_at).toLocaleString() : "—"}{run.finished_at ? ` · finished ${new Date(run.finished_at).toLocaleString()}` : ""}{run.cancel_requested ? " · cancellation requested" : ""}{failureDisplay(run.error, isAdmin) ? ` · ${failureDisplay(run.error, isAdmin)}` : ""}
               {" "}<button type="button" className="run-action" aria-expanded={openRunId === run.run_id} onClick={() => void onToggleRunDetail(run)}>{openRunId === run.run_id ? "Hide details" : "Details"}</button>
               {cancelControls(run)}
             </div>
@@ -232,7 +262,7 @@ export default function ProjectPage() {
                     <div><dt>Started</dt><dd>{detail.started_at ? new Date(detail.started_at).toLocaleString() : "—"}</dd></div>
                     <div><dt>Finished</dt><dd>{detail.finished_at ? new Date(detail.finished_at).toLocaleString() : "—"}</dd></div>
                     <div><dt>Script hash</dt><dd>{detail.script_hash ? <code>{detail.script_hash.slice(0, 12)}…</code> : "—"}</dd></div>
-                    {detail.error && <div><dt>Error</dt><dd>{detail.error}</dd></div>}
+                    {failureDisplay(detail.error, isAdmin) && <div><dt>Error</dt><dd>{failureDisplay(detail.error, isAdmin)}</dd></div>}
                   </dl>
                 )}
               </div>
@@ -252,7 +282,10 @@ function nextActionFor(status: string, projectId: string): { text: string; label
     case "completed":
       return { text: "The film is finished. Open it in the editor, or check delivery and provenance.", label: "Open the editor", href: `/projects/${projectId}/edit` };
     case "failed":
-      return { text: "The latest run failed. Its recorded error is shown with the run history below.", label: "Review asset decisions", href: `/projects/${projectId}/assets` };
+      // FS-4: simple failure status + next action on this page —
+      // no internal failure detail, and no link into the
+      // admin-only asset decisions surface.
+      return { text: "Video generation failed. The run history below shows the run's status — start a new production from Create when you're ready, or contact support if it keeps failing.", label: "Stay on overview", href: `/projects/${projectId}` };
     case "created":
     case "queued":
     case "pipeline_queued":

@@ -37,6 +37,7 @@ instead of re-analysing.
 
 from __future__ import annotations
 
+import copy
 import hmac
 import json
 import os
@@ -853,10 +854,73 @@ def _production_state(project_dir: Path) -> dict | None:
         return None
 
 
-def _run_view(run: dict | None) -> dict | None:
+# ---------------------------------------------------------------------
+# FS-4 / FS-A — failure-detail sanitization (response layer only)
+# ---------------------------------------------------------------------
+# A pipeline stage exception's str(error) is stored verbatim in
+# production_state.json and ProductionRun.error. That text is
+# diagnostic (stage-failure explanations, provider/worker errors,
+# internal codes) and must never reach a non-admin principal in a
+# user-facing response. Storage, backend logging and the admin API
+# keep the full text untouched; this helper rewrites ONLY the
+# response payload, at the response layer, for non-admin principals.
+#
+# Rule: admin / super_admin principals (the operator principal
+# resolves to super_admin, services/auth.py) get the payload
+# byte-identical to the unsanitized one. Everyone else — ordinary
+# users AND project collaborators (collaboration role never
+# elevates; register ambiguity A-9) — gets every non-empty "error"
+# string anywhere in the payload (top level, per-stage entries,
+# the embedded production-state "progress" dict, nested run views)
+# replaced with GENERIC_FAILURE_MESSAGE, and a dict whose status
+# is "failed" but whose "error" is empty gains the generic message
+# too, so a failure is always labelled truthfully. Statuses, stage
+# names, timestamps and progress structure are preserved exactly:
+# a failed run still reads "failed" — failure is never disguised
+# as success, only its internal explanation is withheld.
+# A missing principal is treated as non-admin (fail closed).
+
+GENERIC_FAILURE_MESSAGE = "Video generation failed"
+
+
+def _sanitize_failure_node(node) -> None:
+    if isinstance(node, dict):
+        for key, value in list(node.items()):
+            if key == "error" and isinstance(value, str) and value:
+                node[key] = GENERIC_FAILURE_MESSAGE
+            else:
+                _sanitize_failure_node(value)
+        if node.get("status") == "failed" and "error" in node and not node["error"]:
+            node["error"] = GENERIC_FAILURE_MESSAGE
+    elif isinstance(node, list):
+        for item in node:
+            _sanitize_failure_node(item)
+
+
+def sanitize_failure_detail(view, principal):
+    """Return ``view`` with internal failure detail removed for
+    non-admin principals; admins get ``view`` itself, unchanged.
+
+    The one reusable FS-4 sanitizer: every user-facing carrier of
+    run/project failure detail (run views, project views, project
+    status, the legacy main.py status route) passes its payload
+    through here so future carriers inherit the rule by doing the
+    same. The input is never mutated for non-admins (a deep copy
+    is sanitized); admin payloads are returned as-is.
+    """
+    if view is None:
+        return None
+    if principal is not None and getattr(principal, "is_admin", False):
+        return view
+    sanitized = copy.deepcopy(view)
+    _sanitize_failure_node(sanitized)
+    return sanitized
+
+
+def _run_view(run: dict | None, principal=None) -> dict | None:
     if not run:
         return None
-    return {
+    view = {
         "run_id": run.get("run_id"),
         "project_id": run.get("project_id"),
         "status": run.get("status"),
@@ -868,6 +932,7 @@ def _run_view(run: dict | None) -> dict | None:
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
     }
+    return sanitize_failure_detail(view, principal)
 
 
 def _film_media_url(project_id: str, project_dir: Path) -> str | None:
@@ -879,7 +944,12 @@ def _film_media_url(project_id: str, project_dir: Path) -> str | None:
 
 
 def _project_view(
-    db, project: Project, *, detail: bool = False, access_role: str | None = None
+    db,
+    project: Project,
+    *,
+    detail: bool = False,
+    access_role: str | None = None,
+    principal=None,
 ) -> dict:
     project_dir = media_paths.project_dir(project.id)
     state = _production_state(project_dir)
@@ -899,12 +969,12 @@ def _project_view(
         "video_url": _film_media_url(project.id, project_dir)
         if project.status == "completed"
         else None,
-        "latest_run": _run_view(latest),
+        "latest_run": _run_view(latest, principal),
     }
     if detail:
         view["script"] = project.script
         view["options"] = project.options or {}
-    return view
+    return sanitize_failure_detail(view, principal)
 
 
 # ---------------------------------------------------------------------
@@ -1028,7 +1098,11 @@ def _create_project_record(db, principal, *, title, script, category, options):
         actor=principal.user_id,
     )
     return _project_view(
-        db, project, detail=True, access_role=collaboration.ROLE_OWNER
+        db,
+        project,
+        detail=True,
+        access_role=collaboration.ROLE_OWNER,
+        principal=principal,
     )
 
 
@@ -1100,7 +1174,9 @@ def list_projects(principal=Depends(require_user)):
             .all()
         )
         views = [
-            _project_view(db, p, access_role=collaboration.ROLE_OWNER)
+            _project_view(
+                db, p, access_role=collaboration.ROLE_OWNER, principal=principal
+            )
             for p in projects
         ]
         shared_ids = collaboration.shared_project_ids(db, principal.user_id)
@@ -1119,6 +1195,7 @@ def list_projects(principal=Depends(require_user)):
                         db,
                         project,
                         access_role=collaboration.role_for(db, project, principal),
+                        principal=principal,
                     )
                 )
         return {"projects": views}
@@ -1136,6 +1213,7 @@ def get_project(project_id: str, principal=Depends(require_user)):
             project,
             detail=True,
             access_role=collaboration.role_for(db, project, principal),
+            principal=principal,
         )
     finally:
         db.close()
@@ -1150,21 +1228,24 @@ def get_project_status(project_id: str, principal=Depends(require_user)):
         state = _production_state(project_dir)
         latest = run_ledger.latest_run_for(project.id)
         error = (state or {}).get("error") or (latest or {}).get("error")
-        return {
-            "id": project.id,
-            "title": project.title,
-            "category": project.category,
-            "status": project.status,
-            "created_at": project.created_at,
-            "current_stage": (state or {}).get("current_stage"),
-            "stages": (state or {}).get("stages"),
-            "progress": state,
-            "latest_run": _run_view(latest),
-            "video_url": _film_media_url(project.id, project_dir)
-            if project.status == "completed"
-            else None,
-            "error": error,
-        }
+        return sanitize_failure_detail(
+            {
+                "id": project.id,
+                "title": project.title,
+                "category": project.category,
+                "status": project.status,
+                "created_at": project.created_at,
+                "current_stage": (state or {}).get("current_stage"),
+                "stages": (state or {}).get("stages"),
+                "progress": state,
+                "latest_run": _run_view(latest, principal),
+                "video_url": _film_media_url(project.id, project_dir)
+                if project.status == "completed"
+                else None,
+                "error": error,
+            },
+            principal,
+        )
     finally:
         db.close()
 
@@ -1212,7 +1293,7 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depen
             "awaiting_approval",
         ):
             return {
-                "run": _run_view(existing),
+                "run": _run_view(existing, principal),
                 "deduplicated": True,
                 "job_id": None,
                 "phase": "analysis",
@@ -1236,7 +1317,7 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depen
         run_id = submission["run_id"]
         if submission.get("deduplicated"):
             return {
-                "run": _run_view(run_ledger.get_run(run_id)),
+                "run": _run_view(run_ledger.get_run(run_id), principal),
                 "deduplicated": True,
                 "job_id": None,
                 "phase": "analysis",
@@ -1245,7 +1326,7 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depen
             project_id, script, run_id, options=merged
         )
         return {
-            "run": _run_view(run_ledger.get_run(run_id)),
+            "run": _run_view(run_ledger.get_run(run_id), principal),
             "deduplicated": False,
             "job_id": job_id,
             "phase": "analysis",
@@ -1268,7 +1349,7 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depen
     )
     run = run_ledger.latest_run_for(project_id, script_hash)
     return {
-        "run": _run_view(run),
+        "run": _run_view(run, principal),
         "deduplicated": already_active,
         # When the submission deduplicated, enqueue_full_pipeline
         # returns the existing RUN id (its documented contract), not
@@ -1287,13 +1368,13 @@ def list_project_runs(project_id: str, principal=Depends(require_user)):
     finally:
         db.close()
     runs = run_ledger.list_runs_for(project_id)
-    return {"runs": [_run_view(run) for run in runs]}
+    return {"runs": [_run_view(run, principal) for run in runs]}
 
 
 @router.get("/runs/{run_id}")
 def get_run(run_id: str, principal=Depends(require_user)):
     run = _get_owned_run_or_404(run_id, principal)
-    return _run_view(run)
+    return _run_view(run, principal)
 
 
 @router.post("/runs/{run_id}/cancel")
@@ -1305,7 +1386,7 @@ def cancel_run(run_id: str, principal=Depends(post_guard)):
     return {
         "run_id": run_id,
         "cancel_requested": accepted,
-        "run": _run_view(run_ledger.get_run(run_id)),
+        "run": _run_view(run_ledger.get_run(run_id), principal),
     }
 
 
@@ -1691,7 +1772,7 @@ def approve_plan(project_id: str, principal=Depends(post_guard)):
         project_id, script, options=options, run_id=awaiting["run_id"]
     )
     return {
-        "run": _run_view(run_ledger.get_run(awaiting["run_id"])),
+        "run": _run_view(run_ledger.get_run(awaiting["run_id"]), principal),
         "job_id": job_id,
         "released": True,
         "regenerate_sentences": marks,
