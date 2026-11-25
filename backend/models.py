@@ -9,6 +9,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -88,6 +89,16 @@ class Plan(Base):
     Operator-managed seed data (scripts/seed_founder.py ensures the
     founder/free/pro/studio rows); limits are enforced at the points
     named in 02 §5.3 by Phase 8.3. NULL limit = unlimited.
+
+    Phase 8 monetization (schema authority:
+    migrations/versions/0013_billing.py) adds the commercial
+    catalogue fields. `billing_mode` separates the legacy
+    operator-granted plans ('legacy' — limits-only admission, the
+    pre-monetization behaviour) from the founder-priced metered
+    plans ('metered' — credits + generation entitlements enforced
+    by services/billing). Prices are integer cents; NULL price =
+    not sold. The commercial fields are seeded defaults from the
+    founder's monetization directive and remain admin-editable.
     """
 
     __tablename__ = "plans"
@@ -123,16 +134,66 @@ class Plan(Base):
         Boolean, nullable=False, default=False
     )
 
+    # --- Phase 8 monetization catalogue (0013) -------------------
+    price_monthly_cents: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    price_annual_cents: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default="USD"
+    )
+
+    # Credits granted per monthly benefit period (metered plans).
+    monthly_credits: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    # Included standard (<=15 min) generations per benefit period.
+    included_generations: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    # Included AI script operations / thumbnail operations per
+    # benefit period (services/billing allowances, directive §7).
+    script_allowance: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    thumbnail_allowance: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    # 'legacy' (limits-only) or 'metered' (credits + entitlements).
+    billing_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="legacy"
+    )
+
+    # Plan feature flags / collaboration limits document (§15:
+    # differences are allowances and workspace limits, never
+    # production quality).
+    features: Mapped[dict] = mapped_column(JSONVariant, nullable=True)
+
+    is_public: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
 
 class UserSubscription(Base):
     """One user's subscription to a plan (Phase 8.1; design 02 §5.1).
 
     Exactly ONE active subscription per user, enforced by the
     partial unique index below (both dialects, the 0005 pattern).
-    `billing_provider` / `external_id` are the payment seam only:
-    no billing integration exists; until the founder approves one,
-    every subscription is founder-granted and `status` transitions
-    are operator actions.
+    `billing_provider` / `external_id` are written by the Phase 8
+    payment integration (services/billing) from VERIFIED provider
+    webhooks only — never from a frontend success signal — and by
+    audited operator actions. Phase 8 (0013) adds the billing
+    interval, cancel-at-period-end flag and the provider customer
+    id. Benefit periods are monthly even for annual billing
+    (credits distribute monthly; the payment period is annual).
     """
 
     __tablename__ = "user_subscriptions"
@@ -147,7 +208,7 @@ class UserSubscription(Base):
         String(36), ForeignKey("plans.id"), nullable=False
     )
 
-    # active / cancelled / past_due
+    # active / cancelled / past_due / expired
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="active"
     )
@@ -166,6 +227,21 @@ class UserSubscription(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    # --- Phase 8 monetization (0013) ------------------------------
+    # 'month' or 'year' — the PAYMENT interval. Benefit periods
+    # (billing_periods) stay monthly either way.
+    billing_interval: Mapped[str] = mapped_column(
+        String(10), nullable=True
+    )
+
+    cancel_at_period_end: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+    provider_customer_id: Mapped[str] = mapped_column(
+        String(200), nullable=True
     )
 
     __table_args__ = (
@@ -1105,6 +1181,774 @@ class ProviderUsageEvent(Base):
     # Free-text caller label (e.g. "story_analysis"); NULL when the
     # caller supplied no context at all.
     context: Mapped[str] = mapped_column(String(120), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        index=True,
+    )
+
+
+# =====================================================================
+# Phase 8 monetization (founder directive 2026-11-25, §§1–21).
+# Schema authority: migrations/versions/0013_billing.py.
+# =====================================================================
+
+
+class CreditAccount(Base):
+    """One user's credit wallet (Phase 8; directive §4).
+
+    Balances are split by bucket because the buckets have
+    different rules: subscription credits expire at period end
+    (unless rollover is enabled), purchased credits are valid 12
+    months, promo credits carry a disclosed expiry. Each bucket
+    has an available and a reserved balance; a generation moves
+    credits available -> reserved at submission and settles or
+    releases them at completion (services/billing/credits.py).
+    Every mutation is mirrored by an immutable CreditLedgerEntry;
+    the account row is the fast balance cache, the ledger is the
+    audit truth.
+    """
+
+    __tablename__ = "credit_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False,
+        unique=True, index=True,
+    )
+
+    subscription_available: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    subscription_reserved: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    purchased_available: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    purchased_reserved: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    promo_available: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    promo_reserved: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    lifetime_spent: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        onupdate=_utcnow,
+    )
+
+
+class CreditLedgerEntry(Base):
+    """One immutable credit-ledger entry (Phase 8; directive §4).
+
+    Append-only: rows are never updated or deleted. `amount` is
+    signed from the perspective of the bucket named in `bucket`
+    (allocations and releases positive into available, reserves
+    negative from available, charges negative from reserved,
+    expiries negative). The *_balance_after columns snapshot the
+    three AVAILABLE bucket balances after the entry so any point
+    in history can be reconstructed and audited. The UNIQUE
+    idempotency_key makes every retry-safe operation (allocation
+    per period, webhook-driven grant, reservation per run)
+    exactly-once: a duplicate insert is a constraint violation
+    the caller treats as "already applied".
+    """
+
+    __tablename__ = "credit_ledger"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    account_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("credit_accounts.id"), nullable=False,
+        index=True,
+    )
+
+    # allocation_subscription / allocation_purchase /
+    # allocation_promo / reserve / charge / release / refund /
+    # expire / admin_adjustment
+    entry_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, index=True
+    )
+
+    # subscription / purchased / promo (NULL for account-wide rows)
+    bucket: Mapped[str] = mapped_column(String(20), nullable=True)
+
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    subscription_balance_after: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    purchased_balance_after: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    promo_balance_after: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    subscription_id: Mapped[str] = mapped_column(
+        String(36), nullable=True
+    )
+
+    billing_period_id: Mapped[str] = mapped_column(
+        String(36), nullable=True
+    )
+
+    project_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    run_id: Mapped[str] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+
+    payment_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    reservation_id: Mapped[str] = mapped_column(
+        String(36), nullable=True
+    )
+
+    idempotency_key: Mapped[str] = mapped_column(
+        String(200), nullable=True, unique=True
+    )
+
+    reason: Mapped[str] = mapped_column(Text, nullable=True)
+
+    # user / system / admin / webhook / dispatcher
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="system"
+    )
+
+    actor_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    details: Mapped[dict] = mapped_column(JSONVariant, nullable=True)
+
+    # For allocation lots with their own expiry (purchased credits
+    # valid 12 months; promo credits carry a disclosed expiry).
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        index=True,
+    )
+
+
+class BillingPeriod(Base):
+    """One monthly benefit period for one subscription (Phase 8).
+
+    Benefit periods are monthly even for annual billing: credits,
+    generation entitlements and script/thumbnail allowances are
+    granted per period by the lifecycle job, idempotently (the
+    UNIQUE (user_id, period_start) plus the allocation ledger
+    keys). Counters track granted vs used for entitlements and
+    allowances; credits live in the wallet/ledger.
+    """
+
+    __tablename__ = "billing_periods"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    subscription_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("user_subscriptions.id"),
+        nullable=False, index=True,
+    )
+
+    plan_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("plans.id"), nullable=False
+    )
+
+    period_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    period_end: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    generations_granted: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    generations_used: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    scripts_granted: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    scripts_used: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    thumbnails_granted: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    thumbnails_used: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    credits_allocated: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    # open / closed
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="open"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "period_start",
+            name="uq_billing_periods_user_start",
+        ),
+    )
+
+
+class GenerationReservation(Base):
+    """The billing reservation for one generation chain (Phase 8).
+
+    Created inside run_ledger.submit_production for metered
+    plans, keyed UNIQUE by run_id (the first run of the chain);
+    dispatcher retries share the chain root's reservation and are
+    never charged twice. Settlement/restoration happens inside
+    run_ledger.finish_run, whose first-finisher-wins semantics
+    make settlement exactly-once. `source` distinguishes user
+    generations from zero-charge operator actions (admin
+    replacement / requeue).
+    """
+
+    __tablename__ = "generation_reservations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    run_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, unique=True, index=True
+    )
+
+    root_run_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, index=True
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    project_id: Mapped[str] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+
+    billing_period_id: Mapped[str] = mapped_column(
+        String(36), nullable=True
+    )
+
+    entitlement_reserved: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+    credits_reserved: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    estimated_seconds: Mapped[float] = mapped_column(
+        Float, nullable=True
+    )
+
+    actual_seconds: Mapped[float] = mapped_column(Float, nullable=True)
+
+    charged_credits: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    # active / settled / released
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", index=True
+    )
+
+    # user / admin
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="user"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    settled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class TopupPackage(Base):
+    """A purchasable credit top-up package (Phase 8; directive §8).
+
+    Seeded from the founder's price table; admin-editable.
+    Purchased credits are tracked in the purchased bucket and are
+    valid `validity_months` from purchase.
+    """
+
+    __tablename__ = "topup_packages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    name: Mapped[str] = mapped_column(
+        String(80), nullable=False, unique=True
+    )
+
+    credits: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default="USD"
+    )
+
+    validity_months: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=12
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+
+    sort_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    provider_price_id: Mapped[str] = mapped_column(
+        String(200), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        onupdate=_utcnow,
+    )
+
+
+class Coupon(Base):
+    """A promotion / coupon (Phase 8; directive §11).
+
+    kind: 'percent' (percent_off), 'fixed' (amount_off_cents) or
+    'credits' (credits_grant promo credits, which carry the
+    disclosed expiry in promo_expires_at). Abuse controls:
+    max_redemptions cap, per-user single redemption (enforced by
+    the coupon_redemptions unique constraint), validity window.
+    """
+
+    __tablename__ = "coupons"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    code: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True
+    )
+
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    percent_off: Mapped[int] = mapped_column(Integer, nullable=True)
+
+    amount_off_cents: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    credits_grant: Mapped[int] = mapped_column(Integer, nullable=True)
+
+    promo_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    max_redemptions: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    redeemed_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    starts_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    ends_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+
+    created_by: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+
+class CouponRedemption(Base):
+    """One user's redemption of one coupon (Phase 8).
+
+    The UNIQUE (coupon_id, user_id) constraint is the per-user
+    abuse control: a second redemption attempt violates it and is
+    treated as already-redeemed.
+    """
+
+    __tablename__ = "coupon_redemptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    coupon_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("coupons.id"), nullable=False, index=True
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    payment_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    redeemed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "coupon_id", "user_id",
+            name="uq_coupon_redemptions_once",
+        ),
+    )
+
+
+class Payment(Base):
+    """One payment as recorded from verified provider state
+    (Phase 8; directive §10).
+
+    Rows are created/updated ONLY by verified webhook processing
+    or audited admin actions — never by a frontend success
+    message. Revenue reporting reads completed rows of this
+    table, so reported revenue is always provider-verified.
+    """
+
+    __tablename__ = "payments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    provider: Mapped[str] = mapped_column(
+        String(30), nullable=False, index=True
+    )
+
+    provider_transaction_id: Mapped[str] = mapped_column(
+        String(200), nullable=True, unique=True
+    )
+
+    # subscription / topup
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # pending / completed / failed / refunded /
+    # partially_refunded / disputed
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, index=True
+    )
+
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default="USD"
+    )
+
+    plan_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("plans.id"), nullable=True
+    )
+
+    topup_package_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("topup_packages.id"), nullable=True
+    )
+
+    subscription_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("user_subscriptions.id"), nullable=True
+    )
+
+    coupon_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("coupons.id"), nullable=True
+    )
+
+    refunded_amount_cents: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        index=True,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        onupdate=_utcnow,
+    )
+
+
+class PaymentEvent(Base):
+    """The webhook inbox (Phase 8; directive §16).
+
+    Every verified provider event is stored exactly once — the
+    UNIQUE (provider, event_id) constraint makes duplicate
+    deliveries harmless — then processed; processing errors are
+    recorded on the row, never swallowed.
+    """
+
+    __tablename__ = "payment_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    provider: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    event_id: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    event_type: Mapped[str] = mapped_column(
+        String(120), nullable=False
+    )
+
+    payload: Mapped[dict] = mapped_column(JSONVariant, nullable=True)
+
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    processing_error: Mapped[str] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        index=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "event_id",
+            name="uq_payment_events_provider_event",
+        ),
+    )
+
+
+class PricingRule(Base):
+    """One admin-configured provider price (Phase 8; directive §13).
+
+    The cost engine prices provider_usage_events from these
+    rules. The table ships EMPTY: with no rule configured, costs
+    remain unknown (null) — the platform never invents a price.
+    Rates are integer micro-USD per `unit` (per_1k_tokens /
+    per_call / per_search / per_minute / per_gb_month).
+    """
+
+    __tablename__ = "pricing_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    provider: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True
+    )
+
+    # NULL model = the provider's default rate for the unit.
+    model: Mapped[str] = mapped_column(String(128), nullable=True)
+
+    unit: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    rate_microusd: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
+
+    effective_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    effective_to: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    configured_by: Mapped[str] = mapped_column(
+        String(36), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+
+class GeneratedVideo(Base):
+    """The §21 retention registry: one row per generated video
+    file (Phase 8; founder directive §21).
+
+    Registered at generation completion with
+    delete_after = created_at + 50 hours exactly. The retention
+    sweeper deletes ONLY registered rows, only at/after
+    delete_after, and sets storage_confirmed only after verifying
+    the file no longer exists. Pre-existing media is never
+    registered, so local protected films and historical outputs
+    are unreachable by the sweeper. Download events are recorded
+    here (serve_media); downloading never extends the deadline.
+    """
+
+    __tablename__ = "generated_videos"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    project_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, index=True
+    )
+
+    run_id: Mapped[str] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+
+    revision_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    # master / delivery / revision_final / revision_delivery
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    media_key: Mapped[str] = mapped_column(String(120), nullable=True)
+
+    # Path relative to the media root — never an absolute path;
+    # the sweeper re-derives and containment-checks the absolute
+    # path at deletion time.
+    relative_path: Mapped[str] = mapped_column(
+        String(500), nullable=False
+    )
+
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        index=True,
+    )
+
+    delete_after: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+
+    # active / deleting / deleted / delete_failed
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", index=True
+    )
+
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    storage_confirmed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+    download_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    first_downloaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    last_downloaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    delete_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    last_delete_error: Mapped[str] = mapped_column(Text, nullable=True)
+
+    reminded_24h: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+    reminded_6h: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+    reminded_1h: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+
+class UserNotification(Base):
+    """One in-app notification (Phase 8; directive §21 D).
+
+    The platform's first notification store, created for the
+    retention reminders (24h / 6h / 1h). `email_status` records
+    honestly what happened with the email copy: the mailer's
+    return value ('smtp'), 'not_configured' while no email
+    provider exists, or 'failed'. Email is never claimed sent
+    when it was not.
+    """
+
+    __tablename__ = "user_notifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+
+    body: Mapped[str] = mapped_column(Text, nullable=True)
+
+    project_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    generated_video_id: Mapped[str] = mapped_column(
+        String(36), nullable=True
+    )
+
+    email_status: Mapped[str] = mapped_column(
+        String(20), nullable=True
+    )
+
+    read_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow,
