@@ -3965,6 +3965,11 @@ def build_motion_graphics_assets(
         # the SAME assembled recorded series as the PIL line chart
         # — one data contract, two render engines.
         "manim_line_chart": _assemble_line_chart,
+        # GitHub Skills Programme: the matplotlib line chart rides
+        # the same assembled series; unlike Manim it is cheap
+        # (in-process, seconds), so it is NOT Director-only — it
+        # may also serve the undirected fallback chain.
+        "mpl_line_chart": _assemble_line_chart,
         "pie_chart": _assemble_pie_chart,
         "border_map": _map_variant("border"),
         "route_map": _map_variant("route"),
@@ -4234,6 +4239,10 @@ def build_motion_graphics_assets(
             # GitHub Skills Programme: identical recorded comparison
             # data as the PIL bar chart — the Manim template itself
             # refuses under 3 items, before any render is spent.
+            return {"items": comparison, "title": short_title_for(target)}
+        if name == "mpl_bar_chart" and comparison:
+            # GitHub Skills Programme: the matplotlib bar chart
+            # rides the same recorded comparison data.
             return {"items": comparison, "title": short_title_for(target)}
         if name == "stat_comparison" and comparison:
             return {"items": comparison, "title": short_title_for(target)}

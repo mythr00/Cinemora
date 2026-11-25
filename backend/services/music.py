@@ -936,6 +936,16 @@ def resolve_mix_config(options=None, genre_pack=None, music_volume=None):
     else:
         normalise = True
     config["normalise"] = normalise
+    # Narration denoise (Lane 4 prototype): option wins, then env,
+    # default OFF — see _DENOISE_FILTER's note.
+    denoise_env = os.environ.get("CINEMORA_DENOISE_NARRATION")
+    if options.get("denoise_narration") is not None:
+        denoise = bool(options["denoise_narration"])
+    elif denoise_env is not None and denoise_env.strip() != "":
+        denoise = denoise_env.strip().lower() not in ("0", "false", "no")
+    else:
+        denoise = False
+    config["denoise_narration"] = denoise
     config["target_lufs"] = target_lufs()
     config["max_true_peak_dbtp"] = max_true_peak_dbtp()
     config["preset"] = {
@@ -1011,6 +1021,86 @@ def _loudnorm_analysis(audio_file):
     except Exception as error:
         print(f"Loudnorm analysis failed: {error}")
         return None
+
+
+#: Narration cleanup (GitHub Skills Programme, Lane 4, 2026-11-25).
+#: Lane 4 found the pipeline's one genuine audio capability gap:
+#: no denoising step exists anywhere, while TTS and recorded
+#: narration arrive with hiss/room noise that loudnorm then
+#: amplifies to the -14 LUFS target. ffmpeg's afftdn is already
+#: in the installed build — no new dependency.
+#:
+#: MEASURED design (synthetic A/B, tests/test_narration_denoise.py):
+#: afftdn's decisive parameter is nf (the noise floor it should
+#: expect). At the default nf=-50 it did essentially nothing to a
+#: -30 dBFS noise floor (gap RMS -30.45 -> -30.60 dB); with nf set
+#: just above the MEASURED floor it removed ~21 dB of floor while
+#: moving the voice segment's level by 0.12 dB. So the pass is
+#: two-step: measure the narration's floor (10th-percentile
+#: windowed RMS of the decoded PCM), then run afftdn with
+#: nf = floor + 2 dB and a moderate nr=12. PROTOTYPE posture: off
+#: by default, enabled per-run (option denoise_narration) or by
+#: env CINEMORA_DENOISE_NARRATION=1, always recorded in the mix
+#: section; promotion to a default awaits the same A/B on real
+#: narration when film runs resume.
+_DENOISE_NR_DB = 12
+
+
+def estimate_noise_floor_db(audio_file):
+    """10th-percentile windowed RMS of the decoded mono PCM, in
+    dBFS — the level the quietest parts of the file sit at. None
+    when the file cannot be decoded/measured."""
+    import subprocess as _subprocess
+
+    import numpy as _np
+
+    try:
+        proc = _subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(audio_file),
+             "-ac", "1", "-ar", "48000", "-f", "f32le", "-"],
+            capture_output=True, timeout=300,
+        )
+        if proc.returncode != 0 or not proc.stdout:
+            return None
+        samples = _np.frombuffer(proc.stdout, dtype=_np.float32)
+        window = 4800  # 100 ms windows
+        usable = (len(samples) // window) * window
+        if usable == 0:
+            return None
+        windows = samples[:usable].reshape(-1, window)
+        rms = _np.sqrt(_np.mean(windows.astype(_np.float64) ** 2, axis=1))
+        floor = float(_np.percentile(rms, 10))
+        if floor <= 0:
+            return None
+        return round(20.0 * float(_np.log10(floor)), 2)
+    except Exception as error:
+        print(f"Noise floor measurement failed: {error}")
+        return None
+
+
+def narration_denoise_filter(floor_db=None) -> str:
+    """The afftdn filter string for a measured floor (nf just
+    above it). Without a measurement, afftdn's defaults — the
+    honest no-op-ish fallback the A/B measured."""
+    if floor_db is None:
+        return f"afftdn=nr={_DENOISE_NR_DB}"
+    nf = max(-60.0, min(-20.0, float(floor_db) + 2.0))
+    return f"afftdn=nr={_DENOISE_NR_DB}:nf={nf:.1f}"
+
+
+def denoise_audio_file(input_file, output_file):
+    """Measure the floor, then run the narration denoise pass
+    over a standalone file. Returns the applied record."""
+    floor_db = estimate_noise_floor_db(input_file)
+    filter_string = narration_denoise_filter(floor_db)
+    run_ffmpeg(
+        [
+            "ffmpeg", "-y", "-i", str(input_file),
+            "-af", filter_string,
+            "-c:a", "pcm_s16le", str(output_file),
+        ]
+    )
+    return {"filter": filter_string, "measured_floor_db": floor_db}
 
 
 def _normalise_audio(input_file, output_file, config):
@@ -1213,15 +1303,21 @@ def _mix_to_file(narration_file, mix_file, music_file, mix_config,
     — the caller's corrupt-file path."""
     resolved_volume = mix_config["music_volume"]
     if not music_file:
-        run_ffmpeg(
-            [
-                "ffmpeg", "-y",
-                "-i", str(narration_file),
-                "-map", "0:a:0",
-                "-c:a", "pcm_s16le",
-                str(mix_file),
+        if mix_config.get("denoise_narration"):
+            applied = denoise_audio_file(narration_file, mix_file)
+            mix_config["denoise_measured_floor_db"] = applied[
+                "measured_floor_db"
             ]
-        )
+        else:
+            run_ffmpeg(
+                [
+                    "ffmpeg", "-y",
+                    "-i", str(narration_file),
+                    "-map", "0:a:0",
+                    "-c:a", "pcm_s16le",
+                    str(mix_file),
+                ]
+            )
         return None
 
     narration_probe = probe_audio_file(narration_file) or {}
@@ -1254,9 +1350,16 @@ def _mix_to_file(narration_file, mix_file, music_file, mix_config,
             "[music_gated];"
         )
         music_label = "[music_gated]"
+    voice_cleanup = ""
+    if mix_config.get("denoise_narration"):
+        floor_db = estimate_noise_floor_db(narration_file)
+        mix_config["denoise_measured_floor_db"] = floor_db
+        voice_cleanup = f"{narration_denoise_filter(floor_db)},"
+    
     filter_complex = (
         "[0:a]"
         "aresample=48000,"
+        f"{voice_cleanup}"
         "asetpts=N/SR/TB"
         "[voice];"
 
@@ -1484,6 +1587,20 @@ def prepare_soundtrack(
         "target_lufs": mix_config["target_lufs"],
         "max_true_peak_dbtp": mix_config["max_true_peak_dbtp"],
         "normalisation": normalisation,
+        # Lane 4 prototype: whether the narration chain carried
+        # the afftdn cleanup pass, the filter family and the
+        # measured floor its nf was set from — provenance facts
+        # on every soundtrack record.
+        "denoise": {
+            "applied": bool(mix_config.get("denoise_narration")),
+            "filter": narration_denoise_filter(
+                mix_config.get("denoise_measured_floor_db")
+            ),
+            "measured_floor_db": mix_config.get(
+                "denoise_measured_floor_db"
+            ),
+            "stage": "narration_pre_mix",
+        },
     }
     record = {
         "music": "mixed" if music_file else "absent",

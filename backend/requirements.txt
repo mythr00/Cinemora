@@ -15,6 +15,18 @@
 # .github/workflows/tests.yml). scipy/networkx arrive as manim dependencies;
 # pydub is a manim transitive dependency only — no Cinemora code imports it.
 # Guard: tests/test_manim_templates.py.
+# Research full-text stack (GitHub Skills Programme, Lane 3, 2026-11-25):
+# trafilatura/RapidFuzz/pypdf/pdfplumber/dateparser + their trees power
+# services/source_extraction.py and the story bible's evidence widening.
+# Guard: tests/test_source_extraction.py, tests/test_script_facts_dates.py.
+# Visual-storytelling + chart stack (Lanes 1-2, 2026-11-25): scenedetect
+# (shot boundaries, services/shot_detection.py; the regular distribution —
+# the headless wheel would install a second, conflicting cv2 provider),
+# matplotlib (services/motion_engine/mpl_templates.py). Guards:
+# tests/test_lane2_content_evidence.py, tests/test_mpl_templates.py.
+# hypothesis is TEST-ONLY (Lane 5): property tests for the billing
+# invariants, tests/test_billing_properties.py. It ships in this file
+# because CI installs exactly this file before running the suite.
 alembic==1.20.1
 annotated-doc==0.0.7
 argon2-cffi==25.1.0
@@ -27,7 +39,9 @@ certifi==2026.10.23
 charset-normalizer==3.5.3
 click==8.5.1
 cloup==4.0.0
+contourpy==1.4.0
 croniter==7.0.0
+cycler==0.12.1
 ctranslate2==4.9.0
 decorator==5.3.2
 fakeredis==2.40.0
@@ -35,18 +49,22 @@ fastapi==0.165.0
 faster-whisper==1.2.1
 filelock==4.2.12
 flatbuffers==25.12.19
+fonttools==4.69.1
 fsspec==2026.9.0
 glcontext==3.1.0
 h11==0.16.0
 hf-xet==1.8.0
 httpcore2==2.16.2
+hypothesis==6.170.17
 httptools==0.9.0
 httpx2==2.16.2
 huggingface_hub==2.4.0
 idna==3.20
 iniconfig==2.3.1
 isosurfaces==0.1.2
+kiwisolver==1.5.1
 Mako==1.4.3
+matplotlib==3.10.9
 manim==0.22.1
 manimpango==0.7.1
 mapbox-earcut==2.1.0
@@ -64,6 +82,7 @@ packaging==26.3
 pathvalidate==3.3.1
 pillow==13.0.0
 piper-tts==1.8.0
+platformdirs==4.14.8
 pluggy==1.7.0
 protobuf==7.36.2
 psycopg2-binary==2.9.13
@@ -76,6 +95,7 @@ pydub==0.25.1
 pyglet==2.1.19
 pyglm==2.8.4
 Pygments==2.21.0
+pyparsing==3.3.3
 pytest==9.2.0
 python-dateutil==4.0.0
 python-dotenv==1.2.4
@@ -99,11 +119,13 @@ requests==2.34.2
 rich==15.0.0
 rq==3.0.0
 scipy==1.18.1
+scenedetect==0.7.3
 screeninfo==0.8.1
 shapely==2.2.0
 six==1.17.0
 skia-pathops==0.9.2
 soupsieve==4.1.3
+sortedcontainers==2.4.0
 SQLAlchemy==2.1.9
 srt==3.5.3
 starlette==1.10.0

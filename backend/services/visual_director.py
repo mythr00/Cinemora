@@ -334,7 +334,7 @@ def _template_candidates(row, outcome, pack):
         # template refuses under 3 items (and whenever Manim is
         # unavailable on the host) and the chain falls through to
         # the PIL bar chart with the refusal recorded.
-        candidates += ["manim_bar_chart", "bar_chart", "stat_comparison"]
+        candidates += ["manim_bar_chart", "mpl_bar_chart", "bar_chart", "stat_comparison"]
     if features["has_percent"]:
         candidates += ["data_gauge", "ring_badges"]
     # F1 charts: a measured series, a comparable pair.
@@ -344,7 +344,7 @@ def _template_candidates(row, outcome, pack):
         # recorded series, the PIL line chart as the recorded
         # fall-through (the Manim template refuses under 3 points
         # or when the engine is unavailable).
-        candidates += ["manim_line_chart", "line_chart"]
+        candidates += ["manim_line_chart", "mpl_line_chart", "line_chart"]
     if features["has_pair"]:
         candidates.append("pie_chart")
     # Wave 2 (F1/F2 breadth): the dashboard, bubble chart and

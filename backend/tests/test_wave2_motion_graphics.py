@@ -139,7 +139,9 @@ def test_registry_covers_all_wave2_templates():
     # 31 at Wave 1 + 18 Wave 2 registrations.
     # +2 (GitHub Skills Programme, 2026-11-25): the Manim engine's
     # manim_line_chart / manim_bar_chart registered alongside.
-    assert len(engine_templates.TEMPLATES) == 51
+    # +2 (GitHub Skills Programme, 2026-11-25): the matplotlib
+    # chart engine's mpl_line_chart / mpl_bar_chart.
+    assert len(engine_templates.TEMPLATES) == 53
 
 
 def test_wave2_templates_refuse_with_typed_reasons(tmp_path):

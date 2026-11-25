@@ -21,5 +21,9 @@ from services.motion_engine import templates_v4 as _templates_v4  # noqa: E402,F
 # on hosts where Manim is not installed (its templates then refuse
 # with the typed "manim_unavailable" reason).
 from services.motion_engine import manim_templates as _manim_templates  # noqa: E402,F401
+# GitHub Skills Programme (2026-11-25): the matplotlib chart
+# templates self-register the same way; matplotlib itself is
+# imported lazily inside the renders.
+from services.motion_engine import mpl_templates as _mpl_templates  # noqa: E402,F401
 
 __all__ = ["STYLES", "resolve_style"]

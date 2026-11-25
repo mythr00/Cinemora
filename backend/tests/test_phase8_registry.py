@@ -36,11 +36,14 @@ def test_registry_covers_all_fifteen_templates():
     # F5 construction / molecular, F7/F8 HUD / holographic /
     # before-after / layered reveal / object labels). The GitHub
     # Skills programme grows it again, 49 to 51: the two Manim-engine
-    # registrations (manim_line_chart, manim_bar_chart). The
-    # fifteen-template vocabulary itself is intact.
+    # registrations (manim_line_chart, manim_bar_chart); and 51 to
+    # 53 with the two matplotlib chart registrations (mpl_line_chart,
+    # mpl_bar_chart). The fifteen-template vocabulary itself is
+    # intact.
     names = set(templates.TEMPLATES) | set(templates_v2.V2_TEMPLATES)
-    assert len(names) == 51
+    assert len(names) == 53
     assert "manim_line_chart" in names and "manim_bar_chart" in names
+    assert "mpl_line_chart" in names and "mpl_bar_chart" in names
     # The run-10 T5 guarantee template is part of the vocabulary.
     assert "closing_card" in names
     for name in (
