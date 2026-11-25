@@ -7,6 +7,7 @@ import {
   createProject as apiCreateProject,
   getConfigCatalogue,
   getConfigDefaults,
+  getCurrentUser,
   getProjectStatus,
   getVoiceCatalogue,
   submitRun,
@@ -114,6 +115,13 @@ export default function Home() {
   // Phase 9: the pre-production configuration document. Seeded
   // from the user's saved defaults when they exist; submitted
   // as options.production_config.
+  // FS-G (FS-12): the Visual Plan is an admin-only surface
+  // (FS-C), so the post-submit "Review the production plan" link
+  // in the status card below renders only for admin principals —
+  // the same /auth/me role source the dashboard uses. Ordinary
+  // users follow the run from the project Overview instead (the
+  // "Open the project workspace" link is always shown).
+  const [isAdmin, setIsAdmin] = useState(false);
   const [configCatalogue, setConfigCatalogue] = useState<ConfigCatalogue | null>(null);
   const [productionConfig, setProductionConfig] = useState<ProductionConfig>(emptyProductionConfig());
   const [configSeeded, setConfigSeeded] = useState(false);
@@ -180,6 +188,20 @@ export default function Home() {
       clearTimeout(timer);
       controller.abort();
     };
+  }, []);
+
+  // FS-G (FS-12): load the account role once (see isAdmin above).
+  useEffect(() => {
+    const controller = new AbortController();
+    getCurrentUser(controller.signal)
+      .then((user) =>
+        setIsAdmin(
+          user !== null &&
+            (user.role === "admin" || user.role === "super_admin"),
+        ),
+      )
+      .catch(() => undefined);
+    return () => controller.abort();
   }, []);
 
   const canonicalVoice = voices.find((voice) => !voice.alias_of) || voices[0];
@@ -409,7 +431,7 @@ export default function Home() {
           <div className="status-heading"><span className="status-indicator" /><div><span className="eyebrow">PRODUCTION STATUS</span><h3>{statusTitle(status?.status, !!projectId, loading)}</h3></div></div>
           {projectId ? <>
             <p className="status-message">{message || "Waiting for production status…"}</p>
-            {status?.status === "awaiting_approval" && <p className="status-message"><Link className="text-link" href={`/projects/${projectId}/plan`}>Review the production plan</Link></p>}
+            {status?.status === "awaiting_approval" && isAdmin && <p className="status-message"><Link className="text-link" href={`/projects/${projectId}/plan`}>Review the production plan</Link></p>}
             {status && <StageProgress stages={status.stages} currentStage={status.current_stage} />}
             {projectId && <p className="status-message"><Link className="text-link" href={`/projects/${projectId}`}>Open the project workspace <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link></p>}
             <div className="project-reference"><span>PROJECT</span><code>{projectId.slice(0, 8)}…</code>{jobId && <><i /><span>JOB</span><code>{jobId.slice(0, 8)}…</code></>}</div>

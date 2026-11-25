@@ -32,11 +32,19 @@ import { checkEditorGate } from "@/lib/editor-gate";
  *
  * FS-C (FS-1/FS-5/FS-6/FS-11/FS-13): the presentational internal
  * tabs — Visual Plan, Research, Graphics, Versions and
- * Intelligence — join the same ADMIN-ONLY set, so the ordinary
- * user's tab bar is: Overview, Configuration, Editor, Editor
- * Studio, Thumbnails, Localization, Team. Nothing is deleted;
- * admins keep every tab, and the pages/endpoints enforce the
- * same rule server-side.
+ * Intelligence — join the same ADMIN-ONLY set. Nothing is
+ * deleted; admins keep every admin tab, and the pages/endpoints
+ * enforce the same rule server-side.
+ *
+ * FS-G (FS-12): Team is NOT a tab at all — for any role. It has
+ * its own dedicated page (the unchanged per-project route
+ * /projects/[id]/team) reached from its own navigation entry:
+ * the "Team" button in the project Overview header. Removing it
+ * from this bar also ends the old completion walk in which Team,
+ * as the terminal tab, was the last screen the tab bar led to
+ * after generation. The ordinary user's tab bar is now exactly:
+ * Overview, Configuration, Editor, Editor Studio, Thumbnails,
+ * Localization.
  *
  * FS-F (FS-8): the Editor and Editor Studio tabs are DISABLED
  * (rendered as inert, aria-disabled spans, never links) for
@@ -63,7 +71,8 @@ const TABS = [
   { suffix: "/localization", label: "Localization" },
   { suffix: "/versions", label: "Versions" },
   { suffix: "/intelligence", label: "Intelligence" },
-  { suffix: "/team", label: "Team" },
+  // FS-G (FS-12): no Team tab — see the header comment. The team
+  // page is reached from the Overview header's Team entry.
 ] as const;
 
 const EDITOR_SUFFIXES: ReadonlySet<string> = new Set(["/edit", "/studio"]);

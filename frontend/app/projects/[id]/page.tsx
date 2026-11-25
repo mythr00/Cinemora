@@ -8,7 +8,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { ProjectTabs } from "@/components/project-tabs";
 import { StageProgress } from "@/components/stage-progress";
 import { ErrorState, LoadingState } from "@/components/states";
-import { ArrowLeft, ArrowUpRight, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Sparkles, Users } from "lucide-react";
 import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
 import {
   cancelRun,
@@ -204,7 +204,18 @@ export default function ProjectPage() {
         <p className="eyebrow">PROJECT OVERVIEW</p>
         <h1>{overview.status.title || `${overview.status.category} production`}</h1>
         <p className="overview-status-line">Status: <StatusBadge status={overview.status.status} />{overview.status.current_stage ? ` · Stage: ${overview.status.current_stage.replaceAll("_", " ")}` : ""}</p>
-        <p><Link className="button" href={`/assistant?project=${projectId}`}><Sparkles size={14} strokeWidth={2} aria-hidden /> Ask the assistant</Link></p>
+        <p><Link className="button" href={`/assistant?project=${projectId}`}><Sparkles size={14} strokeWidth={2} aria-hidden /> Ask the assistant</Link>{" "}
+        {/* FS-G (FS-12): Team's own dedicated navigation entry.
+            Team is no longer a workspace tab; this header action
+            opens the same per-project team page the tab used to
+            (members, invitations, roles — unchanged). It sits in
+            the project header so it is reachable from the project
+            context without being part of the tab bar or of the
+            post-generation completion flow. Visibility follows
+            the page behind it: anyone who can open this project
+            overview is a project member, and the team page/API
+            enforce the collaboration roles themselves. */}
+        <Link className="button" href={`/projects/${projectId}/team`}><Users size={14} strokeWidth={2} aria-hidden /> Team</Link></p>
       </div>
       {failureDisplay(overview.status.error, isAdmin) && <p className="projects-error" role="alert">{failureDisplay(overview.status.error, isAdmin)}</p>}
 
@@ -288,7 +299,15 @@ function nextActionFor(status: string, projectId: string, isAdmin: boolean): { t
       }
       return { text: "The production plan is ready and production is paused on your decision.", label: "Review the plan", href: `/projects/${projectId}/plan` };
     case "completed":
-      return { text: "The film is finished. Open it in the editor, or check delivery and provenance.", label: "Open the editor", href: `/projects/${projectId}/edit` };
+      // FS-G (FS-12): the completion flow leads to the finished
+      // video and the Studio — never to Team (no longer a tab,
+      // and never a completion next step) and never to Delivery
+      // & Provenance, which is admin-only (FS-9). The finished
+      // film itself is on this page (the Delivery panel above);
+      // the prominent action opens it in the Editor Studio,
+      // which FS-F (FS-8) now lets a completed production with a
+      // finished video actually open.
+      return { text: "The film is finished — watch it in the Delivery panel above, or open it in the Editor Studio to refine the cut.", label: "Open the Editor Studio", href: `/projects/${projectId}/studio` };
     case "failed":
       // FS-4: simple failure status + next action on this page —
       // no internal failure detail, and no link into the

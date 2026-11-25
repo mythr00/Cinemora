@@ -27,6 +27,7 @@ import {
   clearConfigDefaults,
   getConfigCatalogue,
   getConfigDefaults,
+  getCurrentUser,
   getProjectConfig,
   getVoiceTranscript,
   removeConfigMusicUpload,
@@ -78,6 +79,13 @@ export default function ConfigurePage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [liveValidation, setLiveValidation] = useState<ConfigValidation | null>(null);
 
+  // FS-G (FS-12): the Versions tab is an admin-only surface
+  // (FS-C), so the Versions link in the run-history note below
+  // renders only for admin principals (role from /auth/me, the
+  // same source ProjectTabs uses). Ordinary users keep the note
+  // itself — every run does record its configuration — without a
+  // link into the gated surface.
+  const [isAdmin, setIsAdmin] = useState(false);
   const [transcript, setTranscript] = useState<VoiceTranscript | null>(null);
   const [reviewText, setReviewText] = useState("");
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -101,6 +109,19 @@ export default function ConfigurePage() {
       setTranscript(null);
     }
   }, [projectId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getCurrentUser(controller.signal)
+      .then((user) =>
+        setIsAdmin(
+          user !== null &&
+            (user.role === "admin" || user.role === "super_admin"),
+        ),
+      )
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -370,11 +391,17 @@ export default function ConfigurePage() {
               )}
               <p className="plan-meta">
                 <History size={14} strokeWidth={2} aria-hidden /> Every run
-                records the exact configuration it ran with — see the{" "}
-                <Link className="text-link" href={`/projects/${projectId}/versions`}>
-                  Versions tab
-                </Link>{" "}
-                for the per-run configuration history.
+                records the exact configuration it ran with.
+                {isAdmin && (
+                  <>
+                    {" "}
+                    See the{" "}
+                    <Link className="text-link" href={`/projects/${projectId}/versions`}>
+                      Versions tab
+                    </Link>{" "}
+                    for the per-run configuration history.
+                  </>
+                )}
               </p>
             </section>
 
