@@ -47,6 +47,10 @@ os.environ.setdefault(
 os.environ.setdefault("HF_HOME", os.path.join(DATA, "hf-cache"))
 os.environ.setdefault("CINEMORA_CORS_ORIGINS", "https://cinemora-chi.vercel.app")
 os.environ.setdefault("CINEMORA_COOKIE_SECURE", "1")
+# E-21/B-05: the operator-token dual-auth window stays CLOSED on a
+# hosted launch unless the operator deliberately opens it by setting
+# CINEMORA_ALLOW_OPERATOR_TOKEN=1 in cinemora.env / the environment.
+os.environ.setdefault("CINEMORA_ALLOW_OPERATOR_TOKEN", "0")
 os.environ.setdefault(
     "CINEMORA_PUBLIC_BASE_URL", "https://cinemora-chi.vercel.app"
 )

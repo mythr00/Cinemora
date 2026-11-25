@@ -60,11 +60,11 @@ def effective_settings() -> dict:
             _value("CINEMORA_FOUNDER_EMAIL"),
         ],
         "auth_and_limits": [
-            _value("CINEMORA_ALLOW_OPERATOR_TOKEN", default="1"),
+            _value("CINEMORA_ALLOW_OPERATOR_TOKEN", default="0"),
             _value("CINEMORA_REGISTRATION", default="open"),
             _value("CINEMORA_API_RATE_LIMIT", default="30"),
             _value("CINEMORA_AUTH_RATE_LIMIT", default="10"),
-            _value("CINEMORA_COOKIE_SECURE", default="0"),
+            _value("CINEMORA_COOKIE_SECURE", default="1"),
         ],
         "pipeline": [
             _computed(

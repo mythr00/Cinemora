@@ -8,9 +8,11 @@ this module follows the v1 contract documented in
 - Account auth (AUD-11, Phase 8.2): every route except
   GET /api/v1/health requires an authenticated principal —
   a server-side session (cookie or Bearer, services/auth.py) or,
-  during the dual-auth window, the legacy X-API-Key operator token
-  (constant-time compare), which resolves to the founder principal
-  and is retired by setting CINEMORA_ALLOW_OPERATOR_TOKEN=0. When
+  only when a deployment deliberately opens the dual-auth window
+  with CINEMORA_ALLOW_OPERATOR_TOKEN=1 (closed by default, E-21),
+  the legacy X-API-Key operator token
+  (constant-time compare), which resolves to the founder principal.
+  When
   neither is available the API fails CLOSED: 503
   "api_not_configured" when the token is unconfigured, 401
   otherwise, never open. Project/run routes are owner-scoped:
@@ -158,11 +160,13 @@ def register_error_handlers(app):
 
 
 def _operator_token_open() -> bool:
-    """The dual-auth window (design 02 §1.4): the legacy operator
-    token keeps working until CINEMORA_ALLOW_OPERATOR_TOKEN=0
-    retires it (the preview launcher keeps the window open; the
-    SaaS deployment closes it once session login is in use)."""
-    return os.environ.get("CINEMORA_ALLOW_OPERATOR_TOKEN", "1") != "0"
+    """The dual-auth window (design 02 §1.4; E-21/B-05): CLOSED by
+    default — the legacy operator token resolves to the founder
+    super_admin principal ONLY when the deployment deliberately
+    opens the window with CINEMORA_ALLOW_OPERATOR_TOKEN=1 (the
+    local preview launcher does exactly that, explicitly). Any
+    other value, or the variable being unset, keeps it closed."""
+    return os.environ.get("CINEMORA_ALLOW_OPERATOR_TOKEN", "0") == "1"
 
 
 def _bearer_token(request: Request) -> str | None:
@@ -411,7 +415,10 @@ def _set_session_cookie(response: Response, token: str) -> None:
         value=token,
         httponly=True,
         samesite="lax",
-        secure=os.environ.get("CINEMORA_COOKIE_SECURE") == "1",
+        # Secure by default (E-21/B-07): only an explicit
+        # CINEMORA_COOKIE_SECURE=0 (local http development) turns
+        # the Secure flag off.
+        secure=os.environ.get("CINEMORA_COOKIE_SECURE", "1") != "0",
         path="/",
         max_age=auth_service.SESSION_TTL_SECONDS,
     )
@@ -590,13 +597,27 @@ def password_reset_request(body: ResetRequestIn, request: Request):
                 f"{link}\n\nIf you did not request this, ignore this email.",
             )
             if mode == "manual":
-                # No SMTP on this deployment: the operator's host
-                # log is the delivery channel (02 §1.3) — stated
-                # plainly, never dressed up as an email.
+                # No SMTP on this deployment (B-08/E-24): the raw
+                # reset token and the complete reset link must NEVER
+                # reach a log — host logs are not a secret-delivery
+                # channel. Log only a redacted record: recipient,
+                # expiry, and a short non-reversible reference (a
+                # prefix of the token's stored SHA-256) so an
+                # operator can correlate a support request with this
+                # issuance. Delivery itself requires SMTP (or the
+                # user re-requesting once SMTP is configured); the
+                # token is unrecoverable by design — only its hash
+                # is stored.
+                import hashlib
+
+                token_ref = hashlib.sha256(token.encode()).hexdigest()[:12]
                 logging.getLogger(__name__).warning(
-                    "password reset link for %s (manual delivery): %s",
+                    "password reset issued for %s (manual delivery; "
+                    "token NOT logged): ref sha256:%s, expires %s. "
+                    "No email was sent — configure SMTP for delivery.",
                     user.email,
-                    link,
+                    token_ref,
+                    user.password_reset_expires_at,
                 )
     finally:
         db.close()

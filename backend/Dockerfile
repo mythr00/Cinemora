@@ -55,8 +55,14 @@ COPY . ./
 # writable by uid 10001 (see DEPLOY_STEPS.md steps 6 and 9); if Altare's
 # data folder lives elsewhere, override these four variables in the app
 # environment instead of rebuilding.
+# Security defaults (E-21/B-05/B-07): Secure session cookies ON and
+# the operator-token dual-auth window CLOSED in the shipped image.
+# A deployment may deliberately open the window by overriding
+# CINEMORA_ALLOW_OPERATOR_TOKEN=1 in its own environment.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    CINEMORA_COOKIE_SECURE=1 \
+    CINEMORA_ALLOW_OPERATOR_TOKEN=0 \
     CINEMORA_MEDIA_ROOT=/data/media \
     SOURCE_INTEL_DB=/data/source-intel/source_intel.sqlite3 \
     HF_HOME=/data/hf-cache \

@@ -8,9 +8,11 @@ place that knows how mail would be sent:
   and the delivery mode is "smtp".
 - Otherwise NOTHING is sent and the mode is "manual": the caller
   must surface that honestly (the password-reset flow reports the
-  mode to the requester and logs the link for the operator, whose
-  host access is the delivery channel until SMTP exists — the same
-  trust basis as the seed-script break-glass).
+  mode to the requester). Secret-bearing content — a password-reset
+  token or the complete reset link — must NEVER be written to a log
+  (B-08/E-24): logs are not a delivery channel. Callers in manual
+  mode may log only a redacted record (recipient, purpose, expiry,
+  a short hash-prefix reference).
 
 The mode is never faked: "smtp" is returned only after the server
 accepts the message.

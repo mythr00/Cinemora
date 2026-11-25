@@ -294,7 +294,9 @@ OPERATOR_FALLBACK_ID = "00000000-0000-4000-8000-000000000001"
 
 def resolve_operator_principal(db) -> Principal:
     """Dual-auth window (02 §1.4): the legacy operator token IS the
-    founder, until CINEMORA_ALLOW_OPERATOR_TOKEN=0 retires it."""
+    founder. The window is CLOSED by default (E-21/B-05) — callers
+    (api_v1.require_user) reach this only when the deployment has
+    deliberately set CINEMORA_ALLOW_OPERATOR_TOKEN=1."""
     try:
         founder = ensure_founder_user(db)
         return Principal(
