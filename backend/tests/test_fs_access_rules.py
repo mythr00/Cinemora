@@ -422,3 +422,296 @@ def test_sanitizer_helper_admin_passthrough_and_no_mutation():
     assert sanitized["progress"]["stages"]["video_editor"]["error"] == GENERIC
     assert view["error"] == INTERNAL_ERROR
     assert api_v1.sanitize_failure_detail(view, None)["error"] == GENERIC
+
+
+# =====================================================================
+# FS-B (FS-7/FS-9/FS-10, FS-14) — the diagnostic surfaces are
+# admin-only: Asset Decisions ledger detail, Delivery & Provenance
+# certificate, QA reports.
+#
+# Contract pinned here, per surface:
+# - an ordinary project OWNER (non-admin account role) is refused
+#   the internal detail: certificate + QA routes answer 403 with
+#   none of the internal detail in the body; the shared assets
+#   endpoint answers 200 with the internal fields stripped (it is
+#   field-restricted, not closed — see the shared-flow test);
+# - an accepted collaborator (editor member, non-admin) is refused
+#   exactly the same way (register A-9: collaboration role does
+#   not elevate);
+# - a principal with NO grant on the project keeps the Phase 1a
+#   tenant-private 404 on every surface (existence stays hidden);
+# - admin / super_admin principals and the operator principal
+#   (resolves to super_admin) receive the full detail unchanged;
+# - shared endpoints keep serving their legitimate user flows for
+#   non-admins: GET .../assets still serves the Editor's asset
+#   library (the reuse fields), and GET .../outputs still serves
+#   the Overview's film/caption delivery panel.
+# =====================================================================
+
+from models import AssetDecision  # noqa: E402
+
+SOURCE_URL = "https://provenance.example/internal/ledger-source-9f3"
+CONTENT_HASH = "fsb-internal-content-hash-9f3"
+QA_MARKER = "FSB_INTERNAL_QA_DETAIL_9F3"
+
+
+def _seed_production(owner_id, media_root):
+    """One completed production: project + completed run + two
+    ledger decisions carrying internal provenance detail + a
+    recorded production_report.json whose verdict detail carries
+    the QA marker."""
+    script = "Alpha opens. Bravo continues. Charlie closes."
+    project_id, run_id = _uid(), _uid()
+    db = SessionLocal()
+    try:
+        db.add(
+            Project(
+                id=project_id,
+                owner_id=owner_id,
+                title="FS-B seeded project",
+                script=script,
+                category="Documentary",
+                status="completed",
+            )
+        )
+        db.add(
+            ProductionRun(
+                id=run_id,
+                project_id=project_id,
+                owner_id=owner_id,
+                status="completed",
+                stage="delivery",
+                script_hash=run_ledger.script_sha256(script),
+            )
+        )
+        for idx, decision_type in enumerate(("accepted", "rejected")):
+            db.add(
+                AssetDecision(
+                    id=_uid(),
+                    run_id=run_id,
+                    project_id=project_id,
+                    asset_key=f"ledger/asset-{idx}.mp4",
+                    content_hash=CONTENT_HASH,
+                    source_url=SOURCE_URL,
+                    provider="internal-provider",
+                    scene_number=1,
+                    sentence_number=idx + 1,
+                    interval_start=0.0,
+                    interval_duration=5.0,
+                    evidence_class="direct",
+                    verification={"accepted": decision_type == "accepted"},
+                    rights={"license": "internal-licence", "rights_status": "verified"},
+                    decision_type=decision_type,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+    run_dir = media_root / project_id / "runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "production_report.json").write_text(
+        json.dumps(
+            {
+                "schema": "cinemora.production_report/1",
+                "verdicts": {
+                    "quality": {
+                        "verdict": "QUALITY_WARNING",
+                        "detail": QA_MARKER,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return project_id, run_id
+
+
+def _gated_paths(project_id, run_id):
+    return [
+        ("certificate", f"/api/v1/projects/{project_id}/certificate"),
+        ("qa latest", f"/api/v1/projects/{project_id}/qa-report"),
+        ("qa run", f"/api/v1/projects/{project_id}/runs/{run_id}/qa-report"),
+        (
+            "qa export",
+            f"/api/v1/projects/{project_id}/runs/{run_id}/qa-report/export",
+        ),
+    ]
+
+
+def _assert_refused(name, response):
+    assert response.status_code == 403, (name, response.status_code, response.text)
+    assert SOURCE_URL not in response.text, name
+    assert CONTENT_HASH not in response.text, name
+    assert QA_MARKER not in response.text, name
+    assert "QUALITY_WARNING" not in response.text, name
+
+
+def test_fsb_owner_user_refused_internal_detail(client, media_root):
+    owner = _register(client, "fsb-owner")
+    project_id, run_id = _seed_production(owner["id"], media_root)
+
+    for name, path in _gated_paths(project_id, run_id):
+        _assert_refused(name, client.get(path, headers=owner["headers"]))
+
+    # Assets (FS-7): field-restricted for non-admins — the internal
+    # provenance fields are absent from every row.
+    assets = client.get(
+        f"/api/v1/projects/{project_id}/assets", headers=owner["headers"]
+    )
+    assert assets.status_code == 200, assets.text
+    assert SOURCE_URL not in assets.text
+    assert CONTENT_HASH not in assets.text
+    assert "source_url" not in assets.text
+    assert "content_hash" not in assets.text
+    assert "asset_key" not in assets.text
+    assert "previous_decision_id" not in assets.text
+
+
+def test_fsb_collaborator_refused_internal_detail(client, media_root):
+    owner = _register(client, "fsb-owner")
+    member = _register(client, "fsb-member")
+    project_id, run_id = _seed_production(owner["id"], media_root)
+    _share(client, owner, member, project_id, role="editor")
+
+    for name, path in _gated_paths(project_id, run_id):
+        _assert_refused(name, client.get(path, headers=member["headers"]))
+
+    assets = client.get(
+        f"/api/v1/projects/{project_id}/assets", headers=member["headers"]
+    )
+    assert assets.status_code == 200, assets.text
+    assert SOURCE_URL not in assets.text
+    assert "source_url" not in assets.text
+
+
+def test_fsb_non_member_keeps_phase1a_404(client, media_root):
+    owner = _register(client, "fsb-owner")
+    stranger = _register(client, "fsb-stranger")
+    project_id, run_id = _seed_production(owner["id"], media_root)
+
+    for name, path in _gated_paths(project_id, run_id):
+        response = client.get(path, headers=stranger["headers"])
+        assert response.status_code == 404, (name, response.status_code)
+    assets = client.get(
+        f"/api/v1/projects/{project_id}/assets", headers=stranger["headers"]
+    )
+    assert assets.status_code == 404, assets.text
+
+
+@pytest.mark.parametrize("role", ["admin", "super_admin"])
+def test_fsb_admin_roles_receive_full_detail(client, media_root, role):
+    admin = _make_user(role)
+    project_id, run_id = _seed_production(admin["id"], media_root)
+
+    for name, path in _gated_paths(project_id, run_id):
+        response = client.get(path, headers=admin["headers"])
+        assert response.status_code == 200, (name, response.text)
+    qa = client.get(
+        f"/api/v1/projects/{project_id}/qa-report", headers=admin["headers"]
+    )
+    assert QA_MARKER in qa.text
+    assert "QUALITY_WARNING" in qa.text
+
+    certificate = client.get(
+        f"/api/v1/projects/{project_id}/certificate", headers=admin["headers"]
+    )
+    assert certificate.status_code == 200, certificate.text
+    assert SOURCE_URL in certificate.text
+
+    # Assets: admins receive the full ledger rows, unchanged.
+    assets = client.get(
+        f"/api/v1/projects/{project_id}/assets", headers=admin["headers"]
+    )
+    assert assets.status_code == 200, assets.text
+    assert SOURCE_URL in assets.text
+    assert CONTENT_HASH in assets.text
+    row = assets.json()["items"][0]
+    assert row["source_url"] == SOURCE_URL
+    assert row["content_hash"] == CONTENT_HASH
+    assert row["asset_key"]
+
+
+def test_fsb_admin_reads_diagnostics_across_tenants(client, media_root):
+    # FS-DISCOVERY §3.1 option (a): admin diagnostics are
+    # cross-tenant like the admin API — an admin who does not own
+    # (and is not a member of) the project still receives the full
+    # detail on every gated surface.
+    owner = _register(client, "fsb-owner")
+    admin = _make_user("admin")
+    project_id, run_id = _seed_production(owner["id"], media_root)
+
+    for name, path in _gated_paths(project_id, run_id):
+        response = client.get(path, headers=admin["headers"])
+        assert response.status_code == 200, (name, response.text)
+    assets = client.get(
+        f"/api/v1/projects/{project_id}/assets", headers=admin["headers"]
+    )
+    assert assets.status_code == 200, assets.text
+    assert SOURCE_URL in assets.text
+
+
+def test_fsb_operator_receives_full_detail(client, media_root):
+    # NULL-owner legacy project: the operator principal owns it
+    # through the choke point and resolves to super_admin.
+    project_id, run_id = _seed_production(None, media_root)
+    headers = {"X-API-Key": TOKEN}
+
+    for name, path in _gated_paths(project_id, run_id):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200, (name, response.text)
+    qa = client.get(f"/api/v1/projects/{project_id}/qa-report", headers=headers)
+    assert QA_MARKER in qa.text
+    assets = client.get(
+        f"/api/v1/projects/{project_id}/assets", headers=headers
+    )
+    assert SOURCE_URL in assets.text
+
+
+def test_fsb_shared_endpoints_still_serve_user_flows(client, media_root):
+    owner = _register(client, "fsb-owner")
+    project_id, run_id = _seed_production(owner["id"], media_root)
+
+    # Shared flow 1 — the classic Editor's asset library
+    # (components/editor/asset-panel.tsx) reuses recorded assets
+    # through GET .../assets: a non-admin still gets the rows and
+    # exactly the reuse fields the panel renders (id as the reuse
+    # handle, decision type, provider, sentence, evidence class,
+    # verification and rights labels).
+    assets = client.get(
+        f"/api/v1/projects/{project_id}/assets", headers=owner["headers"]
+    )
+    assert assets.status_code == 200, assets.text
+    body = assets.json()
+    assert body["total"] == 2
+    assert len(body["items"]) == 2
+    for row in body["items"]:
+        assert row["id"]
+        assert row["decision_type"] in ("accepted", "rejected")
+        assert row["provider"] == "internal-provider"
+        assert row["sentence_number"] in (1, 2)
+        assert row["evidence_class"] == "direct"
+        assert row["verification"] in ({"accepted": True}, {"accepted": False})
+        assert row["rights"]["license"] == "internal-licence"
+
+    # Shared flow 2 — the Overview Delivery panel
+    # (app/projects/[id]/page.tsx) reads GET .../outputs for the
+    # film/caption downloads: unchanged for non-admins.
+    outputs = client.get(
+        f"/api/v1/projects/{project_id}/outputs", headers=owner["headers"]
+    )
+    assert outputs.status_code == 200, outputs.text
+    body = outputs.json()
+    assert body["project_id"] == project_id
+    assert "film" in body and "captions" in body
+
+    # Shared flow 3 — the QA page's supporting reads (project +
+    # run list) stay available to non-admins; only the report
+    # detail itself is gated.
+    project = client.get(
+        f"/api/v1/projects/{project_id}", headers=owner["headers"]
+    )
+    assert project.status_code == 200, project.text
+    runs = client.get(
+        f"/api/v1/projects/{project_id}/runs", headers=owner["headers"]
+    )
+    assert runs.status_code == 200, runs.text

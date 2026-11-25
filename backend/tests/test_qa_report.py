@@ -659,7 +659,12 @@ def test_qa_report_cross_tenant_404(client):
     ):
         response = client.get(path, headers=_bearer(b))
         assert response.status_code == 404, (path, response.text)
-    # The owner still reads it.
+    # FS-B (FS-10/FS-14): the QA report is admin-only — the
+    # non-admin owner is now refused with 403 (cross-tenant stays
+    # 404 above), and the operator principal still reads it.
     assert client.get(
         f"/api/v1/projects/{project['id']}/qa-report", headers=_bearer(a)
+    ).status_code == 403
+    assert client.get(
+        f"/api/v1/projects/{project['id']}/qa-report", headers=HEADERS
     ).status_code == 200

@@ -291,6 +291,97 @@ def require_admin(
     return principal
 
 
+def _require_admin_for_diagnostic_surface(
+    principal: auth_service.Principal,
+) -> None:
+    """FS-B (FS-7/FS-9/FS-10, enforcement model FS-14): the
+    diagnostic project surfaces — the Asset Decisions ledger
+    detail, the Delivery & Provenance certificate, and the QA
+    reports — are ADMIN-ONLY. Callers invoke this AFTER
+    _load_project_for_diagnostic_surface (the Phase 1a choke
+    point for non-admins), so the status convention for project
+    data is preserved exactly: a principal with no grant on the
+    project still gets the tenant-private 404, and only a granted
+    principal (owner or accepted member) who is not an
+    administrator gets 403 — the require_admin convention for
+    admin-only resources.
+    Admin and super_admin principals pass unchanged (the operator
+    principal resolves to super_admin, so it passes too).
+
+    Developer-API principals (auth_method "api_key") are exempt:
+    the public API carries its own authorization model (key
+    scopes + the same ownership choke point) and is a kept user
+    surface (FS-DISCOVERY A-8), so its handlers calling these
+    functions in-process keep their existing behaviour. Session
+    principals calling in-process (the Assistant's certificate
+    read tool) are NOT exempt — the same data must not leak
+    around the gate through another user surface (the FS-A
+    fail-closed precedent). Pipeline/service-layer callers never
+    pass through these HTTP handlers at all and are unaffected.
+    """
+    if principal.is_admin:
+        return
+    if getattr(principal, "auth_method", None) == "api_key":
+        return
+    raise ApiError(
+        403, "forbidden", "This endpoint requires an administrator."
+    )
+
+
+def _load_project_for_diagnostic_surface(
+    db, project_id: str, principal: auth_service.Principal
+):
+    """Project load for the FS-B diagnostic surfaces, pairing with
+    _require_admin_for_diagnostic_surface. Admin principals load
+    cross-tenant (existence-only 404): the admin API already
+    operates cross-tenant by design (api_admin.py), the register's
+    framing is "admin diagnostics", and the frontend shows the
+    admin tabs by account role alone — an admin who could see the
+    tab but never open another tenant's diagnostics would be a
+    broken surface (FS-DISCOVERY §3.1 note, option (a)). Every
+    non-admin principal loads through the Phase 1a choke point
+    unchanged, so tenant privacy (404 for non-granted principals)
+    is untouched for ordinary users."""
+    if principal.is_admin:
+        project = db.get(Project, str(project_id))
+        if project is None:
+            raise ApiError(
+                404, "project_not_found", f"No project {project_id}."
+            )
+        return project
+    return _get_owned_project_or_404(db, project_id, principal)
+
+
+# The decision-ledger fields the kept Editor flow consumes
+# (frontend/components/editor/asset-panel.tsx): a ledger row's id
+# (the reuse handle — the editor backend re-reads the decision
+# server-side), its decision type, provider, sentence, evidence
+# class, verification and rights labels. Everything else a ledger
+# row carries — source_url and content_hash (provenance detail),
+# asset_key, scene/interval placement, the previous-decision
+# chain, revision tagging, recorded timestamps — is FS-7
+# diagnostic detail and is stripped for non-admin principals.
+_EDITOR_LEDGER_FIELDS = (
+    "id",
+    "decision_type",
+    "provider",
+    "sentence_number",
+    "evidence_class",
+    "verification",
+    "rights",
+)
+
+
+def _editor_ledger_row(row: dict) -> dict:
+    """The non-admin view of one asset-decision ledger row: only
+    the fields the Editor's asset library needs to offer reuse of
+    a recorded asset (FS-B field restriction of GET .../assets —
+    the endpoint is shared between the admin-only Assets tab and
+    the kept Editor flow, so it is restricted by field, never
+    closed, for non-admins)."""
+    return {field: row.get(field) for field in _EDITOR_LEDGER_FIELDS}
+
+
 def require_api_token(request: Request) -> str:
     """Back-compat shim for the legacy routes in main.py (IA-08):
     same resolution as require_user, returning the identity string
@@ -2022,6 +2113,18 @@ def apply_voice_script(
 
 # ---------------------------------------------------------------------
 # Assets (ledger decisions for the latest run)
+#
+# FS-B (FS-7): the Asset Decisions ledger is an admin-only
+# diagnostic surface, but this endpoint is SHARED with the kept
+# Editor flow — the classic Editor's asset library
+# (frontend/components/editor/asset-panel.tsx) lists ledger rows
+# so a user can reuse a recorded asset in a revision. The
+# endpoint therefore stays open to granted principals and is
+# restricted BY FIELD for non-admins (the FS-A response-layer
+# pattern): admins receive every row byte-identical to before;
+# non-admins receive only the editor-reuse fields
+# (_editor_ledger_row) — no source URLs, content hashes, asset
+# keys, decision chains or other provenance/coverage detail.
 # ---------------------------------------------------------------------
 
 
@@ -2034,7 +2137,7 @@ def list_assets(
 ):
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _load_project_for_diagnostic_surface(db, project_id, principal)
     finally:
         db.close()
     limit = min(max(1, limit), 500)
@@ -2045,6 +2148,8 @@ def list_assets(
     if latest is None:
         return {"run_id": None, "total": 0, "limit": limit, "offset": offset, "items": []}
     rows, total = run_ledger.list_decisions(latest["run_id"], limit, offset)
+    if not principal.is_admin:
+        rows = [_editor_ledger_row(row) for row in rows]
     return {
         "run_id": latest["run_id"],
         "total": total,
@@ -2239,9 +2344,19 @@ def _quality_section(project_id: str, run_id=None) -> dict:
 
 @router.get("/projects/{project_id}/certificate")
 def get_certificate(project_id: str, principal=Depends(require_user)):
+    # FS-B (FS-9): the Delivery & Provenance certificate — delivery
+    # records, provenance and licence-evidence detail — is an
+    # admin-only diagnostic surface. The ownership choke point runs
+    # first (non-granted principals keep the Phase 1a 404); a
+    # granted non-admin then gets 403. The shared GET .../outputs
+    # endpoint is NOT gated: the Overview's film/caption downloads
+    # are a kept user flow (FS-DISCOVERY §3.1).
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal)
+        project = _load_project_for_diagnostic_surface(
+            db, project_id, principal
+        )
+        _require_admin_for_diagnostic_surface(principal)
         project_view = {
             "id": project.id,
             "title": project.title,
@@ -2295,6 +2410,12 @@ def get_certificate(project_id: str, principal=Depends(require_user)):
 # written report "not_recorded", and nothing is recomputed. Every
 # route loads the project through the Phase 8 owner choke point
 # first: another user's project — or a run of it — is a 404.
+#
+# FS-B (FS-10): the QA report READ routes are admin-only diagnostic
+# surfaces — after the ownership choke point, a granted non-admin
+# principal gets 403 (_require_admin_for_diagnostic_surface). Only
+# read access is gated: QA generation and the verdicts' influence
+# on production acceptance are pipeline-internal and untouched.
 # ---------------------------------------------------------------------------
 
 
@@ -2318,7 +2439,8 @@ def get_latest_qa_report(project_id: str, principal=Depends(require_user)):
     can never displace the production the report describes)."""
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _load_project_for_diagnostic_surface(db, project_id, principal)
+        _require_admin_for_diagnostic_surface(principal)
     finally:
         db.close()
     latest = run_ledger.latest_production_run_for(project_id)
@@ -2338,7 +2460,8 @@ def get_run_qa_report(
 ):
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _load_project_for_diagnostic_surface(db, project_id, principal)
+        _require_admin_for_diagnostic_surface(principal)
     finally:
         db.close()
     run = _owned_run_in_project_or_404(project_id, run_id)
@@ -2354,7 +2477,8 @@ def export_run_qa_report(
     disagree with the on-screen report."""
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _load_project_for_diagnostic_surface(db, project_id, principal)
+        _require_admin_for_diagnostic_surface(principal)
     finally:
         db.close()
     run = _owned_run_in_project_or_404(project_id, run_id)

@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { AdminOnlyGate } from "@/components/admin-only-gate";
 import { ProjectTabs } from "@/components/project-tabs";
 import { MediaThumb } from "@/components/media-thumb";
 import { ErrorState, LoadingState } from "@/components/states";
@@ -134,7 +135,7 @@ function CoverageHeader({ quality }: { quality: CertificateQuality | null }) {
   );
 }
 
-export default function ProjectAssetsPage() {
+function ProjectAssetsPageContent() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const [assets, setAssets] = useState<AssetsPage | null>(null);
@@ -272,4 +273,19 @@ export default function ProjectAssetsPage() {
       </p>
     </>}
   </section></main>;
+}
+
+/**
+ * FS-B (FS-7, FS-14): the Asset Decisions ledger is an admin-only
+ * diagnostic surface. The page renders only behind AdminOnlyGate
+ * (role from /auth/me, the AdminShell pattern); a non-admin
+ * following a direct URL gets the plain not-found view, and the
+ * backend endpoint enforces the same rule server-side.
+ */
+export default function ProjectAssetsPage() {
+  return (
+    <AdminOnlyGate>
+      <ProjectAssetsPageContent />
+    </AdminOnlyGate>
+  );
 }

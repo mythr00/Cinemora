@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { AdminOnlyGate } from "@/components/admin-only-gate";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
 import { ProjectTabs } from "@/components/project-tabs";
@@ -57,7 +58,7 @@ function NotRecorded({ state, what }: { state: string; what: string }) {
   );
 }
 
-export default function QaReportPage() {
+function QaReportPageContent() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const [report, setReport] = useState<QaReport | null>(null);
@@ -593,5 +594,20 @@ export default function QaReportPage() {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * FS-B (FS-10, FS-14): the QA Report is an admin-only diagnostic
+ * surface. The page renders only behind AdminOnlyGate (role from
+ * /auth/me, the AdminShell pattern); a non-admin following a
+ * direct URL gets the plain not-found view, and the backend
+ * endpoints enforce the same rule server-side.
+ */
+export default function QaReportPage() {
+  return (
+    <AdminOnlyGate>
+      <QaReportPageContent />
+    </AdminOnlyGate>
   );
 }

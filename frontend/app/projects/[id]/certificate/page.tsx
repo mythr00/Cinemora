@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { AdminOnlyGate } from "@/components/admin-only-gate";
 import { AppNavigation } from "@/components/app-navigation";
 import { StatusBadge } from "@/components/status-badge";
 import { ProjectTabs } from "@/components/project-tabs";
@@ -57,7 +58,7 @@ const OUTCOME_LABELS: Array<[string, string]> = [
   ["uncovered", "uncovered"],
 ];
 
-export default function CertificatePage() {
+function CertificatePageContent() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const [certificate, setCertificate] = useState<Certificate | null>(null);
@@ -342,5 +343,22 @@ export default function CertificatePage() {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * FS-B (FS-9, FS-14): Delivery & Provenance detail is an
+ * admin-only diagnostic surface. The page renders only behind
+ * AdminOnlyGate (role from /auth/me, the AdminShell pattern); a
+ * non-admin following a direct URL gets the plain not-found
+ * view, and the backend endpoint enforces the same rule
+ * server-side. The film/caption downloads on the project
+ * Overview are a separate kept user flow and are unaffected.
+ */
+export default function CertificatePage() {
+  return (
+    <AdminOnlyGate>
+      <CertificatePageContent />
+    </AdminOnlyGate>
   );
 }

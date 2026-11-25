@@ -231,7 +231,7 @@ export default function ProjectPage() {
               {overview.outputs?.captions.srt.exists && <li>Captions (SRT) — <AuthenticatedDownloadLink path={overview.outputs.captions.srt.media_url || ""} filename={overview.outputs.captions.srt.filename}>download</AuthenticatedDownloadLink></li>}
               {overview.outputs?.captions.vtt.exists && <li>Captions (VTT) — <AuthenticatedDownloadLink path={overview.outputs.captions.vtt.media_url || ""} filename={overview.outputs.captions.vtt.filename}>download</AuthenticatedDownloadLink></li>}
             </ul>
-            <p className="hub-panel-note">Asset report, rights manifest and run manifest are on the <Link className="text-link" href={`/projects/${projectId}/certificate`}>Delivery tab</Link>.</p>
+            {isAdmin ? <p className="hub-panel-note">Asset report, rights manifest and run manifest are on the <Link className="text-link" href={`/projects/${projectId}/certificate`}>Delivery tab</Link>.</p> : <p className="hub-panel-note">Asset report, rights manifest and run manifest are recorded with the production.</p>}
           </> : <p className="hub-panel-note">No finished film yet. When a run completes, the film and its captions appear here.</p>}
         </section>
       </div>
