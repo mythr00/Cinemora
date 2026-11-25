@@ -102,17 +102,22 @@ THEMES = {
         accent=(64, 150, 255), accent2=(240, 190, 80),
         paper=(196, 208, 220), brass=(150, 160, 170),
     ),
-    # Pure white ground — founder "Light" (the founder reference
-    # pairs the white field with a soft dark vignette edge; the
-    # token set governs the field and type colours, which is what
-    # the engine paints from).
-    "light_pure": _tokens(
-        "light_pure",
-        bg=(255, 255, 255), surface=(244, 244, 246),
-        text=(18, 20, 24), muted=(110, 114, 120),
-        accent=(30, 90, 200), accent2=(200, 110, 30),
-        paper=(240, 238, 230), brass=(150, 128, 84),
-    ),
+    # Pure white ground — founder "Light". A-11 (Phase 7): the
+    # reference's soft dark vignette edge is now EXPRESSIBLE and
+    # rendered: `background_pattern="vignette"` is honoured by the
+    # compositor (core.Canvas paints a soft radial darkening in
+    # `pattern_color` toward the frame edges before any layer).
+    "light_pure": {
+        **_tokens(
+            "light_pure",
+            bg=(255, 255, 255), surface=(244, 244, 246),
+            text=(18, 20, 24), muted=(110, 114, 120),
+            accent=(30, 90, 200), accent2=(200, 110, 30),
+            paper=(240, 238, 230), brass=(150, 128, 84),
+        ),
+        "background_pattern": "vignette",
+        "pattern_color": (72, 72, 80),
+    },
     # Black field with fine grid lines — founder "Grid". The
     # `background_pattern` token is honoured by the compositor
     # (services.motion_engine.core.Canvas): the base frame is
@@ -158,15 +163,22 @@ THEMES = {
         text=(250, 244, 228), muted=(180, 164, 128),
         accent=(232, 150, 52), accent2=(140, 42, 32),
     ),
-    # Dark smoky brown — founder "Cinematic" (the reference's
-    # textured gradient is approximated by the engine's textured
-    # background painters over this brown field).
-    "cinematic_smoke": _tokens(
-        "cinematic_smoke",
-        bg=(26, 20, 16), surface=(44, 34, 26),
-        text=(244, 238, 228), muted=(168, 150, 128),
-        accent=(232, 164, 76), accent2=(120, 140, 160),
-    ),
+    # Dark smoky brown — founder "Cinematic". A-11 (Phase 7): the
+    # reference's gradient is now EXPRESSIBLE and rendered:
+    # `background_pattern="gradient"` is honoured by the
+    # compositor (core.Canvas paints a vertical gradient from the
+    # bg field at the top to `pattern_color` at the bottom before
+    # any layer is drawn).
+    "cinematic_smoke": {
+        **_tokens(
+            "cinematic_smoke",
+            bg=(26, 20, 16), surface=(44, 34, 26),
+            text=(244, 238, 228), muted=(168, 150, 128),
+            accent=(232, 164, 76), accent2=(120, 140, 160),
+        ),
+        "background_pattern": "gradient",
+        "pattern_color": (88, 62, 38),
+    },
 }
 
 #: Phase 9 (§13.3): the founder theme vocabulary and the engine

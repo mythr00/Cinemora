@@ -24,6 +24,14 @@ WIDTH = 1920
 HEIGHT = 1080
 FPS = 30
 
+#: Background treatments Canvas.composite can actually paint,
+#: named by a theme's `background_pattern` token (A-11, Phase 7):
+#: "grid" (founder Grid), "vignette" (founder Light's soft dark
+#: edge), "gradient" (founder Cinematic's vertical gradient).
+#: Every background_pattern value offered by any theme MUST be in
+#: this set — a treatment with no renderer may not be offered.
+BACKGROUND_PATTERNS = ("grid", "vignette", "gradient")
+
 
 # ---------------------------------------------------------------------------
 # Easing / interpolation
@@ -124,6 +132,37 @@ class Canvas:
         cam_x = float(camera.get("x", 0.0))
         cam_y = float(camera.get("y", 0.0))
         base = Image.new("RGBA", (WIDTH, HEIGHT), tuple(self.bg) + (255,))
+        if self.pattern == "gradient":
+            # A-11: vertical gradient from the bg field (top) to
+            # pattern_color (bottom), painted on the base so every
+            # layer composes over the same graded field.
+            top = tuple(self.bg)
+            bottom = tuple(self.pattern_color or self.bg)
+            strip = Image.new("RGB", (1, HEIGHT))
+            for y in range(HEIGHT):
+                f = y / max(1, HEIGHT - 1)
+                strip.putpixel((0, y), tuple(
+                    int(round(top[i] + (bottom[i] - top[i]) * f))
+                    for i in range(3)
+                ))
+            base = strip.resize((WIDTH, HEIGHT)).convert("RGBA")
+        elif self.pattern == "vignette":
+            # A-11: soft dark vignette edge — the centre keeps the
+            # field colour; toward the corners the frame darkens
+            # toward pattern_color (blended, never a hard edge).
+            from PIL import ImageFilter
+
+            edge = tuple(self.pattern_color or (0, 0, 0))
+            mask = Image.new("L", (WIDTH, HEIGHT), 255)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.ellipse(
+                [int(WIDTH * 0.08), int(HEIGHT * 0.08),
+                 int(WIDTH * 0.92), int(HEIGHT * 0.92)], fill=0)
+            mask = mask.filter(ImageFilter.GaussianBlur(180))
+            solid = Image.new(
+                "RGBA", (WIDTH, HEIGHT), edge + (255,))
+            darkened = Image.composite(solid, base, mask)
+            base = Image.blend(base, darkened, 0.62)
         if self.pattern == "grid":
             # The founder Grid theme (§13.3): fine lines over the
             # field, painted on the base so every layer composes
