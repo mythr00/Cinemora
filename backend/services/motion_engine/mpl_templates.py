@@ -26,8 +26,8 @@ from __future__ import annotations
 import importlib.util
 
 from services.motion_engine import core, motion_registry, styles
-from services.motion_engine.templates import TEMPLATES
-from services.motion_engine.templates_v3 import _clean, _meta, _numeric_items
+from services.motion_engine.templates import TEMPLATES, _clean, _meta
+from services.motion_engine.templates_v3 import _numeric_items
 
 _MAX_POINTS = 60
 _MAX_BARS = 12
@@ -133,10 +133,10 @@ def mpl_line_chart(data, style, out_path, duration=5.0,
         rendered = core.render_video(draw_frame, out_path, duration=duration)
     finally:
         plt.close(fig)
-    return rendered, _meta(
-        style_name, sentence_index, scene_number,
-        points=len(points), engine="matplotlib",
-    )
+    meta = _meta("mpl_line_chart", style_name, duration,
+                 sentence_index, scene_number, data)
+    meta["engine"] = "matplotlib"
+    return rendered, meta
 
 
 def mpl_bar_chart(data, style, out_path, duration=5.0,
@@ -187,10 +187,10 @@ def mpl_bar_chart(data, style, out_path, duration=5.0,
         rendered = core.render_video(draw_frame, out_path, duration=duration)
     finally:
         plt.close(fig)
-    return rendered, _meta(
-        style_name, sentence_index, scene_number,
-        items=len(items), engine="matplotlib",
-    )
+    meta = _meta("mpl_bar_chart", style_name, duration,
+                 sentence_index, scene_number, data)
+    meta["engine"] = "matplotlib"
+    return rendered, meta
 
 
 TEMPLATES.update({
