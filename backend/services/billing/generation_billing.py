@@ -73,13 +73,25 @@ def _resolve_owner_plan(db, project_id):
 def _check_subscription_health(db, user_id: str) -> None:
     """Refuse metered submissions on a non-active metered
     subscription (past_due / cancelled / expired) instead of
-    letting plan resolution fall through to a default plan."""
-    latest = (
-        db.query(models.UserSubscription)
-        .filter_by(user_id=user_id)
-        .order_by(models.UserSubscription.created_at.desc())
-        .first()
-    )
+    letting plan resolution fall through to a default plan.
+
+    Fail-soft on a database without the accounts tables, exactly
+    like plans.resolve_effective_plan (this module's stated fail
+    posture: an unseeded or legacy deployment behaves exactly as
+    before). Without the subscription table there is no metered
+    subscription to be unhealthy — and a raw OperationalError
+    here turned run submission on legacy fixture DBs into a 500.
+    """
+    try:
+        latest = (
+            db.query(models.UserSubscription)
+            .filter_by(user_id=user_id)
+            .order_by(models.UserSubscription.created_at.desc())
+            .first()
+        )
+    except Exception:
+        db.rollback()
+        return
     if latest is None or latest.status == "active":
         return
     plan = db.get(models.Plan, latest.plan_id)

@@ -69,15 +69,41 @@ def _api_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CINEMORA_ALLOW_OPERATOR_TOKEN", "1")  # E-21: explicit opt-in
     monkeypatch.setenv("CINEMORA_MEDIA_ROOT", str(tmp_path / "media"))
     api_v1.rate_limiter.reset()
-    Base.metadata.create_all(
-        bind=engine,
-        tables=[
-            Project.__table__,
-            ProductionRun.__table__,
-            AssetDecision.__table__,
-            ProjectRevision.__table__,
-        ],
-    )
+    # Full create_all, the same startup step main.py runs and the
+    # shape every other API test file uses: run submission now
+    # passes through Phase 8 plan admission + generation billing,
+    # which read the accounts/billing tables — the old four-table
+    # list made POST /runs 500 on the missing tables in isolation.
+    Base.metadata.create_all(bind=engine)
+    # Hermeticity (shared suite DB; the test_versioning precedent):
+    # suites that submit runs through fake queues leave them
+    # active forever, and plan admission counts a principal's
+    # active runs — after enough predecessors, this file's
+    # submissions are refused with plan_limit_concurrency.
+    # Those runs are abandoned leftovers of finished tests;
+    # terminate them, as the production reconciler would, so
+    # admission starts clean.
+    from datetime import datetime, timezone
+
+    db = SessionLocal()
+    try:
+        leaked = (
+            db.query(ProductionRun)
+            .filter(
+                ProductionRun.status.in_(
+                    ("queued", "running", "awaiting_approval")
+                )
+            )
+            .all()
+        )
+        for row in leaked:
+            row.status = "failed"
+            row.error = "test-suite cleanup of a leaked active run"
+            row.finished_at = datetime.now(timezone.utc)
+        if leaked:
+            db.commit()
+    finally:
+        db.close()
     yield
 
 
