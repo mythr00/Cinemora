@@ -96,9 +96,27 @@ def _clean_provider_state():
     # clears the failed-download set, the segment caches, the
     # redirect-resolution cache and provider health, so no test
     # here inherits (or leaks) another test's run state.
+    #
+    # Phase 9 triage: since Phase 8.4 the provider-health backoff
+    # is SHARED Redis state, and provider_health.reset()
+    # deliberately does NOT clear it (it is a platform resource
+    # with its own time bounds). This file's simulated 429s were
+    # therefore written to the suite's real Redis (DB 15), tripping
+    # youtube.com / media.example.org platform-wide for
+    # BACKOFF_SECONDS and poisoning later tests in this file, the
+    # transcript tests, and any subsequent suite run inside the
+    # TTL. The Phase 8 test seam is the isolation (the pattern
+    # test_metadata_absence_bypass.py already uses): a fakeredis
+    # client for the duration of each test here.
+    import fakeredis
+
+    provider_health.set_redis_client(
+        fakeredis.FakeRedis(decode_responses=True)
+    )
     mp.reset_media_caches()
     yield
     mp.reset_media_caches()
+    provider_health.reset_redis_client()
 
 
 # ---------------------------------------------------------------------------

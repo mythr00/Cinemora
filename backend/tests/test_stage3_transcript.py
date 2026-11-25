@@ -16,7 +16,31 @@ from pathlib import Path
 import pytest
 
 from services import media_pipeline as mp
+from services import provider_health
 from services import story_understanding as story
+
+
+@pytest.fixture(autouse=True)
+def _clean_provider_state():
+    # The pick flow consults provider_health.is_backed_off before
+    # every fetch. Since Phase 8.4 that backoff is SHARED Redis
+    # state: another test file's simulated 429s (test_run11 trips
+    # youtube.com) leave this file's fetch hosts backed off
+    # platform-wide for minutes, refusing every candidate before
+    # any request — and provider_health.reset() deliberately does
+    # not clear the shared backoff. Isolate through the Phase 8
+    # test seam, as test_metadata_absence_bypass.py does: a
+    # fakeredis client per test, plus the production per-run
+    # reset of the failed-download set and observation table.
+    import fakeredis
+
+    provider_health.set_redis_client(
+        fakeredis.FakeRedis(decode_responses=True)
+    )
+    mp.reset_media_caches()
+    yield
+    mp.reset_media_caches()
+    provider_health.reset_redis_client()
 
 
 def _bible():
