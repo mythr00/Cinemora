@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 import api_assistant
 import api_v1
+from auth_helpers import with_session_token
 import main
 from database import SessionLocal, engine
 from models import (
@@ -120,7 +121,7 @@ def _register(client, *, admin=False):
         },
     )
     assert response.status_code == 201, response.text
-    payload = response.json()
+    payload = with_session_token(response)
     if admin:
         db = SessionLocal()
         try:

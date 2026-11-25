@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import api_v1
+from auth_helpers import session_token_from_response, with_session_token
 import main
 from database import SessionLocal, engine
 from models import (
@@ -109,7 +110,7 @@ def _register(client, email, password):
         json={"email": email, "password": password},
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    return with_session_token(response)
 
 
 def _bearer(token):
@@ -151,7 +152,7 @@ def test_register_login_logout_me(client, users):
         json={"email": a["user"]["email"], "password": PASSWORD_A},
     )
     assert login.status_code == 200, login.text
-    token2 = login.json()["session_token"]
+    token2 = session_token_from_response(login)
 
     out = client.post("/api/v1/auth/logout", headers=_bearer(token2))
     assert out.status_code == 200
@@ -560,3 +561,90 @@ def test_battery_assistant_conversations(client, users, monkeypatch):
     )
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["action"]["status"] == "failed"
+
+
+# ---------------------------------------------------------------------
+# E-24 (Phase 5c): session-token hygiene — browser flows carry the
+# token ONLY in the HttpOnly cookie; /auth/token is the documented
+# non-browser exchange.
+# ---------------------------------------------------------------------
+
+
+def test_browser_flow_bodies_carry_no_session_token(client):
+    email = f"e24-{uuid.uuid4().hex[:8]}@example.com"
+    reg = client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": PASSWORD_A},
+    )
+    assert reg.status_code == 201, reg.text
+    assert "session_token" not in reg.json()
+    # The credential arrived via Set-Cookie instead.
+    assert session_token_from_response(reg)
+
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": PASSWORD_A},
+    )
+    assert login.status_code == 200, login.text
+    assert "session_token" not in login.json()
+    assert session_token_from_response(login)
+
+
+def test_session_cookie_alone_authenticates_me(client, monkeypatch):
+    # The cookie is Secure by default (Phase 1b); httpx correctly
+    # refuses to send a Secure cookie over the test client's plain
+    # http, so this cookie-path test opts into the documented local
+    # http setting — the cookie mechanics under test are identical.
+    monkeypatch.setenv("CINEMORA_COOKIE_SECURE", "0")
+    fresh = TestClient(main.app, raise_server_exceptions=False)
+    email = f"e24-cookie-{uuid.uuid4().hex[:8]}@example.com"
+    reg = fresh.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": PASSWORD_A},
+    )
+    assert reg.status_code == 201, reg.text
+    # No Authorization header anywhere: the cookie jar alone.
+    me = fresh.get("/api/v1/auth/me")
+    assert me.status_code == 200, me.text
+    assert me.json()["user"]["email"] == email
+
+
+def test_auth_token_exchange_returns_working_bearer(client, users):
+    a, _b = users
+    resp = client.post(
+        "/api/v1/auth/token",
+        json={"email": a["user"]["email"], "password": PASSWORD_A},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["token_type"] == "bearer"
+    assert body["user"]["email"] == a["user"]["email"]
+    me = client.get(
+        "/api/v1/auth/me", headers=_bearer(body["session_token"])
+    )
+    assert me.status_code == 200, me.text
+    assert me.json()["user"]["email"] == a["user"]["email"]
+
+    wrong = client.post(
+        "/api/v1/auth/token",
+        json={"email": a["user"]["email"], "password": "not-the-password-1"},
+    )
+    assert wrong.status_code == 401
+    assert wrong.json()["error"]["code"] == "invalid_credentials"
+
+
+def test_auth_token_is_rate_limited(client, monkeypatch):
+    monkeypatch.setenv("CINEMORA_AUTH_RATE_LIMIT", "3")
+    email = f"e24-rl-{uuid.uuid4().hex[:8]}@example.com"
+    for _ in range(3):
+        resp = client.post(
+            "/api/v1/auth/token",
+            json={"email": email, "password": "wrong-password-1"},
+        )
+        assert resp.status_code == 401
+    blocked = client.post(
+        "/api/v1/auth/token",
+        json={"email": email, "password": "wrong-password-1"},
+    )
+    assert blocked.status_code == 429
+    assert blocked.json()["error"]["code"] == "rate_limited"

@@ -46,6 +46,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import api_v1
+from auth_helpers import with_session_token
 import jobs
 import main
 from database import SessionLocal, engine
@@ -129,7 +130,7 @@ def _register(client):
         "/api/v1/auth/register", json={"email": email, "password": PASSWORD}
     )
     assert response.status_code == 201, response.text
-    body = response.json()
+    body = with_session_token(response)
     return {
         "id": body["user"]["id"],
         "headers": {"Authorization": f"Bearer {body['session_token']}"},

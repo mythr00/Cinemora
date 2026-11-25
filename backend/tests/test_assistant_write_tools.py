@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 import api_assistant
 import api_v1
+from auth_helpers import with_session_token
 import jobs
 import main
 from database import SessionLocal, engine
@@ -134,7 +135,7 @@ def user(client):
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    return with_session_token(response)
 
 
 def _create_project(client, user, title="Write Test Film"):

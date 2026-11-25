@@ -37,6 +37,7 @@ from fastapi.testclient import TestClient
 
 import api_public
 import api_v1
+from auth_helpers import with_session_token
 import jobs
 import main
 from database import SessionLocal, engine
@@ -123,7 +124,7 @@ def _register(client, email):
         "/api/v1/auth/register", json={"email": email, "password": PASSWORD}
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    return with_session_token(response)
 
 
 def _bearer(user):

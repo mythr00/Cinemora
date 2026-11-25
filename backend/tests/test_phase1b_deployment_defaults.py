@@ -25,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import api_v1
+from auth_helpers import with_session_token
 import main
 from database import SessionLocal, engine
 from models import Base, User
@@ -119,7 +120,7 @@ def test_operator_token_with_explicit_opt_in(client, monkeypatch):
 
 
 def test_session_auth_works_with_window_closed(client):
-    body = _register(client, _unique_email()).json()
+    body = with_session_token(_register(client, _unique_email()))
     me = client.get(
         "/api/v1/auth/me",
         headers={"Authorization": f"Bearer {body['session_token']}"},

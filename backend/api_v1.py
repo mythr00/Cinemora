@@ -795,7 +795,11 @@ def register(body: RegisterIn, request: Request, response: Response):
         db.refresh(user)
         token = auth_service.create_session(user.id)
         _set_session_cookie(response, token)
-        return {"user": _user_view(user), "session_token": token}
+        # E-24: the browser credential is the HttpOnly cookie ONLY.
+        # The session token never appears in a response body here;
+        # non-browser clients exchange credentials at POST
+        # /auth/token (see auth_token below).
+        return {"user": _user_view(user)}
     finally:
         db.close()
 
@@ -806,16 +810,19 @@ def register(body: RegisterIn, request: Request, response: Response):
 _DUMMY_HASH = auth_service.hash_password("timing-equalisation-dummy")
 
 
-@router.post("/auth/login")
-def login(body: LoginIn, request: Request, response: Response):
-    email = auth_service.normalize_email(body.email)
-    _auth_rate_limit(request, email)
+def _perform_login(email: str, password: str):
+    """The ONE credential check behind both sign-in surfaces
+    (browser login and the API-client token exchange): verify the
+    password (timing-equalised for unknown accounts), refuse
+    disabled accounts, stamp last_login_at and audit administrator
+    sign-ins. Returns (user_view, user_id); raises ApiError with
+    the login contract's codes otherwise."""
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == email).one_or_none()
         password_ok = auth_service.verify_password(
             user.password_hash if user is not None else _DUMMY_HASH,
-            body.password,
+            password,
         )
         if user is None or not password_ok:
             raise ApiError(
@@ -839,11 +846,43 @@ def login(body: LoginIn, request: Request, response: Response):
                 target_type="account",
                 target_id=user.id,
             )
-        token = auth_service.create_session(user.id)
-        _set_session_cookie(response, token)
-        return {"user": _user_view(user), "session_token": token}
+        return _user_view(user), user.id
     finally:
         db.close()
+
+
+@router.post("/auth/login")
+def login(body: LoginIn, request: Request, response: Response):
+    email = auth_service.normalize_email(body.email)
+    _auth_rate_limit(request, email)
+    user_view, user_id = _perform_login(email, body.password)
+    token = auth_service.create_session(user_id)
+    _set_session_cookie(response, token)
+    # E-24: cookie only — no session token in the body (see
+    # register and /auth/token).
+    return {"user": user_view}
+
+
+@router.post("/auth/token")
+def auth_token(body: LoginIn, request: Request):
+    """The DOCUMENTED credential exchange for non-browser API
+    clients (E-24): POST {email, password} and receive the session
+    token in the body as a Bearer credential for the Authorization
+    header. This is the ONLY auth response that carries a token in
+    its body — the browser flows (register/login) deliver the
+    session exclusively via the HttpOnly cookie and never expose
+    the token to response-body handling (logs, proxies, page
+    scripts). Same credential check and same auth rate limiter
+    (keyed by account + IP) as /auth/login."""
+    email = auth_service.normalize_email(body.email)
+    _auth_rate_limit(request, email)
+    user_view, user_id = _perform_login(email, body.password)
+    token = auth_service.create_session(user_id)
+    return {
+        "session_token": token,
+        "token_type": "bearer",
+        "user": user_view,
+    }
 
 
 @router.post("/auth/logout")

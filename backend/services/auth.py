@@ -7,10 +7,21 @@ The identity layer for the multi-user platform:
   (hashing-DoS bound). Only hashes are ever stored.
 - Sessions: opaque 256-bit tokens, server-side in Redis
   (`session:<sha256(token)>` -> JSON), sliding 14-day TTL renewed
-  on activity, httpOnly cookie on the web path, Bearer header for
-  non-browser clients. Only the token's SHA-256 is stored, so a
-  Redis dump yields no usable session. Revocation is instant —
-  the property that ruled out JWTs (02 §1.2).
+  on activity. Only the token's SHA-256 is stored, so a Redis
+  dump yields no usable session. Revocation is instant — the
+  property that ruled out JWTs (02 §1.2).
+- Credential delivery (E-24): BROWSERS get the session ONLY as
+  the HttpOnly `cinemora_session` cookie — the browser-flow
+  responses (POST /auth/register, POST /auth/login) never carry
+  the token in their bodies, so it cannot leak into response-body
+  logs, proxies or page scripts. NON-BROWSER API clients use the
+  one documented exchange, POST /api/v1/auth/token
+  ({email, password} -> {session_token, token_type: "bearer",
+  user}), rate-limited by the same auth limiter as login, and
+  present the returned token as an `Authorization: Bearer` header.
+  Both surfaces run the same credential check and issue the same
+  server-side session; resolution accepts Bearer first, then the
+  cookie (deliberate credentials beat ambient ones).
 - The founder/operator bridge: during the dual-auth window the
   legacy operator token resolves to the founder principal
   (`resolve_operator_principal`). If a database has no super_admin

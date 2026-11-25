@@ -33,6 +33,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import api_v1
+from auth_helpers import with_session_token
 import jobs
 import main
 from database import SessionLocal, engine
@@ -122,7 +123,7 @@ def _register(client, email):
         "/api/v1/auth/register", json={"email": email, "password": PASSWORD}
     )
     assert response.status_code == 201, response.text
-    body = response.json()
+    body = with_session_token(response)
     # FS-C (FS-1): the Templates endpoints are admin-only, so this
     # suite's actors are admin accounts. Template data stays
     # owner-scoped in the service layer, so the cross-tenant 404

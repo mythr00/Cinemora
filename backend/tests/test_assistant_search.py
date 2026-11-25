@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 import api_assistant
 import api_v1
+from auth_helpers import with_session_token
 import main
 from database import SessionLocal, engine
 from models import (
@@ -142,7 +143,7 @@ def user(client):
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    return with_session_token(response)
 
 
 def _principal(user_json):

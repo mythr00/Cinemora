@@ -17,6 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import api_v1
+from auth_helpers import with_session_token
 import jobs
 import main
 from database import SessionLocal, engine
@@ -117,7 +118,7 @@ def _user(client, plan=None):
         "/api/v1/auth/register", json={"email": email, "password": PASSWORD}
     )
     assert response.status_code == 201, response.text
-    user = response.json()
+    user = with_session_token(response)
     if plan is not None:
         _assign_plan(user["user"]["id"], plan)
     return user
