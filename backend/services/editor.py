@@ -3472,6 +3472,16 @@ def run_revision_render(project_id, revision_id, run_id) -> dict:
             run_id, "completed",
             execution={"revision_id": revision_id, "entrypoint": "editor_render"},
         )
+        # Phase 8 (§21): register the revision export's videos
+        # for the 50-hour retention deadline. Fail-soft.
+        try:
+            from services.billing import retention
+
+            retention.register_revision_outputs(
+                project_id, revision_id, run_id, export
+            )
+        except Exception:
+            pass
         return {
             "status": "exported",
             "run_id": run_id,

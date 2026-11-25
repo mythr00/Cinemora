@@ -2553,6 +2553,12 @@ def get_outputs(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
     try:
         _get_owned_project_or_404(db, project_id, principal)
+        # Phase 8 (§21): the retention block for the project's
+        # latest generated video (exact expiry + countdown data +
+        # download/deletion status), when one is registered.
+        from services.billing import retention
+
+        retention_block = retention.retention_view(db, project_id)
     finally:
         db.close()
     project_dir = media_paths.project_dir(project_id)
@@ -2586,6 +2592,7 @@ def get_outputs(project_id: str, principal=Depends(require_user)):
             or getattr(principal, "auth_method", None) == "api_key"
             else None
         ),
+        "retention": retention_block,
     }
 
 
@@ -2605,6 +2612,14 @@ def serve_media(project_id: str, asset_key: str, principal=Depends(require_user)
             "media_not_found",
             "No recorded media exists for that key on this project.",
         )
+    # Phase 8 (§21): record downloads of registered generated
+    # videos (never extends their deletion deadline). Fail-soft.
+    try:
+        from services.billing import retention
+
+        retention.record_download_for_path(entry["path"])
+    except Exception:
+        pass
     return FileResponse(
         entry["path"],
         media_type=entry["content_type"],

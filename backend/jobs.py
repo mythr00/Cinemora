@@ -3135,6 +3135,16 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             execution=run_metrics.snapshot(),
             manifest_path=manifest_path,
         )
+        # Phase 8 (§21): register the generated videos for the
+        # 50-hour retention deadline, anchored at the run's
+        # finish time. Fail-soft — registration never fails a
+        # production.
+        try:
+            from services.billing import retention
+
+            retention.register_run_outputs(_run_id, artefact_dir)
+        except Exception:
+            pass
         # Phase 8.4: completion frees capacity — promote the next
         # queued production.
         _dispatch_quietly()

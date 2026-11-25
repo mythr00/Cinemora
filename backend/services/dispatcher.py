@@ -498,6 +498,12 @@ LEADER_TTL_SECONDS = 45
 _BILLING_TICK_INTERVAL_SECONDS = 3600
 _last_billing_tick = 0.0
 
+# Phase 8 (§21): the retention sweeper runs every minute on the
+# leader (reminders + deadline deletions; deletions additionally
+# require CINEMORA_RETENTION_ENABLED=1 inside the sweeper).
+_RETENTION_TICK_INTERVAL_SECONDS = 60
+_last_retention_tick = 0.0
+
 
 def run_dispatcher_loop(stop_event: threading.Event | None = None):
     """The dispatcher's periodic loop, run as a thread in ONE
@@ -543,6 +549,17 @@ def run_dispatcher_loop(stop_event: threading.Event | None = None):
                 except Exception:
                     logger.warning(
                         "billing lifecycle tick failed", exc_info=True
+                    )
+            global _last_retention_tick
+            if now_mono - _last_retention_tick >= _RETENTION_TICK_INTERVAL_SECONDS:
+                _last_retention_tick = now_mono
+                try:
+                    from services.billing import retention
+
+                    retention.run_retention_tick()
+                except Exception:
+                    logger.warning(
+                        "retention tick failed", exc_info=True
                     )
         stop_event.wait(15)
 
