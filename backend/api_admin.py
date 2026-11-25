@@ -284,6 +284,12 @@ def submit_replacement(run_id: str, principal=Depends(_write_guard)):
     options = dict(run.get("options") or {})
     options.pop("dispatched_job_id", None)
     options.pop("dispatched_at", None)
+    # Phase 8 billing: an operator replacement is a zero-charge
+    # submission (recorded with source=admin, never billed to the
+    # owner) — the admin surface must not become a billing bypass
+    # for user submissions, and must not bill users for operator
+    # recovery actions either.
+    options["billing_source"] = "admin"
     job_or_run = jobs.enqueue_full_pipeline(
         project.id, project.script, options=options or None
     )

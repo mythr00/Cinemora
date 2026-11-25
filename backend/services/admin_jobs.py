@@ -264,6 +264,9 @@ def requeue_failed_run(run_id: str) -> dict:
     options = dict(run.get("options") or {})
     options.pop("dispatched_job_id", None)
     options.pop("dispatched_at", None)
+    # Phase 8 billing: operator requeue = zero-charge submission
+    # (source=admin reservation, never billed to the owner).
+    options["billing_source"] = "admin"
     job_or_run = jobs.enqueue_full_pipeline(
         project.id, project.script, options=options or None
     )

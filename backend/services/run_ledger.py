@@ -330,6 +330,20 @@ def finish_run(run_id, status, error=None, execution=None,
                 return False
         finally:
             db.close()
+        # Phase 8 billing: settle (completed) or restore (any
+        # other terminal status) the run's credit reservation.
+        # This point is reached ONLY by the first finisher — the
+        # conditional update above returned False for everyone
+        # else — so settlement happens exactly once. Fail-soft:
+        # settlement problems never disturb a production finish.
+        try:
+            from services.billing import generation_billing
+
+            generation_billing.settle_for_run(
+                str(run_id), status, execution=execution
+            )
+        except Exception:
+            pass
         # Developer API webhooks (Phase N): fan the terminal status
         # out to the project owner's subscribed endpoints. The
         # service is fail-soft and delivers on its own thread; the
@@ -734,7 +748,33 @@ def submit_production(project_id, script_text, options=None):
         except Exception as error:
             print(f"WARNING: run ledger dedup check failed: {error}")
             return None
-        return _insert_run(project_id, script_text, options, "queued")
+        created = _insert_run(project_id, script_text, options, "queued")
+        if created is not None:
+            # Phase 8 billing (directive §16): reserve credits /
+            # an entitlement for the project owner at the single
+            # insert choke point, so every submission path — v1,
+            # public API, assistant, legacy, dispatcher retry —
+            # is billed identically and none can bypass. A
+            # rejection fails the fresh run (it is never enqueued)
+            # and propagates as BillingRejected for the API layer
+            # to surface as 402/503.
+            from services.billing import generation_billing
+
+            try:
+                generation_billing.reserve_for_new_run(
+                    created["run_id"], project_id, script_text, options
+                )
+            except generation_billing.BillingRejected as rejected:
+                finish_run(
+                    created["run_id"],
+                    "failed",
+                    error=(
+                        "billing rejected: "
+                        f"{rejected.error_code}"
+                    ),
+                )
+                raise
+        return created
 
 
 def _claim_row(row_id, from_statuses=("queued",), worker_id=None):
@@ -932,6 +972,7 @@ def request_cancel(run_id):
         from models import ProductionRun
 
         db = _session()
+        cancelled_now = False
         try:
             row = db.get(ProductionRun, str(run_id))
             if row is None or row.status in TERMINAL_STATUSES:
@@ -941,10 +982,23 @@ def request_cancel(run_id):
                 row.status = "cancelled"
                 row.error = "cancelled"
                 row.finished_at = _now()
+                cancelled_now = True
             db.commit()
-            return True
         finally:
             db.close()
+        if cancelled_now:
+            # Phase 8 billing: a queued run cancelled before any
+            # work restores its reservation in full, here — this
+            # path terminates the run without finish_run.
+            try:
+                from services.billing import generation_billing
+
+                generation_billing.settle_for_run(
+                    str(run_id), "cancelled"
+                )
+            except Exception:
+                pass
+        return True
     except Exception as error:
         print(f"WARNING: run cancel request failed: {error}")
         return False
@@ -958,6 +1012,23 @@ def is_cancel_requested(run_id):
     if not run:
         return False
     return bool(run["cancel_requested"]) or run["status"] == "cancelled"
+
+
+def _restore_interrupted_reservations(run_ids):
+    """Phase 8 billing: restore reservations for runs the
+    reconciler terminated (they never pass through finish_run).
+    Fail-soft per run; settle_for_run itself guards on the run
+    being terminal and the reservation still active."""
+    try:
+        from services.billing import generation_billing
+
+        for run_id in run_ids:
+            try:
+                generation_billing.settle_for_run(str(run_id), "failed")
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def reconcile_stale_runs(stale_after_seconds=None):
@@ -991,6 +1062,14 @@ def reconcile_stale_runs(stale_after_seconds=None):
         db = _session()
         try:
             if stale_after_seconds is None:
+                # Phase 8 billing needs the ids to restore the
+                # interrupted runs' reservations after the update.
+                total_ids = [
+                    row_id
+                    for (row_id,) in db.query(ProductionRun.id)
+                    .filter(ProductionRun.status == "running")
+                    .all()
+                ]
                 result = db.execute(
                     update(ProductionRun)
                     .where(ProductionRun.status == "running")
@@ -1001,7 +1080,10 @@ def reconcile_stale_runs(stale_after_seconds=None):
                     )
                 )
                 db.commit()
-                return int(result.rowcount or 0)
+                reconciled = int(result.rowcount or 0)
+                if reconciled:
+                    _restore_interrupted_reservations(total_ids)
+                return reconciled
 
             rows = (
                 db.query(ProductionRun)
@@ -1053,6 +1135,11 @@ def reconcile_stale_runs(stale_after_seconds=None):
             db.commit()
             reconciled_count = int(result.rowcount or 0)
             if reconciled_count:
+                # Phase 8 billing: interrupted runs restore their
+                # reservations in full (settle guards on the run
+                # actually being terminal, so the re-guard race
+                # above cannot restore a live run's reservation).
+                _restore_interrupted_reservations(stale_ids)
                 # C-15 forensics: the NEXT worker death must be
                 # diagnosable from records. This event is the
                 # durable evidence that these runs' heartbeats were
@@ -2319,7 +2406,7 @@ def submit_revision_render(project_id, script_text, revision_id,
         except Exception as error:
             print(f"WARNING: revision render dedup check failed: {error}")
             return None
-        return _insert_run(
+        created = _insert_run(
             project_id,
             script_text,
             {
@@ -2330,6 +2417,24 @@ def submit_revision_render(project_id, script_text, revision_id,
             },
             "queued",
         )
+        if created is not None:
+            # Phase 8 billing: revision renders are credit-charged
+            # for metered owners (never entitlement-covered); a
+            # rejection fails the render run and propagates.
+            from services.billing import generation_billing
+
+            try:
+                generation_billing.reserve_for_revision(
+                    created["run_id"], project_id, script_text
+                )
+            except generation_billing.BillingRejected:
+                finish_run(
+                    created["run_id"],
+                    "failed",
+                    error="billing rejected: revision render",
+                )
+                raise
+        return created
 
 
 # ---------------------------------------------------------------------

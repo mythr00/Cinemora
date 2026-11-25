@@ -2646,9 +2646,16 @@ def request_render(project_id, revision_id, allow_gaps=False) -> dict:
     plan = compute_render_plan(parent_doc, doc)
     project = _load_project_row(project_id)
     script_text = (project or {}).get("script") or ""
-    submitted = run_ledger.submit_revision_render(
-        project_id, script_text, revision_id, view["run_id"]
-    )
+    from services.billing import generation_billing
+
+    try:
+        submitted = run_ledger.submit_revision_render(
+            project_id, script_text, revision_id, view["run_id"]
+        )
+    except generation_billing.BillingRejected as rejected:
+        raise EditorError(
+            rejected.status_code, rejected.error_code, str(rejected)
+        ) from rejected
     if submitted is None:
         raise EditorError(
             503, "ledger_unavailable",

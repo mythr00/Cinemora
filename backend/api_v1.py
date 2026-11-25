@@ -126,6 +126,24 @@ def register_error_handlers(app):
             content=_error_body(exc.code, exc.message),
         )
 
+    # Phase 8 billing rejections (insufficient credits, past-due
+    # subscription, billing unavailable) raised from the run
+    # ledger choke point, below every route — one handler maps
+    # them for every surface that can submit a generation.
+    from services.billing.generation_billing import BillingRejected
+
+    @app.exception_handler(BillingRejected)
+    async def _billing_rejected_handler(request: Request, exc: BillingRejected):
+        if request.url.path.startswith(("/api/v1", "/api/public/")):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=_error_body(exc.error_code, str(exc)),
+            )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": str(exc)},
+        )
+
     @app.exception_handler(StarletteHTTPException)
     async def _http_error_handler(request: Request, exc: StarletteHTTPException):
         if request.url.path.startswith(("/api/v1", "/api/public/")):

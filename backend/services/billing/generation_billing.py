@@ -1,0 +1,428 @@
+"""Generation billing hooks (Phase 8; directive §§5, 6, 16, 18).
+
+Wired into the run ledger's choke points so NO submission path
+can bypass billing:
+
+- run_ledger.submit_production -> reserve_for_new_run (after the
+  run row is inserted; a rejection fails the run and raises
+  BillingRejected, which the API layer maps to 402/503);
+- run_ledger.submit_revision_render -> reserve_for_revision
+  (credits-only, same rejection contract);
+- run_ledger.finish_run -> settle_for_run (first-finisher-wins
+  makes settlement exactly-once);
+- run_ledger.request_cancel (queued) and reconcile_stale_runs ->
+  settle_for_run (full restoration).
+
+Who is charged: the PROJECT OWNER (stamped onto the run by the
+ledger choke point), whoever submitted — so the legacy operator
+routes and the admin paths cannot bypass billing by construction.
+Operator actions submitted through the admin surface carry
+options billing_source="admin" and create zero-charge
+reservations (recorded, never billed).
+
+Retry semantics: every run row carries its OWN reservation. A
+failed generation restores everything (credits + entitlement),
+so an automatic dispatcher retry reserves afresh and the user is
+charged exactly once — for the run that completes. At most one
+reservation per run, and settlement is keyed to the finishing
+run, so no chain can be charged twice.
+
+Fail posture: plan resolution is fail-soft (an unseeded or
+legacy deployment behaves exactly as before). Once a user is
+PROVEN metered, every billing failure is fail-closed: the
+submission is rejected rather than run unbilled.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+
+import models
+from database import SessionLocal
+from services import plans as plans_service
+from services.billing import catalogue, credits
+from services.billing import periods as periods_service
+
+TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+
+
+class BillingRejected(credits.BillingError):
+    """A metered submission refused by billing. Carries the API
+    error code + HTTP status the routes surface."""
+
+    def __init__(self, error_code: str, message: str,
+                 status_code: int = 402):
+        super().__init__(message)
+        self.error_code = error_code
+        self.status_code = status_code
+
+
+def _session():
+    return SessionLocal()
+
+
+def _resolve_owner_plan(db, project_id):
+    project = db.get(models.Project, str(project_id))
+    if project is None or not project.owner_id:
+        return None, None
+    plan = plans_service.resolve_effective_plan(db, project.owner_id)
+    return project, plan
+
+
+def _check_subscription_health(db, user_id: str) -> None:
+    """Refuse metered submissions on a non-active metered
+    subscription (past_due / cancelled / expired) instead of
+    letting plan resolution fall through to a default plan."""
+    latest = (
+        db.query(models.UserSubscription)
+        .filter_by(user_id=user_id)
+        .order_by(models.UserSubscription.created_at.desc())
+        .first()
+    )
+    if latest is None or latest.status == "active":
+        return
+    plan = db.get(models.Plan, latest.plan_id)
+    if plan is None or plan.billing_mode != "metered":
+        return
+    if latest.status == "past_due":
+        raise BillingRejected(
+            "subscription_past_due",
+            "Your subscription payment is past due. Update your "
+            "payment method to keep generating.",
+        )
+    raise BillingRejected(
+        "subscription_inactive",
+        "Your subscription is not active. Resubscribe to keep "
+        "generating.",
+    )
+
+
+def _create_reservation(
+    db,
+    *,
+    run_id: str,
+    root_run_id: str,
+    user_id: str,
+    project_id: str,
+    period,
+    entitlement: bool,
+    credits_needed: int,
+    estimated_seconds: float,
+    source: str,
+) -> models.GenerationReservation:
+    reservation = models.GenerationReservation(
+        id=str(uuid.uuid4()),
+        run_id=str(run_id),
+        root_run_id=str(root_run_id),
+        user_id=user_id,
+        project_id=str(project_id),
+        billing_period_id=period.id if period else None,
+        entitlement_reserved=entitlement,
+        credits_reserved=0,
+        estimated_seconds=estimated_seconds,
+        source=source,
+        status="active",
+    )
+    db.add(reservation)
+    db.flush()
+    if credits_needed > 0:
+        split = credits.reserve(
+            db,
+            user_id,
+            credits_needed,
+            reservation_id=reservation.id,
+            run_id=str(run_id),
+            project_id=str(project_id),
+            billing_period_id=period.id if period else None,
+            source=source,
+        )
+        reservation.credits_reserved = sum(split.values())
+    return reservation
+
+
+def reserve_for_new_run(run_id, project_id, script_text, options=None):
+    """Reserve billing for a freshly inserted production run.
+
+    Returns None when the project owner is not on a metered plan
+    (legacy behaviour, unchanged), else a summary dict. Raises
+    BillingRejected when a metered submission cannot be billed.
+    """
+    options = options or {}
+    db = _session()
+    try:
+        project, plan = _resolve_owner_plan(db, project_id)
+        if project is None:
+            return None
+        owner_id = project.owner_id
+        source = (
+            "admin"
+            if options.get("billing_source") == "admin"
+            else "user"
+        )
+        if source == "user":
+            # Health before the metered check: a past-due /
+            # cancelled METERED subscription must refuse here,
+            # not fall through plan resolution to a default plan.
+            _check_subscription_health(db, owner_id)
+        if plan is None or plan.billing_mode != "metered":
+            return None
+        try:
+            root_run_id = str(options.get("retry_of") or run_id)
+            estimated_seconds = catalogue.estimate_seconds(script_text)
+
+            if source == "admin":
+                reservation = _create_reservation(
+                    db, run_id=run_id, root_run_id=root_run_id,
+                    user_id=owner_id, project_id=project_id,
+                    period=None, entitlement=False, credits_needed=0,
+                    estimated_seconds=estimated_seconds, source="admin",
+                )
+                db.commit()
+                return {
+                    "metered": True, "reservation_id": reservation.id,
+                    "entitlement": False, "credits_reserved": 0,
+                    "source": "admin",
+                }
+
+            period = periods_service.ensure_current_period(db, owner_id)
+
+            entitlement = False
+            credits_needed: int
+            if period is not None and periods_service.consume_allowance(
+                db, period, "generations"
+            ):
+                entitlement = True
+                excess = estimated_seconds - catalogue.STANDARD_GENERATION_SECONDS
+                credits_needed = (
+                    catalogue.generation_credit_cost(excess)
+                    if excess > 0
+                    else 0
+                )
+            else:
+                credits_needed = catalogue.generation_credit_cost(
+                    estimated_seconds
+                )
+
+            reservation = _create_reservation(
+                db, run_id=run_id, root_run_id=root_run_id,
+                user_id=owner_id, project_id=project_id,
+                period=period, entitlement=entitlement,
+                credits_needed=credits_needed,
+                estimated_seconds=estimated_seconds, source="user",
+            )
+            db.commit()
+            return {
+                "metered": True, "reservation_id": reservation.id,
+                "entitlement": entitlement,
+                "credits_reserved": reservation.credits_reserved,
+                "source": "user",
+            }
+        except BillingRejected:
+            db.rollback()
+            raise
+        except credits.InsufficientCreditsError as exc:
+            db.rollback()
+            raise BillingRejected(
+                "insufficient_credits",
+                f"This generation needs {exc.needed} credits but "
+                f"only {exc.available} are available. Top up or "
+                "upgrade your plan to generate.",
+            ) from exc
+        except Exception as exc:
+            db.rollback()
+            raise BillingRejected(
+                "billing_unavailable",
+                "Billing is temporarily unavailable; the "
+                "generation was not started and nothing was "
+                "charged.",
+                status_code=503,
+            ) from exc
+    finally:
+        db.close()
+
+
+def reserve_for_revision(run_id, project_id, script_text):
+    """Reserve credits for an editor revision render (credits
+    only — renders never consume generation entitlements).
+    Same contract as reserve_for_new_run."""
+    db = _session()
+    try:
+        project, plan = _resolve_owner_plan(db, project_id)
+        if project is None:
+            return None
+        owner_id = project.owner_id
+        _check_subscription_health(db, owner_id)
+        if plan is None or plan.billing_mode != "metered":
+            return None
+        try:
+            # Ensure the period so the subscription's monthly
+            # credits are allocated before the render draws on
+            # the wallet.
+            periods_service.ensure_current_period(db, owner_id)
+            estimated_seconds = catalogue.estimate_seconds(script_text)
+            credits_needed = catalogue.generation_credit_cost(
+                estimated_seconds
+            )
+            reservation = _create_reservation(
+                db, run_id=run_id, root_run_id=run_id,
+                user_id=owner_id, project_id=project_id,
+                period=None, entitlement=False,
+                credits_needed=credits_needed,
+                estimated_seconds=estimated_seconds, source="user",
+            )
+            db.commit()
+            return {
+                "metered": True, "reservation_id": reservation.id,
+                "entitlement": False,
+                "credits_reserved": reservation.credits_reserved,
+                "source": "user",
+            }
+        except BillingRejected:
+            db.rollback()
+            raise
+        except credits.InsufficientCreditsError as exc:
+            db.rollback()
+            raise BillingRejected(
+                "insufficient_credits",
+                f"This render needs {exc.needed} credits but only "
+                f"{exc.available} are available.",
+            ) from exc
+        except Exception as exc:
+            db.rollback()
+            raise BillingRejected(
+                "billing_unavailable",
+                "Billing is temporarily unavailable; the render "
+                "was not started and nothing was charged.",
+                status_code=503,
+            ) from exc
+    finally:
+        db.close()
+
+
+def _extract_actual_seconds(reservation, execution) -> float:
+    if isinstance(execution, dict):
+        for key in (
+            "duration_seconds",
+            "final_duration_seconds",
+            "video_duration_seconds",
+        ):
+            value = execution.get(key)
+            if isinstance(value, (int, float)) and value > 0:
+                return float(value)
+    if reservation.estimated_seconds:
+        return float(reservation.estimated_seconds)
+    return float(catalogue.STANDARD_GENERATION_SECONDS)
+
+
+def settle_for_run(run_id, status, execution=None) -> None:
+    """Settle or restore the reservation for a finished run.
+
+    Fail-soft by contract (it is called from the ledger's finish
+    paths, which must never be disturbed): internal failures are
+    printed, and the reservation stays 'active' for the lifecycle
+    sweeper to reconcile rather than losing the user's money
+    silently. Idempotent: a non-active reservation is untouched,
+    and a run that is not actually terminal is never settled.
+    """
+    if not run_id:
+        return
+    db = _session()
+    try:
+        reservation = (
+            db.query(models.GenerationReservation)
+            .filter_by(run_id=str(run_id))
+            .one_or_none()
+        )
+        if reservation is None:
+            # A retry finishes under its own run id only when its
+            # reservation was created for the chain root (pre-Phase-8
+            # chains); walk the retry links to find it.
+            run_row = db.get(models.ProductionRun, str(run_id))
+            hops = 0
+            while reservation is None and run_row is not None and hops < 10:
+                options = run_row.options or {}
+                parent = options.get("retry_of")
+                if not parent:
+                    break
+                reservation = (
+                    db.query(models.GenerationReservation)
+                    .filter_by(run_id=str(parent))
+                    .one_or_none()
+                )
+                run_row = db.get(models.ProductionRun, str(parent))
+                hops += 1
+        if reservation is None or reservation.status != "active":
+            return
+        run_row = db.get(models.ProductionRun, str(run_id))
+        if run_row is not None and run_row.status not in TERMINAL_STATUSES:
+            return
+
+        if status == "completed":
+            actual = _extract_actual_seconds(reservation, execution)
+            if reservation.entitlement_reserved:
+                excess = actual - catalogue.STANDARD_GENERATION_SECONDS
+                cost = (
+                    catalogue.generation_credit_cost(excess)
+                    if excess > 0
+                    else 0
+                )
+            else:
+                cost = catalogue.generation_credit_cost(actual)
+            charged = 0
+            if cost > 0:
+                result = credits.charge_reservation(
+                    db,
+                    reservation.user_id,
+                    reservation_id=reservation.id,
+                    total_charge=cost,
+                    run_id=reservation.run_id,
+                    project_id=reservation.project_id,
+                    billing_period_id=reservation.billing_period_id,
+                    source="system",
+                )
+                charged = int(result["charged"])
+            if reservation.credits_reserved:
+                credits.release_reservation(
+                    db,
+                    reservation.user_id,
+                    reservation_id=reservation.id,
+                    run_id=reservation.run_id,
+                    project_id=reservation.project_id,
+                    source="system",
+                    reason="unused reservation released at settlement",
+                )
+            reservation.status = "settled"
+            reservation.charged_credits = charged
+            reservation.actual_seconds = actual
+        else:
+            if reservation.credits_reserved:
+                credits.release_reservation(
+                    db,
+                    reservation.user_id,
+                    reservation_id=reservation.id,
+                    run_id=reservation.run_id,
+                    project_id=reservation.project_id,
+                    source="system",
+                    reason=f"generation {status}: full restoration",
+                )
+            if reservation.entitlement_reserved and reservation.billing_period_id:
+                period = db.get(
+                    models.BillingPeriod, reservation.billing_period_id
+                )
+                if period is not None:
+                    periods_service.release_allowance(
+                        db, period, "generations"
+                    )
+            reservation.status = "released"
+            reservation.charged_credits = 0
+        reservation.settled_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception as error:  # fail-soft: never disturb the finish
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print(f"WARNING: billing settlement failed for run {run_id}: {error}")
+    finally:
+        db.close()
