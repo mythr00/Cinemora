@@ -343,6 +343,25 @@ def timeline_eligible(visual):
     return verification.get("accepted") is True
 
 
+def _recorded_scenes(visual):
+    """Shot scenes recorded on the visual's frame check, if any
+    (GitHub Skills Programme, Lane 2, 2026-11-25). The frame check
+    rides on the visual directly or on its verification verdict
+    copy; only an evaluated PySceneDetect record counts."""
+    if not isinstance(visual, dict):
+        return []
+    containers = [visual.get("frame_check")]
+    verification = visual.get("verification")
+    if isinstance(verification, dict):
+        containers.append(verification.get("frame_check"))
+    for container in containers:
+        if isinstance(container, dict):
+            shots = container.get("shots")
+            if isinstance(shots, dict) and shots.get("status") == "evaluated":
+                return shots.get("scenes") or []
+    return []
+
+
 def get_clip_start(visual):
     """Stage 3F (MA-15): the asset's segment offset (seconds into
     the source clip) as a float, defaulting to 0.0. Carried onto
@@ -1219,6 +1238,30 @@ def build_scene_timeline(
                     _clip_end = _clip_start + float(item["duration"] or 0.0)
                     if _segment_end is not None:
                         _clip_end = min(_clip_end, _segment_end)
+                # GitHub Skills Programme (Lane 2, 2026-11-25):
+                # SHOT-AWARE WINDOW — when the chosen visual's
+                # frame check recorded shot boundaries, keep the
+                # shown window inside a single shot (shift into
+                # the next shot when it can hold the window, else
+                # clamp to the current shot's end). A window
+                # straddling a hard cut puts a cut mid-sentence —
+                # the flicker family the founder ruled a defect.
+                # No recorded scenes -> the window is exactly
+                # what it was, and the item records the snap when
+                # one happens (shot_snapped).
+                _scenes = _recorded_scenes(visual)
+                if _scenes:
+                    from services.shot_detection import (
+                        snap_window_inside_shot,
+                    )
+
+                    _snapped = snap_window_inside_shot(
+                        _scenes, _clip_start, _clip_end - _clip_start
+                    )
+                    if _snapped[2]:
+                        _clip_start = _snapped[0]
+                        _clip_end = _clip_start + _snapped[1]
+                        item["shot_snapped"] = True
                 item["clip_start"] = round(_clip_start, 3)
                 item["clip_end"] = round(_clip_end, 3)
                 if _continued:

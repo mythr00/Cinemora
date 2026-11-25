@@ -1237,10 +1237,35 @@ def verify_asset_frames(asset, scenario=None, bible=None, *,
             ocr_text, ocr_engine = _ocr_for_frames(
                 ocr_text_provider, frame_paths
             )
-            return verify_frames(
+            record = verify_frames(
                 images, kind="video", scenario=scenario, bible=bible,
                 ocr_text=ocr_text, ocr_engine=ocr_engine,
             )
+            # GitHub Skills Programme (Lane 2, 2026-11-25):
+            # record-only content evidence — ffmpeg freeze/black
+            # intervals, PySceneDetect shot boundaries and
+            # perceptual hashes of the sampled frames. None of it
+            # changes the verdict above; each piece fails soft
+            # independently, exactly like the frame stage itself.
+            from services import content_analysis, perceptual_hash
+            from services import shot_detection
+
+            record["content_analysis"] = (
+                content_analysis.analyse_video_content(path)
+            )
+            record["shots"] = shot_detection.detect_shots(
+                path,
+                duration_seconds=asset.get("duration_seconds")
+                or asset.get("clip_duration"),
+            )
+            try:
+                record["frame_hashes"] = perceptual_hash.frame_hashes(images)
+            except Exception as error:  # never wedge verification
+                record["frame_hashes"] = {
+                    "count": 0,
+                    "reason": f"error: {type(error).__name__}: {error}",
+                }
+            return record
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
     except Exception as error:  # fail-soft: never wedge a production
