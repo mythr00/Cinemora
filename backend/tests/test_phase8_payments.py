@@ -142,7 +142,7 @@ def test_topup_webhook_grants_credits_once(db, configured):
     assert payment.amount_cents == 1800
     entry = (
         db.query(models.CreditLedgerEntry)
-        .filter_by(entry_type="allocation_purchase")
+        .filter_by(entry_type="allocation_purchase", user_id=user.id)
         .one()
     )
     assert entry.expires_at is not None

@@ -164,7 +164,7 @@ def test_charge_shortfall_is_recorded_never_negative(db):
     assert credits.total_available(account) == 0
     entry = (
         session.query(models.CreditLedgerEntry)
-        .filter_by(entry_type="charge")
+        .filter_by(entry_type="charge", user_id=user_id)
         .one()
     )
     assert entry.details["shortfall_credits"] == 54
