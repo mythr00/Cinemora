@@ -8,6 +8,7 @@ import { formatBytes, formatDateTime } from "@/components/admin-format";
 import { ErrorState, LoadingState } from "@/components/states";
 import {
   assignAdminUserPlan,
+  generateAdminUserResetLink,
   getAdminSubscriptions,
   getAdminUser,
   setAdminUserStatus,
@@ -25,6 +26,9 @@ export default function AdminUserDetailPage() {
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
+  // A-16: the generated reset link lives only in this state — shown
+  // once, never persisted, cleared on dismiss or on leaving.
+  const [resetLink, setResetLink] = useState<string | null>(null);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -78,6 +82,30 @@ export default function AdminUserDetailPage() {
         next === "disabled"
           ? "Account suspended and sessions revoked. Recorded in the audit log."
           : "Account reactivated. Recorded in the audit log.",
+      );
+    } catch (cause) {
+      setError(cause);
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function onGenerateResetLink() {
+    if (!user) return;
+    if (
+      !window.confirm(
+        `Generate a one-time password reset link for ${user.email}? Any previous reset link for this account stops working. The new link is shown once — deliver it to the user out of band.`,
+      )
+    )
+      return;
+    setActing(true);
+    setNotice(null);
+    setResetLink(null);
+    try {
+      const result = await generateAdminUserResetLink(userId);
+      setResetLink(result.reset_link);
+      setNotice(
+        "Reset link generated and recorded in the audit log. It is shown once below and expires in 1 hour.",
       );
     } catch (cause) {
       setError(cause);
@@ -148,6 +176,36 @@ export default function AdminUserDetailPage() {
           {user.status === "active" ? "Suspend account" : "Reactivate account"}
         </button>
       </div>
+      <h2 className="admin-section-title">Password reset</h2>
+      <p className="admin-intro">
+        For a locked-out user: generate a one-time reset link and
+        deliver it out of band. Email delivery is not configured —
+        this operator path is the deliberate alternative.
+      </p>
+      <div className="admin-actions">
+        <button
+          type="button"
+          className="button button-primary"
+          onClick={() => void onGenerateResetLink()}
+          disabled={acting}
+        >
+          Generate reset link
+        </button>
+        {resetLink && (
+          <button
+            type="button"
+            className="button"
+            onClick={() => setResetLink(null)}
+          >
+            Dismiss link
+          </button>
+        )}
+      </div>
+      {resetLink && (
+        <p className="admin-notice">
+          Shown once — copy it now: <code>{resetLink}</code>
+        </p>
+      )}
       <h2 className="admin-section-title">Plan assignment</h2>
       <div className="admin-actions">
         <label className="admin-filter">

@@ -26,6 +26,8 @@ table exists (services/run_metrics design rule).
 
 from __future__ import annotations
 
+import os
+
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
@@ -718,6 +720,52 @@ def assign_plan(
             detail={"from_plan": previous_name, "to_plan": plan.name},
         )
         return {"user": api_v1._user_view(user), "plan": plan.name}
+    finally:
+        db.close()
+
+
+@router.post("/users/{user_id}/reset-link")
+def generate_reset_link(
+    user_id: str,
+    principal=Depends(_write_guard),
+):
+    """Operator-mediated password reset (Phase 6, A-16).
+
+    Email delivery is founder-gated (D-09), so a locked-out user is
+    helped out of band instead: an admin generates a one-time reset
+    link here and delivers it to the user through a channel they
+    control. The link is built from the EXISTING reset machinery
+    (services/auth.issue_reset_token — single-use, SHA-256 stored,
+    1 h expiry; the confirm flow at /auth/password-reset/confirm
+    consumes it) and is returned ONCE, in this response only.
+
+    The token and the complete link must NEVER be logged (B-08):
+    nothing here writes them to a log, and the audit entry records
+    only the action, the target and the expiry — admin_audit's
+    secret-key denylist is a second line of defence, not the first.
+    Generating a new link supersedes any outstanding one (the
+    stored hash is replaced), exactly like a fresh reset request.
+    """
+    db = SessionLocal()
+    try:
+        user = db.get(User, str(user_id))
+        if user is None:
+            raise ApiError(404, "user_not_found", f"No user {user_id}.")
+        token = auth_service.issue_reset_token(db, user)
+        base = os.environ.get("CINEMORA_PUBLIC_BASE_URL", "")
+        link = f"{base}/reset-password?token={token}"
+        expires_at = user.password_reset_expires_at
+        admin_audit.record(
+            principal,
+            "user.password_reset_link_generated",
+            target_type="user",
+            target_id=user.id,
+            detail={
+                "delivery": "operator_out_of_band",
+                "expires_at": str(expires_at) if expires_at else None,
+            },
+        )
+        return {"reset_link": link, "expires_at": expires_at}
     finally:
         db.close()
 

@@ -3064,6 +3064,16 @@ export function assignAdminUserPlan(userId: string, planName: string) {
   );
 }
 
+/** Phase 6 (A-16): operator-mediated password reset. The response
+ * carries the one-time reset link exactly once — the caller shows
+ * it once for out-of-band delivery and never stores it. */
+export function generateAdminUserResetLink(userId: string) {
+  return apiRequest<{ reset_link: string; expires_at: string | null }>(
+    `/api/v1/admin/users/${userId}/reset-link`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
 export function getAdminSubscriptions(signal?: AbortSignal) {
   return apiRequest<AdminSubscriptions>("/api/v1/admin/subscriptions", {
     signal,
