@@ -530,6 +530,10 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
         "or distinctive expression.",
         _outline_prompt(topic, str(angle or "").strip(), minutes, category),
         max_tokens=3000,
+        usage_context={
+            "user_id": user_id,
+            "context": "script_studio_draft",
+        },
     )
     raw_sections = (outline or {}).get("sections") if isinstance(outline, dict) else None
     if not raw_sections or not isinstance(raw_sections, list):
@@ -576,6 +580,10 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
             _section_prompt(topic, item["heading"], item["intent"],
                             item["word_budget"], position),
             max_tokens=8000,
+            usage_context={
+                "user_id": user_id,
+                "context": "script_studio_draft",
+            },
         )
         sections.append(
             {"id": _new_id("sec"), "heading": item["heading"], "body": str(body or "").strip()}

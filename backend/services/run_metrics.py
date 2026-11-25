@@ -249,6 +249,31 @@ def llm_call(total_tokens=0):
         pass
 
 
+def process_totals() -> dict:
+    """Counters summed across every run state this PROCESS still
+    holds (Phase 5c-1 / B-10). Process-local by construction: the
+    states are in-memory, capped at the most recent runs, and say
+    nothing about other processes — callers must label them as
+    such. Never raises."""
+    try:
+        with _LOCK:
+            serper = {"total": 0, "web": 0, "images": 0, "video": 0}
+            llm = {"total": 0, "total_tokens": 0}
+            for state in _STATES.values():
+                for key in serper:
+                    serper[key] += int(state["serper"].get(key) or 0)
+                llm["total"] += int(state["llm"].get("total") or 0)
+                llm["total_tokens"] += int(
+                    state["llm"].get("total_tokens") or 0
+                )
+            return {"serper_calls": serper, "llm_calls": llm}
+    except Exception:
+        return {
+            "serper_calls": {"total": 0, "web": 0, "images": 0, "video": 0},
+            "llm_calls": {"total": 0, "total_tokens": 0},
+        }
+
+
 def snapshot(run_id=None):
     """The report-ready "execution" block for a run (default: the
     bound run). Never raises."""

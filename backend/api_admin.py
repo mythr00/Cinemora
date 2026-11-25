@@ -158,6 +158,25 @@ def workers(principal=Depends(admin_guard)):
         db.close()
 
 
+@router.get("/usage")
+def usage(days: int = 30, principal=Depends(admin_guard)):
+    """B-10 (Phase 5c-1): provider usage visibility — LLM token
+    totals from the append-only provider_usage_events ledger,
+    grouped by provider + model + day. Cost is null with
+    pricing_status "not_configured": no price table exists, and
+    no figure is invented (the Phase 8 cost engine will price
+    these events later). The search section exposes Serper's
+    in-process counters, labelled process-local — they are not
+    a platform-wide ledger."""
+    from services import provider_usage
+
+    db = SessionLocal()
+    try:
+        return provider_usage.aggregate_usage(db, days=days)
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------------
 # M2 — production monitoring (+ the two audited writes)
 # ---------------------------------------------------------------------

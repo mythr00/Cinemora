@@ -28,6 +28,19 @@ def client():
     return TestClient(main.app, raise_server_exceptions=False)
 
 
+@pytest.fixture(autouse=True)
+def _reenable_cinemora_loggers():
+    # Alembic's env.py fileConfig (run by the migration tests in
+    # other modules) disables every pre-existing logger — the
+    # same suite hazard test_ia09 works around for the "database"
+    # logger. Re-enable the cinemora tree so capture works
+    # regardless of test order. (Production is unaffected:
+    # migrations run in a separate process from serving.)
+    for name in ("cinemora", "cinemora.http", "cinemora.phase5c_test"):
+        logging.getLogger(name).disabled = False
+    yield
+
+
 # ---------------------------------------------------------------------
 # Middleware on the real app
 # ---------------------------------------------------------------------

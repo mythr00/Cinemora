@@ -1060,3 +1060,53 @@ class WebhookDelivery(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow, index=True
     )
+
+
+class ProviderUsageEvent(Base):
+    """One recorded LLM provider call (Phase 5c-1 / B-10).
+
+    Schema authority: migrations/versions/0012_provider_usage.py.
+
+    Append-only usage ledger: one row per completed provider call,
+    written by the provider layer (services/provider_usage) from
+    the usage the provider actually reported. Token fields are
+    NULL when the provider reported nothing — unknown stays
+    unknown. There are deliberately NO cost/price columns: no
+    price table is configured anywhere in the system, and the
+    Phase 8 cost engine will price these events later from its
+    own configuration. Context columns (user/project/run) are
+    NULL when the caller had none to pass — never fabricated.
+    """
+
+    __tablename__ = "provider_usage_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    provider: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True
+    )
+
+    model: Mapped[str] = mapped_column(String(128), nullable=True)
+
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=True)
+
+    completion_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=True
+    )
+
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=True)
+
+    user_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    project_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    run_id: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    # Free-text caller label (e.g. "story_analysis"); NULL when the
+    # caller supplied no context at all.
+    context: Mapped[str] = mapped_column(String(120), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        index=True,
+    )

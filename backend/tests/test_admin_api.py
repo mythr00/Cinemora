@@ -156,6 +156,7 @@ ADMIN_ROUTES = [
     ("POST", "/api/v1/admin/runs/some-run/cancel", None),
     ("POST", "/api/v1/admin/runs/some-run/replacement", None),
     ("GET", "/api/v1/admin/providers/usage", None),
+    ("GET", "/api/v1/admin/usage", None),
     ("GET", "/api/v1/admin/storage", None),
     ("GET", "/api/v1/admin/storage/orphans", None),
     ("GET", "/api/v1/admin/settings", None),
