@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -10,6 +11,26 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_SIZE = "base"
 DEVICE = "cpu"
 COMPUTE_TYPE = "int8"
+
+# D-04: the Whisper weights are PINNED — an explicit Hugging Face
+# repo id plus the exact revision (commit hash) a fresh deployment
+# must resolve, instead of an unpinned first-use download of
+# whatever "base" points at that day. The defaults are the weights
+# the local stack actually resolves today, verified 2026-11-25 from
+# the local HF cache: Systran/faster-whisper-base (faster-whisper's
+# own mapping for "base") at the snapshot recorded in
+# ~/.cache/huggingface/hub/models--Systran--faster-whisper-base/
+# refs/main. Read at import time (like llm_client's config) —
+# rotation requires a process restart. The cache location itself
+# stays HF_HOME's business (the Docker image sets
+# HF_HOME=/data/hf-cache).
+WHISPER_MODEL_ID = os.environ.get(
+    "CINEMORA_WHISPER_MODEL", "Systran/faster-whisper-base"
+)
+WHISPER_MODEL_REVISION = os.environ.get(
+    "CINEMORA_WHISPER_REVISION",
+    "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+)
 
 # Stage 3I: the Whisper model is a lazy module-level singleton —
 # previously every transcribe_audio call constructed a new
@@ -23,9 +44,10 @@ def _get_whisper_model():
         from faster_whisper import WhisperModel
 
         _WHISPER_MODEL = WhisperModel(
-            MODEL_SIZE,
+            WHISPER_MODEL_ID,
             device=DEVICE,
             compute_type=COMPUTE_TYPE,
+            revision=WHISPER_MODEL_REVISION,
         )
     return _WHISPER_MODEL
 
