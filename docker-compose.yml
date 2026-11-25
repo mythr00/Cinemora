@@ -1,3 +1,38 @@
+# Cinemora full stack: Postgres + Redis + web API + workers (B-03).
+#
+#   docker compose up --build
+#
+# The web service runs the deployment supervisor in --web-only mode;
+# the worker service runs it in --workers-only mode, which spawns and
+# restarts CINEMORA_WORKER_COUNT worker processes (default 2) inside
+# that container. Both services share the same image and environment
+# so API and workers can never drift onto different media roots,
+# databases or queues. Set the counts/concurrency in the shell or a
+# .env file beside this file:
+#   CINEMORA_WORKER_COUNT=2 CINEMORA_RENDER_CONCURRENCY=1
+#
+# Secrets below are LOCAL-DEVELOPMENT defaults only — override
+# DATABASE_URL / POSTGRES_PASSWORD / CINEMORA_API_TOKEN and the
+# provider keys for any real deployment (see DEPLOYMENT-RUNBOOK.md in
+# the audit folder).
+
+x-backend-env: &backend-env
+  DATABASE_URL: ${DATABASE_URL:-postgresql://documentary:documentary_dev_password@postgres:5432/documentary}
+  REDIS_URL: redis://redis:6379/0
+  CINEMORA_WORKER_COUNT: ${CINEMORA_WORKER_COUNT:-2}
+  CINEMORA_RENDER_CONCURRENCY: ${CINEMORA_RENDER_CONCURRENCY:-1}
+  CINEMORA_MEDIA_ROOT: /data/media
+  SOURCE_INTEL_DB: /data/source-intel/source_intel.sqlite3
+  HF_HOME: /data/hf-cache
+  TMPDIR: /data/tmp
+  # Phase 1b security opt-ins (E-21/B-05/B-07): Secure cookies on,
+  # operator-token dual-auth window closed unless deliberately opened.
+  CINEMORA_COOKIE_SECURE: "1"
+  CINEMORA_ALLOW_OPERATOR_TOKEN: ${CINEMORA_ALLOW_OPERATOR_TOKEN:-0}
+  CINEMORA_API_TOKEN: ${CINEMORA_API_TOKEN:-}
+  SERPER_API_KEY: ${SERPER_API_KEY:-}
+  BREWKEG_API_KEY: ${BREWKEG_API_KEY:-}
+
 services:
 
   postgres:
@@ -7,7 +42,7 @@ services:
     environment:
       POSTGRES_DB: documentary
       POSTGRES_USER: documentary
-      POSTGRES_PASSWORD: documentary_dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-documentary_dev_password}
     ports:
       - "5432:5432"
     volumes:
@@ -27,6 +62,46 @@ services:
     volumes:
       - redis_data:/data
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: documentary-backend
+    restart: unless-stopped
+    # Web only: migrations run once here (CINEMORA_RUN_MIGRATIONS is
+    # set in the image), then uvicorn. Workers live in `worker`.
+    command: ["python", "supervise.py", "--web-only"]
+    environment: *backend-env
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - app_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: documentary-worker
+    restart: unless-stopped
+    # Supervised workers: spawns CINEMORA_WORKER_COUNT worker.py
+    # processes and restarts any that die. A worker started before
+    # migrations finish exits on its schema gate and is restarted
+    # until the web service has migrated the database.
+    command: ["python", "supervise.py", "--workers-only"]
+    environment: *backend-env
+    volumes:
+      - app_data:/data
+    depends_on:
+      - postgres
+      - redis
+      - backend
+
 volumes:
   postgres_data:
   redis_data:
+  app_data:

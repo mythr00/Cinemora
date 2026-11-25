@@ -66,14 +66,23 @@ ENV PYTHONUNBUFFERED=1 \
     CINEMORA_MEDIA_ROOT=/data/media \
     SOURCE_INTEL_DB=/data/source-intel/source_intel.sqlite3 \
     HF_HOME=/data/hf-cache \
-    TMPDIR=/data/tmp
+    TMPDIR=/data/tmp \
+    CINEMORA_WORKER_COUNT=2 \
+    CINEMORA_RENDER_CONCURRENCY=1 \
+    CINEMORA_RUN_MIGRATIONS=1
 
 RUN mkdir -p /data/media /data/tmp /data/hf-cache /data/source-intel \
     && chown -R cinemora:cinemora /data /app
 
 USER cinemora
 
-# Default process = the web API. Altare sets $PORT; the Procfile carries
-# the same command (plus the migration step) and wins where Altare reads
-# the Procfile, so keep the two in sync.
-CMD ["sh", "-c", "exec python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Default process = the deployment supervisor (B-03/B-04): it runs
+# migrations once (CINEMORA_RUN_MIGRATIONS=1), then starts uvicorn
+# plus CINEMORA_WORKER_COUNT worker processes (default 2), restarts
+# dead workers, forwards signals, and exits if the web process dies.
+# Altare sets $PORT, which the supervisor honours for uvicorn.
+# Web-only (for hosts that scale web/workers as separate processes):
+#   docker run ... python supervise.py --web-only
+# or set CINEMORA_WEB_ONLY=1; workers-only: python supervise.py
+# --workers-only (that is what the compose `worker` service runs).
+CMD ["python", "supervise.py"]

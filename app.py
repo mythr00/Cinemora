@@ -13,6 +13,16 @@ What it does, in order:
    the environment), exactly like the Docker image's entrypoint.
 4. Serves the FastAPI app with uvicorn on 0.0.0.0:$SERVER_PORT (the panel's
    allocated port), falling back to $PORT, then 25585.
+5. Starts CINEMORA_WORKER_COUNT worker processes (B-03/B-04) as children
+   of this launcher and supervises them for the life of the web server:
+   a monitor thread restarts any worker that dies, and all workers are
+   terminated when the web server exits. Panel limitation: the panel
+   sees and manages only this one process — if the panel kills or
+   restarts app.py, the children die with it (they are in its process
+   tree and are terminated in the finally block below); there is no
+   independent panel-level restart policy for the workers, and a hard
+   SIGKILL of app.py can orphan children until the panel reaps the
+   container. See DEPLOYMENT-RUNBOOK.md.
 """
 
 import os
@@ -72,8 +82,54 @@ from alembic.config import Config  # noqa: E402
 
 command.upgrade(Config(os.path.join(BACKEND, "alembic.ini")), "head")
 
-# 5. Serve.
+# 5. Workers (B-03/B-04): CINEMORA_WORKER_COUNT real worker.py child
+# processes, spawned and supervised by the shared WorkerPool from
+# backend/supervise.py — the same code the Docker image runs. The
+# child environment carries the count back to each worker, so the
+# dispatcher's promotion cap, the admin display and the actual
+# process count cannot diverge.
+import subprocess  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+from supervise import WorkerPool, build_child_env, worker_count_from_env  # noqa: E402
+
+_worker_count = worker_count_from_env(os.environ)
+_pool = WorkerPool(
+    _worker_count,
+    spawn=subprocess.Popen,
+    env=build_child_env(os.environ, _worker_count),
+    cwd=BACKEND,
+)
+_pool.start()
+print(f"app.py: started {_worker_count} worker process(es)", flush=True)
+
+_stop_monitor = threading.Event()
+
+
+def _monitor_workers():
+    while not _stop_monitor.wait(2.0):
+        restarted = _pool.restart_dead()
+        if restarted:
+            print(
+                f"app.py: restarted {restarted} dead worker process(es)",
+                flush=True,
+            )
+
+
+_monitor_thread = threading.Thread(
+    target=_monitor_workers, name="app-worker-monitor", daemon=True
+)
+_monitor_thread.start()
+
+# 6. Serve. Workers live exactly as long as the web server: when
+# uvicorn returns (or raises), the monitor stops and every worker is
+# terminated before this process exits.
 import uvicorn  # noqa: E402
 
 _port = int(os.environ.get("SERVER_PORT") or os.environ.get("PORT") or "25585")
-uvicorn.run("main:app", host="0.0.0.0", port=_port)
+try:
+    uvicorn.run("main:app", host="0.0.0.0", port=_port)
+finally:
+    _stop_monitor.set()
+    _pool.terminate_all()
