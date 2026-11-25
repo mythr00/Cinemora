@@ -1023,6 +1023,10 @@ OCR_ENGINE_TESSERACT = "tesseract"
 
 _RAPIDOCR_ENGINE = None
 _RAPIDOCR_UNAVAILABLE = False
+# D-03/C-11: WHY the engine is unavailable (exception type + message),
+# recorded when the build first fails so the degradation is explicit
+# in-process, not just inferred downstream from ocr_engine_unavailable.
+_RAPIDOCR_UNAVAILABLE_REASON = None
 _RAPIDOCR_LOCK = threading.Lock()
 
 
@@ -1031,6 +1035,7 @@ def _rapidocr_engine():
     build is cached: a broken install is not retried per
     candidate."""
     global _RAPIDOCR_ENGINE, _RAPIDOCR_UNAVAILABLE
+    global _RAPIDOCR_UNAVAILABLE_REASON
     if _RAPIDOCR_ENGINE is not None or _RAPIDOCR_UNAVAILABLE:
         return _RAPIDOCR_ENGINE
     with _RAPIDOCR_LOCK:
@@ -1039,8 +1044,20 @@ def _rapidocr_engine():
                 from rapidocr_onnxruntime import RapidOCR
 
                 _RAPIDOCR_ENGINE = RapidOCR()
-            except Exception:
+            except Exception as error:
                 _RAPIDOCR_UNAVAILABLE = True
+                _RAPIDOCR_UNAVAILABLE_REASON = (
+                    f"{type(error).__name__}: {error}"
+                )
+                # Explicit degradation (D-03/C-11): the geography
+                # record already stamps ocr_engine_unavailable, but
+                # the failure itself was previously swallowed with no
+                # trace of the cause. Log it once, when it is cached.
+                print(
+                    "[frame_verification] RapidOCR unavailable "
+                    f"({_RAPIDOCR_UNAVAILABLE_REASON}); OCR degrades "
+                    "to ocr_engine_unavailable / fallback providers."
+                )
     return _RAPIDOCR_ENGINE
 
 

@@ -4,6 +4,10 @@
 # Direct deps: fastapi, uvicorn, pydantic, sqlalchemy, python-dotenv, redis, rq, requests,
 # pillow, faster-whisper, yt-dlp, piper-tts, psycopg2-binary, python-multipart (Stage 6:
 # editor file uploads via FastAPI); dev/test: pytest, alembic.
+# OCR (D-03/C-11): rapidocr-onnxruntime + its transitive stack (opencv-python,
+# pyclipper, shapely, six) — frame_verification's primary OCR engine. These were
+# venv-local only and missing from this file, so every Docker deployment silently
+# lost OCR (the psycopg parity class). Guard: tests/test_phase4a_ocr_packaging.py.
 alembic==1.20.1
 annotated-doc==0.0.7
 argon2-cffi==25.1.0
@@ -34,6 +38,7 @@ Mako==1.4.3
 MarkupSafe==3.0.4
 numpy==2.5.5
 onnxruntime==1.32.0
+opencv-python==5.1.0.95
 opentelemetry-api==1.45.2
 packaging==26.3
 pathvalidate==3.3.1
@@ -43,6 +48,7 @@ pluggy==1.7.0
 protobuf==7.36.2
 psycopg2-binary==2.9.13
 psycopg[binary]==3.2.9
+pyclipper==1.4.0
 pydantic==2.14.3
 pydantic_core==2.50.4
 Pygments==2.21.0
@@ -51,9 +57,12 @@ python-dateutil==4.0.0
 python-dotenv==1.2.4
 python-multipart==0.0.34
 PyYAML==6.0.3
+rapidocr-onnxruntime==1.4.4
 redis==8.1.0
 requests==2.34.2
 rq==3.0.0
+shapely==2.2.0
+six==1.17.0
 SQLAlchemy==2.1.9
 starlette==1.10.0
 tokenizers==0.23.3
