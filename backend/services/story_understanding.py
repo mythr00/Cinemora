@@ -33,6 +33,12 @@ from services.atomic_write import write_json_atomic
 # either services.search_provider.search_web or this attribute.
 search_web = None
 
+# GitHub Skills Programme (2026-11-25): the same lazy-seam pattern
+# for the source full-text extractor (see _resolve_extractor).
+# Tests patch this attribute; production resolves
+# services.source_extraction when the deployment enables it.
+extract_source_text = None
+
 SENTENCE_ROLES = [
     "hook", "setup", "background", "action", "event", "evidence",
     "motivation", "reflection", "legal", "aftermath", "transition", "conclusion",
@@ -460,6 +466,13 @@ def find_mentions(text, alias_index):
 _RESEARCH_MAX_SUBJECTS = 12
 _RESEARCH_MAX_SOURCES_PER_SUBJECT = 10
 _RESEARCH_FAILURE_LIMIT = 3  # total failed queries before giving up
+# GitHub Skills Programme: the full-text extraction pass's budget —
+# at most this many attached sources are fetched per bible build.
+_EXTRACTION_MAX_SOURCES = 12
+# RapidFuzz token_set_ratio at/above which two attached sources'
+# titles are stamped as probable duplicates (recorded evidence for
+# review — sources are never merged or dropped on a fuzzy score).
+_TITLE_DUPLICATE_THRESHOLD = 92.0
 
 _NUMBER_RE = re.compile(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b|\b\d+(?:\.\d+)?\b")
 _YEAR_RE = re.compile(r"\b(?:1[5-9]\d\d|20\d\d)\b")
@@ -486,6 +499,137 @@ def _resolve_search_web():
         return getattr(search_provider, "search_web", None)
     except Exception:
         return None
+
+
+def _resolve_extractor():
+    """The source full-text extractor, resolved at call time like
+    search_web: a callable patched onto this module's
+    ``extract_source_text`` attribute wins; otherwise
+    services.source_extraction's entry point when the deployment
+    enabled extraction (CINEMORA_SOURCE_EXTRACTION_ENABLED=1 —
+    closed by default; the production image sets it). Returns
+    None when the pass is disabled, which research_meta records."""
+    fn = globals().get("extract_source_text")
+    if callable(fn):
+        return fn
+    try:
+        from services import source_extraction
+
+        if source_extraction.extraction_enabled():
+            return source_extraction.extract_from_url
+    except Exception:
+        pass
+    return None
+
+
+def _extract_attached_sources(entities, extractor):
+    """Bounded full-text extraction over the sources the research
+    pass attached (GitHub Skills Programme, 2026-11-25).
+
+    For each attached source (in order, at most
+    _EXTRACTION_MAX_SOURCES per bible build) the extractor's
+    record is stamped onto the source as source["extraction"]
+    and, on success, the extracted text as
+    source["extracted_text"] — the snippet is never removed, so
+    the evidence basis only ever widens. Fail-soft throughout:
+    an extractor exception is recorded as a failed extraction,
+    never propagated. Returns the pass's stats for research_meta.
+    """
+    stats = {
+        "enabled": extractor is not None,
+        "attempted": 0,
+        "extracted": 0,
+        "failed": 0,
+        "refused": 0,
+    }
+    if extractor is None:
+        return stats
+    for entity in entities or []:
+        if not isinstance(entity, dict):
+            continue
+        for source in entity.get("sources") or []:
+            if stats["attempted"] >= _EXTRACTION_MAX_SOURCES:
+                return stats
+            if not isinstance(source, dict) or source.get("extraction"):
+                continue
+            url = str(source.get("url") or "").strip()
+            if not url:
+                continue
+            stats["attempted"] += 1
+            try:
+                result = extractor(url) or {}
+            except Exception as error:
+                result = {
+                    "status": "failed",
+                    "reason": f"extractor_error:{type(error).__name__}",
+                }
+            record = {
+                "status": result.get("status") or "failed",
+                "extractor": result.get("extractor"),
+                "char_count": result.get("char_count") or 0,
+                "extracted_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if result.get("date_iso"):
+                # The source's own stated date, normalised by the
+                # extractor (dateparser) — recorded as the source's
+                # claim, never as a verified fact.
+                record["source_date_iso"] = result["date_iso"]
+            if result.get("reason"):
+                record["reason"] = str(result["reason"])[:120]
+            source["extraction"] = record
+            if record["status"] == "extracted" and result.get("text"):
+                source["extracted_text"] = str(result["text"])
+                stats["extracted"] += 1
+            elif record["status"] == "refused":
+                stats["refused"] += 1
+            else:
+                stats["failed"] += 1
+    return stats
+
+
+def _stamp_title_duplicates(entities):
+    """Record probable duplicate sources across the bible
+    (GitHub Skills Programme, 2026-11-25).
+
+    The same wire story syndicated to several outlets attaches
+    once per URL today and would otherwise read as several
+    INDEPENDENT corroborations. RapidFuzz token_set_ratio over
+    normalised titles finds the probable duplicates; the later
+    source is stamped {"title_match": {"score", "of_url"}} —
+    evidence for review, recorded with its score. Nothing is
+    merged, dropped or re-weighted: verdict maths is unchanged.
+    Returns the number of stamps written.
+    """
+    try:
+        from rapidfuzz import fuzz
+    except Exception:
+        return 0
+    seen = []  # (normalised title, url)
+    stamps = 0
+    for entity in entities or []:
+        if not isinstance(entity, dict):
+            continue
+        for source in entity.get("sources") or []:
+            if not isinstance(source, dict):
+                continue
+            title = " ".join(
+                str(source.get("title") or "").lower().split())
+            url = str(source.get("url") or "")
+            if len(title) < 12 or not url:
+                continue
+            for seen_title, seen_url in seen:
+                if seen_url == url:
+                    continue
+                score = fuzz.token_set_ratio(title, seen_title)
+                if score >= _TITLE_DUPLICATE_THRESHOLD:
+                    source["title_match"] = {
+                        "score": round(float(score), 1),
+                        "of_url": seen_url,
+                    }
+                    stamps += 1
+                    break
+            seen.append((title, url))
+    return stamps
 
 
 def _number_tokens(text):
@@ -556,14 +700,30 @@ def _research_queries_for(bible, entity, genre_pack=None):
     return queries
 
 
+def _source_evidence_text(source):
+    """The text a source contributes as evidence: its extracted
+    full text when a successful extraction is recorded (GitHub
+    Skills Programme, 2026-11-25), else the search snippet. The
+    snippet is never removed by extraction — the basis only ever
+    widens, and with no extraction recorded this returns exactly
+    what the checks read before the programme."""
+    if (source.get("extraction") or {}).get("status") == "extracted":
+        extracted = str(source.get("extracted_text") or "")
+        if extracted:
+            return extracted
+    return str(source.get("snippet") or "")
+
+
 def _fact_supported(fact_text, sources):
     """A fact is externally supported when at least one retrieved
-    snippet for its subject contains the fact's year/number (when the
-    fact has one) or a strict majority of its key content tokens."""
+    source's evidence text (extracted full text when recorded,
+    else its snippet) for its subject contains the fact's
+    year/number (when the fact has one) or a strict majority of
+    its key content tokens."""
     numbers = _number_tokens(fact_text)
     key_tokens = _content_tokens(fact_text)
     for source in sources:
-        snippet = str(source.get("snippet") or "")
+        snippet = _source_evidence_text(source)
         if not snippet:
             continue
         if numbers and numbers & _number_tokens(snippet):
@@ -596,7 +756,7 @@ def _fact_conflict(fact_text, subject, sources):
     share_tokens = (key_tokens - subject_tokens) or key_tokens
     per_source = []
     for source in sources:
-        snippet = str(source.get("snippet") or "")
+        snippet = _source_evidence_text(source)
         if not snippet:
             continue
         if share_tokens and not (share_tokens & _content_tokens(snippet)):
@@ -787,6 +947,17 @@ def enrich_bible_with_research(bible, script_text, sentences=None, genre_pack=No
                         if len(entity["sources"]) >= _RESEARCH_MAX_SOURCES_PER_SUBJECT:
                             break
 
+        # GitHub Skills Programme (2026-11-25): widen the evidence
+        # BEFORE it is read — a bounded full-text extraction pass
+        # over the attached sources (fail-soft; recorded in
+        # research_meta) and recorded near-duplicate title stamps.
+        # With extraction disabled (the default outside the
+        # production image) the stats record enabled=False and the
+        # labelling below reads snippets exactly as before.
+        extraction_stats = _extract_attached_sources(
+            entities, _resolve_extractor())
+        title_duplicates = _stamp_title_duplicates(entities)
+
         conflicts = _label_bible_facts(bible, by_id)
         bible["conflicts"] = conflicts
         # Stage 7 / R7: record the pack's research requirements and
@@ -832,6 +1003,8 @@ def enrich_bible_with_research(bible, script_text, sentences=None, genre_pack=No
             "errors": errors,
             "outcome": _outcome,
             "degraded": _outcome != "completed",
+            "extraction": extraction_stats,
+            "title_duplicates_found": title_duplicates,
         }
         if _outcome == "degraded":
             print(

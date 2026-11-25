@@ -122,11 +122,48 @@ def _sentence_items(sentences):
     return items
 
 
+def _iso_from_groups(groups, year):
+    """Deterministic ISO normalisation of a pattern-matched date
+    mention from its OWN capture groups (GitHub Skills Programme,
+    2026-11-25). Returns the ISO string or None.
+
+    A month is recognised only as a full month name (the patterns'
+    _MONTH_ALT vocabulary); a day only as a 1-2 digit group
+    alongside a month. Season mentions normalise to the year
+    alone — a season is not a month and is never dressed up as
+    one. Mentions without a recorded year never gain an ISO date:
+    no year is invented. This is deliberately NOT a probabilistic
+    parser: every year-bearing pattern already captures its
+    components, so the chronology path stays deterministic."""
+    if year is None:
+        return None
+    month = None
+    day = None
+    for group in groups:
+        if not group:
+            continue
+        lowered = group.lower()
+        if lowered in _MONTHS:
+            month = _MONTHS[lowered]
+        elif re.fullmatch(r"\d{1,2}", group) and 1 <= int(group) <= 31:
+            day = int(group)
+    if month is not None and day is not None:
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    if month is not None:
+        return f"{year:04d}-{month:02d}"
+    return f"{year:04d}"
+
+
 def _date_mentions(text):
     """All date mentions in one sentence, as dicts with display,
     precision and (when present) year. Overlapping matches are
     resolved greedily: a span consumed by a more specific pattern
-    is not re-matched by a coarser one."""
+    is not re-matched by a coarser one.
+
+    GitHub Skills Programme (2026-11-25): each mention also
+    carries "iso" — the deterministic ISO normalisation of the
+    mention (see _iso_from_groups) — or None when the mention
+    records no year."""
     mentions = []
     consumed = []
 
@@ -146,6 +183,7 @@ def _date_mentions(text):
                 "display": match.group(0),
                 "precision": precision,
                 "year": year,
+                "iso": _iso_from_groups(match.groups(), year),
                 "span": match.span(),
             })
     for match in _BARE_YEAR_RE.finditer(text):
@@ -156,6 +194,7 @@ def _date_mentions(text):
             "display": match.group(0),
             "precision": "year",
             "year": int(match.group(0)),
+            "iso": f"{int(match.group(0)):04d}",
             "span": match.span(),
         })
     mentions.sort(key=lambda m: m["span"][0])
@@ -233,6 +272,12 @@ def extract_script_facts(sentences, bible=None):
                 "what": text,
                 "year": first["year"],
                 "precision": first["precision"],
+                # GitHub Skills Programme: the recorded ISO
+                # normalisation (basis "pattern" — derived from
+                # the mention's own matched components, never
+                # parsed probabilistically), or None.
+                "iso_date": first.get("iso"),
+                "date_basis": "pattern" if first.get("iso") else None,
                 "sentence_number": number,
                 "basis": BASIS_SCRIPT,
                 "source": {"type": "script", "sentence_number": number},
@@ -244,6 +289,8 @@ def extract_script_facts(sentences, bible=None):
                     "kind": "date",
                     "display": mention["display"],
                     "year": mention["year"],
+                    "iso_date": mention.get("iso"),
+                    "date_basis": "pattern" if mention.get("iso") else None,
                     "sentence_number": number,
                     "basis": BASIS_SCRIPT,
                     "source": {"type": "script", "sentence_number": number},
@@ -304,6 +351,12 @@ def timeline_events_from_facts(facts):
             "fact_basis": fact.get("basis") or BASIS_SCRIPT,
             "fact_id": fact.get("fact_id"),
             "sentence_number": fact.get("sentence_number"),
+            # GitHub Skills Programme: carried through so merged
+            # timelines can match events on their normalised date
+            # (merge_timeline_events) and consumers can sort a
+            # chronology without re-parsing display strings.
+            "iso_date": fact.get("iso_date"),
+            "date_basis": fact.get("date_basis"),
         })
     return events
 
@@ -340,8 +393,17 @@ def merge_timeline_events(existing, facts):
             if not isinstance(entry, dict):
                 continue
             overlap = _token_overlap(event["what"], entry.get("what"))
+            # GitHub Skills Programme: equal recorded ISO dates are
+            # the same when-match evidence as display containment —
+            # "9 November 1989" and "Nov 9, 1989" are one date even
+            # though neither display string contains the other.
+            iso_match = bool(
+                event.get("iso_date")
+                and event.get("iso_date") == entry.get("iso_date")
+            )
             if overlap >= 0.6 or (
-                _when_matches(event["when"], entry.get("when"))
+                (_when_matches(event["when"], entry.get("when"))
+                 or iso_match)
                 and overlap >= 0.25
             ):
                 covered = True
