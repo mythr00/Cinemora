@@ -1010,6 +1010,102 @@ def account_usage(
         db.close()
 
 
+# ---------------------------------------------------------------------
+# Phase 8 billing: webhooks + checkout (directive §§10, 15)
+# ---------------------------------------------------------------------
+
+
+@router.post("/billing/webhooks/{provider_name}")
+async def billing_webhook(provider_name: str, request: Request):
+    """Provider webhook receiver. Unauthenticated by design —
+    the provider's signature over the raw body IS the
+    authentication (services.billing.webhooks). Benefits are
+    granted only inside verified processing."""
+    from services.billing import webhooks
+
+    raw_body = await request.body()
+    status, body = webhooks.handle_webhook(
+        provider_name, dict(request.headers), raw_body
+    )
+    return JSONResponse(status_code=status, content=body)
+
+
+class CheckoutSubscriptionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_id: str = Field(min_length=1, max_length=64)
+    interval: str = Field(default="month", pattern="^(month|year)$")
+
+
+class CheckoutTopupIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    package_id: str = Field(min_length=1, max_length=64)
+
+
+class SubscriptionChangeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_id: str = Field(min_length=1, max_length=64)
+    interval: str | None = Field(
+        default=None, pattern="^(month|year)$"
+    )
+
+
+@router.post("/account/billing/checkout/subscription")
+def billing_checkout_subscription(
+    body: CheckoutSubscriptionIn,
+    principal: auth_service.Principal = Depends(post_guard),
+):
+    from services.billing import checkout
+
+    return checkout.create_subscription_checkout(
+        principal.user_id, body.plan_id, body.interval
+    )
+
+
+@router.post("/account/billing/checkout/topup")
+def billing_checkout_topup(
+    body: CheckoutTopupIn,
+    principal: auth_service.Principal = Depends(post_guard),
+):
+    from services.billing import checkout
+
+    return checkout.create_topup_checkout(
+        principal.user_id, body.package_id
+    )
+
+
+@router.post("/account/billing/subscription/change")
+def billing_subscription_change(
+    body: SubscriptionChangeIn,
+    principal: auth_service.Principal = Depends(post_guard),
+):
+    from services.billing import checkout
+
+    return checkout.change_subscription(
+        principal.user_id, body.plan_id, body.interval
+    )
+
+
+@router.post("/account/billing/subscription/cancel")
+def billing_subscription_cancel(
+    principal: auth_service.Principal = Depends(post_guard),
+):
+    from services.billing import checkout
+
+    return checkout.cancel_subscription(principal.user_id)
+
+
+@router.get("/account/billing/management-url")
+def billing_management_url(
+    principal: auth_service.Principal = Depends(require_user),
+):
+    from services.billing import checkout
+
+    return {"url": checkout.management_url(principal.user_id)}
+
+
 # The Phase 8 account-admin endpoints that used to live here
 # (GET /admin/users, POST /admin/users/{user_id}/plan) moved to
 # api_admin.py in Phase 7 — same paths and shapes, now behind the
