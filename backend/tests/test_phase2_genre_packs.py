@@ -10,8 +10,10 @@ genre packs.
   visual plan under the engineering pack than under general
   (template candidates + affinities from the Director's own
   consumer, plus the resolved category priors).
-- Resolution acceptance through the jobs chain (project category
-  -> resolve -> asset report), mirroring the Phase 1.2 test.
+- Resolution acceptance through the jobs chain, mirroring the
+  Phase 1.2 test — SUPERSEDED by FS-D (FS-2): the stored category
+  no longer reaches resolution; the jobs chain derives the pack
+  from the script (see the FS-D test at the category site below).
 - Per-pack narration pace (Phase 2.4): the two new packs declare
   0.94; the existing packs declare nothing and resolve to 1.0.
 """
@@ -194,7 +196,15 @@ def project_ids():
 
 
 @pytest.mark.parametrize("pack_id", NEW_PACKS)
-def test_project_category_records_new_pack(project_ids, pack_id):
+def test_project_category_no_longer_records_new_pack(project_ids, pack_id):
+    """FS-D (FS-2) supersedes the Phase 2 category acceptance: the
+    stored category used to reach resolution through jobs and
+    record the pack it named. That backdoor is removed — the jobs
+    chain now derives the pack from the script alone. The detector
+    distinguishes only true_crime/history/general, so a neutral
+    script on a project categorised as a new pack resolves the
+    general pack (the founder-accepted FS-2 consequence for packs
+    with no detector), and the asset report records THAT."""
     project_id = str(uuid.uuid4())
     project_ids.append(project_id)
     db = SessionLocal()
@@ -207,15 +217,16 @@ def test_project_category_records_new_pack(project_ids, pack_id):
     finally:
         db.close()
 
-    merged = jobs._options_with_project_category({}, project_id)
-    info = genre_packs.resolve_genre_pack(merged, NEUTRAL_SCRIPT)
-    assert info["pack_id"] == pack_id
-    assert info["source"] == "project_category"
+    info = genre_packs.resolve_genre_pack(
+        jobs._options_for_genre_resolution({}), NEUTRAL_SCRIPT
+    )
+    assert info["pack_id"] == "general"
+    assert info["source"] == "default"
     report = build_asset_report(
         [], genre_pack={"id": info["pack_id"], "source": info["source"]}
     )
     assert report["genre_pack"] == {
-        "id": pack_id, "source": "project_category",
+        "id": "general", "source": "default",
     }
 
 

@@ -762,6 +762,10 @@ def account_usage(
 class ProjectOptionsIn(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    # FS-2 / FS-D: accepted for old-client compatibility but
+    # IGNORED — genre is never a user choice; the pack is
+    # backend-derived from the script. The key is stripped before
+    # storage (see _strip_user_genre_options).
     genre: str | None = None
     voice_id: str | None = None
     captions: str | None = None  # "burn" | "sidecar" | "off"
@@ -932,6 +936,26 @@ def _options_dict(options) -> dict:
     if isinstance(options, BaseModel):
         return options.model_dump(exclude_none=True)
     return dict(options)
+
+
+# FS-2 / FS-D: the option keys through which a user could once
+# choose a genre pack. The create/configure flows no longer offer
+# a genre selection, and a user-supplied value under either key
+# must have NO effect on the pack a production resolves — the
+# documentary treatment is backend-derived from the script
+# (services.genre_packs.detect_genre). Payloads carrying the keys
+# are still accepted (old clients keep working); the keys are
+# stripped wherever user options are stored or merged for a run.
+USER_GENRE_OPTION_KEYS = ("genre", "genre_pack")
+
+
+def _strip_user_genre_options(options) -> dict:
+    """A copy of user-supplied options with the FS-2 genre keys
+    removed (see USER_GENRE_OPTION_KEYS)."""
+    cleaned = dict(options) if isinstance(options, dict) else {}
+    for key in USER_GENRE_OPTION_KEYS:
+        cleaned.pop(key, None)
+    return cleaned
 
 
 def _production_state(project_dir: Path) -> dict | None:
@@ -1169,6 +1193,10 @@ def _create_project_record(db, principal, *, title, script, category, options):
     input through ProjectCreateIn first — this helper assumes a
     validated body and applies no second, divergent rule set."""
     plans_service.enforce_script_length(db, principal.user_id, script)
+    # FS-2 / FS-D: a user-supplied genre never reaches storage —
+    # the pack is derived from the script at production time, so
+    # the stored options carry no genre choice to honour later.
+    options = _strip_user_genre_options(options)
     project = Project(
         id=str(uuid4()),
         owner_id=principal.user_id,
@@ -1364,6 +1392,11 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depen
     )
 
     merged = {**project_options, **((body.options if body else None) or {})}
+    # FS-2 / FS-D: a genre supplied with the run — or still stored
+    # on a pre-FS-D project — is inert: pack resolution at
+    # production time derives from the script alone (jobs strips
+    # the same keys again at the resolution seam).
+    merged = _strip_user_genre_options(merged)
     # Phase 9 (§14.2/§15): the pre-generation configuration gate.
     # When the merged options carry a production_config document
     # it is re-cleaned, validated against the live system and

@@ -181,46 +181,37 @@ def _set_project_status(project_id, status: str):
         )
 
 
-def _project_category(project_id):
-    """The owning project's stored category, or None.
+# FS-2 / FS-D: the genre keys a user could once feed into pack
+# resolution. None of them may influence which pack a production
+# resolves: the documentary treatment is backend-derived from the
+# script (genre_packs.detect_genre, via resolve_genre_pack's
+# detected/default branches) for every project, old and new.
+_USER_GENRE_OPTION_KEYS = ("genre", "genre_pack", "project_category")
 
-    Run-9 fix (genre-pack wiring): a project created with category
-    "true_crime" produced a run whose pack resolved to "general"
-    because the category never reached resolve_genre_pack — the run
-    options carried no genre and the conservative script detector
-    did not fire. Best-effort like _set_project_status: any failure
-    returns None and resolution falls back to detection/default.
+
+def _options_for_genre_resolution(options):
+    """A COPY of the run options with every user-fed genre key
+    removed, for genre-pack resolution.
+
+    FS-2 / FS-D cuts the two user-fed inputs the resolver used to
+    honour: (1) an explicit ``genre``/``genre_pack`` option — the
+    create/configure flows no longer offer a genre selection and
+    the create API strips the keys at storage, but a project or
+    run created before FS-D may still carry one in its stored
+    options; (2) the project's stored ``category`` label, which
+    the run-9 wiring used to inject here as ``project_category``
+    (via the now-removed ``_options_with_project_category``) — a
+    stored category can never again act as a user-chosen pack
+    override. Resolution therefore always lands on the resolver's
+    detector/default branches. The caller's dict is not mutated:
+    jobs stamps the RESOLVED pack back onto the real options
+    (``genre_pack``/``genre_source``) after resolution, and
+    downstream consumers read those stamps.
     """
-    try:
-        from database import SessionLocal
-        from models import Project
-
-        db = SessionLocal()
-        try:
-            project = db.get(Project, str(project_id))
-            if project is None:
-                return None
-            category = str(project.category or "").strip()
-            return category or None
-        finally:
-            db.close()
-    except Exception as error:
-        print(
-            f"WARNING: could not read project category "
-            f"for {project_id}: {error}"
-        )
-        return None
-
-
-def _options_with_project_category(options, project_id):
-    """A COPY of the run options carrying the project's category
-    for genre-pack resolution (explicit run genre always wins —
-    resolve_genre_pack checks "genre"/"genre_pack" first)."""
-    merged = dict(options) if isinstance(options, dict) else {}
-    category = _project_category(project_id)
-    if category:
-        merged.setdefault("project_category", category)
-    return merged
+    cleaned = dict(options) if isinstance(options, dict) else {}
+    for key in _USER_GENRE_OPTION_KEYS:
+        cleaned.pop(key, None)
+    return cleaned
 
 
 class _StageAdopted(Exception):
@@ -905,8 +896,11 @@ def run_analysis_phase(project_id: str, script: str, run_id: str = None, options
         # Stage 5A: the analysis phase resolves the genre pack the
         # same way the full pipeline does, so a gated run's research
         # is shaped by the same pack its production will record.
+        # FS-2: the pack is backend-derived from the script —
+        # user-fed genre keys are stripped before the resolver
+        # sees the options (see _options_for_genre_resolution).
         _genre_info = genre_packs.resolve_genre_pack(
-            _options_with_project_category(options, project_id), script
+            _options_for_genre_resolution(options), script
         )
         production_data = build_production_scenes(
             script,
@@ -1374,13 +1368,16 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     if caption_sync not in ("word", "syllable", "off"):
         caption_sync = "word"
 
-    # Stage 5A: resolve the genre pack (explicit "genre" option,
-    # else the project's stored category, else the conservative
-    # script detector, else "general") BEFORE the ledger run
+    # Stage 5A: resolve the genre pack BEFORE the ledger run
     # begins, so the resolved pack id lands in the run's options
-    # snapshot and therefore in the run manifest.
+    # snapshot and therefore in the run manifest. FS-2: the pack
+    # is backend-derived from the script (the conservative script
+    # detector, else "general") — user-fed genre keys are stripped
+    # before the resolver sees the options (see
+    # _options_for_genre_resolution), so no stored category label
+    # or legacy options.genre can act as a pack choice.
     _genre_info = genre_packs.resolve_genre_pack(
-        _options_with_project_category(options, project_id), script
+        _options_for_genre_resolution(options), script
     )
     _genre_pack = _genre_info["pack"]
     options["genre_pack"] = _genre_info["pack_id"]

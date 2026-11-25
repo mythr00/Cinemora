@@ -7,13 +7,11 @@ import { StatusBadge } from "@/components/status-badge";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import {
   createProject as apiCreateProject,
-  getGenreCatalogue,
   getProjectStatus,
   getVoiceCatalogue,
   listProjects,
   submitRun,
   type ApiConnectionStatus,
-  type GenreCatalogueEntry,
   type ProjectStatus,
   type ProjectSummary,
   type VoiceCatalogueEntry,
@@ -35,16 +33,13 @@ const IN_PRODUCTION_STATUSES = ["created", "queued", "pipeline_queued", "running
 const MAX_SCRIPT_CHARS = 60000;
 
 // The canonical narration voice (the installed Piper model), and
-// the honest catalogue fallbacks — the same facts app/create
-// falls back to when the catalogue endpoints cannot be reached:
-// the three real genre packs and the one installed voice. They
-// are labelled as a fallback whenever they are shown.
+// the honest catalogue fallback — the same fact app/create
+// falls back to when the catalogue endpoint cannot be reached:
+// the one installed voice. It is labelled as a fallback whenever
+// it is shown. FS-2: there is no genre selection on this desk —
+// the documentary treatment (genre pack) is derived by the
+// backend from the script, and is never a user choice.
 const NARRATION_VOICE_ID = "en_US-lessac-medium";
-const FALLBACK_GENRES: GenreCatalogueEntry[] = [
-  { id: "general", name: "General documentary", label: "General documentary", description: "", style_family: null, graphics_motifs: [], format_preferences: {}, entity_handling: [], research_query_templates: [], pacing: {} },
-  { id: "history", name: "History", label: "History", description: "", style_family: "history", graphics_motifs: [], format_preferences: {}, entity_handling: [], research_query_templates: [], pacing: {} },
-  { id: "true_crime", name: "True crime", label: "True crime", description: "", style_family: "true_crime", graphics_motifs: [], format_preferences: {}, entity_handling: [], research_query_templates: [], pacing: {} },
-];
 const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
   { id: NARRATION_VOICE_ID, is_default: false, alias_of: null, model: "en_US-lessac-medium.onnx", model_file: "en_US-lessac-medium.onnx", config_file: "en_US-lessac-medium.onnx.json", installed: true },
   { id: "default", is_default: true, alias_of: NARRATION_VOICE_ID, model: "en_US-lessac-medium.onnx", model_file: "en_US-lessac-medium.onnx", config_file: "en_US-lessac-medium.onnx.json", installed: true },
@@ -53,11 +48,11 @@ const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
 // GoMotion redesign (2026-11-24): the desk is create-first. The
 // page opens on the step-numbered creation flow — 1 Input
 // (write a script, or the voiceover path), 2 Voice & story
-// (title, genre pack, narration voice from the real catalogues),
+// (title, narration voice from the real catalogue),
 // 3 Start — and the desk's live data (summary counts, approvals
 // queue, active and recent productions) follows as cards.
 // Submitting runs the production form's own path: createProject
-// with the consumed option keys (genre, voice_id, captions,
+// with the consumed option keys (voice_id, captions,
 // require_plan_approval), then submitRun — no new endpoints, and
 // the full configuration (presets, theme, music) stays one link
 // away on /create, named as such.
@@ -72,8 +67,6 @@ export default function StudioPage() {
   const [mode, setMode] = useState<"write" | "voiceover">("write");
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
-  const [genreId, setGenreId] = useState("general");
-  const [genres, setGenres] = useState<GenreCatalogueEntry[]>(FALLBACK_GENRES);
   const [voices, setVoices] = useState<VoiceCatalogueEntry[]>(FALLBACK_VOICES);
   const [voiceId, setVoiceId] = useState("");
   const [catalogueState, setCatalogueState] = useState<"loading" | "api" | "fallback">("loading");
@@ -85,7 +78,6 @@ export default function StudioPage() {
 
   const words = useMemo(() => script.trim().split(/\s+/).filter(Boolean).length, [script]);
   const duration = words ? Math.max(1, Math.round(words / 145)) : 0;
-  const selectedGenre = genres.find((genre) => genre.id === genreId) || genres[0];
   const voiceOptions = voices.filter((voice) => !voice.alias_of);
   const canonicalVoice = voiceOptions[0];
   const effectiveVoiceId = voiceId || canonicalVoice?.id || NARRATION_VOICE_ID;
@@ -99,12 +91,8 @@ export default function StudioPage() {
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const [genreData, voiceData] = await Promise.all([
-            getGenreCatalogue(controller.signal),
-            getVoiceCatalogue(controller.signal),
-          ]);
+          const voiceData = await getVoiceCatalogue(controller.signal);
           if (controller.signal.aborted) return;
-          if (genreData.genres?.length) setGenres(genreData.genres);
           if (voiceData.voices?.length) {
             setVoices(voiceData.voices);
             const canonical = voiceData.voices.find((voice) => !voice.alias_of) || voiceData.voices[0];
@@ -140,9 +128,7 @@ export default function StudioPage() {
       const createdProject = await apiCreateProject({
         title: title.trim() || undefined,
         script: script.trim(),
-        category: selectedGenre?.label || selectedGenre?.name || genreId,
         options: {
-          genre: selectedGenre?.id || genreId,
           voice_id: effectiveVoiceId,
           captions: "burn",
           require_plan_approval: requirePlanApproval,
@@ -283,16 +269,13 @@ export default function StudioPage() {
             <label className="field-label" htmlFor="dash-title">TITLE
               <input id="dash-title" className="thumbnail-input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} placeholder="e.g. The Yangtze Incident" />
             </label>
-            <label className="field-label" htmlFor="dash-genre">GENRE PACK
-              <span className="select-wrap"><select id="dash-genre" value={selectedGenre?.id || genreId} onChange={(event) => setGenreId(event.target.value)}>{genres.map((genre) => <option key={genre.id} value={genre.id}>{genre.label || genre.name || genre.id}</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
-            </label>
             <label className="field-label" htmlFor="dash-voice">NARRATION VOICE
               <span className="select-wrap"><select id="dash-voice" value={effectiveVoiceId} onChange={(event) => setVoiceId(event.target.value)}>{voiceOptions.map((voice) => <option key={voice.id} value={voice.id}>{voice.id} · English (US)</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
             </label>
             <div className="field-label length-field"><span>ESTIMATED RUNTIME</span><div className="runtime-value">{duration ? `~${duration} min` : "Add a script"}</div></div>
           </div>
-          {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The genre and voice catalogues could not be reached, so this form shows the fallback facts — the three real genre packs and the one installed voice. Nothing else has been added.</p>}
-          {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the genre and voice catalogues from the studio API…</p>}
+          {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The voice catalogue could not be reached, so this form shows the fallback fact — the one installed voice. Nothing else has been added.</p>}
+          {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the voice catalogue from the studio API…</p>}
           <label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis — you approve the per-sentence plan before any footage is retrieved or rendered.</small></span></label>
         </section>
 
@@ -301,7 +284,7 @@ export default function StudioPage() {
             <span className="gm-step-num">3</span>
             <h2 id="dash-start-title">Start</h2>
           </div>
-          <p className="gm-summary-line"><strong>{selectedGenre?.label || selectedGenre?.name || genreId}</strong> · voice <strong>{effectiveVoiceId}</strong> · {words ? `${words.toLocaleString()} words, about ${duration} min` : "no script yet"} · captions burned in{requirePlanApproval ? " · plan review on" : ""}</p>
+          <p className="gm-summary-line">voice <strong>{effectiveVoiceId}</strong> · {words ? `${words.toLocaleString()} words, about ${duration} min` : "no script yet"} · captions burned in{requirePlanApproval ? " · plan review on" : ""}</p>
           <p className="status-message"><ApiConnectionBadge onStatus={setConnection} /></p>
           <button className="generate-button" type="submit" disabled={creating || !script.trim() || apiBlocked}>
             {creating ? <><span className="button-spinner" /> Starting…</> : <>Create and start <ArrowRight size={18} strokeWidth={1.7} aria-hidden /></>}

@@ -7,13 +7,11 @@ import {
   createProject as apiCreateProject,
   getConfigCatalogue,
   getConfigDefaults,
-  getGenreCatalogue,
   getProjectStatus,
   getVoiceCatalogue,
   submitRun,
   type ApiConnectionStatus,
   type ConfigCatalogue,
-  type GenreCatalogueEntry,
   type ProductionConfig,
   type ProjectStatus,
   type VoiceCatalogueEntry,
@@ -28,64 +26,22 @@ import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/auth
 import {
   ArrowRight,
   ArrowUpRight,
-  ChevronDown,
   Film,
   Info,
   Mic,
   Search,
 } from "lucide-react";
 
-// IA-06: the genre selector and the voice panel are rendered
-// from the backend catalogues (GET /api/v1/catalogues/genres and
-// /voices — the real genre packs and the installed voice
-// catalogue). The constants below are ONLY the honest fallback
-// used when those endpoints cannot be reached: they state the
-// same previously-static truthful facts (the three real packs,
-// the one installed voice and its default alias), and the UI
-// labels them as a fallback whenever they are shown — no option
-// is ever silently invented.
-const FALLBACK_GENRES: GenreCatalogueEntry[] = [
-  {
-    id: "general",
-    name: "General documentary",
-    label: "General documentary",
-    description:
-      "Default pack when no genre is specified or detected. No genre assumptions: the historical per-template engine styles apply, with a modern chart-first motif order.",
-    style_family: null,
-    graphics_motifs: [],
-    format_preferences: {},
-    entity_handling: [],
-    research_query_templates: [],
-    pacing: {},
-  },
-  {
-    id: "history",
-    name: "History",
-    label: "History",
-    description:
-      "Documentaries about past events, people and places. Research leans on records and archives; graphics lean on maps, documents and chronology.",
-    style_family: "history",
-    graphics_motifs: [],
-    format_preferences: {},
-    entity_handling: [],
-    research_query_templates: [],
-    pacing: {},
-  },
-  {
-    id: "true_crime",
-    name: "True crime",
-    label: "True crime",
-    description:
-      "Documentaries about real criminal cases. Evidence discipline is absolute: nothing about a case is invented, and victims are treated with care.",
-    style_family: "true_crime",
-    graphics_motifs: [],
-    format_preferences: {},
-    entity_handling: [],
-    research_query_templates: [],
-    pacing: {},
-  },
-];
-
+// IA-06: the voice panel is rendered from the backend catalogue
+// (GET /api/v1/catalogues/voices — the installed voice
+// catalogue). The constant below is ONLY the honest fallback
+// used when that endpoint cannot be reached: it states the same
+// previously-static truthful facts (the one installed voice and
+// its default alias), and the UI labels it as a fallback
+// whenever it is shown — no option is ever silently invented.
+// FS-2: there is no genre selection on this form — the
+// documentary treatment (genre pack) is derived by the backend
+// from the script, and is never a user choice.
 const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
   {
     id: "en_US-lessac-medium",
@@ -133,7 +89,7 @@ const MAX_SCRIPT_CHARS = 60000;
 
 // Redesign F1 (plan §3.3): the form is a stepped production
 // brief — one page, sectioned, no wizard hiding state:
-// 1 Script · 2 Story (genre + voice from the real catalogues) ·
+// 1 Script · 2 Story (voice from the real catalogue) ·
 // 3 Visual approach (the plan-approval toggle) ·
 // 4 Configuration (Phase 9: the pre-production configuration —
 // presets, motion graphics, theme, music, voice, captions —
@@ -146,8 +102,6 @@ const MAX_SCRIPT_CHARS = 60000;
 export default function Home() {
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
-  const [genreId, setGenreId] = useState("general");
-  const [genres, setGenres] = useState<GenreCatalogueEntry[]>(FALLBACK_GENRES);
   const [voices, setVoices] = useState<VoiceCatalogueEntry[]>(FALLBACK_VOICES);
   const [catalogueState, setCatalogueState] = useState<"loading" | "api" | "fallback">("loading");
   const [requirePlanApproval, setRequirePlanApproval] = useState(false);
@@ -168,7 +122,7 @@ export default function Home() {
   const duration = words ? Math.max(1, Math.round(words / 145)) : 0;
   const isTerminal = status?.status === "completed" || status?.status === "failed";
 
-  // IA-06: load the genre and voice catalogues from the API.
+  // IA-06: load the voice catalogue from the API.
   // (IA-10 / F-04: the sessionStorage draft read that used to sit
   // here is removed — nothing in the active build ever writes
   // that key; its only setter lives in preserved/ code.)
@@ -177,12 +131,8 @@ export default function Home() {
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const [genreData, voiceData] = await Promise.all([
-            getGenreCatalogue(controller.signal),
-            getVoiceCatalogue(controller.signal),
-          ]);
+          const voiceData = await getVoiceCatalogue(controller.signal);
           if (controller.signal.aborted) return;
-          if (genreData.genres?.length) setGenres(genreData.genres);
           if (voiceData.voices?.length) setVoices(voiceData.voices);
           setCatalogueState("api");
           // Phase 9: the configuration catalogue + the user's
@@ -232,7 +182,6 @@ export default function Home() {
     };
   }, []);
 
-  const selectedGenre = genres.find((genre) => genre.id === genreId) || genres[0];
   const canonicalVoice = voices.find((voice) => !voice.alias_of) || voices[0];
   const narrationVoiceId = canonicalVoice?.id || NARRATION_VOICE_ID;
 
@@ -306,9 +255,11 @@ export default function Home() {
       // silently discarded it, plus query parameters the analyze
       // handler never read.
       // Brief Stage 3 (C-05): the submitted options are now EXACTLY
-      // the consumed keys of ProjectOptionsIn — genre (genre-pack
-      // resolution), voice_id (narration), captions (burn/off) and
-      // require_plan_approval (the plan gate). The music, sfx,
+      // the consumed keys of ProjectOptionsIn — voice_id
+      // (narration), captions (burn/off) and
+      // require_plan_approval (the plan gate). FS-2: no genre is
+      // sent — the genre pack is derived by the backend from the
+      // script, never chosen here. The music, sfx,
       // graphics, language and background keys the form used to add
       // were recorded in the snapshot but consumed by nothing
       // (verified against jobs.py: recognised keys are music_file,
@@ -324,9 +275,7 @@ export default function Home() {
       const created = await apiCreateProject({
         title: title.trim() || undefined,
         script: script.trim(),
-        category: selectedGenre?.label || selectedGenre?.name || genreId,
         options: {
-          genre: selectedGenre?.id || genreId,
           voice_id: narrationVoiceId,
           captions: configCatalogue
             ? productionConfig.captions.mode
@@ -394,21 +343,17 @@ export default function Home() {
           <section className="create-step" aria-labelledby="story-title">
             <div className="create-step-head">
               <div className="step-marker">2</div>
-              <div><h2 id="story-title">Story</h2><p>Title, genre pack and narration voice.</p></div>
+              <div><h2 id="story-title">Story</h2><p>Title and narration voice.</p></div>
             </div>
             <div className="form-fields">
               <label className="field-label" htmlFor="project-title">TITLE
                 <input id="project-title" className="thumbnail-input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} placeholder="e.g. The Yangtze Incident" />
               </label>
-              <label className="field-label" htmlFor="category">GENRE PACK
-                <span className="select-wrap"><select id="category" value={selectedGenre?.id || genreId} onChange={(event) => setGenreId(event.target.value)}>{genres.map((genre) => <option key={genre.id} value={genre.id}>{genre.label || genre.name || genre.id}</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
-                {selectedGenre?.description && <span className="genre-description">{selectedGenre.description}</span>}
-              </label>
               <div className="field-label length-field"><span>ESTIMATED RUNTIME</span><div className="runtime-value">{duration ? `~${duration} min` : "Add a script"}</div><small>Based on about 145 spoken words per minute.</small></div>
             </div>
             <div className="voice-catalog-list">{voices.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.id}</strong><small>{voice.alias_of ? `Default alias of ${voice.alias_of} · Same installed Piper model` : "English (US) · Built-in Piper voice"} · {voice.installed ? "Model installed" : "Model not installed"}</small></div>{!voice.alias_of && <span>In use</span>}{voice.is_default && <span>Default</span>}</div>)}</div>
-            {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The genre and voice catalogues could not be reached, so this form is showing the fallback facts — the three real genre packs and the one installed voice listed above — labelled as a fallback. Nothing else has been added.</p>}
-            {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the genre and voice catalogues from the studio API…</p>}
+            {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The voice catalogue could not be reached, so this form is showing the fallback facts — the one installed voice listed above — labelled as a fallback. Nothing else has been added.</p>}
+            {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the voice catalogue from the studio API…</p>}
             <p className="voice-note">Narration language is English (US) — the language of the installed voices.</p>
             <div className="workflow-includes"><span className="include-label">INCLUDED IN YOUR WORKFLOW</span><div className="include-chips"><span><Search size={18} strokeWidth={1.7} aria-hidden /> Story research</span><span><Film size={18} strokeWidth={1.7} aria-hidden /> Matched visuals</span><span><Mic size={18} strokeWidth={1.7} aria-hidden /> Narration + captions</span></div></div>
           </section>
@@ -449,7 +394,7 @@ export default function Home() {
               <div><h2 id="review-title">Review &amp; start</h2><p>Exactly what will be submitted — nothing else is sent.</p></div>
             </div>
             <div className="summary-card">
-              <div className="summary-rows"><div><span>Genre pack</span><strong>{selectedGenre?.label || selectedGenre?.name || genreId}</strong></div><div><span>Narration voice</span><strong>{(configCatalogue ? productionConfig.narration.voice_id : null) || narrationVoiceId} · English (US)</strong></div><div><span>Captions</span><strong>{configCatalogue ? (productionConfig.captions.mode === "burn" ? "Burned in" : productionConfig.captions.mode === "sidecar" ? "Sidecar files" : "Off") : "Burned in"}</strong></div>{configCatalogue && <><div><span>Preset</span><strong>{productionConfig.preset === "custom" ? "Custom" : productionConfig.preset[0].toUpperCase() + productionConfig.preset.slice(1)}</strong></div><div><span>Motion graphics</span><strong>{productionConfig.motion_graphics.enabled ? productionConfig.motion_graphics.intensity[0].toUpperCase() + productionConfig.motion_graphics.intensity.slice(1) : "Off"}</strong></div><div><span>Visual theme</span><strong>{productionConfig.theme.id ? (productionConfig.theme.id === "custom" ? "Custom" : productionConfig.theme.id[0].toUpperCase() + productionConfig.theme.id.slice(1)) : "Genre pack default"}</strong></div><div><span>Music</span><strong>{!productionConfig.music.enabled ? "Off" : productionConfig.music.source === "upload" ? "Your upload (add it in the project's Configuration tab)" : productionConfig.music.source === "library" ? "Studio library" : "On — no track selected yet"}</strong></div></>}<div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
+              <div className="summary-rows"><div><span>Narration voice</span><strong>{(configCatalogue ? productionConfig.narration.voice_id : null) || narrationVoiceId} · English (US)</strong></div><div><span>Captions</span><strong>{configCatalogue ? (productionConfig.captions.mode === "burn" ? "Burned in" : productionConfig.captions.mode === "sidecar" ? "Sidecar files" : "Off") : "Burned in"}</strong></div>{configCatalogue && <><div><span>Preset</span><strong>{productionConfig.preset === "custom" ? "Custom" : productionConfig.preset[0].toUpperCase() + productionConfig.preset.slice(1)}</strong></div><div><span>Motion graphics</span><strong>{productionConfig.motion_graphics.enabled ? "On" : "Off"}</strong></div><div><span>Visual theme</span><strong>{productionConfig.theme.id ? (productionConfig.theme.id === "custom" ? "Custom" : productionConfig.theme.id[0].toUpperCase() + productionConfig.theme.id.slice(1)) : "Genre pack default"}</strong></div><div><span>Music</span><strong>{!productionConfig.music.enabled ? "Off" : productionConfig.music.source === "upload" ? "Your upload (add it in the project's Configuration tab)" : productionConfig.music.source === "library" ? "Studio library" : "On — no track selected yet"}</strong></div></>}<div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div><div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
               <div className="summary-footnote"><Info size={18} strokeWidth={1.7} aria-hidden /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
               <p className="status-message"><ApiConnectionBadge onStatus={setConnection} /></p>
               <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiBlocked}>

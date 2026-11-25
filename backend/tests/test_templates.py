@@ -381,6 +381,12 @@ def test_template_from_project_filters_and_reports_drops(client, users):
     )
     assert response.status_code == 201, response.text
     project = response.json()
+    # FS-D (FS-2): the genre the caller sent is stripped by the
+    # creation path — genre is never a user choice, so it is not
+    # stored on the project and cannot ride into a template made
+    # from it. The category label above stays (a stored datum,
+    # not a pack selection).
+    assert "genre" not in (project["options"] or {})
 
     response = client.post(
         "/api/v1/templates/from-project",
@@ -396,7 +402,7 @@ def test_template_from_project_filters_and_reports_drops(client, users):
     # creation path itself stores the model's default — and it IS
     # a consumed key, so the filter keeps it like any other.
     assert template["options"] == {
-        "genre": "industrial", "voice_id": "default", "captions": "off",
+        "voice_id": "default", "captions": "off",
         "require_plan_approval": False,
     }
     dropped = {d["key"]: d["reason"] for d in body["dropped_options"]}
@@ -506,8 +512,11 @@ def test_apply_to_project_uses_the_creation_path(client, users):
     assert project["category"] == "Industrial"
     assert project["script"] == SCRIPT_BODY
     # The template's bundle is on the project row, exactly as a
-    # manual creation with the same options would store it.
-    assert project["options"]["genre"] == "industrial"
+    # manual creation with the same options would store it —
+    # EXCEPT its genre: FS-D (FS-2) strips the genre key at the
+    # creation choke point, so a template can no longer choose a
+    # project's pack; the pack derives from the script at run time.
+    assert "genre" not in project["options"]
     assert project["options"]["captions"] == "burn"
     assert project["options"]["require_plan_approval"] is True
     assert "narration_speed" not in (project["options"] or {})
@@ -519,7 +528,9 @@ def test_apply_to_project_uses_the_creation_path(client, users):
     finally:
         db.close()
 
-    # Built-in application: the pack's category + genre option.
+    # Built-in application: the pack's category label still lands
+    # on the project (a stored datum), but its genre option does
+    # not — FS-D strips it at creation like any user-fed genre.
     response = client.post(
         "/api/v1/templates/builtin:biography/apply-project",
         json={"script": SCRIPT_BODY},
@@ -527,8 +538,8 @@ def test_apply_to_project_uses_the_creation_path(client, users):
     )
     assert response.status_code == 201, response.text
     assert response.json()["category"] == "Biography"
-    # Exactly what manual creation with genre=biography stores:
-    # the bundle plus the creation model's own False default.
+    # Exactly what manual creation stores after the FS-D strip:
+    # only the creation model's own False default remains.
     assert response.json()["options"] == {
-        "genre": "biography", "require_plan_approval": False,
+        "require_plan_approval": False,
     }

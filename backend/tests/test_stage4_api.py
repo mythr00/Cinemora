@@ -142,7 +142,9 @@ def test_project_crud_shapes(client):
     assert created["title"] == "The Yangtze Incident"
     assert created["category"] == "History"
     assert created["status"] == "created"
-    assert created["options"]["genre"] == "history"
+    # FS-D (FS-2): the supplied genre is inert — it is stripped at
+    # creation and never stored; the pack derives from the script.
+    assert "genre" not in created["options"]
     assert created["script"].startswith("Script ")
 
     listing = client.get("/api/v1/projects", headers=HEADERS).json()
