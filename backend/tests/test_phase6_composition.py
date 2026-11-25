@@ -302,10 +302,17 @@ def test_apply_decisions_stamps_matching_items_only():
 # ---------------------------------------------------------------------------
 
 def test_six_themes_exist_and_legacy_pack_values_map():
-    assert set(themes.THEMES) == {
+    # The six Phase 6 themes must all still exist. The registry is
+    # no longer EXACTLY six: commit 7a0bbbd (Phase 9) deliberately
+    # added the founder themes (light_pure, grid_mono, newsprint,
+    # archive_dossier, cinematic_smoke) as real engine token sets
+    # in the same THEMES registry, and test_phase7_theme_treatments
+    # / test_phase9_config_studio depend on them being there — so
+    # this pins the original six as a subset, not the whole set.
+    assert {
         "editorial_dark", "documentary_clean", "archival",
         "cinematic_data", "technical_blueprint", "investigative",
-    }
+    } <= set(themes.THEMES)
     assert themes.resolve_theme("editorial")["name"] == "editorial_dark"
     assert themes.resolve_theme("history")["name"] == "archival"
     assert themes.resolve_theme("true_crime")["name"] == "investigative"

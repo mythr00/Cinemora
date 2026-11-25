@@ -739,7 +739,15 @@ def test_director_registers_every_wave2_template():
 
 def test_wave2_pack_affinities_and_validation():
     packs = genre_packs.available_packs()
-    assert len(packs) == 5
+    # The five wave-2 packs must all be present. The catalogue is
+    # no longer exactly five: commit 575fe8e (Phase M) deliberately
+    # added the biography / science / investigative packs (see
+    # PHASE_M_PACKS in test_phase2_genre_packs), so this pins the
+    # wave-2 five as a subset; the invariant loop below still runs
+    # over EVERY pack in the catalogue.
+    assert {
+        "general", "history", "true_crime", "engineering", "industrial",
+    } <= {p["id"] for p in packs}
     by_id = {p["id"]: p for p in packs}
     for pack in packs:
         failures = genre_packs.validate_visual_profile(
