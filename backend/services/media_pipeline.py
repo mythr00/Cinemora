@@ -19,10 +19,16 @@ from PIL import Image, UnidentifiedImageError
 def download_image(image_url, output_path):
     # Bounded retry with backoff + Retry-After: a single Wikimedia 429
     # must not kill an otherwise verified image download outright.
+    # Phase 3a / C-12: the retry budget is the taxonomy policy —
+    # at most ONE transient retry (max_attempts=2) at a 10s
+    # per-request timeout; deterministic answers (404/410/rights)
+    # are never retried by request_with_retry's status list and
+    # raise immediately via raise_for_status.
     response = request_with_retry(
         "GET",
         image_url,
-        timeout=30,
+        timeout=IMAGE_HTTP_TIMEOUT,
+        max_attempts=1 + download_taxonomy.MAX_TRANSIENT_RETRIES,
         headers={"User-Agent": "Mozilla/5.0"},
     )
     response.raise_for_status()
@@ -41,6 +47,7 @@ from services import visual_identity
 from services import frame_verification
 from services.media_probe import probe_image, probe_video
 from services.http_retry import request_with_retry, classify_error
+from services import download_taxonomy
 
 try:
     from services.canonical_media import (
@@ -659,8 +666,54 @@ def drain_discovery_failures():
 
 
 MAX_CONSECUTIVE_SEARCH_FAILURES = 8
-YT_DLP_TIMEOUT = 120
+# ---------------------------------------------------------------------------
+# Download time bounds (Phase 3a / C-12). Before this change a doomed
+# candidate could burn ~5 minutes: yt-dlp ran under a 180s ceiling
+# (with 5 internal retries / 5 fragment retries at a 30s socket
+# timeout) followed by a 90s normalisation ffmpeg (270s worst case),
+# and the direct path stacked 90s range-seek + 60s HTTP + 90s trim
+# (240s). The bounds below are per-candidate AGGREGATE budgets:
+# every subprocess/HTTP step in a candidate's download is capped so
+# the paths sum to well under the old figure —
+#   YouTube path:  YT_DLP_TIMEOUT 60 + DOWNLOAD_FFMPEG_TIMEOUT 45 = 105s
+#   direct path:   seek 45 + HTTP read 20 + trim 45               = 110s
+#   image path:    2 outer attempts x (2 requests x 10s + 1s
+#                  backoff) + 0.5s outer delay                    ~ 43s
+# Retry policy (services.download_taxonomy): deterministic failures
+# (404/410/other 4xx, rights rejections, verification failures) are
+# never retried; transient failures get at most one retry.
+# ---------------------------------------------------------------------------
+YT_DLP_TIMEOUT = 60
+YTDLP_RETRIES = 2
+YTDLP_FRAGMENT_RETRIES = 2
+YTDLP_SOCKET_TIMEOUT = 10
 FFMPEG_TIMEOUT = 90
+DOWNLOAD_FFMPEG_TIMEOUT = 45
+DIRECT_HTTP_TIMEOUT = (5, 20)  # (connect, read) seconds, per read
+IMAGE_HTTP_TIMEOUT = 10
+
+#: Last download failure detail per output path (Phase 3a / C-02),
+#: the DOWNLOAD_PROVENANCE pattern: the low-level downloaders know
+#: WHY a candidate died (HTTP status, timeout, stderr tail) while
+#: their callers only see a bool. They record it here; the
+#: candidate downloaders pop it and stamp the taxonomy record on
+#: the candidate so the failure aggregate can classify it.
+DOWNLOAD_LAST_ERROR: dict = {}
+
+
+def _record_download_error(output_path, reason, *, http_status=None,
+                           detail=None, error=None):
+    classified = download_taxonomy.classify_download_failure(
+        reason, http_status=http_status, detail=detail, error=error,
+    )
+    DOWNLOAD_LAST_ERROR[str(output_path)] = {
+        "reason": str(reason),
+        "failure_class": classified["failure_class"],
+        "http_status": classified["http_status"],
+        "check": classified["check"],
+        "retryable": classified["retryable"],
+        "detail": str(detail or "")[-500:],
+    }
 TEMP_FILE_SUFFIXES = (".part", ".ytdl", ".temp")
 TEMP_FILE_PATTERNS = ("*.part", "*.ytdl", "*.temp")
 MAX_IDENTITY_PEOPLE_PER_SCENE = 8
@@ -1995,6 +2048,10 @@ def _download_image_detailed(image_url, output_path):
         status = getattr(getattr(error, "response", None), "status_code", None)
         if status == 429 or "429" in str(error):
             return False, "rate_limited"
+        if classify_error(error).get("error_class") == "timeout":
+            # Phase 3a / C-02: a timeout is its own class, not a
+            # generic download_failed.
+            return False, "timeout"
         if status is not None or "HTTP" in type(error).__name__:
             return False, "http_error"
         if re.search(r"\b[45]\d\d\b", str(error)):
@@ -2044,7 +2101,7 @@ def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, star
         "-an", "-movflags", "+faststart", str(output_path),
     ]
     seek_code, _, _seek_err = run_command_safe(
-        seek_command, FFMPEG_TIMEOUT, "FFmpeg range download"
+        seek_command, DOWNLOAD_FFMPEG_TIMEOUT, "FFmpeg range download"
     )
     if seek_code == 0 and validate_video(output_path):
         DOWNLOAD_PROVENANCE[str(output_path)] = {
@@ -2067,9 +2124,9 @@ def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, star
         # body is a definitive answer and is not retried; a 429 is
         # recorded into provider health and not retried either.
         _stream_error = None
-        for _stream_attempt in range(2):
+        for _stream_attempt in range(1 + download_taxonomy.MAX_TRANSIENT_RETRIES):
             try:
-                response = _http().get(url, timeout=60, stream=True)
+                response = _http().get(url, timeout=DIRECT_HTTP_TIMEOUT, stream=True)
                 response.raise_for_status()
                 with open(raw_path, "wb") as handle:
                     for chunk in response.iter_content(64 * 1024):
@@ -2097,18 +2154,25 @@ def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, star
         if _stream_error is not None:
             raise _stream_error
         if not raw_path.exists() or raw_path.stat().st_size < 10_000:
+            _record_download_error(
+                output_path, "invalid_media",
+                detail="full download completed below the 10000-byte floor",
+            )
             return False
         # MS-3: honour the evidence-backed start_time (was silently
         # ignored — direct downloads always trimmed from second 0).
         command = ["ffmpeg", "-y", "-ss", str(max(0, int(start_time or 0))), "-i", str(raw_path), "-t", str(duration), "-c:v", "libx264",
                    "-preset", "ultrafast", "-crf", "28", "-an", "-movflags", "+faststart", str(output_path)]
-        code, _, stderr = run_command_safe(command, FFMPEG_TIMEOUT, "FFmpeg source")
+        code, _, stderr = run_command_safe(command, DOWNLOAD_FFMPEG_TIMEOUT, "FFmpeg source")
         try:
             raw_path.unlink()
         except OSError:
             pass
         if code != 0 or not validate_video(output_path):
             print((stderr or "")[-1000:])
+            _record_download_error(
+                output_path, "download_failed", detail=stderr or "",
+            )
             return False
         # This path downloaded the whole file before trimming — the
         # provenance says so; it is never dressed up as partial.
@@ -2119,6 +2183,10 @@ def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, star
         return True
     except Exception as error:
         print(f"Source video download failed: {error}")
+        _record_download_error(
+            output_path, f"download_exception: {error}",
+            error=error,
+        )
         try:
             if raw_path.exists():
                 raw_path.unlink()
@@ -2199,10 +2267,15 @@ def download_video_clip(
         "--no-warnings",
         "--restrict-filenames",
 
-        "--retries", "5",
-        "--fragment-retries", "5",
+        # Phase 3a / C-12: internal retries are bounded by the
+        # taxonomy policy (transient at most once more inside the
+        # aggregate YT_DLP_TIMEOUT ceiling); a deterministic
+        # failure (404/410/rights) spends no retry at all because
+        # yt-dlp returns it as a hard error, not a retryable one.
+        "--retries", str(YTDLP_RETRIES),
+        "--fragment-retries", str(YTDLP_FRAGMENT_RETRIES),
         "--retry-sleep", "1",
-        "--socket-timeout", "30",
+        "--socket-timeout", str(YTDLP_SOCKET_TIMEOUT),
 
         # Use yt-dlp's normal YouTube client handling.
         # Avoid forcing a single client such as VISIONOS.
@@ -2235,13 +2308,18 @@ def download_video_clip(
 
     returncode, stdout, stderr = run_command_safe(
         command,
-        180,
+        YT_DLP_TIMEOUT,
         "yt-dlp",
     )
 
     if returncode != 0:
         print("yt-dlp clip extraction failed:")
         print((stderr or "")[-3000:])
+        _record_download_error(
+            output_path,
+            "timeout" if returncode == -999 else "download_failed",
+            detail=stderr or "",
+        )
         # Run-11 fix 2: a 429 inside a failed extraction is
         # provider-health evidence for the clip's scope — repeated
         # 429s back the scope off instead of being retried into
@@ -2271,6 +2349,10 @@ def download_video_clip(
         print(
             "yt-dlp completed but no "
             "source clip was found."
+        )
+        _record_download_error(
+            output_path, "source_unavailable",
+            detail="yt-dlp completed but produced no source clip",
         )
 
         cleanup_temp_files(output_path.parent)
@@ -2312,7 +2394,7 @@ def download_video_clip(
 
     returncode, stdout, stderr = run_command_safe(
         ffmpeg_command,
-        FFMPEG_TIMEOUT,
+        DOWNLOAD_FFMPEG_TIMEOUT,
         "FFmpeg YouTube",
     )
 
@@ -2329,6 +2411,11 @@ def download_video_clip(
     ):
         print(
             "YouTube clip normalization failed."
+        )
+        _record_download_error(
+            output_path,
+            "timeout" if returncode == -999 else "invalid_media",
+            detail=stderr or "",
         )
 
         if stderr:
@@ -4317,6 +4404,36 @@ def _segment_start_detailed(url, subject="", place="", event="", era="",
     return int(start), "verified_segment"
 
 
+def _stamp_download_failure(candidate, reason, *, http_status=None,
+                            detail=None):
+    """Phase 3a / C-02: stamp the taxonomy record for a failed
+    candidate download onto the candidate itself, beside the legacy
+    ``_download_error`` string (kept for every existing consumer).
+    The record — failure_class, http_status, verification check —
+    is what _uve_fetch_first copies into the run's failure records
+    and the asset report aggregates by class."""
+    classified = download_taxonomy.classify_download_failure(
+        reason,
+        http_status=http_status,
+        detail=detail,
+        stage=candidate.get("rejection_stage"),
+    )
+    candidate["_download_failure"] = {
+        "failure_class": classified["failure_class"],
+        "reason": str(reason),
+        "http_status": classified["http_status"],
+        "check": classified["check"],
+        "retryable": classified["retryable"],
+        "provider": candidate.get("provider") or candidate.get("source") or "unknown",
+        "url": str(
+            candidate.get("url") or candidate.get("video_url")
+            or candidate.get("image_url") or candidate.get("link") or ""
+        ),
+        "sentence_number": candidate.get("sentence_number"),
+    }
+    return classified
+
+
 def _uve_download_video_candidate(
     candidate,
     scene_dir,
@@ -4335,6 +4452,7 @@ def _uve_download_video_candidate(
 
     if not url:
         candidate["_download_error"] = "no_url"
+        _stamp_download_failure(candidate, "no_url")
         return None
 
     need = candidate.get("shot_need") or {}
@@ -4392,6 +4510,7 @@ def _uve_download_video_candidate(
             f"url={url}"
         )
         candidate["_download_error"] = "no_segment_evidence"
+        _stamp_download_failure(candidate, "no_segment_evidence")
         # VA-03: preserve WHY evidence failed (broken information
         # channel vs genuinely absent evidence) and every source tried.
         candidate["_segment_attempts"] = list(_SEGMENT_ATTEMPTS.get(url) or [])
@@ -4443,6 +4562,7 @@ def _uve_download_video_candidate(
     candidate["_attempted_segment_id"] = _selection_segment_id
     if f"seg:{_selection_segment_id}" in _FAILED_DOWNLOAD_URLS:
         candidate["_download_error"] = "previously_failed_this_run"
+        _stamp_download_failure(candidate, "previously_failed_this_run")
         candidate["_segment_previously_failed"] = True
         return None
 
@@ -4479,14 +4599,32 @@ def _uve_download_video_candidate(
             f"{url} start={start}s error={exc}"
         )
         candidate["_download_error"] = f"download_exception: {exc}"
+        _stamp_download_failure(
+            candidate, f"download_exception: {exc}", detail=str(exc),
+        )
         return None
 
     if not ok:
         candidate["_download_error"] = "download_failed"
+        _last_error = DOWNLOAD_LAST_ERROR.pop(str(output_path), None)
+        if _last_error:
+            candidate["_download_failure"] = {
+                "failure_class": _last_error["failure_class"],
+                "reason": _last_error["reason"],
+                "http_status": _last_error["http_status"],
+                "check": _last_error["check"],
+                "retryable": bool(_last_error.get("retryable")),
+                "provider": candidate.get("provider") or candidate.get("source") or "unknown",
+                "url": url,
+                "detail": _last_error.get("detail"),
+            }
+        else:
+            _stamp_download_failure(candidate, "download_failed")
         return None
 
     if not validate_video(output_path):
         candidate["_download_error"] = "invalid_media"
+        _stamp_download_failure(candidate, "invalid_media")
         try:
             output_path.unlink()
         except OSError:
@@ -4500,6 +4638,7 @@ def _uve_download_video_candidate(
     probe = probe_video(output_path)
     if probe is None:
         candidate["_download_error"] = "probe_failed"
+        _stamp_download_failure(candidate, "probe_failed")
         try:
             output_path.unlink()
         except OSError:
@@ -4513,6 +4652,10 @@ def _uve_download_video_candidate(
     technical_failures = _video_technical_failures(probe)
     if technical_failures:
         candidate["_download_error"] = "technical_below_minimum"
+        _stamp_download_failure(
+            candidate, "technical_below_minimum",
+            detail=",".join(str(f) for f in technical_failures),
+        )
         candidate["_technical_rejection"] = {
             "facts": probe,
             "failed": technical_failures,
@@ -4661,6 +4804,7 @@ def _uve_download_image_candidate(
         # VA-13: image failures carry explicit reason codes, exactly
         # like the video path — never a silent None.
         candidate["_download_error"] = reason
+        _stamp_download_failure(candidate, reason)
         candidate["rejection_stage"] = (
             "technical_validation"
             if reason in ("undersized_file", "decode_failed", "probe_failed")
@@ -4671,6 +4815,7 @@ def _uve_download_image_candidate(
     probe = probe_image(output_path)
     if probe is None:
         candidate["_download_error"] = "probe_failed"
+        _stamp_download_failure(candidate, "probe_failed")
         candidate["rejection_stage"] = "technical_validation"
         try:
             output_path.unlink()
@@ -4683,6 +4828,10 @@ def _uve_download_image_candidate(
     image_failures = _image_technical_failures(probe)
     if image_failures:
         candidate["_download_error"] = "technical_below_minimum"
+        _stamp_download_failure(
+            candidate, "technical_below_minimum",
+            detail=",".join(str(f) for f in image_failures),
+        )
         candidate["_technical_rejection"] = {
             "facts": probe,
             "failed": image_failures,
@@ -5480,6 +5629,7 @@ def _uve_search_and_pick(
                 if _budget_blocked is not None:
                     _budget_blocked.append({
                         "candidate_id": None,
+                        "failure_class": "budget_exhausted",
                         "reason": STOP_BEAT_DOWNLOAD_ATTEMPT_CAP,
                         "tier": _reserve.get("tier_escalation"),
                         "undrawn": len(_items) - len(_drawn_ids),
@@ -5494,6 +5644,7 @@ def _uve_search_and_pick(
                     if _budget_blocked is not None:
                         _budget_blocked.append({
                             "candidate_id": _reserve.get("candidate_id"),
+                            "failure_class": "budget_exhausted",
                             "reason": (
                                 tier_ladder.STOP_TIER_DOWNLOAD_BUDGET
                             ),
@@ -5506,6 +5657,7 @@ def _uve_search_and_pick(
                     if _budget_blocked is not None:
                         _budget_blocked.append({
                             "candidate_id": _reserve.get("candidate_id"),
+                            "failure_class": "budget_exhausted",
                             "reason": (
                                 tier_ladder
                                 .STOP_PRODUCTION_DOWNLOAD_BUDGET
@@ -6518,13 +6670,26 @@ def _uve_unsearched_ladder_entry(
         attempt["repeat"] = True
         attempt["prior_outcome"] = _prior_entry_attempt.get("outcome")
         return [attempt]
-    if not ledger.can_spend_download():
+    # Phase 3a / C-01 starvation fix: this gate used to call
+    # can_spend_download() with NO need key, so the entry was
+    # judged as an anonymous deepening spend against the whole
+    # production account — earlier scenes' downloads could refuse
+    # the entry before its first query ever ran, and the attempt
+    # recorded an empty query list (the Petito sentence-23 shape).
+    # The entry now gates as THIS need's breadth download (its
+    # first download is protected like every other need's), and a
+    # refusal records the planned queries beside the empty
+    # executed list, so "planned but starved" is distinguishable
+    # from "nothing to search" in every downstream record.
+    if not ledger.can_spend_download(need_key=_entry_key):
         attempt["outcome"] = "budget_exhausted"
         attempt["stop_reason"] = (
             tier_ladder.STOP_WALL_CLOCK
             if ledger.wall_clock_exceeded()
             else tier_ladder.STOP_PRODUCTION_DOWNLOAD_BUDGET
         )
+        attempt["queries_planned"] = list(queries)
+        attempt["failure_class"] = "budget_exhausted"
         return [attempt]
     _entry_queries = list(queries)
     _allowed = ledger.allocate_searches(len(queries), need_key=_entry_key)
@@ -6532,6 +6697,8 @@ def _uve_unsearched_ladder_entry(
     if not queries:
         attempt["outcome"] = "budget_exhausted"
         attempt["stop_reason"] = tier_ladder.STOP_PRODUCTION_SEARCH_BUDGET
+        attempt["queries_planned"] = list(_entry_queries)
+        attempt["failure_class"] = "budget_exhausted"
         return [attempt]
     need["queries"] = queries
     scenario["queries"] = queries

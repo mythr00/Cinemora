@@ -44,6 +44,7 @@ access through another namespace — a behaviour risk, not a move.
 
 import os
 
+from services import download_taxonomy
 from services import frame_verification
 from services import pipeline_assignment
 from services import provider_health
@@ -638,15 +639,18 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
             # Already failed once this run (throttled, dead, invalid):
             # never re-request it; record the skip as a failure too.
             if failures is not None:
-                failures.append(
+                failures.append(download_taxonomy.annotate_failure(
                     {
                         "provider": candidate.get("provider")
                         or candidate.get("source")
                         or "unknown",
                         "url": candidate_url,
                         "reason": "previously_failed_this_run",
+                        "candidate_id": candidate.get("candidate_id"),
+                        "stage": "download",
+                        "sentence_number": sentence_number,
                     }
-                )
+                ))
             continue
 
         # Run-11 fix 2 (provider health): a provider scope backed
@@ -660,7 +664,7 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
         _health_scope = provider_health.scope_for_url(candidate_url)
         if _health_scope and provider_health.is_backed_off(_health_scope):
             if failures is not None:
-                failures.append(
+                failures.append(download_taxonomy.annotate_failure(
                     {
                         "provider": candidate.get("provider")
                         or candidate.get("source")
@@ -672,8 +676,9 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                         ),
                         "candidate_id": candidate.get("candidate_id"),
                         "stage": "download",
+                        "sentence_number": sentence_number,
                     }
-                )
+                ))
             continue
 
         # Metadata-absence bypass budget (run-6345 fix): a
@@ -698,7 +703,7 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                 beat_key=_spec_beat_key
             ):
                 if failures is not None:
-                    failures.append(
+                    failures.append(download_taxonomy.annotate_failure(
                         {
                             "provider": candidate.get("provider")
                             or candidate.get("source")
@@ -710,8 +715,9 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                             ),
                             "candidate_id": candidate.get("candidate_id"),
                             "stage": "download",
+                            "sentence_number": sentence_number,
                         }
-                    )
+                    ))
                 continue
             _spec_ledger.spend_speculative_download(
                 beat_key=_spec_beat_key
@@ -780,6 +786,24 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                     failure["segment_attempts"] = candidate["_segment_attempts"]
                 if candidate.get("rejection_stage"):
                     failure["stage"] = candidate["rejection_stage"]
+                # Phase 3a / C-02: every download failure record
+                # carries its taxonomy class — from the
+                # downloader's own stamp when it made one
+                # (it saw the HTTP status / timeout / stderr),
+                # else classified here from the reason.
+                _taxonomy = candidate.get("_download_failure")
+                if isinstance(_taxonomy, dict) and _taxonomy.get("failure_class"):
+                    failure["failure_class"] = _taxonomy["failure_class"]
+                    failure["http_status"] = _taxonomy.get("http_status")
+                    failure["check"] = _taxonomy.get("check")
+                    failure["retryable"] = _taxonomy.get("retryable")
+                    if _taxonomy.get("detail"):
+                        failure["detail"] = _taxonomy["detail"]
+                else:
+                    failure = download_taxonomy.annotate_failure(
+                        failure, sentence_number=sentence_number,
+                    )
+                failure.setdefault("sentence_number", sentence_number)
                 failures.append(failure)
             continue
 
@@ -835,7 +859,7 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                 f"{candidate_url} reason={frame_record.get('reason')}"
             )
             if failures is not None:
-                failures.append({
+                failures.append(download_taxonomy.annotate_failure({
                     "provider": candidate.get("provider")
                     or candidate.get("source")
                     or "unknown",
@@ -846,7 +870,8 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                     "candidate_id": candidate.get("candidate_id"),
                     "stage": "frame_verification",
                     "frame_check": frame_record,
-                })
+                    "sentence_number": sentence_number,
+                }))
             if not asset.get("segment_reused"):
                 try:
                     path = asset.get("file_path")
@@ -877,7 +902,7 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                     f"{(frame_record or {}).get('outcome')}"
                 )
                 if failures is not None:
-                    failures.append({
+                    failures.append(download_taxonomy.annotate_failure({
                         "provider": candidate.get("provider")
                         or candidate.get("source")
                         or "unknown",
@@ -889,7 +914,8 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                         "candidate_id": candidate.get("candidate_id"),
                         "stage": "frame_verification",
                         "frame_check": frame_record,
-                    })
+                        "sentence_number": sentence_number,
+                    }))
                 if not asset.get("segment_reused"):
                     try:
                         path = asset.get("file_path")
@@ -917,7 +943,7 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                     f"{candidate_url} start={asset.get('clip_start')}"
                 )
                 if failures is not None:
-                    failures.append({
+                    failures.append(download_taxonomy.annotate_failure({
                         "provider": candidate.get("provider")
                         or candidate.get("source")
                         or "unknown",
@@ -925,7 +951,8 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                         "reason": "transcript_mismatch",
                         "candidate_id": candidate.get("candidate_id"),
                         "stage": "transcript_verification",
-                    })
+                        "sentence_number": sentence_number,
+                    }))
                 # A segment-reused asset's file is SHARED with the
                 # beat that extracted it — demotion removes this
                 # beat's use, never the shared file.

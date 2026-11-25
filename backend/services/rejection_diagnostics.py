@@ -174,6 +174,10 @@ REJECTION_REASON_REGISTRY = {
     "probe_failed": ("download",),
     "rate_limited": ("download",),
     "http_error": ("download",),
+    # Phase 3a / C-02: the image path's timeout reason code —
+    # a timeout is its own failure class in the download
+    # taxonomy, not a generic download_failed.
+    "timeout": ("download",),
     # technical validation
     "technical_below_minimum": ("technical_validation",),
     "undersized_file": ("technical_validation",),

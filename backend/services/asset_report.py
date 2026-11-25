@@ -37,6 +37,7 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
+from services import download_taxonomy
 from services import rejection_diagnostics
 from services import visual_identity
 from services.atomic_write import write_json_atomic
@@ -1284,6 +1285,16 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             },
         },
         "download_failures": download_failures,
+        # Phase 3a / C-02: the download-failure TAXONOMY aggregate —
+        # counts BY machine-readable class (and class x provider /
+        # class x HTTP status), derived from the failure records
+        # themselves, so a future "58 of 76 failed" is immediately
+        # diagnosable as a sum of named buckets instead of one
+        # conflated counter. Records predating the taxonomy are
+        # classified on the fly by the aggregator.
+        "download_failure_taxonomy": (
+            download_taxonomy.aggregate_failure_classes(download_failures)
+        ),
         # Run-11 fix 2: measured per-provider-scope download
         # health for the production — attempts / succeeded /
         # failed / rate_limited / backed_off per scope (the fetch
