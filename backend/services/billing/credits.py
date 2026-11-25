@@ -73,8 +73,12 @@ def get_or_create_account(db, user_id: str) -> models.CreditAccount:
 
 
 def _lock_account(db, user_id: str) -> models.CreditAccount:
-    """Fetch the account FOR UPDATE (Postgres); SQLite serialises
-    writers anyway, and its dialect cannot render FOR UPDATE."""
+    """Fetch the account FOR UPDATE (Postgres row lock, which
+    serialises the read-modify-write cycle there). SQLite cannot
+    render FOR UPDATE and its writer serialisation does NOT cover a
+    read-check-write spread across statements — on SQLite the
+    balance guards live in _apply_bucket_delta's conditional
+    UPDATEs, which the database evaluates atomically."""
     query = db.query(models.CreditAccount).filter_by(user_id=user_id)
     if db.bind is not None and db.bind.dialect.name != "sqlite":
         query = query.with_for_update()
@@ -82,6 +86,69 @@ def _lock_account(db, user_id: str) -> models.CreditAccount:
     if account is None:
         account = get_or_create_account(db, user_id)
     return account
+
+
+def _apply_bucket_delta(
+    db,
+    account: models.CreditAccount,
+    bucket: str,
+    *,
+    available_delta: int = 0,
+    reserved_delta: int = 0,
+    min_available: int | None = None,
+    min_reserved: int | None = None,
+) -> bool:
+    """Atomically adjust one bucket's counters via a conditional
+    UPDATE, refreshing the ORM account on success.
+
+    The balance guard (``min_available`` / ``min_reserved``) and the
+    mutation are a single statement, so the database evaluates the
+    guard against the newest committed row when it takes the write
+    lock — a concurrent transaction cannot slip between the check
+    and the write the way it can between an ORM read and a later
+    setattr (Phase 9 adversarial tests proved 5 of 8 racing
+    reservations could over-reserve one wallet before this).
+    Returns False — nothing changed — when the guard fails.
+    """
+    available_col = getattr(models.CreditAccount, f"{bucket}_available")
+    reserved_col = getattr(models.CreditAccount, f"{bucket}_reserved")
+    filters = [models.CreditAccount.id == account.id]
+    if min_available is not None:
+        filters.append(available_col >= min_available)
+    if min_reserved is not None:
+        filters.append(reserved_col >= min_reserved)
+    values = {}
+    if available_delta:
+        values[f"{bucket}_available"] = available_col + available_delta
+    if reserved_delta:
+        values[f"{bucket}_reserved"] = reserved_col + reserved_delta
+    if not values:
+        return True
+    updated = (
+        db.query(models.CreditAccount)
+        .filter(*filters)
+        .update(values, synchronize_session=False)
+    )
+    if updated != 1:
+        return False
+    db.refresh(account)
+    return True
+
+
+def _bump_lifetime_spent(db, account: models.CreditAccount, amount: int) -> None:
+    """Relative UPDATE for the lifetime counter (never an absolute
+    setattr computed from a possibly stale read)."""
+    if not amount:
+        return
+    db.query(models.CreditAccount).filter(
+        models.CreditAccount.id == account.id
+    ).update(
+        {
+            "lifetime_spent": models.CreditAccount.lifetime_spent + amount,
+        },
+        synchronize_session=False,
+    )
+    db.refresh(account)
 
 
 def available(account: models.CreditAccount, bucket: str) -> int:
@@ -191,10 +258,10 @@ def grant(
     if existing is not None:
         return existing, False
     account = _lock_account(db, user_id)
-    setattr(
-        account, f"{bucket}_available",
-        available(account, bucket) + amount,
-    )
+    if not _apply_bucket_delta(
+        db, account, bucket, available_delta=amount
+    ):
+        raise BillingError("grant failed: account row not updated")
     try:
         entry = _append_entry(
             db,
@@ -266,14 +333,22 @@ def reserve(
         take = min(available(account, bucket), remaining)
         if take <= 0:
             continue
-        setattr(
-            account, f"{bucket}_available",
-            available(account, bucket) - take,
-        )
-        setattr(
-            account, f"{bucket}_reserved",
-            reserved(account, bucket) + take,
-        )
+        if not _apply_bucket_delta(
+            db,
+            account,
+            bucket,
+            available_delta=-take,
+            reserved_delta=take,
+            min_available=take,
+        ):
+            # A concurrent transaction took the balance first; the
+            # guard inside the UPDATE saw the newest committed row.
+            # Nothing in this transaction may stand — the caller
+            # rolls back, discarding any earlier buckets' moves.
+            db.refresh(account)
+            raise InsufficientCreditsError(
+                needed=amount, available=total_available(account)
+            )
         split[bucket] = take
         remaining -= take
         _append_entry(
@@ -343,13 +418,15 @@ def release_reservation(
         amount = min(amount, held)
         if amount <= 0:
             continue
-        setattr(
-            account, f"{bucket}_reserved", held - amount
-        )
-        setattr(
-            account, f"{bucket}_available",
-            available(account, bucket) + amount,
-        )
+        if not _apply_bucket_delta(
+            db,
+            account,
+            bucket,
+            available_delta=amount,
+            reserved_delta=-amount,
+            min_reserved=amount,
+        ):
+            continue
         released[bucket] = amount
         _append_entry(
             db,
@@ -417,11 +494,10 @@ def charge_reservation(
             break
         held = min(split.get(bucket, 0), reserved(account, bucket))
         take = min(held, remaining)
-        if take > 0:
-            setattr(
-                account, f"{bucket}_reserved",
-                reserved(account, bucket) - take,
-            )
+        if take > 0 and _apply_bucket_delta(
+            db, account, bucket,
+            reserved_delta=-take, min_reserved=take,
+        ):
             from_reserved[bucket] = take
             remaining -= take
 
@@ -429,17 +505,16 @@ def charge_reservation(
         if remaining <= 0:
             break
         take = min(available(account, bucket), remaining)
-        if take > 0:
-            setattr(
-                account, f"{bucket}_available",
-                available(account, bucket) - take,
-            )
+        if take > 0 and _apply_bucket_delta(
+            db, account, bucket,
+            available_delta=-take, min_available=take,
+        ):
             from_available[bucket] = take
             remaining -= take
 
     shortfall = remaining
     charged = total_charge - shortfall
-    account.lifetime_spent = int(account.lifetime_spent) + charged
+    _bump_lifetime_spent(db, account, charged)
 
     for bucket in SPEND_ORDER:
         amount = from_reserved.get(bucket, 0) + from_available.get(
@@ -525,10 +600,17 @@ def spend(
         take = min(available(account, bucket), remaining)
         if take <= 0:
             continue
-        setattr(
-            account, f"{bucket}_available",
-            available(account, bucket) - take,
-        )
+        if not _apply_bucket_delta(
+            db, account, bucket,
+            available_delta=-take, min_available=take,
+        ):
+            # Lost a race for this bucket's balance; fail closed —
+            # the caller's transaction rollback discards any
+            # earlier buckets' moves and entries.
+            db.refresh(account)
+            raise InsufficientCreditsError(
+                needed=amount, available=total_available(account)
+            )
         split[bucket] = take
         remaining -= take
         _append_entry(
@@ -543,7 +625,7 @@ def spend(
             project_id=project_id,
             details=details,
         )
-    account.lifetime_spent = int(account.lifetime_spent) + amount
+    _bump_lifetime_spent(db, account, amount)
     return split
 
 
