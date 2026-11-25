@@ -20,7 +20,9 @@ this module follows the v1 contract documented in
 - Consistent error shape: {"error": {"code", "message"}} for every
   error raised under /api/v1 (auth, validation, domain errors).
 - Script payloads are capped at 60,000 characters (422 beyond).
-- POST routes are rate limited in-process (default 30/min per
+- POST routes are rate limited via a Redis-backed sliding window
+  (B-12; in-process fallback only when Redis is unreachable,
+  logged loudly) (default 30/min per
   token identity, CINEMORA_API_RATE_LIMIT overrides).
 - Media is served ONLY through recorded artefacts (the plan
   document's media index): an opaque key resolves to a file that a
@@ -40,6 +42,7 @@ from __future__ import annotations
 import copy
 import hmac
 import json
+import logging
 import os
 import threading
 import time
@@ -447,25 +450,132 @@ def require_api_token(request: Request) -> str:
     return principal.email
 
 
-class _RateLimiter:
-    """In-process sliding-window limiter for POST routes."""
+_rate_logger = logging.getLogger(__name__)
 
-    def __init__(self):
+# B-12: how long a failed Redis probe suppresses further probes.
+# During the suppression window the limiter runs on its in-memory
+# fallback (and says so loudly, once per probe failure).
+_RATE_LIMIT_REDIS_RETRY_SECONDS = 5.0
+
+_rate_limit_redis_client = None
+_rate_limit_redis_client_set = False
+
+
+def set_rate_limit_redis_client(client) -> None:
+    """Test seam: inject the Redis client the limiters share
+    (fakeredis in tests). Pass None to restore lazy creation."""
+    global _rate_limit_redis_client, _rate_limit_redis_client_set
+    _rate_limit_redis_client = client
+    _rate_limit_redis_client_set = True
+
+
+def reset_rate_limit_redis_client() -> None:
+    global _rate_limit_redis_client, _rate_limit_redis_client_set
+    _rate_limit_redis_client = None
+    _rate_limit_redis_client_set = False
+
+
+def _shared_rate_limit_redis():
+    global _rate_limit_redis_client, _rate_limit_redis_client_set
+    if not _rate_limit_redis_client_set:
+        from redis import Redis
+
+        _rate_limit_redis_client = Redis.from_url(
+            os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        _rate_limit_redis_client_set = True
+    return _rate_limit_redis_client
+
+
+class _RateLimiter:
+    """Sliding-window limiter for POST routes (60s window).
+
+    B-12: DISTRIBUTED by default — hits live in a Redis sorted
+    set per (scope, identity), so every API process sharing the
+    Redis enforces ONE combined limit (the pre-5b in-process
+    deque let multi-worker deployments multiply the limit by the
+    worker count). The algorithm is the same sliding window:
+    prune hits older than 60s, refuse at the limit, else record.
+
+    FALLBACK: when Redis is unreachable the limiter degrades to
+    the original in-process deque and logs the degradation
+    LOUDLY (error level) — a silent fallback would hide exactly
+    the multi-worker bypass this change exists to close. Limits
+    and thresholds are unchanged in both modes.
+    """
+
+    WINDOW_SECONDS = 60.0
+
+    def __init__(self, scope: str = "api", redis_client=None):
+        self._scope = scope
+        self._redis_client = redis_client
         self._hits: dict[str, deque] = defaultdict(deque)
         self._lock = threading.Lock()
+        self._redis_down_until = 0.0
+        self._redis_keys: set[str] = set()
+        self.degraded = False  # True while running on the fallback
 
-    def _limit(self) -> int:
-        try:
-            return max(1, int(os.environ.get("CINEMORA_API_RATE_LIMIT", "30")))
-        except ValueError:
-            return 30
+    # -- Redis plumbing ------------------------------------------------
 
-    def check(self, identity: str, limit: int | None = None) -> None:
-        effective = self._limit() if limit is None else limit
+    def _redis(self):
+        if self._redis_client is not None:
+            return self._redis_client
+        return _shared_rate_limit_redis()
+
+    def set_redis_client(self, client) -> None:
+        self._redis_client = client
+        self._redis_down_until = 0.0
+
+    def _redis_available(self) -> bool:
+        return time.monotonic() >= self._redis_down_until
+
+    def _note_redis_failure(self, exc: Exception) -> None:
+        self.degraded = True
+        self._redis_down_until = (
+            time.monotonic() + _RATE_LIMIT_REDIS_RETRY_SECONDS
+        )
+        _rate_logger.error(
+            "RATE LIMITER DEGRADED: Redis unavailable for scope "
+            "%s (%s); falling back to PER-PROCESS in-memory limits "
+            "— multi-worker deployments will NOT share one limit "
+            "until Redis recovers.",
+            self._scope,
+            exc,
+        )
+
+    def _key(self, identity: str) -> str:
+        return f"ratelimit:{self._scope}:{identity}"
+
+    def _redis_check(self, identity: str, effective: int) -> None:
+        client = self._redis()
+        key = self._key(identity)
+        now = time.time()
+        client.zremrangebyscore(key, 0, now - self.WINDOW_SECONDS)
+        count = client.zcard(key)
+        if count >= effective:
+            raise ApiError(
+                429,
+                "rate_limited",
+                "Too many write requests in the last minute; "
+                "retry shortly.",
+            )
+        member = f"{now}:{uuid4().hex}"
+        client.zadd(key, {member: now})
+        client.expire(key, int(self.WINDOW_SECONDS) + 60)
+        with self._lock:
+            self._redis_keys.add(key)
+        self.degraded = False
+
+    # -- In-memory fallback (the pre-5b behaviour) ---------------------
+
+    def _memory_check(self, identity: str, effective: int) -> None:
         now = time.monotonic()
         with self._lock:
             hits = self._hits[identity]
-            while hits and now - hits[0] > 60.0:
+            while hits and now - hits[0] > self.WINDOW_SECONDS:
                 hits.popleft()
             if len(hits) >= effective:
                 raise ApiError(
@@ -476,25 +586,62 @@ class _RateLimiter:
                 )
             hits.append(now)
 
+    # -- Public surface (unchanged contract) ---------------------------
+
+    def _limit(self) -> int:
+        try:
+            return max(1, int(os.environ.get("CINEMORA_API_RATE_LIMIT", "30")))
+        except ValueError:
+            return 30
+
+    def check(self, identity: str, limit: int | None = None) -> None:
+        effective = self._limit() if limit is None else limit
+        if self._redis_available():
+            try:
+                self._redis_check(identity, effective)
+                return
+            except ApiError:
+                raise
+            except Exception as exc:
+                self._note_redis_failure(exc)
+        self._memory_check(identity, effective)
+
     def peek(self, identity: str) -> int:
         """Current in-window hit count for an identity, without
         recording a hit (Developer API usage surface, Phase N)."""
+        if self._redis_available():
+            try:
+                client = self._redis()
+                key = self._key(identity)
+                client.zremrangebyscore(
+                    key, 0, time.time() - self.WINDOW_SECONDS
+                )
+                return int(client.zcard(key))
+            except Exception as exc:
+                self._note_redis_failure(exc)
         now = time.monotonic()
         with self._lock:
             hits = self._hits.get(identity)
             if not hits:
                 return 0
-            while hits and now - hits[0] > 60.0:
+            while hits and now - hits[0] > self.WINDOW_SECONDS:
                 hits.popleft()
             return len(hits)
 
     def reset(self) -> None:
         with self._lock:
             self._hits.clear()
+            keys = list(self._redis_keys)
+            self._redis_keys.clear()
+        if keys and self._redis_available():
+            try:
+                self._redis().delete(*keys)
+            except Exception:
+                pass
 
 
-rate_limiter = _RateLimiter()
-auth_rate_limiter = _RateLimiter()
+rate_limiter = _RateLimiter(scope="api")
+auth_rate_limiter = _RateLimiter(scope="auth")
 
 
 def _auth_rate_limit(request: Request, email: str) -> None:
