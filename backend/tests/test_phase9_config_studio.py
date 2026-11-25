@@ -43,7 +43,7 @@ import api_v1
 import jobs
 import main
 from database import SessionLocal, engine
-from models import Base, Plan, ProductionRun, Project
+from models import Base, Plan, ProductionRun, Project, User
 from services import auth as auth_service
 from services import (
     graphics_pipeline,
@@ -781,6 +781,15 @@ def test_run_submission_stamps_the_resolved_config_snapshot(client, users):
         "motion_graphics_disabled_coverage"
 
     # The Versioning history renders this same run record.
+    # FS-C (FS-11): the versions read is admin-only, so promote
+    # the owner to an admin account for this read.
+    db = SessionLocal()
+    try:
+        row = db.get(User, a["user"]["id"])
+        row.role = "admin"
+        db.commit()
+    finally:
+        db.close()
     versions = client.get(
         f"/api/v1/projects/{project['id']}/versions", headers=headers
     )

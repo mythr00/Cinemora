@@ -36,7 +36,7 @@ import api_v1
 import jobs
 import main
 from database import SessionLocal, engine
-from models import Base, Plan, ProductionRun, Project
+from models import Base, Plan, ProductionRun, Project, User
 from services import auth as auth_service
 from services import genre_packs, llm_client, run_ledger
 
@@ -122,7 +122,19 @@ def _register(client, email):
         "/api/v1/auth/register", json={"email": email, "password": PASSWORD}
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    body = response.json()
+    # FS-C (FS-1): the Templates endpoints are admin-only, so this
+    # suite's actors are admin accounts. Template data stays
+    # owner-scoped in the service layer, so the cross-tenant 404
+    # assertions below are unchanged in meaning.
+    db = SessionLocal()
+    try:
+        user = db.get(User, body["user"]["id"])
+        user.role = "admin"
+        db.commit()
+    finally:
+        db.close()
+    return body
 
 
 def _bearer(user):

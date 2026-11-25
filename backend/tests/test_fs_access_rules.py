@@ -715,3 +715,343 @@ def test_fsb_shared_endpoints_still_serve_user_flows(client, media_root):
         f"/api/v1/projects/{project_id}/runs", headers=owner["headers"]
     )
     assert runs.status_code == 200, runs.text
+
+
+# =====================================================================
+# FS-C (FS-1/FS-5/FS-6/FS-11/FS-13, FS-14) — the presentational
+# internal surfaces are admin-only: Visual Plan, Research & Source
+# Library, Versioning & Recovery, project + account Intelligence,
+# and the account Library & Templates families.
+#
+# Contract pinned here, per surface:
+# - an ordinary project OWNER (non-admin account role) is refused:
+#   project-scoped surfaces answer 403 (after the Phase 1a choke
+#   point), account-scoped families answer 403 directly, and no
+#   internal payload crosses in any refusal body;
+# - an accepted collaborator is refused exactly the same way
+#   (register A-9);
+# - a principal with NO grant on the project keeps the
+#   tenant-private 404 on the project-scoped surfaces;
+# - admin / super_admin principals and the operator principal
+#   receive the surfaces unchanged (admins cross-tenant, per the
+#   FS-B convention);
+# - the plan-approval gate (A-5): a non-admin-owned project with
+#   require_plan_approval set does NOT park at the gate — the run
+#   goes straight to the full pipeline — while an admin's gated
+#   submission still parks in the analysis phase, and the plan
+#   approve POST refuses non-admins;
+# - shared endpoints left open keep serving their kept flows: the
+#   Graphics tab's only read is the shared editor document
+#   endpoint (kept Editor / Editor Studio), which is NOT gated.
+# =====================================================================
+
+from types import SimpleNamespace  # noqa: E402
+
+import jobs  # noqa: E402
+
+PLAN_MARKER = "FSC_INTERNAL_PLAN_SENTENCE_7A1"
+RESEARCH_MARKER = "FSC_INTERNAL_RESEARCH_ENTITY_7A1"
+
+
+class _FakeQueue:
+    def __init__(self):
+        self.calls = []
+
+    def enqueue(self, fn, *args, **kwargs):
+        self.calls.append((fn, args, kwargs))
+        return SimpleNamespace(id=f"job-{len(self.calls)}")
+
+
+def _seed_fsc_project(owner_id, media_root):
+    """One project with a recorded plan document (marker sentence)
+    and a Case Bible (marker entity), so the gated surfaces have
+    real internal payloads to protect."""
+    project_id, run_id = _seed_production(owner_id, media_root)
+    project_dir = media_root / project_id
+    (project_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "sentences": [
+                    {"sentence_number": 1, "text": PLAN_MARKER}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (project_dir / "case_bible.json").write_text(
+        json.dumps(
+            {
+                "title": "FS-C bible",
+                "entities": [
+                    {"id": "e1", "name": RESEARCH_MARKER, "type": "person"}
+                ],
+                "facts": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return project_id, run_id
+
+
+def _fsc_project_paths(project_id):
+    return [
+        ("plan", f"/api/v1/projects/{project_id}/plan"),
+        ("research", f"/api/v1/projects/{project_id}/research"),
+        ("research bible", f"/api/v1/projects/{project_id}/research/bible"),
+        ("research sources", f"/api/v1/projects/{project_id}/research/sources"),
+        ("versions", f"/api/v1/projects/{project_id}/versions"),
+        ("intelligence", f"/api/v1/projects/{project_id}/intelligence"),
+    ]
+
+
+def _fsc_account_paths():
+    return [
+        ("account intelligence", "/api/v1/intelligence"),
+        ("library assets", "/api/v1/library/assets"),
+        ("library duplicates", "/api/v1/library/duplicates"),
+        ("library storage", "/api/v1/library/storage"),
+        ("library folders", "/api/v1/library/folders"),
+        ("templates", "/api/v1/templates"),
+    ]
+
+
+def _assert_fsc_refused(name, response, status=403):
+    assert response.status_code == status, (
+        name,
+        response.status_code,
+        response.text,
+    )
+    assert PLAN_MARKER not in response.text, name
+    assert RESEARCH_MARKER not in response.text, name
+    assert SOURCE_URL not in response.text, name
+
+
+def test_fsc_owner_user_refused_presentational_surfaces(client, media_root):
+    owner = _register(client, "fsc-owner")
+    project_id, _run_id = _seed_fsc_project(owner["id"], media_root)
+
+    for name, path in _fsc_project_paths(project_id):
+        _assert_fsc_refused(name, client.get(path, headers=owner["headers"]))
+    for name, path in _fsc_account_paths():
+        _assert_fsc_refused(name, client.get(path, headers=owner["headers"]))
+
+    # Writes on the gated families refuse non-admins too.
+    writes = [
+        ("plan generate", "post", f"/api/v1/projects/{project_id}/plan/generate", {}),
+        (
+            "plan decisions",
+            "post",
+            f"/api/v1/projects/{project_id}/plan/decisions",
+            {"json": {"sentence_number": 1, "action": "approve"}},
+        ),
+        ("plan approve", "post", f"/api/v1/projects/{project_id}/plan/approve", {}),
+        (
+            "research session",
+            "post",
+            f"/api/v1/projects/{project_id}/research/sessions",
+            {"json": {"topic": "T"}},
+        ),
+        (
+            "snapshot create",
+            "post",
+            f"/api/v1/projects/{project_id}/versions/snapshots",
+            {"json": {"name": "S"}},
+        ),
+        ("template create", "post", "/api/v1/templates", {"json": {"name": "T"}}),
+        ("library folder", "post", "/api/v1/library/folders", {"json": {"name": "F"}}),
+    ]
+    for name, method, path, kwargs in writes:
+        response = getattr(client, method)(
+            path, headers=owner["headers"], **kwargs
+        )
+        _assert_fsc_refused(name, response)
+
+
+def test_fsc_collaborator_refused_and_stranger_404(client, media_root):
+    owner = _register(client, "fsc-owner")
+    member = _register(client, "fsc-member")
+    stranger = _register(client, "fsc-stranger")
+    project_id, _run_id = _seed_fsc_project(owner["id"], media_root)
+    _share(client, owner, member, project_id, role="editor")
+
+    for name, path in _fsc_project_paths(project_id):
+        _assert_fsc_refused(
+            f"collaborator {name}", client.get(path, headers=member["headers"])
+        )
+        response = client.get(path, headers=stranger["headers"])
+        assert response.status_code == 404, (name, response.status_code)
+
+
+@pytest.mark.parametrize("role", ["admin", "super_admin"])
+def test_fsc_admin_roles_receive_full_surfaces(client, media_root, role):
+    admin = _make_user(role)
+    project_id, _run_id = _seed_fsc_project(admin["id"], media_root)
+
+    plan = client.get(
+        f"/api/v1/projects/{project_id}/plan", headers=admin["headers"]
+    )
+    assert plan.status_code == 200, plan.text
+    assert PLAN_MARKER in plan.text
+
+    research = client.get(
+        f"/api/v1/projects/{project_id}/research", headers=admin["headers"]
+    )
+    assert research.status_code == 200, research.text
+    bible = client.get(
+        f"/api/v1/projects/{project_id}/research/bible",
+        headers=admin["headers"],
+    )
+    assert bible.status_code == 200, bible.text
+    assert RESEARCH_MARKER in bible.text
+
+    versions = client.get(
+        f"/api/v1/projects/{project_id}/versions", headers=admin["headers"]
+    )
+    assert versions.status_code == 200, versions.text
+    assert versions.json()["entries"], versions.text
+
+    intelligence = client.get(
+        f"/api/v1/projects/{project_id}/intelligence",
+        headers=admin["headers"],
+    )
+    assert intelligence.status_code == 200, intelligence.text
+
+    for name, path in _fsc_account_paths():
+        response = client.get(path, headers=admin["headers"])
+        assert response.status_code == 200, (name, response.text)
+
+
+def test_fsc_admin_reads_presentational_surfaces_across_tenants(
+    client, media_root
+):
+    # The FS-B convention (FS-DISCOVERY §3.1 option (a)): admin
+    # surfaces are cross-tenant like the admin API.
+    owner = _register(client, "fsc-owner")
+    admin = _make_user("admin")
+    project_id, _run_id = _seed_fsc_project(owner["id"], media_root)
+
+    for name, path in _fsc_project_paths(project_id):
+        response = client.get(path, headers=admin["headers"])
+        assert response.status_code == 200, (name, response.text)
+    plan = client.get(
+        f"/api/v1/projects/{project_id}/plan", headers=admin["headers"]
+    )
+    assert PLAN_MARKER in plan.text
+
+
+def test_fsc_operator_receives_full_surfaces(client, media_root):
+    project_id, _run_id = _seed_fsc_project(None, media_root)
+    headers = {"X-API-Key": TOKEN}
+
+    for name, path in _fsc_project_paths(project_id):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200, (name, response.text)
+    for name, path in _fsc_account_paths():
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200, (name, response.text)
+
+
+def test_fsc_shared_editor_endpoint_not_gated(client, media_root):
+    # The Graphics tab's only backend read is GET .../editor — the
+    # SAME endpoint the kept classic Editor and Editor Studio load
+    # their document through. FS-C gates the Graphics PAGE, not
+    # this shared data path: a non-admin owner must not be refused
+    # with the admin-only 403 here (the editor's own production
+    # gating — completed run / no production — is FS-F's concern
+    # and answers in its own codes).
+    owner = _register(client, "fsc-owner")
+    project_id, _run_id = _seed_production(owner["id"], media_root)
+
+    response = client.get(
+        f"/api/v1/projects/{project_id}/editor", headers=owner["headers"]
+    )
+    assert response.status_code != 403, response.text
+    assert "requires an administrator" not in response.text
+
+    # The kept Thumbnails flow (which composes from the project's
+    # recorded material, library items included) stays open.
+    thumbnails = client.get(
+        f"/api/v1/projects/{project_id}/thumbnails", headers=owner["headers"]
+    )
+    assert thumbnails.status_code == 200, thumbnails.text
+
+
+def _create_fsc_project(client, headers, options=None):
+    body = {
+        "title": "FS-C plan gate",
+        "script": "Alpha opens. Bravo continues. Charlie closes.",
+    }
+    if options is not None:
+        body["options"] = options
+    response = client.post("/api/v1/projects", headers=headers, json=body)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_fsc_non_admin_plan_approval_gate_is_bypassed(client, monkeypatch):
+    # A-5: an ordinary owner whose project carries
+    # require_plan_approval must NOT park at the approval gate —
+    # the submission goes straight to the full pipeline.
+    queue = _FakeQueue()
+    monkeypatch.setattr(jobs, "video_queue", queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", queue)
+    owner = _register(client, "fsc-gate-owner")
+    project = _create_fsc_project(
+        client, owner["headers"], options={"require_plan_approval": True}
+    )
+
+    submitted = client.post(
+        f"/api/v1/projects/{project['id']}/runs",
+        headers=owner["headers"],
+        json={},
+    )
+    assert submitted.status_code == 202, submitted.text
+    body = submitted.json()
+    assert body["phase"] == "production", body
+    assert body["run"]["status"] != "awaiting_approval", body
+    assert len(queue.calls) == 1
+    assert queue.calls[0][0] is jobs.run_full_pipeline
+
+
+def test_fsc_admin_plan_approval_gate_still_parks(client, monkeypatch):
+    # The mechanism is preserved for admins: an admin-owned
+    # project with require_plan_approval still parks in the
+    # analysis phase, and the approve POST then refuses an
+    # ordinary user while an admin passes the gate (409 here: no
+    # run is awaiting in this hermetic setup — the gate, not the
+    # release, is what this asserts).
+    queue = _FakeQueue()
+    monkeypatch.setattr(jobs, "video_queue", queue)
+    monkeypatch.setattr(jobs, "video_queue_priority", queue)
+    admin = _make_user("admin")
+    project = _create_fsc_project(
+        client, admin["headers"], options={"require_plan_approval": True}
+    )
+
+    submitted = client.post(
+        f"/api/v1/projects/{project['id']}/runs",
+        headers=admin["headers"],
+        json={},
+    )
+    assert submitted.status_code == 202, submitted.text
+    body = submitted.json()
+    assert body["phase"] == "analysis", body
+    assert len(queue.calls) == 1
+    assert queue.calls[0][0] is jobs.run_analysis_phase
+
+    owner = _register(client, "fsc-gate-user")
+    refused = client.post(
+        f"/api/v1/projects/{project['id']}/plan/approve",
+        headers=owner["headers"],
+    )
+    assert refused.status_code in (403, 404), refused.text
+
+    # The admin passes the gate: the answer is the mechanism's own
+    # 409 (the analysis phase has not run in this hermetic setup,
+    # so no run is awaiting yet), not an authorization refusal.
+    admin_answer = client.post(
+        f"/api/v1/projects/{project['id']}/plan/approve",
+        headers=admin["headers"],
+    )
+    assert admin_answer.status_code == 409, admin_answer.text
+    assert admin_answer.json()["error"]["code"] == "no_awaiting_run"

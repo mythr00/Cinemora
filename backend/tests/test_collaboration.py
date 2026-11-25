@@ -171,6 +171,17 @@ def _respond(client, member, project_id, accept=True, expect=200):
 def _setup(client):
     """Owner + editor-to-be + viewer-to-be + outsider, one project."""
     owner = _user(client, "owner")
+    # FS-C (FS-5): plan decisions are an admin-only surface, so the
+    # owner here is an admin account (the activity-feed test records
+    # a plan decision as the owner). Collaboration roles are
+    # per-project and unaffected by the account role.
+    db = SessionLocal()
+    try:
+        row = db.get(User, owner["id"])
+        row.role = "admin"
+        db.commit()
+    finally:
+        db.close()
     editor = _user(client, "editor")
     viewer = _user(client, "viewer")
     outsider = _user(client, "outsider")
@@ -284,11 +295,12 @@ def test_viewer_is_read_only_but_can_discuss(client):
         f"/api/v1/projects/{project_id}/activity",
     ):
         response = client.get(path, headers=viewer["headers"])
-        assert response.status_code in (200, 404), (path, response.text)
+        assert response.status_code in (200, 404, 403), (path, response.text)
         if path.endswith("/plan"):
-            # No analysis exists yet in this test: 404 plan_not_found
-            # is the honest read outcome; anything else must be 200.
-            assert response.status_code == 404
+            # FS-C (FS-5): the Visual Plan is admin-only — a granted
+            # non-admin member (this viewer) is refused 403, where
+            # before FS-C the honest outcome was 404 plan_not_found.
+            assert response.status_code == 403
         else:
             assert response.status_code == 200, (path, response.text)
 

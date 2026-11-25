@@ -352,6 +352,63 @@ def _load_project_for_diagnostic_surface(
     return _get_owned_project_or_404(db, project_id, principal)
 
 
+# ---------------------------------------------------------------------
+# FS-C (FS-1/FS-5/FS-6/FS-11/FS-13, enforcement model FS-14): the
+# presentational internal surfaces — Visual Plan, Research & Source
+# Library, Versioning & Recovery, project/account Intelligence,
+# and the account Library & Templates pages — are ADMIN-ONLY,
+# exactly like the FS-B diagnostic surfaces: they leave the
+# ordinary-user product completely (tabs, nav, direct URL, API)
+# while nothing is deleted and the restriction stays trivially
+# restorable. The semantics are the FS-B pair's, reused verbatim:
+# non-granted principals keep the Phase 1a tenant-private 404,
+# granted non-admins get 403, admins load cross-tenant, and
+# developer-API principals (auth_method "api_key") keep their own
+# scope+ownership model (A-8) — the public API's versions read
+# delegates to the v1 handler in-process and must not be broken
+# by a session-UI gate. Service-layer functions are never gated:
+# the pipeline's own snapshot writes, research-correction hooks
+# and editor library imports call services directly and are
+# unaffected.
+# ---------------------------------------------------------------------
+
+
+def _require_admin_for_presentational_surface(
+    principal: auth_service.Principal,
+) -> None:
+    """FS-C admin check for the presentational surfaces: the FS-B
+    diagnostic convention, shared implementation."""
+    _require_admin_for_diagnostic_surface(principal)
+
+
+def _load_project_for_presentational_surface(
+    db, project_id: str, principal: auth_service.Principal
+):
+    """Project load for the FS-C presentational surfaces: the FS-B
+    diagnostic loader (Phase 1a choke point for non-admins,
+    cross-tenant existence-only load for admins)."""
+    return _load_project_for_diagnostic_surface(db, project_id, principal)
+
+
+def _require_project_for_presentational_surface(
+    project_id: str, principal, *, write: bool = False
+) -> None:
+    """Load + admin-check in one step for the FS-C project-scoped
+    surfaces whose handlers previously called
+    _require_owned_project. `write` is accepted for call-site
+    symmetry with the choke point: every non-admin is refused by
+    the admin check regardless, so the read/write distinction no
+    longer changes the outcome (a granted viewer previously got
+    the choke point's read-only 403; they now get the admin-only
+    403 — same status, stricter rule)."""
+    db = SessionLocal()
+    try:
+        _load_project_for_presentational_surface(db, project_id, principal)
+        _require_admin_for_presentational_surface(principal)
+    finally:
+        db.close()
+
+
 # The decision-ledger fields the kept Editor flow consumes
 # (frontend/components/editor/asset-panel.tsx): a ledger row's id
 # (the reuse handle — the editor backend re-reads the decision
@@ -1409,7 +1466,22 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depen
     )
     script_hash = run_ledger.script_sha256(script)
 
-    if merged.get("require_plan_approval"):
+    # FS-C (FS-5, ambiguity A-5): the plan-approval gate applies
+    # only when an ADMIN principal administers the flow. The Visual
+    # Plan surface is admin-only, so a non-admin owner who stored
+    # require_plan_approval (the Create toggle predates FS-C) would
+    # park their run in awaiting_approval with no UI able to
+    # release it. For non-admin principals the flag is therefore
+    # inert at submission: the run takes the ordinary full-pipeline
+    # path below (auto-approved at the point the pipeline would
+    # wait), and a legacy run already parked by a pre-FS-C
+    # submission is not deduplicated against — a fresh full run is
+    # queued instead. Admin/operator submissions keep the gate
+    # exactly as before, and POST /plan/approve stays available to
+    # them (admin-only, below).
+    if merged.get("require_plan_approval") and getattr(
+        principal, "is_admin", False
+    ):
         existing = run_ledger.latest_run_for(project_id, script_hash)
         if existing and existing["status"] in (
             "queued",
@@ -1521,9 +1593,15 @@ def cancel_run(run_id: str, principal=Depends(post_guard)):
 
 @router.get("/projects/{project_id}/plan")
 def get_plan(project_id: str, principal=Depends(require_user)):
+    # FS-C (FS-5): the Visual Plan is an admin-only presentational
+    # surface — choke point first (non-granted 404), then the
+    # admin check (granted non-admin 403).
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal)
+        project = _load_project_for_presentational_surface(
+            db, project_id, principal
+        )
+        _require_admin_for_presentational_surface(principal)
     finally:
         db.close()
     plan = plan_document.build_plan(
@@ -1542,9 +1620,14 @@ def get_plan(project_id: str, principal=Depends(require_user)):
 
 @router.post("/projects/{project_id}/plan/generate")
 def generate_plan(project_id: str, principal=Depends(post_guard)):
+    # FS-C (FS-5): plan generation serves the admin-only Visual
+    # Plan surface; same load + admin check as the plan read.
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal, write=True)
+        project = _load_project_for_presentational_surface(
+            db, project_id, principal
+        )
+        _require_admin_for_presentational_surface(principal)
         script = project.script
     finally:
         db.close()
@@ -1824,7 +1907,10 @@ def post_plan_decision(project_id: str, body: PlanDecisionIn, principal=Depends(
         )
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal, write=True)
+        project = _load_project_for_presentational_surface(
+            db, project_id, principal
+        )
+        _require_admin_for_presentational_surface(principal)
     finally:
         db.close()
     project_dir = media_paths.project_dir(project.id)
@@ -1850,9 +1936,17 @@ def post_plan_decision(project_id: str, body: PlanDecisionIn, principal=Depends(
 
 @router.post("/projects/{project_id}/plan/approve")
 def approve_plan(project_id: str, principal=Depends(post_guard)):
+    # FS-C (FS-5, A-5): plan approval is an admin-only action —
+    # the approval mechanism is preserved for admins (and the
+    # operator), while non-admin submissions no longer park at
+    # the gate at all (see submit_run), so no ordinary user can
+    # be stranded awaiting a release only an admin may give.
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal, write=True)
+        project = _load_project_for_presentational_surface(
+            db, project_id, principal
+        )
+        _require_admin_for_presentational_surface(principal)
         script = project.script
     finally:
         db.close()
@@ -2542,9 +2636,12 @@ def export_run_qa_report(
 
 @router.get("/projects/{project_id}/intelligence")
 def get_project_intelligence(project_id: str, principal=Depends(require_user)):
+    # FS-C (FS-13): project Intelligence is an admin-only
+    # presentational surface — choke point first, then admin.
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, principal)
+        _load_project_for_presentational_surface(db, project_id, principal)
+        _require_admin_for_presentational_surface(principal)
     finally:
         db.close()
     return project_intelligence.build_project_intelligence(
@@ -2554,6 +2651,10 @@ def get_project_intelligence(project_id: str, principal=Depends(require_user)):
 
 @router.get("/intelligence")
 def get_account_intelligence(principal=Depends(require_user)):
+    # FS-C (FS-13): account Intelligence is admin-only. The
+    # service stays principal-scoped (an admin sees only their
+    # own catalogue's aggregates), exactly as before.
+    _require_admin_for_presentational_surface(principal)
     return project_intelligence.build_account_intelligence(principal.user_id)
 
 
@@ -2582,9 +2683,18 @@ def _versioning_call(fn, *args, **kwargs):
 
 
 def _owned_project_dict(project_id: str, principal, *, write: bool = False) -> dict:
+    # FS-C (FS-11): Versioning & Recovery is an admin-only
+    # presentational surface, so this versioning-only loader pairs
+    # the presentational load with the admin check. The pipeline's
+    # own snapshot writes go through services/versioning directly
+    # and are unaffected. `write` is retained for call-site
+    # symmetry; the admin check refuses every non-admin regardless.
     db = SessionLocal()
     try:
-        project = _get_owned_project_or_404(db, project_id, principal, write=write)
+        project = _load_project_for_presentational_surface(
+            db, project_id, principal
+        )
+        _require_admin_for_presentational_surface(principal)
         return {
             "id": project.id,
             "script": project.script,
@@ -2732,6 +2842,13 @@ def set_version_label(
 # workspace over the existing engine (services/research_studio.py).
 # Every route loads the project through the Phase 8 owner choke
 # point first: another user's project is a 404 on reads AND writes.
+#
+# FS-C (FS-6): the Research & Source Library surface is
+# ADMIN-ONLY — every route below loads through
+# _require_project_for_presentational_surface (choke point, then
+# the admin check). services/research_studio.py and the pipeline's
+# in-process research hooks (jobs.py's entity-correction pass)
+# are untouched.
 # ---------------------------------------------------------------------------
 
 
@@ -2824,13 +2941,13 @@ class SummaryIn(BaseModel):
 
 @router.get("/projects/{project_id}/research")
 def get_research_overview(project_id: str, principal=Depends(require_user)):
-    _require_owned_project(project_id, principal)
+    _require_project_for_presentational_surface(project_id, principal)
     return _research_call(research_studio.overview, project_id)
 
 
 @router.get("/projects/{project_id}/research/bible")
 def get_research_bible(project_id: str, principal=Depends(require_user)):
-    _require_owned_project(project_id, principal)
+    _require_project_for_presentational_surface(project_id, principal)
     return _research_call(research_studio.bible_view, project_id)
 
 
@@ -2841,7 +2958,7 @@ def get_research_sources(
     q: str | None = None,
     principal=Depends(require_user),
 ):
-    _require_owned_project(project_id, principal)
+    _require_project_for_presentational_surface(project_id, principal)
     return _research_call(
         research_studio.list_sources, project_id, state=state, query=q
     )
@@ -2851,7 +2968,7 @@ def get_research_sources(
 def create_research_session(
     project_id: str, body: ResearchSessionIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     return _research_call(research_studio.run_session, project_id, body.topic)
 
 
@@ -2859,7 +2976,7 @@ def create_research_session(
 def get_research_session(
     project_id: str, session_id: str, principal=Depends(require_user)
 ):
-    _require_owned_project(project_id, principal)
+    _require_project_for_presentational_surface(project_id, principal)
     return _research_call(research_studio.get_session, project_id, session_id)
 
 
@@ -2870,7 +2987,7 @@ def set_research_source_state(
     body: SourceStateIn,
     principal=Depends(post_guard),
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     return _research_call(
         research_studio.set_source_state, project_id, source_id, body.state
     )
@@ -2880,7 +2997,7 @@ def set_research_source_state(
 def add_research_external_source(
     project_id: str, body: ExternalSourceIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     return _research_call(
         research_studio.add_external_source,
         project_id,
@@ -2891,7 +3008,7 @@ def add_research_external_source(
 
 @router.post("/projects/{project_id}/research/fact-check")
 def run_research_fact_check(project_id: str, principal=Depends(post_guard)):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     return _research_call(research_studio.run_fact_check, project_id)
 
 
@@ -2899,7 +3016,7 @@ def run_research_fact_check(project_id: str, principal=Depends(post_guard)):
 def check_research_entity(
     project_id: str, entity_id: str, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     return _research_call(research_studio.check_entity, project_id, entity_id)
 
 
@@ -2907,7 +3024,7 @@ def check_research_entity(
 def create_research_correction(
     project_id: str, body: CorrectionIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     return _research_call(
         research_studio.add_correction,
         project_id,
@@ -2921,14 +3038,14 @@ def create_research_correction(
 def delete_research_correction(
     project_id: str, correction_id: str, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     _research_call(research_studio.delete_correction, project_id, correction_id)
     return {"deleted": True, "correction_id": correction_id}
 
 
 @router.get("/projects/{project_id}/research/citations")
 def get_research_citations(project_id: str, principal=Depends(require_user)):
-    _require_owned_project(project_id, principal)
+    _require_project_for_presentational_surface(project_id, principal)
     return {"citations": _research_call(research_studio.list_citations, project_id)}
 
 
@@ -2936,7 +3053,7 @@ def get_research_citations(project_id: str, principal=Depends(require_user)):
 def create_research_citation(
     project_id: str, body: CitationIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     return _research_call(
         research_studio.add_citation,
         project_id,
@@ -2951,14 +3068,14 @@ def create_research_citation(
 def delete_research_citation(
     project_id: str, citation_id: str, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     _research_call(research_studio.delete_citation, project_id, citation_id)
     return {"deleted": True, "citation_id": citation_id}
 
 
 @router.get("/projects/{project_id}/research/bibliography")
 def get_research_bibliography(project_id: str, principal=Depends(require_user)):
-    _require_owned_project(project_id, principal)
+    _require_project_for_presentational_surface(project_id, principal)
     return _research_call(research_studio.bibliography, project_id)
 
 
@@ -2966,7 +3083,7 @@ def get_research_bibliography(project_id: str, principal=Depends(require_user)):
 def create_research_timeline_event(
     project_id: str, body: TimelineEventIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     return _research_call(
         research_studio.add_timeline_event,
         project_id,
@@ -2983,7 +3100,7 @@ def update_research_timeline_event(
     body: TimelineEventUpdateIn,
     principal=Depends(post_guard),
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     return _research_call(
         research_studio.update_timeline_event,
         project_id,
@@ -2998,14 +3115,14 @@ def update_research_timeline_event(
 def delete_research_timeline_event(
     project_id: str, event_id: str, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     _research_call(research_studio.delete_timeline_event, project_id, event_id)
     return {"deleted": True, "event_id": event_id}
 
 
 @router.get("/projects/{project_id}/research/summaries")
 def get_research_summaries(project_id: str, principal=Depends(require_user)):
-    _require_owned_project(project_id, principal)
+    _require_project_for_presentational_surface(project_id, principal)
     return {"summaries": _research_call(research_studio.list_summaries, project_id)}
 
 
@@ -3013,7 +3130,7 @@ def get_research_summaries(project_id: str, principal=Depends(require_user)):
 def create_research_summary(
     project_id: str, body: SummaryIn, principal=Depends(post_guard)
 ):
-    _require_owned_project(project_id, principal, write=True)
+    _require_project_for_presentational_surface(project_id, principal, write=True)
     return _research_call(
         research_studio.generate_summary, project_id, body.session_id
     )
@@ -3228,6 +3345,17 @@ def attach_script_to_project(
 # _create_project_record; apply-draft creates through the Script
 # Studio's own create path. Literal routes are declared before
 # the {template_id} routes so they can never be shadowed by one.
+#
+# FS-C (FS-1): the Templates page is an admin-only surface, so
+# every route in this family requires an admin principal (403 for
+# ordinary users — these are account-scoped routes over the
+# caller's own templates, so there is no tenant-private 404 to
+# preserve). Consumer evidence for gating the two apply routes
+# too: the only frontend callers of apply-draft / apply-project
+# are the Templates page itself (grep-verified); Script Studio
+# and project creation never call them — they use the service /
+# _create_project_record paths in-process, which stay ungated.
+# services/templates.py is untouched.
 # ---------------------------------------------------------------------------
 
 
@@ -3314,6 +3442,8 @@ def _template_sections(body_sections):
 
 @router.get("/templates")
 def list_templates(principal=Depends(require_user)):
+    # FS-C (FS-1): Templates is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _template_call(templates_service.list_templates, db, principal)
@@ -3323,6 +3453,8 @@ def list_templates(principal=Depends(require_user)):
 
 @router.post("/templates", status_code=201)
 def create_template(body: TemplateIn, principal=Depends(post_guard)):
+    # FS-C (FS-1): Templates is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _template_call(
@@ -3343,6 +3475,8 @@ def create_template(body: TemplateIn, principal=Depends(post_guard)):
 def create_template_from_project(
     body: TemplateFromProjectIn, principal=Depends(post_guard)
 ):
+    # FS-C (FS-1): Templates is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         project = _get_owned_project_or_404(db, body.project_id, principal)
@@ -3362,6 +3496,8 @@ def create_template_from_project(
 def create_template_from_draft(
     body: TemplateFromDraftIn, principal=Depends(post_guard)
 ):
+    # FS-C (FS-1): Templates is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _template_call(
@@ -3379,6 +3515,8 @@ def create_template_from_draft(
 def copy_builtin_template(
     pack_id: str, body: TemplateCopyIn, principal=Depends(post_guard)
 ):
+    # FS-C (FS-1): Templates is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _template_call(
@@ -3390,6 +3528,8 @@ def copy_builtin_template(
 
 @router.get("/templates/{template_id}")
 def get_template(template_id: str, principal=Depends(require_user)):
+    # FS-C (FS-1): Templates is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _template_call(
@@ -3403,6 +3543,8 @@ def get_template(template_id: str, principal=Depends(require_user)):
 def update_template(
     template_id: str, body: TemplateUpdateIn, principal=Depends(post_guard)
 ):
+    # FS-C (FS-1): Templates is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _template_call(
@@ -3424,6 +3566,8 @@ def update_template(
 
 @router.delete("/templates/{template_id}")
 def delete_template(template_id: str, principal=Depends(post_guard)):
+    # FS-C (FS-1): Templates is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _template_call(
@@ -3437,6 +3581,8 @@ def delete_template(template_id: str, principal=Depends(post_guard)):
 def apply_template_to_draft(
     template_id: str, body: TemplateApplyDraftIn, principal=Depends(post_guard)
 ):
+    # FS-C (FS-1): Templates is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _template_call(
@@ -3454,6 +3600,8 @@ def apply_template_to_draft(
 def apply_template_to_project(
     template_id: str, body: TemplateApplyProjectIn, principal=Depends(post_guard)
 ):
+    # FS-C (FS-1): Templates is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         payload = _template_call(
@@ -4032,6 +4180,18 @@ def get_studio_waveform(
 # (services/asset_library.py). Every route is principal-scoped: the
 # library is built from the caller's own projects only, and another
 # user's asset answers 404 exactly like a nonexistent one.
+#
+# FS-C (FS-1): the Library page is an admin-only surface, so every
+# route in this family requires an admin principal (403 for
+# ordinary users — account-scoped routes, no tenant-private 404
+# to preserve). Judgement on the shared-data concern: no kept
+# frontend flow calls these HTTP routes (grep-verified — the
+# classic Editor and Thumbnails read through the project editor /
+# media endpoints, not /library/*); the flows that DO consume
+# library data — the editor import machinery and the pipeline —
+# call services/asset_library.py in-process, and service-layer
+# functions are never gated. The project upload route
+# (/projects/{id}/uploads) is a separate kept flow and untouched.
 # ---------------------------------------------------------------------------
 
 
@@ -4089,6 +4249,8 @@ def list_library_assets(
     offset: int = 0,
     principal=Depends(require_user),
 ):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _library_call(
@@ -4114,6 +4276,8 @@ def list_library_assets(
 
 @router.get("/library/assets/{content_hash}")
 def get_library_asset(content_hash: str, principal=Depends(require_user)):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _library_call(
@@ -4125,6 +4289,8 @@ def get_library_asset(content_hash: str, principal=Depends(require_user)):
 
 @router.get("/library/assets/{content_hash}/media")
 def serve_library_media(content_hash: str, principal=Depends(require_user)):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         path = _library_call(
@@ -4145,6 +4311,8 @@ def set_library_asset_organisation(
     body: LibraryOrganisationIn,
     principal=Depends(post_guard),
 ):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _library_call(
@@ -4165,6 +4333,8 @@ def import_library_asset(
     body: LibraryImportIn,
     principal=Depends(post_guard),
 ):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _library_call(
@@ -4180,6 +4350,8 @@ def import_library_asset(
 
 @router.get("/library/duplicates")
 def list_library_duplicates(principal=Depends(require_user)):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _library_call(asset_library.list_duplicates, db, principal)
@@ -4189,6 +4361,8 @@ def list_library_duplicates(principal=Depends(require_user)):
 
 @router.get("/library/storage")
 def get_library_storage(principal=Depends(require_user)):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _library_call(asset_library.storage_view, db, principal)
@@ -4198,6 +4372,8 @@ def get_library_storage(principal=Depends(require_user)):
 
 @router.get("/library/folders")
 def list_library_folders(principal=Depends(require_user)):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _library_call(asset_library.list_folders, db, principal)
@@ -4209,6 +4385,8 @@ def list_library_folders(principal=Depends(require_user)):
 def create_library_folder(
     body: LibraryFolderIn, principal=Depends(post_guard)
 ):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _library_call(
@@ -4220,6 +4398,8 @@ def create_library_folder(
 
 @router.delete("/library/folders/{folder_id}")
 def delete_library_folder(folder_id: str, principal=Depends(post_guard)):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         return _library_call(
@@ -4235,6 +4415,8 @@ def upload_to_library(
     file: UploadFile = File(...),
     principal=Depends(post_guard),
 ):
+    # FS-C (FS-1): the Library is an admin-only surface.
+    _require_admin_for_presentational_surface(principal)
     db = SessionLocal()
     try:
         _get_owned_project_or_404(db, project_id, principal, write=True)

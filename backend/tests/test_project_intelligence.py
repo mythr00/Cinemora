@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 import api_v1
 import main
 from database import SessionLocal, engine
-from models import Base, Plan
+from models import Base, Plan, User
 from services import auth as auth_service
 from services import media_paths, project_intelligence, run_ledger
 
@@ -480,6 +480,15 @@ def test_intelligence_cross_tenant_404_and_isolation(client):
     suffix = uuid.uuid4().hex[:8]
     a = _register(client, f"pi-a-{suffix}@example.com")
     b = _register(client, f"pi-b-{suffix}@example.com")
+    # FS-C (FS-13): the Intelligence endpoints are admin-only, so
+    # the owner here is an admin account.
+    db = SessionLocal()
+    try:
+        user = db.get(User, a["user"]["id"])
+        user.role = "admin"
+        db.commit()
+    finally:
+        db.close()
     project = _create_project(client, headers=_bearer(a), title="A only")
     _write_bible(
         project["id"], _bible([_entity("e1", "Secret Entity", "person")])
@@ -498,13 +507,13 @@ def test_intelligence_cross_tenant_404_and_isolation(client):
     )
     assert response.status_code == 404, response.text
 
-    account_b = client.get("/api/v1/intelligence", headers=_bearer(b)).json()
-    assert account_b["totals"]["projects"] == 0
-    assert account_b["entity_connections"] == []
-    assert account_b["providers"]["providers"] == []
-    assert all(
-        row["project_id"] != project["id"] for row in account_b["projects"]
-    )
+    # FS-C (FS-13): account Intelligence is admin-only — the
+    # ordinary user's read is refused outright (403, no payload),
+    # which subsumes the old empty-aggregate isolation assertions:
+    # no foreign data can enter a response that is never served.
+    account_b_response = client.get("/api/v1/intelligence", headers=_bearer(b))
+    assert account_b_response.status_code == 403, account_b_response.text
+    assert "Secret Entity" not in account_b_response.text
 
     # The owner sees their own data.
     account_a = client.get("/api/v1/intelligence", headers=_bearer(a)).json()

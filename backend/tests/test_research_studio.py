@@ -105,6 +105,16 @@ def users(client):
     suffix = uuid.uuid4().hex[:8]
     a = _register(client, f"rs-a-{suffix}@example.com")
     b = _register(client, f"rs-b-{suffix}@example.com")
+    # FS-C (FS-6): the Research endpoints are admin-only, so the
+    # owner here is an admin account; the stranger stays an
+    # ordinary user with no grant and keeps the tenant-private 404.
+    db = SessionLocal()
+    try:
+        user = db.get(User, a["user"]["id"])
+        user.role = "admin"
+        db.commit()
+    finally:
+        db.close()
     return a, b
 
 

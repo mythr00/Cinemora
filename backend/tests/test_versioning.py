@@ -748,6 +748,16 @@ def test_versioning_cross_tenant_404(client):
     suffix = uuid.uuid4().hex[:8]
     a = _register(client, f"ver-a-{suffix}@example.com")
     b = _register(client, f"ver-b-{suffix}@example.com")
+    # FS-C (FS-11): the Versioning endpoints are admin-only, so the
+    # owner here is an admin account; the stranger stays an
+    # ordinary user with no grant and keeps the tenant-private 404.
+    db = SessionLocal()
+    try:
+        user = db.get(User, a["user"]["id"])
+        user.role = "admin"
+        db.commit()
+    finally:
+        db.close()
     project = _create_project(client, headers=_bearer(a))
     run_id = _completed_run(project["id"], SCRIPT_A)
     snapshot = client.post(

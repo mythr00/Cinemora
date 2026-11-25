@@ -105,6 +105,17 @@ def _register(client, email):
     )
     assert response.status_code == 201, response.text
     body = response.json()
+    # FS-C (FS-1): the Library endpoints are admin-only, so this
+    # suite's actors are admin accounts. Library data stays
+    # principal-scoped in the service layer, so the cross-tenant
+    # 404 assertions below are unchanged in meaning.
+    db = SessionLocal()
+    try:
+        user = db.get(User, body["user"]["id"])
+        user.role = "admin"
+        db.commit()
+    finally:
+        db.close()
     return {"id": body["user"]["id"], "session_token": body["session_token"]}
 
 
