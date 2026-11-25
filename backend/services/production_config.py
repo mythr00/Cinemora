@@ -28,8 +28,10 @@ resolved into those keys:
   specific error, never started.
 
 New pipeline surface this phase adds, all consumed by real
-stages: motion-graphics enable/intensity (jobs' motion_designer
-stage + the Visual Director's composition layer), the founder
+stages: motion-graphics enable + backend-auto intensity (FS-3:
+jobs' motion_designer stage derives the treatment bundle from
+the production's own context — see derive_graphics_intensity;
+no user-facing intensity setting exists), the founder
 visual themes (the motion engine's theme system), music
 placement sections (the ONE mix implementation in
 services.music), and the voice-to-documentary flow
@@ -62,7 +64,14 @@ from services.motion_engine import themes as themes_module
 CONFIG_KEY = "production_config"
 DEFAULTS_SECTION = "production_config"
 
+#: The three graphics-treatment bundles remain the INTERNAL
+#: vocabulary of graphics_build_params, but since FS-3 the
+#: bundle is no longer a user setting: derive_graphics_intensity
+#: picks one from the production's own context at run time, and
+#: a stored/submitted configuration carries only the AUTO
+#: marker in its place.
 INTENSITIES = ("subtle", "moderate", "dynamic")
+AUTO_INTENSITY = "auto"
 CAPTION_MODES = ("burn", "sidecar", "off")
 CAPTION_SYNCS = ("word", "syllable", "off")
 MUSIC_SOURCES = ("none", "upload", "library")
@@ -95,6 +104,12 @@ _MIX_BOUNDS = {
 #: preset fills exactly these fields; everything stays editable
 #: afterwards (the stored document then reads preset "custom"
 #: unless it still equals the bundle verbatim).
+#:
+#: FS-3 note: the bundles below still carry an "intensity"
+#: entry as inert bundle data (A-1 reading) — clean_config
+#: normalises it to the AUTO marker, so applying a preset can
+#: never restore a user-chosen graphics intensity; presets are
+#: distinguished by their theme/music/captions fields.
 PRESETS = {
     "clean": {
         "label": "Clean Documentary",
@@ -300,10 +315,16 @@ def clean_config(raw) -> dict:
     mg = _section(raw, "motion_graphics", {"enabled", "intensity"})
     config["motion_graphics"] = {
         "enabled": _bool("motion_graphics", "enabled", mg.get("enabled", True)),
-        "intensity": _enum(
-            "motion_graphics", "intensity",
-            mg.get("intensity", "moderate"), INTENSITIES,
-        ),
+        # FS-3: graphics intensity is backend-auto, never a user
+        # choice. The "intensity" key stays an accepted member of
+        # the section so legacy clients, stored documents and
+        # preset bundles keep loading, but any supplied value is
+        # discarded here — the stored document carries the AUTO
+        # marker, and the real bundle is derived per production
+        # at run time by derive_graphics_intensity(). The
+        # sibling "enabled" toggle is a real user setting and is
+        # preserved untouched.
+        "intensity": AUTO_INTENSITY,
     }
 
     theme = _section(raw, "theme", {"id", "base", "tokens"})
@@ -671,7 +692,11 @@ def flat_options(config) -> dict:
     flat = {}
     mg = config["motion_graphics"]
     flat["motion_graphics_enabled"] = mg["enabled"]
-    flat["motion_graphics_intensity"] = mg["intensity"]
+    # FS-3: the flat key has no pipeline readers; it records
+    # that intensity is auto-derived at run time, never a stored
+    # user value — so the AUTO marker is written unconditionally,
+    # whatever an uncleaned document might carry.
+    flat["motion_graphics_intensity"] = AUTO_INTENSITY
 
     resolved_theme = resolve_theme(config)
     if resolved_theme["founder_id"] is not None:
@@ -716,41 +741,120 @@ def flat_options(config) -> dict:
     return flat
 
 
-def graphics_build_params(config) -> dict:
-    """The motion-graphics intensity in the graphics stage's own
+# ---------------------------------------------------------------------
+# Graphics intensity — backend-auto (FS-3)
+# ---------------------------------------------------------------------
+
+#: Auto-derivation thresholds. "Dynamic" (the heavy bundle) is
+#: for productions graphics genuinely carry: at least one in
+#: four narration sentences needs a graphic, or the case bible's
+#: timeline is dense enough (>= 8 dated events) that chronology
+#: graphics are a structural part of the film.
+GRAPHICS_DYNAMIC_TARGET_SHARE = 0.25
+GRAPHICS_DYNAMIC_TIMELINE_EVENTS = 8
+
+#: The three treatment bundles in the graphics stage's own
+#: terms — the exact parameter sets the pre-FS-3 user selector
+#: chose among, unchanged:
+#: - subtle: balanced build, the stat-family cap tightened to
+#:   1, and the Visual Director's composition layer OFF
+#:   (graphics only where a beat needs one);
+#: - moderate: the standard balance (balanced, the Stage A cap,
+#:   compositions on);
+#: - dynamic: heavy build (stat family uncapped), compositions
+#:   on.
+_GRAPHICS_BUNDLES = {
+    "subtle": {"mode": "balanced", "max_stats": 1, "compositions": False},
+    "moderate": {"mode": "balanced", "max_stats": None, "compositions": True},
+    "dynamic": {"mode": "heavy", "max_stats": None, "compositions": True},
+}
+
+
+def _context_count(context, key) -> int:
+    try:
+        value = int((context or {}).get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, value)
+
+
+def derive_graphics_intensity(context=None) -> str:
+    """FS-3: choose the graphics-treatment bundle from the
+    production's OWN context — never from a user-supplied value.
+
+    The rule (deterministic; same context, same bundle; no
+    randomness, no provider calls). Signals are counts the
+    pipeline has already computed by the time the motion
+    designer stage runs:
+
+    - context is None (no production context available, e.g.
+      the run-submission snapshot): "moderate", the standard
+      balance — the bundle a default production always got.
+    - graphic_target_count == 0 (no narration sentence needs a
+      graphic — footage covered every beat): "subtle", the
+      lightest bundle; there is nothing for a heavier treatment
+      to serve.
+    - graphic targets are >= 25% of all narration sentences,
+      or the bible timeline carries >= 8 dated events:
+      "dynamic" — graphics/chronology carry a structural share
+      of this film, so the heavy, uncapped bundle applies.
+    - otherwise (some beats need graphics, an ordinary share):
+      "moderate".
+
+    `context` may also carry descriptive keys (genre_pack_id,
+    scene_count) which are recorded by callers for the
+    production record; the derivation itself reads only the
+    three demand counts above.
+    """
+    if context is None:
+        return "moderate"
+    targets = _context_count(context, "graphic_target_count")
+    if targets <= 0:
+        return "subtle"
+    sentences = _context_count(context, "sentence_count")
+    if (
+        sentences > 0
+        and targets / sentences >= GRAPHICS_DYNAMIC_TARGET_SHARE
+    ):
+        return "dynamic"
+    if (
+        _context_count(context, "timeline_event_count")
+        >= GRAPHICS_DYNAMIC_TIMELINE_EVENTS
+    ):
+        return "dynamic"
+    return "moderate"
+
+
+def graphics_build_params(config, context=None) -> dict:
+    """The motion-graphics treatment in the graphics stage's own
     terms (jobs' motion_designer stage consumes exactly this):
 
-    - disabled: mode "off" — build_motion_graphics_assets
-      returns [] before any chain runs, so no graphic is
-      inserted, including as the T5 coverage fallback (§13.1);
-    - subtle: balanced build, the stat-family cap tightened to
-      1, and the Visual Director's composition layer OFF
-      (graphics only where a beat needs one);
-    - moderate: today's behaviour verbatim (balanced, the
-      Stage A cap, compositions on);
-    - dynamic: heavy build (stat family uncapped), compositions
-      on.
+    - disabled (the preserved user on/off toggle): mode "off" —
+      build_motion_graphics_assets returns [] before any chain
+      runs, so no graphic is inserted, including as the T5
+      coverage fallback (§13.1);
+    - enabled: the bundle derive_graphics_intensity(context)
+      selects — FS-3 backend-auto. Any "intensity" value stored
+      on the config (legacy documents, preset bundles, old
+      clients) is inert and never read here.
+
+    The returned dict carries the derived bundle name under
+    "intensity" and "intensity_source": "auto" so the
+    production record shows what actually ran and why.
     """
     mg = (config or {}).get("motion_graphics") or {}
     if not mg.get("enabled", True):
         return {
             "enabled": False, "mode": "off", "max_stats": 0,
             "compositions": False,
+            "intensity": None, "intensity_source": "auto",
         }
-    intensity = mg.get("intensity", "moderate")
-    if intensity == "subtle":
-        return {
-            "enabled": True, "mode": "balanced", "max_stats": 1,
-            "compositions": False,
-        }
-    if intensity == "dynamic":
-        return {
-            "enabled": True, "mode": "heavy", "max_stats": None,
-            "compositions": True,
-        }
+    intensity = derive_graphics_intensity(context)
     return {
-        "enabled": True, "mode": "balanced", "max_stats": None,
-        "compositions": True,
+        "enabled": True,
+        "intensity": intensity,
+        "intensity_source": "auto",
+        **_GRAPHICS_BUNDLES[intensity],
     }
 
 
@@ -1185,7 +1289,6 @@ def catalogue() -> dict:
             }
             for preset_id, preset in PRESETS.items()
         ],
-        "intensities": list(INTENSITIES),
         "caption_modes": list(CAPTION_MODES),
         "caption_syncs": list(CAPTION_SYNCS),
         "music_placements": list(MUSIC_PLACEMENTS),

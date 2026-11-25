@@ -169,37 +169,11 @@ export function ProductionConfigForm({
             </small>
           </span>
         </label>
-        <label className="field-label" htmlFor="p9-intensity">
-          INTENSITY
-          <span className="select-wrap">
-            <select
-              id="p9-intensity"
-              disabled={!value.motion_graphics.enabled}
-              value={value.motion_graphics.intensity}
-              onChange={(event) =>
-                edit({
-                  ...value,
-                  motion_graphics: {
-                    ...value.motion_graphics,
-                    intensity: event.target.value,
-                  },
-                })
-              }
-            >
-              {catalogue.intensities.map((intensity) => (
-                <option key={intensity} value={intensity}>
-                  {intensity[0].toUpperCase() + intensity.slice(1)}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={18} strokeWidth={1.7} aria-hidden />
-          </span>
-          <span className="genre-description">
-            Subtle: graphics only where a beat needs one, no decorative
-            compositions over footage. Moderate: the standard balance.
-            Dynamic: the fullest graphics treatment.
-          </span>
-        </label>
+        <p className="p9-hint">
+          How much graphics treatment a production gets is decided
+          automatically from the film itself — its narration, scenes
+          and subject — so there is no intensity setting to pick.
+        </p>
       </fieldset>
 
       <fieldset className="p9-group">
@@ -729,7 +703,7 @@ export function emptyProductionConfig(): ProductionConfig {
   return {
     version: 1,
     preset: "custom",
-    motion_graphics: { enabled: true, intensity: "moderate" },
+    motion_graphics: { enabled: true, intensity: "auto" },
     theme: { id: null },
     music: {
       enabled: true,

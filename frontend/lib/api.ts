@@ -4565,7 +4565,6 @@ export type ConfigCatalogue = {
   }>;
   custom_theme: { bases: string[]; token_keys: string[] };
   presets: Array<{ id: string; label: string; config: ProductionConfig }>;
-  intensities: string[];
   caption_modes: string[];
   caption_syncs: string[];
   music_placements: string[];

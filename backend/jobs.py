@@ -1948,17 +1948,35 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 f"{len(graphic_targets)}"
             )
 
-        # Phase 9 (§13.1/§14.2): the run's motion-graphics
-        # configuration, resolved from the run's production
-        # config snapshot. Recorded on the production state so
-        # the report shows which intensity actually ran.
+        # Phase 9 (§13.1/§14.2) + FS-3: the run's motion-graphics
+        # configuration. The on/off toggle comes from the run's
+        # production config snapshot; the intensity is backend-
+        # auto — derived by production_config from this
+        # production's own graphics demand (how many narration
+        # sentences graphics must answer, out of how many, and
+        # how chronology-dense the case bible is). Any intensity
+        # value a user or a stored config once carried is inert.
+        # Recorded on the production state so the report shows
+        # which derived intensity actually ran.
+        _graphics_context = {
+            "genre_pack_id": _genre_info["pack_id"],
+            "scene_count": len(processed_scenes),
+            "sentence_count": sum(
+                len(((ps.get("scene") or {}).get("sentences")) or [])
+                for ps in processed_scenes
+            ),
+            "graphic_target_count": len(graphic_targets),
+            "timeline_event_count": len(
+                (analysis.get("bible") or {}).get("timeline") or []
+            ),
+        }
         _graphics_params = _production_config.graphics_build_params(
-            _config
+            _config, _graphics_context
         )
         state["motion_graphics"] = {
             "enabled": _graphics_params["enabled"],
-            "intensity": (_config or {}).get("motion_graphics", {})
-            .get("intensity") if _config else None,
+            "intensity": _graphics_params["intensity"],
+            "intensity_source": _graphics_params["intensity_source"],
             "mode": _graphics_params["mode"],
             "compositions": _graphics_params["compositions"],
         }

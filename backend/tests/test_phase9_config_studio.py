@@ -12,7 +12,8 @@ never frontend-only):
 - Motion graphics: mode "off" produces zero graphics (the T5
   fallback included); Subtle suppresses the Director's
   composition layer while starved beats are still directed;
-  the intensity -> build parameters mapping is exact.
+  the FS-3 auto intensity derivation -> build parameters
+  mapping is exact (see also tests/test_fs_intensity_auto.py).
 - Music: placement sections are validated once and gated in
   the ONE mix implementation — a real soundtrack has the bed
   silent outside the selected sections and present inside
@@ -187,31 +188,48 @@ def test_graphics_build_mode_off_produces_nothing(tmp_path):
 
 
 def test_graphics_build_params_mapping_is_exact():
+    # FS-3: intensity is backend-auto. The toggle still maps to
+    # "off" verbatim; the enabled bundles are DERIVED from the
+    # production context, and a user-supplied intensity in the
+    # submitted document is inert (cleaning normalises it to
+    # the "auto" marker, so it cannot steer the result).
     off = production_config.clean_config(
         {"motion_graphics": {"enabled": False}}
     )
     assert production_config.graphics_build_params(off) == {
         "enabled": False, "mode": "off", "max_stats": 0,
         "compositions": False,
+        "intensity": None, "intensity_source": "auto",
     }
-    subtle = production_config.clean_config(
-        {"motion_graphics": {"enabled": True, "intensity": "subtle"}}
-    )
-    assert production_config.graphics_build_params(subtle) == {
-        "enabled": True, "mode": "balanced", "max_stats": 1,
-        "compositions": False,
-    }
-    moderate = production_config.clean_config({})
-    assert production_config.graphics_build_params(moderate) == {
-        "enabled": True, "mode": "balanced", "max_stats": None,
-        "compositions": True,
-    }
-    dynamic = production_config.clean_config(
+    config = production_config.clean_config(
         {"motion_graphics": {"enabled": True, "intensity": "dynamic"}}
     )
-    assert production_config.graphics_build_params(dynamic) == {
+    assert config["motion_graphics"]["intensity"] == "auto"
+    # No production context: the standard (moderate) bundle.
+    assert production_config.graphics_build_params(config) == {
+        "enabled": True, "mode": "balanced", "max_stats": None,
+        "compositions": True,
+        "intensity": "moderate", "intensity_source": "auto",
+    }
+    # No beat needs a graphic: the subtle bundle.
+    assert production_config.graphics_build_params(
+        config,
+        {"graphic_target_count": 0, "sentence_count": 20,
+         "timeline_event_count": 2},
+    ) == {
+        "enabled": True, "mode": "balanced", "max_stats": 1,
+        "compositions": False,
+        "intensity": "subtle", "intensity_source": "auto",
+    }
+    # Graphics carry a structural share of the film: dynamic.
+    assert production_config.graphics_build_params(
+        config,
+        {"graphic_target_count": 6, "sentence_count": 20,
+         "timeline_event_count": 2},
+    ) == {
         "enabled": True, "mode": "heavy", "max_stats": None,
         "compositions": True,
+        "intensity": "dynamic", "intensity_source": "auto",
     }
 
 
@@ -702,7 +720,10 @@ def test_put_config_validation_and_cleaning_refusals(client, users):
     assert view["config"]["preset"] == "cinematic"
     assert view["preset_match"] == "cinematic"
     assert view["flat_options"]["visual_theme_engine"] == "cinematic_smoke"
-    assert view["flat_options"]["motion_graphics_intensity"] == "dynamic"
+    # FS-3: the cinematic preset's bundled intensity is inert —
+    # the flat record states the backend-auto marker, never the
+    # preset's (or any user's) chosen value.
+    assert view["flat_options"]["motion_graphics_intensity"] == "auto"
 
 
 def test_validate_endpoint_reports_without_storing(client, users):
