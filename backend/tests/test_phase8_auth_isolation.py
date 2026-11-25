@@ -22,6 +22,7 @@ from models import (
     AssistantMessage,
     Base,
     Plan,
+    ProductionRun,
     Project,
     User,
     UserSubscription,
@@ -34,6 +35,17 @@ from services.assistant import orchestrator
 TOKEN = "phase8-" + "operator-token-for-tests"
 PASSWORD_A = "alpha-correct-horse-42"
 PASSWORD_B = "bravo-correct-horse-42"
+
+
+def _wipe_account_tables(db):
+    """Delete every application row in FK-safe order.
+
+    ``Base.metadata.sorted_tables`` is topologically ordered
+    parents-first, so reversing it deletes children before the
+    rows they reference — valid on SQLite and PostgreSQL alike.
+    """
+    for table in reversed(Base.metadata.sorted_tables):
+        db.execute(table.delete())
 
 
 @pytest.fixture(scope="module")
@@ -54,8 +66,12 @@ def _auth_env(monkeypatch, tmp_path):
     db = SessionLocal()
     try:
         # Clean slate for the account tables this module owns.
-        for model in (Project, User):
-            db.query(model).delete()
+        # Wipe in FK-safe order (children before parents, from the
+        # metadata graph): required on PostgreSQL, where FKs are
+        # always enforced — SQLite test runs historically tolerated
+        # deleting users before their subscriptions/preferences
+        # (E-07 cutover readiness, 2026-11-25).
+        _wipe_account_tables(db)
         if db.query(Plan).filter_by(name="free").one_or_none() is None:
             db.add(
                 Plan(
@@ -81,12 +97,7 @@ def _auth_env(monkeypatch, tmp_path):
     # the data-layer orphan battery.
     db = SessionLocal()
     try:
-        db.query(AssistantAction).delete()
-        db.query(AssistantMessage).delete()
-        db.query(AssistantConversation).delete()
-        db.query(UserSubscription).delete()
-        db.query(User).delete()
-        db.query(Plan).delete()
+        _wipe_account_tables(db)
         db.commit()
     finally:
         db.close()

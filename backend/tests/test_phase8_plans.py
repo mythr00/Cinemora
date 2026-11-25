@@ -64,11 +64,11 @@ def _plans_env(monkeypatch, tmp_path):
     monkeypatch.setattr(jobs, "video_queue_priority", _paired_queue)
     db = SessionLocal()
     try:
-        db.query(ProductionRun).delete()
-        db.query(Project).delete()
-        db.query(UserSubscription).delete()
-        db.query(User).delete()
-        db.query(Plan).delete()
+        # FK-safe wipe (children before parents, from the metadata
+        # graph): PostgreSQL enforces FKs that SQLite test runs
+        # historically tolerated violating (E-07 readiness).
+        for table in reversed(Base.metadata.sorted_tables):
+            db.execute(table.delete())
         specs = {
             # name: (concurrent, per-month, script, storage, upload, tier, default)
             "founder": (2_147_483_647, None, None, None, None, 1, False),
@@ -101,11 +101,11 @@ def _plans_env(monkeypatch, tmp_path):
     # for every principal in the process (Phase 8 gate find).
     db = SessionLocal()
     try:
-        db.query(ProductionRun).delete()
-        db.query(Project).delete()
-        db.query(UserSubscription).delete()
-        db.query(User).delete()
-        db.query(Plan).delete()
+        # FK-safe wipe (children before parents, from the metadata
+        # graph): PostgreSQL enforces FKs that SQLite test runs
+        # historically tolerated violating (E-07 readiness).
+        for table in reversed(Base.metadata.sorted_tables):
+            db.execute(table.delete())
         db.commit()
     finally:
         db.close()
