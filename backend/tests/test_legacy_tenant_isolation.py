@@ -48,7 +48,7 @@ def client():
 def _auth_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CINEMORA_API_TOKEN", TOKEN)
     monkeypatch.setenv("CINEMORA_MEDIA_ROOT", str(tmp_path / "media"))
-    monkeypatch.delenv("CINEMORA_ALLOW_OPERATOR_TOKEN", raising=False)
+    monkeypatch.setenv("CINEMORA_ALLOW_OPERATOR_TOKEN", "1")  # E-21: window is closed by default; tests opt in explicitly
     monkeypatch.delenv("CINEMORA_REGISTRATION", raising=False)
     api_v1.rate_limiter.reset()
     api_v1.auth_rate_limiter.reset()

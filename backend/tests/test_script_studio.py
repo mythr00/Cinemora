@@ -55,6 +55,7 @@ def client():
 @pytest.fixture(autouse=True)
 def _api_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CINEMORA_API_TOKEN", TOKEN)
+    monkeypatch.setenv("CINEMORA_ALLOW_OPERATOR_TOKEN", "1")  # E-21: explicit opt-in
     monkeypatch.setenv("CINEMORA_MEDIA_ROOT", str(tmp_path / "media"))
     # Deterministic AI availability: no provider unless a test
     # explicitly configures the stub.

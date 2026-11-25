@@ -57,6 +57,7 @@ def client():
 @pytest.fixture(autouse=True)
 def _api_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CINEMORA_API_TOKEN", TOKEN)
+    monkeypatch.setenv("CINEMORA_ALLOW_OPERATOR_TOKEN", "1")  # E-21: explicit opt-in
     monkeypatch.setenv("CINEMORA_MEDIA_ROOT", str(tmp_path / "media"))
     monkeypatch.setattr(llm_client, "BREWKEG_API_KEY", None)
     api_v1.rate_limiter.reset()

@@ -74,6 +74,7 @@ def production(tmp_path_factory):
 @pytest.fixture()
 def client(monkeypatch, production):
     monkeypatch.setenv("CINEMORA_API_TOKEN", TOKEN)
+    monkeypatch.setenv("CINEMORA_ALLOW_OPERATOR_TOKEN", "1")  # E-21: explicit opt-in
     import jobs
 
     _paired_queue = SyncQueue()

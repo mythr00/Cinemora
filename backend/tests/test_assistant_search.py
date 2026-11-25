@@ -74,7 +74,7 @@ def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("CINEMORA_API_TOKEN", TOKEN)
     monkeypatch.setenv("CINEMORA_MEDIA_ROOT", str(tmp_path / "media"))
     monkeypatch.setenv("SERPER_API_KEY", "test-dummy-key")
-    monkeypatch.delenv("CINEMORA_ALLOW_OPERATOR_TOKEN", raising=False)
+    monkeypatch.setenv("CINEMORA_ALLOW_OPERATOR_TOKEN", "1")  # E-21: window is closed by default; tests opt in explicitly
     api_v1.rate_limiter.reset()
     api_v1.auth_rate_limiter.reset()
     api_assistant._message_limiter.reset()

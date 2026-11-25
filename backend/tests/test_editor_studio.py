@@ -46,6 +46,7 @@ def api_production(production):
 @pytest.fixture()
 def client(monkeypatch, api_production):
     monkeypatch.setenv("CINEMORA_API_TOKEN", TOKEN)
+    monkeypatch.setenv("CINEMORA_ALLOW_OPERATOR_TOKEN", "1")  # E-21: explicit opt-in
     from main import app
 
     return TestClient(app, raise_server_exceptions=False)
