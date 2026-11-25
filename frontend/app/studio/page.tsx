@@ -19,10 +19,20 @@ import {
 } from "@/lib/api";
 import { StageProgress } from "@/components/stage-progress";
 import { ApiConnectionBadge } from "@/components/connection-status";
+import { clearDraft, loadDraft, saveDraft } from "@/lib/draft-storage";
 import { AuthenticatedVideo } from "@/components/authenticated-media";
 import { ArrowRight, ArrowUpRight, ChevronDown, Sparkles } from "lucide-react";
 
 type Project = ProjectSummary;
+
+const DASH_DRAFT_KEY = "cinemora:studio-draft:v1";
+
+type DashDraft = {
+  script?: string;
+  title?: string;
+  voiceId?: string;
+  requirePlanApproval?: boolean;
+};
 
 function label(value: string) { return value.replaceAll("_", " "); }
 
@@ -75,12 +85,22 @@ export default function StudioPage() {
   const projectsRef = useRef<Project[]>([]);
 
   // --- Create flow state (mirrors app/create's flat path) ---
-  const [script, setScript] = useState("");
-  const [title, setTitle] = useState("");
+  // Phase 6 (A-05): same draft persistence as /create — restore in
+  // the initialisers, save debounced below, clear on creation.
+  const restoredDraftRef = useRef<DashDraft | null>(null);
+  if (restoredDraftRef.current === null) {
+    restoredDraftRef.current = loadDraft<DashDraft>(DASH_DRAFT_KEY) ?? {};
+  }
+  const restored = restoredDraftRef.current;
+  const [draftRestored, setDraftRestored] = useState<boolean>(
+    Boolean(restored.script || restored.title),
+  );
+  const [script, setScript] = useState(restored.script ?? "");
+  const [title, setTitle] = useState(restored.title ?? "");
   const [voices, setVoices] = useState<VoiceCatalogueEntry[]>(FALLBACK_VOICES);
-  const [voiceId, setVoiceId] = useState("");
+  const [voiceId, setVoiceId] = useState(restored.voiceId ?? "");
   const [catalogueState, setCatalogueState] = useState<"loading" | "api" | "fallback">("loading");
-  const [requirePlanApproval, setRequirePlanApproval] = useState(false);
+  const [requirePlanApproval, setRequirePlanApproval] = useState(restored.requirePlanApproval ?? false);
   // FS-C (FS-5): the plan-approval queue links into the admin-only
   // Visual Plan surface, and approval itself is an admin action —
   // the queue renders only for admin/super_admin roles (fail-closed
@@ -125,7 +145,8 @@ export default function StudioPage() {
           if (voiceData.voices?.length) {
             setVoices(voiceData.voices);
             const canonical = voiceData.voices.find((voice) => !voice.alias_of) || voiceData.voices[0];
-            if (canonical) setVoiceId(canonical.id);
+            // A-05: a restored draft voice wins over the canonical seed.
+            if (canonical && !restoredDraftRef.current?.voiceId) setVoiceId(canonical.id);
           }
           setCatalogueState("api");
         } catch {
@@ -135,6 +156,31 @@ export default function StudioPage() {
     }, 0);
     return () => { clearTimeout(timer); controller.abort(); };
   }, []);
+
+  // A-05: debounced draft save; an all-empty form removes the key.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!script && !title) {
+        clearDraft(DASH_DRAFT_KEY);
+        return;
+      }
+      saveDraft(DASH_DRAFT_KEY, {
+        script,
+        title,
+        voiceId,
+        requirePlanApproval,
+      } satisfies DashDraft);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [script, title, voiceId, requirePlanApproval]);
+
+  function discardDraft() {
+    clearDraft(DASH_DRAFT_KEY);
+    restoredDraftRef.current = {};
+    setDraftRestored(false);
+    setScript("");
+    setTitle("");
+  }
 
   async function startProduction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -159,6 +205,9 @@ export default function StudioPage() {
           require_plan_approval: isAdmin ? requirePlanApproval : false,
         },
       });
+      // A-05: the draft's job is done once the project exists.
+      clearDraft(DASH_DRAFT_KEY);
+      setDraftRestored(false);
       const started = await submitRun(createdProject.id);
       setCreated({
         id: createdProject.id,
@@ -259,6 +308,14 @@ export default function StudioPage() {
             <span className="required-tag">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span>
           </div>
           <>
+            {draftRestored && (
+              <p className="draft-restored" role="status">
+                Draft restored from this browser.{" "}
+                <button type="button" className="text-link draft-discard" onClick={discardDraft}>
+                  Discard draft
+                </button>
+              </p>
+            )}
             <label className="sr-only" htmlFor="dash-script">Documentary script</label>
             <textarea
               id="dash-script"

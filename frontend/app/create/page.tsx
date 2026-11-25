@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import {
   createProject as apiCreateProject,
@@ -22,6 +22,7 @@ import {
   emptyProductionConfig,
 } from "@/components/production-config-form";
 import { ApiConnectionBadge } from "@/components/connection-status";
+import { clearDraft, loadDraft, saveDraft } from "@/lib/draft-storage";
 import { StageProgress } from "@/components/stage-progress";
 import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
 import {
@@ -100,12 +101,33 @@ const MAX_SCRIPT_CHARS = 60000;
 // 5 Review & start (exactly what will be submitted + submit).
 // Post-submit status with StageProgress + 3s polling is
 // preserved verbatim.
+const CREATE_DRAFT_KEY = "cinemora:create-draft:v1";
+
+type CreateDraft = {
+  script?: string;
+  title?: string;
+  requirePlanApproval?: boolean;
+  productionConfig?: ProductionConfig;
+};
+
 export default function Home() {
-  const [script, setScript] = useState("");
-  const [title, setTitle] = useState("");
+  // Phase 6 (A-05): restore the local draft (if any) in the state
+  // initialisers, so a refresh never destroys a script again. The
+  // catalogue/defaults seed below must not overwrite a restored
+  // productionConfig — it checks `restoredDraftRef` first.
+  const restoredDraftRef = useRef<CreateDraft | null>(null);
+  if (restoredDraftRef.current === null) {
+    restoredDraftRef.current = loadDraft<CreateDraft>(CREATE_DRAFT_KEY) ?? {};
+  }
+  const restored = restoredDraftRef.current;
+  const [draftRestored, setDraftRestored] = useState<boolean>(
+    Boolean(restored.script || restored.title),
+  );
+  const [script, setScript] = useState(restored.script ?? "");
+  const [title, setTitle] = useState(restored.title ?? "");
   const [voices, setVoices] = useState<VoiceCatalogueEntry[]>(FALLBACK_VOICES);
   const [catalogueState, setCatalogueState] = useState<"loading" | "api" | "fallback">("loading");
-  const [requirePlanApproval, setRequirePlanApproval] = useState(false);
+  const [requirePlanApproval, setRequirePlanApproval] = useState(restored.requirePlanApproval ?? false);
   const [loading, setLoading] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [jobId, setJobId] = useState("");
@@ -159,9 +181,13 @@ export default function Home() {
             // unless a choice already exists, so the voice the
             // Story step marks "In use" is the voice the
             // configuration submits.
-            const seed = defaultsData.defaults
-              ? structuredClone(defaultsData.defaults)
-              : emptyProductionConfig();
+            const restoredConfig = restoredDraftRef.current?.productionConfig;
+            const seed = restoredConfig
+              ? structuredClone(restoredConfig)
+              : defaultsData.defaults
+                ? structuredClone(defaultsData.defaults)
+                : emptyProductionConfig();
+            if (restoredConfig) setDraftRestored(true);
             if (!seed.narration.voice_id) {
               const fetchedCanonical =
                 voiceData.voices?.find((voice) => !voice.alias_of) ||
@@ -189,6 +215,35 @@ export default function Home() {
       controller.abort();
     };
   }, []);
+
+  // Phase 6 (A-05): persist the draft as the user types
+  // (debounced). An all-empty form removes the key instead of
+  // storing an empty draft. saveDraft never throws.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!script && !title) {
+        clearDraft(CREATE_DRAFT_KEY);
+        return;
+      }
+      saveDraft(CREATE_DRAFT_KEY, {
+        script,
+        title,
+        requirePlanApproval,
+        productionConfig,
+      } satisfies CreateDraft);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [script, title, requirePlanApproval, productionConfig]);
+
+  function discardDraft() {
+    clearDraft(CREATE_DRAFT_KEY);
+    restoredDraftRef.current = {};
+    setDraftRestored(false);
+    setScript("");
+    setTitle("");
+    setRequirePlanApproval(false);
+    setProductionConfig(emptyProductionConfig());
+  }
 
   // FS-G (FS-12): load the account role once (see isAdmin above).
   useEffect(() => {
@@ -309,6 +364,9 @@ export default function Home() {
         },
       });
 
+      // A-05: the draft's job is done once the project exists.
+      clearDraft(CREATE_DRAFT_KEY);
+      setDraftRestored(false);
       setProjectId(created.id);
       setMessage("Project created. Adding it to the production queue…");
       const started = await submitRun(created.id);
@@ -355,6 +413,14 @@ export default function Home() {
               <span className="required-tag">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span>
             </div>
             <div className="script-panel">
+              {draftRestored && (
+                <p className="draft-restored" role="status">
+                  Draft restored from this browser.{" "}
+                  <button type="button" className="text-link draft-discard" onClick={discardDraft}>
+                    Discard draft
+                  </button>
+                </p>
+              )}
               <label className="sr-only" htmlFor="documentary-script">Documentary script</label>
               <textarea id="documentary-script" value={script} onChange={(event) => setScript(event.target.value)} maxLength={MAX_SCRIPT_CHARS} placeholder="Paste script…" />
               <div className="script-meta"><span className="editor-hint">{words.toLocaleString()} words</span><span className="count">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span></div>

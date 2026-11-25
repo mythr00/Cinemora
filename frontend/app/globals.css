@@ -224,6 +224,8 @@ a { -webkit-tap-highlight-color: transparent; text-underline-offset: 0.2em; }
 .connection-warn { color: var(--warning); }
 .connection-bad { color: var(--danger); }
 .connection-neutral { color: var(--ink-muted); }
+.draft-restored { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--paper); color: var(--ink-soft); font-size: var(--type-small); }
+.draft-discard { border: 0; background: none; padding: 0; cursor: pointer; font: inherit; }
 .connection-retry {
   padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px;
   background: var(--paper); color: var(--ink-soft); font-size: var(--type-micro); font-weight: 600; cursor: pointer;
