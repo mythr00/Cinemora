@@ -165,7 +165,7 @@ function CertificatePageContent() {
                   {outputs.asset_report.exists && <li>Asset report — <AuthenticatedDownloadLink path={outputs.asset_report.media_url || ""} filename={outputs.asset_report.filename}>download JSON</AuthenticatedDownloadLink></li>}
                   {outputs.rights_manifest.exists && <li>Rights manifest — <AuthenticatedDownloadLink path={outputs.rights_manifest.media_url || ""} filename={outputs.rights_manifest.filename}>download JSON</AuthenticatedDownloadLink></li>}
                   {outputs.run_manifest.exists && <li>Run manifest — <AuthenticatedDownloadLink path={outputs.run_manifest.media_url || ""} filename={outputs.run_manifest.filename}>download JSON</AuthenticatedDownloadLink></li>}
-                  <li>Certificate data — <AuthenticatedDownloadLink path={outputs.certificate_url} filename="certificate.json">download JSON</AuthenticatedDownloadLink></li>
+                  {outputs.certificate_url && <li>Certificate data — <AuthenticatedDownloadLink path={outputs.certificate_url} filename="certificate.json">download JSON</AuthenticatedDownloadLink></li>}
                   {!outputs.film.exists && !outputs.asset_report.exists && <li>No output files recorded yet.</li>}
                 </ul>
               </section>

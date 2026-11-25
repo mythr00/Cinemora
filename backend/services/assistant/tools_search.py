@@ -238,6 +238,22 @@ def _navigation_link(principal, args):
         finally:
             db.close()
     url = knowledge.build_link(args.destination, args.project_id)
+    if url is not None and not getattr(principal, "is_admin", False):
+        # FS-H: destinations that are admin-only surfaces (Visual
+        # Plan, Asset Decisions, Graphics review, Delivery &
+        # Provenance certificate) must not be generated as deep
+        # links for a non-admin Assistant session.
+        if (args.destination or "").strip().lower() in (
+            "plan",
+            "assets",
+            "graphics",
+            "certificate",
+        ):
+            raise ApiError(
+                403,
+                "forbidden",
+                "This endpoint requires an administrator.",
+            )
     if url is None:
         raise ApiError(
             404,

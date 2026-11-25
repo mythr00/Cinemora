@@ -497,8 +497,8 @@ export type ProjectOutputs = {
   asset_report: OutputEntry;
   rights_manifest: OutputEntry;
   run_manifest: OutputEntry;
-  certificate_url: string;
-  plan_url: string;
+  certificate_url: string | null;
+  plan_url: string | null;
 };
 
 /**

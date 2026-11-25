@@ -154,7 +154,7 @@ export function AppNavigation({
           <BrandLockup size="app" priority />
         </Link>
         <div className="app-topbar-right">
-          {awaitingCount !== null && awaitingCount > 0 && (
+          {isAdmin && awaitingCount !== null && awaitingCount > 0 && (
             <Link className="app-approvals" href="/studio">
               <BellRing size={14} strokeWidth={2} aria-hidden />
               {awaitingCount} awaiting approval

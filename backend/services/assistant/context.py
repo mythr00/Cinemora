@@ -37,7 +37,11 @@ def project_context_pack(db, principal, project_id: str | None) -> dict | None:
         if state
         else None,
     }
-    return pack
+    # FS-H (FS-4): this pack is assembled in-process, bypassing the
+    # HTTP response layer — pass it through the same FS-A sanitizer
+    # so a non-admin session's context carries the generic failure
+    # label instead of per-stage error text. Admins pass unchanged.
+    return api_v1.sanitize_failure_detail(pack, principal)
 
 
 def account_context_pack(principal) -> dict:

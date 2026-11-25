@@ -151,7 +151,7 @@ export default function StudioPage() {
         options: {
           voice_id: effectiveVoiceId,
           captions: "burn",
-          require_plan_approval: requirePlanApproval,
+          require_plan_approval: isAdmin ? requirePlanApproval : false,
         },
       });
       const started = await submitRun(createdProject.id);
@@ -296,7 +296,7 @@ export default function StudioPage() {
           </div>
           {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The voice catalogue could not be reached, so this form shows the fallback fact — the one installed voice. Nothing else has been added.</p>}
           {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the voice catalogue from the studio API…</p>}
-          <label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis — you approve the per-sentence plan before any footage is retrieved or rendered.</small></span></label>
+          {isAdmin && <label className="motion-toggle"><input type="checkbox" checked={requirePlanApproval} onChange={(event) => setRequirePlanApproval(event.target.checked)} /><span><strong>Review plan before rendering</strong><small>Production pauses after story analysis — you approve the per-sentence plan before any footage is retrieved or rendered.</small></span></label>}
         </section>
 
         <section className="gm-card" aria-labelledby="dash-start-title">
@@ -304,7 +304,7 @@ export default function StudioPage() {
             <span className="gm-step-num">3</span>
             <h2 id="dash-start-title">Start</h2>
           </div>
-          <p className="gm-summary-line">voice <strong>{effectiveVoiceId}</strong> · {words ? `${words.toLocaleString()} words, about ${duration} min` : "no script yet"} · captions burned in{requirePlanApproval ? " · plan review on" : ""}</p>
+          <p className="gm-summary-line">voice <strong>{effectiveVoiceId}</strong> · {words ? `${words.toLocaleString()} words, about ${duration} min` : "no script yet"} · captions burned in{isAdmin && requirePlanApproval ? " · plan review on" : ""}</p>
           <p className="status-message"><ApiConnectionBadge onStatus={setConnection} /></p>
           <button className="generate-button" type="submit" disabled={creating || !script.trim() || apiBlocked}>
             {creating ? <><span className="button-spinner" /> Starting…</> : <>Create and start <ArrowRight size={18} strokeWidth={1.7} aria-hidden /></>}

@@ -1406,3 +1406,317 @@ def test_fsf_completed_with_video_loads_edits_and_survives_later_failure(
         headers=admin_member["headers"],
     )
     assert admin_view.status_code == 200, admin_view.text
+
+
+# =====================================================================
+# FS-H — the Assistant side channel + backend-generated link targets
+#
+# The Assistant's service-layer read tools call services/ledgers
+# in-process, bypassing the HTTP layer. These tests pin the FS-H
+# rule at the tool boundary (the principal the tool receives):
+# non-admin sessions get exactly the HTTP restriction (assets →
+# retained editor-reuse fields only; research → recorded status
+# only; plan → 403; certificate → 403 via the HTTP handler it
+# delegates to; failure evidence → simple status; revision chain →
+# count only; recommendation links → project Overview), while
+# admin principals keep full detail. Ownership runs first, so a
+# non-granted principal still gets the tenant-private 404.
+# =====================================================================
+
+from models import ProjectRevision  # noqa: E402
+from services.assistant import context as assistant_context  # noqa: E402
+from services.assistant import registry as assistant_registry  # noqa: E402
+from services.assistant import tools_read as _tools_read  # noqa: F401,E402
+from services.assistant import tools_search as _tools_search  # noqa: F401,E402
+
+RESEARCH_MARKER = "FSH_SECRET_ENTITY_9F3"
+
+
+def _principal_for(user, role=None):
+    return auth_service.Principal(
+        user_id=user["id"],
+        email=user["email"],
+        role=role or "user",
+        auth_method="session",
+    )
+
+
+def _call_tool(principal, tool_name, **arguments):
+    spec = assistant_registry.get(tool_name)
+    assert spec is not None, tool_name
+    return spec.handler(principal, spec.input_model(**arguments))
+
+
+def _seed_research_artefact(media_root, project_id):
+    project_dir = media_root / project_id
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "case_bible.json").write_text(
+        json.dumps(
+            {
+                "entities": [{"name": RESEARCH_MARKER}],
+                "timeline_events": [{"year": 1901, "event": RESEARCH_MARKER}],
+                "script_facts": [RESEARCH_MARKER],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+def test_fsh_assistant_assets_field_restricted_for_non_admin(client, media_root):
+    owner = _register(client, "fsh-assets-owner")
+    admin = _make_user("admin")
+    project_id, _run_id = _seed_production(owner["id"], media_root)
+    _share(client, owner, admin, project_id, role="editor")
+
+    result = _call_tool(
+        _principal_for(owner), "get_project_assets", project_id=project_id
+    )
+    assert result["total"] == 2
+    assert SOURCE_URL not in str(result)
+    assert CONTENT_HASH not in str(result)
+    for row in result["items"]:
+        assert set(row) <= set(api_v1._EDITOR_LEDGER_FIELDS)
+
+    full = _call_tool(
+        _principal_for(admin, role="admin"),
+        "get_project_assets",
+        project_id=project_id,
+    )
+    assert SOURCE_URL in str(full)
+
+def test_fsh_assistant_research_reduced_and_plan_refused(client, media_root):
+    owner = _register(client, "fsh-research-owner")
+    admin = _make_user("admin")
+    stranger = _register(client, "fsh-research-stranger")
+    project_id, _run_id = _seed_production(owner["id"], media_root)
+    _share(client, owner, admin, project_id, role="editor")
+    _seed_research_artefact(media_root, project_id)
+
+    reduced = _call_tool(
+        _principal_for(owner), "get_project_research", project_id=project_id
+    )
+    assert reduced["recorded"] is True
+    assert RESEARCH_MARKER not in str(reduced)
+    assert "entities" not in reduced
+
+    full = _call_tool(
+        _principal_for(admin, role="admin"),
+        "get_project_research",
+        project_id=project_id,
+    )
+    assert RESEARCH_MARKER in str(full)
+
+    with pytest.raises(api_v1.ApiError) as caught:
+        _call_tool(
+            _principal_for(owner), "get_project_plan", project_id=project_id
+        )
+    assert caught.value.status_code == 403
+    # Ownership still runs first: a stranger gets the 404, not 403.
+    with pytest.raises(api_v1.ApiError) as caught:
+        _call_tool(
+            _principal_for(stranger), "get_project_plan", project_id=project_id
+        )
+    assert caught.value.status_code == 404
+
+def test_fsh_assistant_certificate_fails_closed_for_non_admin(client, media_root):
+    owner = _register(client, "fsh-cert-owner")
+    admin = _make_user("admin")
+    project_id, _run_id = _seed_production(owner["id"], media_root)
+    _share(client, owner, admin, project_id, role="editor")
+
+    with pytest.raises(api_v1.ApiError) as caught:
+        _call_tool(
+            _principal_for(owner),
+            "get_project_certificate",
+            project_id=project_id,
+        )
+    assert caught.value.status_code == 403
+
+    certificate = _call_tool(
+        _principal_for(admin, role="admin"),
+        "get_project_certificate",
+        project_id=project_id,
+    )
+    assert QA_MARKER in str(certificate)
+
+def test_fsh_assistant_failure_evidence_and_activity_sanitized(client, media_root):
+    owner = _register(client, "fsh-errors-owner")
+    admin = _make_user("admin")
+    project_id, _run_id = _seed_failed_project(owner["id"], media_root)
+    _share(client, owner, admin, project_id, role="editor")
+
+    reduced = _call_tool(
+        _principal_for(owner), "get_production_errors", project_id=project_id
+    )
+    assert reduced["run_status"] == "failed"
+    assert reduced["error"] == GENERIC
+    assert INTERNAL_ERROR not in str(reduced)
+
+    full = _call_tool(
+        _principal_for(admin, role="admin"),
+        "get_production_errors",
+        project_id=project_id,
+    )
+    assert full["run_error"] == INTERNAL_ERROR
+
+    activity = _call_tool(_principal_for(owner), "get_account_activity", limit=5)
+    assert INTERNAL_ERROR not in str(activity)
+    assert GENERIC in str(activity)
+
+def test_fsh_assistant_render_status_reduces_revision_chain(client, media_root):
+    owner = _register(client, "fsh-render-owner")
+    admin = _make_user("admin")
+    project_id, run_id = _seed_production(owner["id"], media_root)
+    _share(client, owner, admin, project_id, role="editor")
+    db = SessionLocal()
+    try:
+        db.add(
+            ProjectRevision(
+                id=_uid(),
+                project_id=project_id,
+                run_id=run_id,
+                parent_revision_id=None,
+                revision_number=0,
+                status="draft",
+                document_path="revision.json",
+                document_hash="fsh-hash",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    reduced = _call_tool(
+        _principal_for(owner), "get_render_status", project_id=project_id
+    )
+    assert reduced["revision_count"] == 1
+    assert "revisions" not in reduced
+
+    full = _call_tool(
+        _principal_for(admin, role="admin"),
+        "get_render_status",
+        project_id=project_id,
+    )
+    assert len(full["revisions"]) == 1
+
+def test_fsh_assistant_recommendation_links_repointed_for_non_admin(
+    client, media_root
+):
+    owner = _register(client, "fsh-recs-owner")
+    admin = _make_user("admin")
+    project_id, run_id = _seed_production(owner["id"], media_root)
+    _share(client, owner, admin, project_id, role="editor")
+    run_dir = media_root / project_id / "runs" / run_id
+    (run_dir / "asset_report.json").write_text(
+        json.dumps(
+            {
+                "coverage": {
+                    "total_sentences": 11,
+                    "covered_sentences": 9,
+                    "uncovered_sentences": [4, 7],
+                    "complete": False,
+                },
+                "missing_visual_count": 0,
+                "repeated_footage": 0,
+                "unverified_assets": 0,
+                "low_confidence_selections": 0,
+                "download_failures": [],
+                "discovery_failures": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _call_tool(
+        _principal_for(owner),
+        "get_project_recommendations",
+        project_id=project_id,
+    )
+    assert result["recommendations"]
+    for finding in result["recommendations"]:
+        assert finding["link"] == f"/projects/{project_id}"
+
+    full = _call_tool(
+        _principal_for(admin, role="admin"),
+        "get_project_recommendations",
+        project_id=project_id,
+    )
+    assert any(
+        finding["link"].endswith("/assets")
+        for finding in full["recommendations"]
+    )
+
+def test_fsh_assistant_context_pack_sanitized_for_non_admin(client, media_root):
+    owner = _register(client, "fsh-context-owner")
+    admin = _make_user("admin")
+    project_id, _run_id = _seed_failed_project(owner["id"], media_root)
+    _share(client, owner, admin, project_id, role="editor")
+
+    db = SessionLocal()
+    try:
+        pack = assistant_context.project_context_pack(
+            db, _principal_for(owner), project_id
+        )
+        admin_pack = assistant_context.project_context_pack(
+            db, _principal_for(admin, role="admin"), project_id
+        )
+    finally:
+        db.close()
+    assert INTERNAL_ERROR not in str(pack)
+    assert GENERIC in str(pack)
+    assert INTERNAL_ERROR in str(admin_pack)
+
+def test_fsh_assistant_navigation_link_refuses_gated_destinations(
+    client, media_root
+):
+    owner = _register(client, "fsh-nav-owner")
+    admin = _make_user("admin")
+    project_id, _run_id = _seed_production(owner["id"], media_root)
+    _share(client, owner, admin, project_id, role="editor")
+
+    with pytest.raises(api_v1.ApiError) as caught:
+        _call_tool(
+            _principal_for(owner),
+            "generate_product_navigation_link",
+            destination="assets",
+            project_id=project_id,
+        )
+    assert caught.value.status_code == 403
+
+    linked = _call_tool(
+        _principal_for(admin, role="admin"),
+        "generate_product_navigation_link",
+        destination="assets",
+        project_id=project_id,
+    )
+    assert linked["url"] == f"/projects/{project_id}/assets"
+    # Kept destinations still generate for ordinary users.
+    kept = _call_tool(
+        _principal_for(owner),
+        "generate_product_navigation_link",
+        destination="project",
+        project_id=project_id,
+    )
+    assert kept["url"] == f"/projects/{project_id}"
+
+def test_fsh_outputs_payload_hides_admin_only_urls_for_non_admin(
+    client, media_root
+):
+    owner = _register(client, "fsh-outputs-owner")
+    admin = _make_user("admin")
+    project_id, _run_id = _seed_production(owner["id"], media_root)
+    _share(client, owner, admin, project_id, role="editor")
+
+    outputs = client.get(
+        f"/api/v1/projects/{project_id}/outputs", headers=owner["headers"]
+    )
+    assert outputs.status_code == 200, outputs.text
+    assert outputs.json()["certificate_url"] is None
+    assert outputs.json()["plan_url"] is None
+    assert outputs.json()["film"]["exists"] is False  # kept flow intact
+
+    admin_outputs = client.get(
+        f"/api/v1/projects/{project_id}/outputs", headers=admin["headers"]
+    )
+    assert admin_outputs.status_code == 200, admin_outputs.text
+    assert admin_outputs.json()["certificate_url"].endswith("/certificate")
+    assert admin_outputs.json()["plan_url"].endswith("/plan")

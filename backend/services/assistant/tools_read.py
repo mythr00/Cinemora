@@ -58,6 +58,36 @@ def _latest_production_run(project_id: str) -> dict | None:
     return run_ledger.latest_production_run_for(project_id)
 
 
+# ---------------------------------------------------------------------
+# FS-H (FS-14): the Assistant is a user surface, so its in-process
+# reads must apply the SAME restrictions the HTTP layer applies —
+# calling a service or ledger function directly must not become a
+# side channel around the FS-A/FS-B/FS-C gates. The rule is applied
+# HERE, at the tool boundary, with the principal the tool already
+# receives; the underlying service functions stay ungated because
+# the pipeline itself calls them. Admin/operator principals
+# (is_admin) keep full detail. Developer-API principals never
+# reach the Assistant (session surface), so no api_key exemption
+# applies here.
+# ---------------------------------------------------------------------
+
+
+def _is_admin(principal) -> bool:
+    return bool(getattr(principal, "is_admin", False))
+
+
+def _require_admin_tool(principal) -> None:
+    """Refuse an internal-detail tool for a non-admin principal,
+    with the HTTP layer's admin-only convention (403). Callers run
+    the ownership choke point FIRST, so a non-granted principal
+    still gets the tenant-private 404 and only a granted non-admin
+    reaches this refusal."""
+    if not _is_admin(principal):
+        raise ApiError(
+            403, "forbidden", "This endpoint requires an administrator."
+        )
+
+
 class ProjectArg(BaseModel):
     model_config = {"extra": "forbid"}
     project_id: str = Field(min_length=1, max_length=64)
@@ -186,7 +216,17 @@ def _account_activity(principal, args):
                     "project_title": title,
                     "status": run.status,
                     "stage": run.stage,
-                    "error": run.error,
+                    # FS-H/FS-A: failure detail is sanitized for
+                    # non-admins exactly as on the HTTP carriers.
+                    "error": (
+                        run.error
+                        if _is_admin(principal)
+                        else (
+                            api_v1.GENERIC_FAILURE_MESSAGE
+                            if run.error
+                            else run.error
+                        )
+                    ),
                     "created_at": run.created_at.isoformat()
                     if run.created_at
                     else None,
@@ -309,6 +349,22 @@ def _project_research(principal, args):
         db.close()
     bible = _read_artefact(project_id, "case_bible.json")
     plan = _read_artefact(project_id, "plan.json")
+    if not _is_admin(principal):
+        # FS-H (FS-6): research detail is an admin-only
+        # presentational surface on HTTP; a non-admin Assistant
+        # session gets only the simple recorded/not-recorded
+        # status the user product legitimately shows.
+        return {
+            "project_id": project_id,
+            "recorded": bible is not None or plan is not None,
+            "note": (
+                "Research is recorded for this project."
+                if bible is not None or plan is not None
+                else "No research artefacts are recorded for this "
+                "project yet; research is produced by story "
+                "analysis during a production run."
+            ),
+        }
     if bible is None and plan is None:
         return {
             "project_id": project_id,
@@ -342,6 +398,9 @@ def _project_plan(principal, args):
         project_id = project.id
     finally:
         db.close()
+    # FS-H (FS-5): the Visual Plan is admin-only on HTTP (reads
+    # included); the Assistant must not become its side channel.
+    _require_admin_tool(principal)
     plan = plan_document.build_plan(
         project_id, media_paths.project_dir(project_id)
     )
@@ -396,6 +455,11 @@ def _project_assets(principal, args):
             "note": "This project has no production runs yet.",
         }
     rows, total = run_ledger.list_decisions(latest["run_id"], 500, 0)
+    if not _is_admin(principal):
+        # FS-H (FS-7): mirror the HTTP field restriction exactly —
+        # non-admins receive only the retained editor-reuse fields
+        # (api_v1._editor_ledger_row), never provenance detail.
+        rows = [api_v1._editor_ledger_row(row) for row in rows]
     if args.filter != "all":
         rows = [
             row
@@ -447,6 +511,9 @@ def _project_timeline(principal, args):
 
 
 def _project_output(principal, args):
+    # Delegates to the HTTP handler, which now withholds the
+    # admin-only certificate/plan URLs from non-admin principals
+    # (FS-H) — the film/caption inventory stays a kept user flow.
     return api_v1.get_outputs(args.project_id, principal)
 
 
@@ -483,6 +550,18 @@ def _project_recommendations(principal, args):
     findings = project_intelligence.run_findings(
         args.project_id, latest["run_id"], report
     )
+    if not _is_admin(principal):
+        # FS-H: findings' `link` fields point at admin-only
+        # surfaces (assets/plan/research). The findings themselves
+        # are the user-legitimate summary; their gated deep links
+        # must not surface through this non-gated payload, so a
+        # non-admin gets the project Overview as the link target.
+        findings = [
+            {**finding, "link": f"/projects/{args.project_id}"}
+            if isinstance(finding, dict) and finding.get("link")
+            else finding
+            for finding in findings
+        ]
     return {
         "project_id": args.project_id,
         "run_id": latest["run_id"],
@@ -563,6 +642,28 @@ def _production_errors(principal, args):
             "project_id": project_id,
             "recorded": False,
             "note": "This project has no runs, so no failure evidence exists.",
+        }
+    if not _is_admin(principal):
+        # FS-H (FS-4): the verbatim evidence pack is failure
+        # diagnostics — admin-only, exactly as on HTTP. A non-admin
+        # Assistant session gets the truthful simple status: the
+        # run's status/stage and the generic failure label, never
+        # the recorded error text or per-stage errors.
+        return {
+            "project_id": project_id,
+            "run_id": run["run_id"],
+            "run_status": run["status"],
+            "run_stage": run["stage"],
+            "error": (
+                api_v1.GENERIC_FAILURE_MESSAGE
+                if run["status"] == "failed"
+                else None
+            ),
+            "evidence_note": (
+                "Detailed failure diagnostics are available to "
+                "administrators; this session sees the run's "
+                "status only."
+            ),
         }
     pack: dict = {
         "project_id": project_id,
@@ -674,6 +775,22 @@ def _render_status(principal, args):
         or run.get("stage") == "video_editor"
         and (run.get("options") or {}).get("revision_id")
     ]
+    if not _is_admin(principal):
+        # FS-H (FS-11): the revision chain is version-history
+        # detail — an admin-only surface on HTTP. A non-admin
+        # Assistant session gets the simple status (how many
+        # revisions exist, and the render runs, whose views are
+        # already failure-sanitized), not the chain itself.
+        return {
+            "project_id": args.project_id,
+            "revision_count": len(revisions),
+            "render_runs": render_runs[:10],
+            "note": (
+                "Revision history detail is available to "
+                "administrators; this session sees the revision "
+                "count and render status only."
+            ),
+        }
     return {
         "project_id": args.project_id,
         "revisions": revisions,

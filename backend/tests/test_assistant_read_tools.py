@@ -331,8 +331,30 @@ def test_scenario_4_failure_evidence_pack(client, seeded):
             },
         },
     )
+    # FS-H: an ordinary (non-admin) Assistant session gets the
+    # truthful simple status only — the verbatim evidence pack is
+    # failure diagnostics, admin-only exactly as on HTTP (FS-4).
     pack = _call(
         _principal(seeded["a"]),
+        "get_production_errors",
+        project_id=seeded["older"]["id"],
+    )
+    assert pack["run_status"] == "failed"
+    assert pack["run_stage"] == "asset_manager"
+    assert pack["error"] == "Video generation failed"
+    assert "run_error" not in pack
+    assert "stage_errors" not in pack
+    # An admin principal with the same ownership keeps the full
+    # verbatim evidence pack.
+    base = _principal(seeded["a"])
+    admin = auth_service.Principal(
+        user_id=base.user_id,
+        email=base.email,
+        role="admin",
+        auth_method="session",
+    )
+    pack = _call(
+        admin,
         "get_production_errors",
         project_id=seeded["older"]["id"],
     )

@@ -2328,8 +2328,23 @@ def get_outputs(project_id: str, principal=Depends(require_user)):
         "asset_report": _output_entry(project_id, project_dir, index, names["asset_report"]),
         "rights_manifest": _output_entry(project_id, project_dir, index, names["rights_manifest"]),
         "run_manifest": _output_entry(project_id, project_dir, index, names["run_manifest"]),
-        "certificate_url": f"/api/v1/projects/{project_id}/certificate",
-        "plan_url": f"/api/v1/projects/{project_id}/plan",
+        # FS-H: the certificate and plan are admin-only surfaces
+        # (FS-9/FS-5) — their URLs must not surface to non-admin
+        # session principals through this kept, non-gated payload.
+        # Admins and developer-API principals (their own scope
+        # model, FS-B precedent) keep the links.
+        "certificate_url": (
+            f"/api/v1/projects/{project_id}/certificate"
+            if principal.is_admin
+            or getattr(principal, "auth_method", None) == "api_key"
+            else None
+        ),
+        "plan_url": (
+            f"/api/v1/projects/{project_id}/plan"
+            if principal.is_admin
+            or getattr(principal, "auth_method", None) == "api_key"
+            else None
+        ),
     }
 
 
