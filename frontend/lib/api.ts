@@ -1935,23 +1935,34 @@ export async function downloadAuthenticatedMedia(options: {
  * The honest connection states the studio can be in. They are
  * distinguished because each needs a different action:
  * - "connected": an authenticated v1 call succeeded.
- * - "auth": the API answered but rejected the session (401) —
- *   the visitor is signed out, or the session expired or was
- *   revoked; signing in again is the fix.
+ * - "signed-out": the API answered 401 — there is no valid
+ *   session (the visitor is signed out, or the session expired
+ *   or was revoked). This is a NEUTRAL state, not an error:
+ *   signing in is the fix (Phase 6, A-02; replaces the old
+ *   "auth" / "Session rejected" classification, retained in the
+ *   union only for state-shape compatibility).
+ * - "proxy-not-configured": the same-origin proxy answered 503
+ *   api_proxy_not_configured — CINEMORA_BACKEND_URL is not set
+ *   on this deployment, so no request reached the backend.
  * - "frontend-not-configured": retained for state-shape
  *   compatibility; the session model has no build-time credential
  *   to be missing, so checkApiConnection no longer produces it.
- * - "backend-not-configured": the server itself has no
- *   CINEMORA_API_TOKEN set and fails closed (503
- *   api_not_configured) for credential-less requests.
+ * - "backend-not-configured": the BACKEND itself answered 503
+ *   api_not_configured — it has no CINEMORA_API_TOKEN set and
+ *   fails closed for credential-less requests. Only this exact
+ *   error code may carry that diagnosis (A-02: previously ANY
+ *   503 was blamed on the retired token story).
  * - "unavailable": the API answered with another server error.
- * - "network": the API could not be reached at all.
+ * - "network": the API could not be reached at all — including
+ *   the proxy's 502 api_proxy_unreachable (backend unreachable).
  */
 export type ApiConnectionState =
   | "connected"
   | "auth"
+  | "signed-out"
   | "frontend-not-configured"
   | "backend-not-configured"
+  | "proxy-not-configured"
   | "unavailable"
   | "network";
 
@@ -1977,12 +1988,26 @@ export async function checkApiConnection(
     if (error instanceof ApiClientError) {
       if (error.status === 401) {
         return {
-          state: "auth",
+          state: "signed-out",
           message:
-            "The studio API rejected your session. Sign in again to continue.",
+            "You are signed out. Sign in to continue.",
         };
       }
-      if (error.status === 503) {
+      if (error.code === "api_proxy_unreachable" || error.status === 502) {
+        return {
+          state: "network",
+          message:
+            "The studio API could not be reached: the backend is unreachable. Check that it is running, then try again.",
+        };
+      }
+      if (error.status === 503 && error.code === "api_proxy_not_configured") {
+        return {
+          state: "proxy-not-configured",
+          message:
+            "The API proxy is not configured on this deployment (CINEMORA_BACKEND_URL is not set), so requests never reach the backend.",
+        };
+      }
+      if (error.status === 503 && error.code === "api_not_configured") {
         return {
           state: "backend-not-configured",
           message:

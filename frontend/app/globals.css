@@ -223,6 +223,7 @@ a { -webkit-tap-highlight-color: transparent; text-underline-offset: 0.2em; }
 .connection-ok { color: var(--positive); }
 .connection-warn { color: var(--warning); }
 .connection-bad { color: var(--danger); }
+.connection-neutral { color: var(--ink-muted); }
 .connection-retry {
   padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px;
   background: var(--paper); color: var(--ink-soft); font-size: var(--type-micro); font-weight: 600; cursor: pointer;
@@ -416,6 +417,9 @@ span.authenticated-media-state {
   color: var(--on-accent); font-size: 13px; font-weight: 600; text-decoration: none;
 }
 .marketing-nav-cta:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+.marketing-auth { display: inline-flex; align-items: center; gap: 18px; flex: 0 0 auto; }
+.marketing-signin { color: var(--ink-soft); font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.marketing-signin:hover { color: var(--accent-deep); }
 .marketing-menu-toggle { display: none; }
 .landing-page { overflow: clip; background: var(--paper); color: var(--ink-strong); width: 100%; }
 .landing-hero {

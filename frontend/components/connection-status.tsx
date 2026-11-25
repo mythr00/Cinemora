@@ -24,20 +24,26 @@ import {
  * This component performs one authenticated v1 call on mount (and
  * again only when the operator presses retry — no polling) and
  * renders the classified state as icon + text, never a bare dot:
- * connected / session rejected / frontend not configured / server
- * not configured / API unavailable / network unreachable. The
+ * connected / signed out (neutral) / proxy not configured /
+ * server not configured / API unavailable / backend unreachable. The
  * detailed message is exposed as the element's title and as
  * screen-reader text; the visible label stays short.
  */
 
 const PRESENTATION: Record<
   ApiConnectionState,
-  { label: string; Icon: typeof CircleCheck; tone: "ok" | "bad" | "warn" }
+  { label: string; Icon: typeof CircleCheck; tone: "ok" | "bad" | "warn" | "neutral" }
 > = {
   connected: { label: "API connected", Icon: CircleCheck, tone: "ok" },
-  auth: { label: "Session rejected", Icon: KeyRound, tone: "bad" },
+  // Phase 6 (A-02): a 401 is the neutral signed-out state, never
+  // an error-styled "Session rejected". The legacy "auth" value
+  // is no longer produced by checkApiConnection; it renders the
+  // same neutral presentation if an old caller supplies it.
+  auth: { label: "Signed out", Icon: KeyRound, tone: "neutral" },
+  "signed-out": { label: "Signed out", Icon: KeyRound, tone: "neutral" },
   "frontend-not-configured": { label: "API not configured in this build", Icon: Settings2, tone: "warn" },
   "backend-not-configured": { label: "API not configured on server", Icon: Settings2, tone: "warn" },
+  "proxy-not-configured": { label: "API proxy not configured", Icon: Settings2, tone: "warn" },
   unavailable: { label: "Studio API unavailable", Icon: CircleExclamationPoint, tone: "bad" },
   network: { label: "Studio API unreachable", Icon: CloudOff, tone: "bad" },
 };
