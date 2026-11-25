@@ -28,6 +28,14 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements.txt
+      - name: System build packages for the Manim wheels
+        # manimpango + pycairo build from source (no manylinux
+        # wheels); they need the cairo/pango dev packages present
+        # BEFORE pip install (GitHub Skills Programme, 2026-11-25).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libcairo2-dev libpango1.0-dev
       - name: Install dependencies
         run: pip install -r backend/requirements.txt
       - name: Run the full backend suite with coverage (F-09)
@@ -93,6 +101,28 @@ jobs:
             --entrypoint python \
             cinemora:ci-smoke \
             -c "import main; from services.frame_verification import _rapidocr_engine; engine = _rapidocr_engine(); assert engine is not None, 'OCR engine unavailable in image'; print('image smoke ok')"
+      - name: Smoke — the Manim engine renders a chart in the image
+        # GitHub Skills Programme (2026-11-25): proves the second
+        # motion-graphics engine end to end inside the production
+        # image (source-built manimpango/pycairo, pango runtime,
+        # bundled-font fontconfig) — a real 2 s render through the
+        # template contract, not just an import.
+        run: |
+          docker run --rm \
+            --entrypoint python \
+            cinemora:ci-smoke \
+            -c "
+          from services.motion_engine import manim_templates
+          assert manim_templates.manim_available(), 'manim unavailable in image'
+          data = {'points': [
+              {'label': '1900', 'value': 5, 'display': '5'},
+              {'label': '1910', 'value': 15, 'display': '15'},
+              {'label': '1920', 'value': 30, 'display': '30'}],
+              'title': 'CI smoke'}
+          out, meta = manim_templates.manim_line_chart(data, 'editorial', '/tmp/ci-manim.mp4', duration=2.0)
+          assert out and meta.get('engine') == 'manim', meta
+          print('manim image smoke ok')
+          "
 
   secrets:
     name: git-history secret scan (E-23)

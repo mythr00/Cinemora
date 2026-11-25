@@ -137,7 +137,9 @@ def test_registry_covers_all_wave2_templates():
     for name in WAVE2_TEMPLATES:
         assert name in engine_templates.TEMPLATES, name
     # 31 at Wave 1 + 18 Wave 2 registrations.
-    assert len(engine_templates.TEMPLATES) == 49
+    # +2 (GitHub Skills Programme, 2026-11-25): the Manim engine's
+    # manim_line_chart / manim_bar_chart registered alongside.
+    assert len(engine_templates.TEMPLATES) == 51
 
 
 def test_wave2_templates_refuse_with_typed_reasons(tmp_path):

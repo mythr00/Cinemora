@@ -20,12 +20,25 @@ FROM python:3.12.3-slim-bookworm
 #   pipeline's ffmpeg subprocess calls).
 # - libgomp1: OpenMP runtime needed by onnxruntime / ctranslate2 wheels.
 # - ca-certificates + curl: TLS for provider APIs; curl for healthchecks.
+# - Manim (GitHub Skills Programme, 2026-11-25): manimpango + pycairo
+#   build from source (no manylinux wheels) -> gcc, pkg-config and the
+#   cairo/pango dev packages; the dev packages also pull the runtime
+#   libcairo2 / libpango libraries the Manim templates link at render
+#   time. fonts-dejavu-core is belt-and-braces (the templates point
+#   fontconfig at the bundled DejaVu in assets/fonts regardless).
+#   A multi-stage build could shed the toolchain from the final
+#   image; the single-stage layout is retained deliberately (E-28).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ffmpeg \
         libgomp1 \
         ca-certificates \
         curl \
+        gcc \
+        pkg-config \
+        libcairo2-dev \
+        libpango1.0-dev \
+        fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root runtime user (Altare requires non-root images).
@@ -63,6 +76,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     CINEMORA_COOKIE_SECURE=1 \
     CINEMORA_ALLOW_OPERATOR_TOKEN=0 \
+    CINEMORA_SOURCE_EXTRACTION_ENABLED=1 \
     CINEMORA_MEDIA_ROOT=/data/media \
     SOURCE_INTEL_DB=/data/source-intel/source_intel.sqlite3 \
     HF_HOME=/data/hf-cache \

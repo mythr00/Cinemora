@@ -15,5 +15,11 @@ from services.motion_engine import templates as _templates  # noqa: E402,F401
 from services.motion_engine import templates_v2 as _templates_v2  # noqa: E402,F401
 from services.motion_engine import templates_v3 as _templates_v3  # noqa: E402,F401
 from services.motion_engine import templates_v4 as _templates_v4  # noqa: E402,F401
+# GitHub Skills Programme (2026-11-25): the Manim render engine's
+# templates self-register into templates.TEMPLATES on import. The
+# module never imports manim itself, so this stays cheap and safe
+# on hosts where Manim is not installed (its templates then refuse
+# with the typed "manim_unavailable" reason).
+from services.motion_engine import manim_templates as _manim_templates  # noqa: E402,F401
 
 __all__ = ["STYLES", "resolve_style"]

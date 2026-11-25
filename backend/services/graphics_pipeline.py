@@ -3942,6 +3942,14 @@ def build_motion_graphics_assets(
         # in visual_director are their recorded-evidence gate.
         "milestone_waveform", "bubble_chart", "animated_dashboard",
         "holographic_panel", "classified_file",
+        # GitHub Skills Programme (2026-11-25): the Manim engine's
+        # templates are Director-only for the same reason, plus a
+        # cost discipline the others do not need — a Manim render
+        # costs ~15-25 s of CPU, so it may only be spent where the
+        # Director's recorded-evidence candidacy (a real series /
+        # comparison on the record) justifies it, never as an
+        # undirected fallback for an unserved beat.
+        "manim_line_chart", "manim_bar_chart",
     }
 
     #: Template name -> assembler. Templates NOT listed here have
@@ -3953,6 +3961,10 @@ def build_motion_graphics_assets(
         "outcome_path": _assemble_outcome_path,
         # Wave 1 (Motion Graphics Engine plan §C).
         "line_chart": _assemble_line_chart,
+        # GitHub Skills Programme: the Manim line chart consumes
+        # the SAME assembled recorded series as the PIL line chart
+        # — one data contract, two render engines.
+        "manim_line_chart": _assemble_line_chart,
         "pie_chart": _assemble_pie_chart,
         "border_map": _map_variant("border"),
         "route_map": _map_variant("route"),
@@ -4217,6 +4229,11 @@ def build_motion_graphics_assets(
             # gate's refusal is recorded, exactly as above.
             return _assemble_classified_file(target) or {}
         if name == "bar_chart" and comparison:
+            return {"items": comparison, "title": short_title_for(target)}
+        if name == "manim_bar_chart" and comparison:
+            # GitHub Skills Programme: identical recorded comparison
+            # data as the PIL bar chart — the Manim template itself
+            # refuses under 3 items, before any render is spent.
             return {"items": comparison, "title": short_title_for(target)}
         if name == "stat_comparison" and comparison:
             return {"items": comparison, "title": short_title_for(target)}
