@@ -1086,7 +1086,18 @@ def load_defaults(db, user_id) -> dict | None:
         return None
     from models import UserPreference
 
-    row = db.get(UserPreference, user_id)
+    try:
+        row = db.get(UserPreference, user_id)
+    except Exception:
+        # Fail-soft on a database without the preferences table
+        # (legacy fixture DBs that create_all only the production
+        # tables — the same contract services.plans documents for
+        # resolve_effective_plan): no preferences system exists
+        # there, so no saved defaults apply. Without this guard,
+        # project creation 500s on such a database even though
+        # defaults are only an optional seed.
+        db.rollback()
+        return None
     document = (row.document if row else None) or {}
     section = document.get(DEFAULTS_SECTION)
     if not isinstance(section, dict):

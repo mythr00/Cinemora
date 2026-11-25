@@ -20,7 +20,13 @@ import models  # noqa: E402,F401  (registers tables on Base.metadata)
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: the stock Alembic scaffold
+    # default (True) disables every logger that already exists in
+    # the process. That is harmless for a standalone CLI migration
+    # but destructive when migrations run in-process (embedded
+    # runners, the test suite): it silently killed the app's
+    # loggers (e.g. api_v1) for everything that ran afterwards.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # MA-13: fail fast like database.py. The old fallback silently
 # migrated a throwaway sqlite:///unused.db when DATABASE_URL was
