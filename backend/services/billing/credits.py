@@ -478,6 +478,75 @@ def charge_reservation(
     }
 
 
+def spend(
+    db,
+    user_id: str,
+    amount: int,
+    *,
+    idempotency_key: str,
+    reason: str | None = None,
+    project_id: str | None = None,
+    details: dict | None = None,
+    source: str = "user",
+) -> dict:
+    """Immediately debit `amount` from available balances in
+    spend order (for priced operations that have no reservation
+    lifecycle — script/thumbnail operations). Returns the split.
+    Idempotent on idempotency_key (a replay returns the recorded
+    split and moves nothing). Raises InsufficientCreditsError
+    without moving anything."""
+    if amount <= 0:
+        raise BillingError("spend amount must be positive")
+    existing = (
+        db.query(models.CreditLedgerEntry)
+        .filter(
+            models.CreditLedgerEntry.idempotency_key.like(
+                f"{idempotency_key}:%"
+            ),
+            models.CreditLedgerEntry.entry_type == "charge",
+        )
+        .all()
+    )
+    if existing:
+        return {
+            entry.bucket: -entry.amount
+            for entry in existing
+            if entry.bucket
+        }
+    account = _lock_account(db, user_id)
+    total = total_available(account)
+    if total < amount:
+        raise InsufficientCreditsError(needed=amount, available=total)
+    split: dict[str, int] = {}
+    remaining = amount
+    for bucket in SPEND_ORDER:
+        if remaining <= 0:
+            break
+        take = min(available(account, bucket), remaining)
+        if take <= 0:
+            continue
+        setattr(
+            account, f"{bucket}_available",
+            available(account, bucket) - take,
+        )
+        split[bucket] = take
+        remaining -= take
+        _append_entry(
+            db,
+            account,
+            entry_type="charge",
+            bucket=bucket,
+            amount=-take,
+            idempotency_key=f"{idempotency_key}:{bucket}",
+            source=source,
+            reason=reason,
+            project_id=project_id,
+            details=details,
+        )
+    account.lifetime_spent = int(account.lifetime_spent) + amount
+    return split
+
+
 def expire_bucket(
     db,
     user_id: str,

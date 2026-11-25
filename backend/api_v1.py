@@ -1686,6 +1686,21 @@ def submit_run(project_id: str, body: RunSubmitIn | None = None, principal=Depen
     }
 
 
+@router.get("/projects/{project_id}/generation-estimate")
+def generation_estimate(project_id: str, principal=Depends(require_user)):
+    """Phase 8 (§5): the pre-generation estimate — what pressing
+    Generate will consume for THIS project's script (entitlement
+    and/or credits), computed from the script itself."""
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal)
+    finally:
+        db.close()
+    from services.billing import operations
+
+    return operations.estimate_for_project(principal.user_id, project_id)
+
+
 @router.get("/projects/{project_id}/runs")
 def list_project_runs(project_id: str, principal=Depends(require_user)):
     db = SessionLocal()
@@ -3303,6 +3318,21 @@ def _script_call(fn, *args, **kwargs):
         raise ApiError(error.status_code, error.code, message) from error
 
 
+def _billed_script_call(operation, fn, user_id, *args, **kwargs):
+    """Phase 8 (§7): a Script Studio AI operation consumes one
+    script allowance unit or debits its credit price BEFORE it
+    runs; any failure refunds in full (services.billing
+    .operations). Legacy-plan users are unmetered."""
+    from services.billing import operations
+
+    receipt = operations.begin_operation(user_id, "scripts", operation)
+    try:
+        return _script_call(fn, user_id, *args, **kwargs)
+    except Exception:
+        operations.refund_operation(user_id, receipt)
+        raise
+
+
 class ScriptSectionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -3420,17 +3450,24 @@ def restore_script_revision(
 
 @router.post("/script-studio/scripts/{script_id}/analysis")
 def run_script_analysis(script_id: str, principal=Depends(post_guard)):
-    return _script_call(script_studio.run_analysis, principal.user_id, script_id)
+    return _billed_script_call(
+        "analysis", script_studio.run_analysis, principal.user_id,
+        script_id,
+    )
 
 
 @router.post("/script-studio/scripts/{script_id}/fact-check")
 def run_script_fact_check(script_id: str, principal=Depends(post_guard)):
-    return _script_call(script_studio.run_fact_check, principal.user_id, script_id)
+    return _billed_script_call(
+        "fact_check", script_studio.run_fact_check,
+        principal.user_id, script_id,
+    )
 
 
 @router.post("/script-studio/ai/draft", status_code=201)
 def generate_script_draft(body: ScriptGenerateIn, principal=Depends(post_guard)):
-    return _script_call(
+    return _billed_script_call(
+        "draft",
         script_studio.generate_draft,
         principal.user_id,
         topic=body.topic,
@@ -3442,8 +3479,9 @@ def generate_script_draft(body: ScriptGenerateIn, principal=Depends(post_guard))
 
 @router.post("/script-studio/scripts/{script_id}/ai/expand")
 def expand_script_sections(script_id: str, principal=Depends(post_guard)):
-    return _script_call(
-        script_studio.expand_sections, principal.user_id, script_id
+    return _billed_script_call(
+        "expand", script_studio.expand_sections, principal.user_id,
+        script_id,
     )
 
 
@@ -3451,7 +3489,8 @@ def expand_script_sections(script_id: str, principal=Depends(post_guard)):
 def tighten_script_passage(
     script_id: str, body: ScriptTightenIn, principal=Depends(post_guard)
 ):
-    return _script_call(
+    return _billed_script_call(
+        "tighten",
         script_studio.tighten_passage,
         principal.user_id,
         script_id,
@@ -3806,6 +3845,23 @@ def _thumb_call(fn, *args, **kwargs):
         raise ApiError(error.status_code, error.code, message) from error
 
 
+def _billed_thumb_call(operation, user_id, fn, *args, **kwargs):
+    """Phase 8 (§7): a thumbnail AI operation consumes one
+    thumbnail allowance unit or debits its credit price BEFORE it
+    runs; any failure refunds in full. Legacy-plan users are
+    unmetered."""
+    from services.billing import operations
+
+    receipt = operations.begin_operation(
+        user_id, "thumbnails", operation
+    )
+    try:
+        return _thumb_call(fn, *args, **kwargs)
+    except Exception:
+        operations.refund_operation(user_id, receipt)
+        raise
+
+
 def _thumb_project(project_id: str, principal, *, write: bool = False):
     db = SessionLocal()
     try:
@@ -3847,7 +3903,9 @@ def get_thumbnails(project_id: str, principal=Depends(require_user)):
 def compose_thumbnail(project_id: str, body: ThumbnailComposeIn,
                       principal=Depends(post_guard)):
     project = _thumb_project(project_id, principal, write=True)
-    return _thumb_call(
+    return _billed_thumb_call(
+        "compose",
+        principal.user_id,
         thumbnail_studio.compose_thumbnail,
         project_id,
         body.base_id,
@@ -3862,7 +3920,9 @@ def compose_thumbnail(project_id: str, body: ThumbnailComposeIn,
 def generate_thumbnail_variants(project_id: str, body: ThumbnailVariantsIn,
                                 principal=Depends(post_guard)):
     project = _thumb_project(project_id, principal, write=True)
-    return _thumb_call(
+    return _billed_thumb_call(
+        "compose",
+        principal.user_id,
         thumbnail_studio.generate_variants,
         project_id,
         headline=body.headline,
@@ -3883,7 +3943,9 @@ def analyse_thumbnail_base(project_id: str, body: ThumbnailAnalyseIn,
 def suggest_thumbnail_headlines(project_id: str,
                                 principal=Depends(post_guard)):
     project = _thumb_project(project_id, principal)
-    return _thumb_call(
+    return _billed_thumb_call(
+        "headlines",
+        principal.user_id,
         thumbnail_studio.suggest_headlines_ai,
         project_id,
         project_title=project.title,
