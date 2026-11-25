@@ -884,6 +884,20 @@ def run_analysis_phase(project_id: str, script: str, run_id: str = None, options
                     "run_id": run_id,
                     "deduplicated_execution": True,
                 }
+            # B-02 (Phase 5a): same closure as run_full_pipeline —
+            # never execute a caller-carried run unclaimed when
+            # its ledger state cannot even be read.
+            print(
+                f"Run {run_id} could not be claimed and its ledger "
+                "state could not be read; REFUSING to execute the "
+                "analysis phase unclaimed (B-02)."
+            )
+            return {
+                "project_id": project_id,
+                "status": "unclaimed_execution_refused",
+                "run_id": run_id,
+                "deduplicated_execution": True,
+            }
         # Stage 3 (R2): heartbeat for the analysis run, as in the
         # full pipeline — it stops itself when the run parks in
         # awaiting_approval or finishes.
@@ -1422,15 +1436,29 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             "source: production_config)"
         )
 
-    # Stage 2: claim or begin the ledger run. All fail-soft — the
-    # ledger records the run; it never gates it. When the caller
+    # Stage 2: claim or begin the ledger run. When the caller
     # carries a run_id (the enqueue path), the queued run is claimed
     # atomically; a run whose state is KNOWN to be non-claimable
     # (cancelled while queued, claimed by another delivery, already
-    # finished) is not executed twice. When the ledger cannot be
-    # read, the run proceeds (availability first). The claim happens
-    # BEFORE any status write-back so an aborted duplicate never
-    # marks the project "running".
+    # finished) is not executed twice. The claim happens BEFORE any
+    # status write-back so an aborted duplicate never marks the
+    # project "running".
+    #
+    # B-02 (Phase 5a): the previous fall-through executed the run
+    # UNCLAIMED when the claim was lost AND the follow-up read
+    # could not see the run (a lock burst made get_run fail-soft
+    # to None) — the production ran with no owner, no heartbeat
+    # and no claim record, its DB status still reading "queued"
+    # while it executed, free to be claimed and executed AGAIN by
+    # the next delivery. That is the claim-status loss the audit
+    # pinned, and it is now closed in code: a caller-carried run
+    # that could not be claimed and whose state cannot be proven
+    # is REFUSED, loudly, with an explicit record. The RQ job is
+    # not retried automatically; the run stays queued in the
+    # ledger, visible to the dispatcher/backlog, instead of
+    # executing invisibly. (Caller-less runs still begin_run
+    # fail-soft below: with no pre-existing run row there is no
+    # claim to lose and no duplicate-execution hazard.)
     if run_id is not None:
         # Stage 4: a plan-approved run is claimed from
         # "awaiting_approval" (its analysis phase already ran and the
@@ -1455,6 +1483,18 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                     "run_id": run_id,
                     "deduplicated_execution": True,
                 }
+            print(
+                f"Run {run_id} could not be claimed and its ledger "
+                "state could not be read; REFUSING to execute it "
+                "unclaimed (B-02). The run remains queued in the "
+                "ledger for a later delivery."
+            )
+            return {
+                "project_id": project_id,
+                "status": "unclaimed_execution_refused",
+                "run_id": run_id,
+                "deduplicated_execution": True,
+            }
         _run_id = run_id
     else:
         _run_id = run_ledger.begin_run(

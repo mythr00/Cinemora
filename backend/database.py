@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
@@ -19,10 +19,64 @@ if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is not configured.")
 
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-)
+# =========================================================
+# ENGINE FACTORY (B-02 / E-06, Phase 5a)
+# =========================================================
+# Every engine in the app is built HERE, so connection policy
+# lives in exactly one place. For SQLite the policy is:
+#
+# - busy_timeout (30 s): concurrent writers (pipeline +
+#   dispatcher + reconciler + API on the local stack) queue on
+#   the write lock instead of failing instantly with
+#   "database is locked" — the contention that lost fail-soft
+#   ledger writes (a run's DB status reading "queued" while RQ
+#   was already executing it). Applied both as the DBAPI
+#   connect timeout and as an explicit PRAGMA so the value is
+#   inspectable on any live connection.
+# - journal_mode=WAL (file-backed databases only): one writer
+#   no longer blocks all readers, and readers never block the
+#   writer. In-memory databases have no file to journal and
+#   keep their "memory" mode.
+#
+# Postgres (and every other dialect) is untouched: no SQLite
+# pragmas, no SQLite connect args.
+
+SQLITE_BUSY_TIMEOUT_MS = 30_000
+
+
+def create_app_engine(url, **kwargs):
+    """Create an engine with the application's connection policy
+    (see above). SQLite-only configuration is applied only when
+    the URL is SQLite."""
+    kwargs.setdefault("pool_pre_ping", True)
+    url_str = str(url)
+    if url_str.startswith("sqlite"):
+        connect_args = dict(kwargs.get("connect_args") or {})
+        connect_args.setdefault(
+            "timeout", SQLITE_BUSY_TIMEOUT_MS / 1000.0
+        )
+        kwargs["connect_args"] = connect_args
+        created = create_engine(url, **kwargs)
+
+        is_file_backed = ":memory:" not in url_str
+
+        @event.listens_for(created, "connect")
+        def _sqlite_connection_policy(dbapi_connection, _record):
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute(
+                    f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}"
+                )
+                if is_file_backed:
+                    cursor.execute("PRAGMA journal_mode = WAL")
+            finally:
+                cursor.close()
+
+        return created
+    return create_engine(url, **kwargs)
+
+
+engine = create_app_engine(DATABASE_URL)
 
 
 SessionLocal = sessionmaker(

@@ -289,28 +289,45 @@ def begin_run(project_id, script_text, options=None):
 
 def finish_run(run_id, status, error=None, execution=None,
                manifest_path=None, stage=None):
-    """Move a run to a terminal status. Returns True on success."""
+    """Move a run to a terminal status. Returns True on success.
+
+    B-02 (Phase 5a): the finish is a CONDITIONAL update guarded
+    on the run still being non-terminal, in the same transaction
+    — the FIRST finisher wins. Previously the row was loaded and
+    overwritten unconditionally, so a stale finisher (a retried
+    or duplicated delivery finishing late, after another delivery
+    already completed the run) could downgrade a "completed" run
+    to "failed" or resurrect a failed run as completed, and the
+    claim's recorded status was lost. A second finish now returns
+    False and changes nothing."""
     if not run_id:
         return False
     try:
         from models import ProductionRun
+        from sqlalchemy import update
 
+        values = {"status": status, "finished_at": _now()}
+        if stage is not None:
+            values["stage"] = stage
+        if error is not None:
+            values["error"] = str(error)
+        if execution is not None:
+            values["execution"] = execution
+        if manifest_path is not None:
+            values["manifest_path"] = str(manifest_path)
         db = _session()
         try:
-            row = db.get(ProductionRun, str(run_id))
-            if row is None:
-                return False
-            row.status = status
-            if stage is not None:
-                row.stage = stage
-            if error is not None:
-                row.error = str(error)
-            if execution is not None:
-                row.execution = execution
-            if manifest_path is not None:
-                row.manifest_path = str(manifest_path)
-            row.finished_at = _now()
+            result = db.execute(
+                update(ProductionRun)
+                .where(
+                    ProductionRun.id == str(run_id),
+                    ProductionRun.status.notin_(TERMINAL_STATUSES),
+                )
+                .values(**values)
+            )
             db.commit()
+            if result.rowcount != 1:
+                return False
         finally:
             db.close()
         # Developer API webhooks (Phase N): fan the terminal status
@@ -330,29 +347,67 @@ def finish_run(run_id, status, error=None, execution=None,
         return False
 
 
+# B-02 (Phase 5a): the lifecycle transitions set_run_status may
+# perform, as {current_status: (allowed targets)}. Monotonic in
+# the claim sense: nothing ever moves a run BACK to "queued"
+# once it has been claimed ("running"), and nothing moves a run
+# out of a terminal status (finish_run owns terminal writes and
+# guards them itself). Before this map existed, set_run_status
+# moved ANY non-terminal run to ANY status — a stale queued-era
+# write could downgrade a claimed, executing run back to
+# "queued", where claim_next_run would hand it to a second
+# worker for a duplicate execution, and the claim's recorded
+# status was effectively lost.
+_STATUS_TRANSITIONS = {
+    "queued": ("awaiting_approval", "running", "cancelled"),
+    "awaiting_approval": ("queued", "running", "cancelled"),
+    "running": ("awaiting_approval", "cancelled"),
+}
+
+
 def set_run_status(run_id, status, stage=None):
     """Move a non-terminal run to a lifecycle status (Stage 4).
 
     Used by the plan-approval gate: an analysis-phase run is parked
     in "awaiting_approval" until the studio releases it. Terminal
     runs are never moved by this helper (finish_run owns those
-    transitions). Fail-soft like everything in this module.
+    transitions), and moves are MONOTONIC (B-02): the conditional
+    UPDATE only fires from a current status that may legitimately
+    precede the target (see _STATUS_TRANSITIONS), so a stale
+    write can never downgrade a claimed/running run. Fail-soft
+    like everything in this module.
     """
     if not run_id or not status:
         return False
+    target = str(status)
+    if target in TERMINAL_STATUSES:
+        return False
+    allowed_from = tuple(
+        current
+        for current, targets in _STATUS_TRANSITIONS.items()
+        if target in targets
+    )
+    if not allowed_from:
+        return False
     try:
         from models import ProductionRun
+        from sqlalchemy import update
 
+        values = {"status": target}
+        if stage is not None:
+            values["stage"] = str(stage)
         db = _session()
         try:
-            row = db.get(ProductionRun, str(run_id))
-            if row is None or row.status in TERMINAL_STATUSES:
-                return False
-            row.status = str(status)
-            if stage is not None:
-                row.stage = str(stage)
+            result = db.execute(
+                update(ProductionRun)
+                .where(
+                    ProductionRun.id == str(run_id),
+                    ProductionRun.status.in_(allowed_from),
+                )
+                .values(**values)
+            )
             db.commit()
-            return True
+            return result.rowcount == 1
         finally:
             db.close()
     except Exception as error:
