@@ -12,13 +12,16 @@ import { ArrowLeft, ArrowUpRight, Sparkles, Users } from "lucide-react";
 import { AuthenticatedDownloadLink, AuthenticatedVideo } from "@/components/authenticated-media";
 import {
   cancelRun,
+  getBillingTransactions,
   getCurrentUser,
   getOutputs,
   getProjectStatus,
   getRun,
   listRuns,
+  type LedgerEntry,
   type ProjectOutputs,
   type ProjectStatus,
+  type RetentionView,
   type RunSummary,
 } from "@/lib/api";
 
@@ -58,8 +61,7 @@ type Overview = { status: ProjectStatus; outputs: ProjectOutputs | null; runs: R
 // Admins (whose API responses carry the full detail) still see it.
 const GENERIC_FAILURE_MESSAGE = "Video generation failed";
 
-function failureDisplay(error: string | null | undefined, isAdmin: boolean): string | null {
-  if (!error) return null;
+function failureDisplay(error: string | null | undefined, isAdmin: boolean): string | null {  if (!error) return null;
   return isAdmin ? error : GENERIC_FAILURE_MESSAGE;
 }
 
@@ -71,6 +73,67 @@ const TERMINAL_STATUSES = ["completed", "failed", "cancelled"];
 // recorded on the run). Terminal runs refuse (the endpoint reports
 // cancel_requested: false).
 const CANCELLABLE_STATUSES = ["queued", "running", "awaiting_approval"];
+
+/**
+ * §21 retention warning (Phase 8 MON): the exact founder
+ * headline, the exact expiry, a live countdown and a prominent
+ * download action. Data is the server's retention registry —
+ * nothing here is estimated.
+ */
+function RetentionWarning({
+  retention,
+  filmPath,
+  filmFilename,
+}: {
+  retention: RetentionView;
+  filmPath: string;
+  filmFilename: string;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  if (!retention) return null;
+  const video =
+    retention.videos.find((v) => v.kind === "final" && v.status === "active") ??
+    retention.videos.find((v) => v.status === "active");
+  if (!video) return null;
+  const deadline = new Date(video.delete_after).getTime();
+  const remainingMs = Math.max(0, deadline - now);
+  const hours = Math.floor(remainingMs / 3_600_000);
+  const minutes = Math.floor((remainingMs % 3_600_000) / 60_000);
+  const seconds = Math.floor((remainingMs % 60_000) / 1000);
+  return (
+    <div className="retention-warning" role="alert">
+      <h3>{retention.headline}</h3>
+      <p>
+        This video will be permanently deleted on{" "}
+        <strong>{new Date(video.delete_after).toLocaleString()}</strong>.
+        Your project, script and production history are kept — only
+        the video file is deleted.
+      </p>
+      <p className="retention-countdown">
+        {hours}h {String(minutes).padStart(2, "0")}m{" "}
+        {String(seconds).padStart(2, "0")}s remaining
+      </p>
+      <p>
+        <AuthenticatedDownloadLink
+          path={filmPath}
+          filename={filmFilename}
+          className="button button-primary"
+        >
+          Download your video now
+        </AuthenticatedDownloadLink>
+      </p>
+      <p className="hub-panel-note">
+        {video.downloaded
+          ? `Downloaded ${video.download_count} time${video.download_count === 1 ? "" : "s"} — keep your copy safe.`
+          : "You have not downloaded this video yet."}
+      </p>
+    </div>
+  );
+}
 
 export default function ProjectPage() {
   const params = useParams<{ id: string }>();
@@ -100,14 +163,25 @@ export default function ProjectPage() {
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelNote, setCancelNote] = useState("");
+  // Phase 8: latest settled billing charge for this project.
+  const [chargeEntry, setChargeEntry] = useState<LedgerEntry | null>(null);
 
   const loadOverview = useCallback(async () => {
-    const [statusResult, outputsResult, runsResult] = await Promise.all([
-      getProjectStatus(projectId),
-      getOutputs(projectId).catch(() => null),
-      listRuns(projectId).catch(() => ({ runs: [] as RunSummary[] })),
-    ]);
+    const [statusResult, outputsResult, runsResult, billingResult] =
+      await Promise.all([
+        getProjectStatus(projectId),
+        getOutputs(projectId).catch(() => null),
+        listRuns(projectId).catch(() => ({ runs: [] as RunSummary[] })),
+        // Phase 8: the settled generation charge for this project
+        // (best-effort — the ledger belongs to the project owner,
+        // so collaborators simply see no charge line).
+        getBillingTransactions().catch(() => ({ entries: [] as LedgerEntry[] })),
+      ]);
     setOverview({ status: statusResult, outputs: outputsResult, runs: runsResult.runs || [] });
+    const charge = billingResult.entries.find(
+      (entry) => entry.project_id === projectId && entry.entry_type === "charge",
+    );
+    setChargeEntry(charge ?? null);
     setLoadError(null);
   }, [projectId]);
 
@@ -242,6 +316,8 @@ export default function ProjectPage() {
               {overview.outputs?.captions.srt.exists && <li>Captions (SRT) — <AuthenticatedDownloadLink path={overview.outputs.captions.srt.media_url || ""} filename={overview.outputs.captions.srt.filename}>download</AuthenticatedDownloadLink></li>}
               {overview.outputs?.captions.vtt.exists && <li>Captions (VTT) — <AuthenticatedDownloadLink path={overview.outputs.captions.vtt.media_url || ""} filename={overview.outputs.captions.vtt.filename}>download</AuthenticatedDownloadLink></li>}
             </ul>
+            <RetentionWarning retention={overview.outputs?.retention ?? null} filmPath={film.media_url || ""} filmFilename={film.filename} />
+            {chargeEntry && <p className="hub-panel-note">Generation cost: {chargeEntry.details?.entitlement_used ? "1 included generation" : ""}{chargeEntry.details?.entitlement_used && chargeEntry.credits_delta < 0 ? " + " : ""}{chargeEntry.credits_delta < 0 ? `${-chargeEntry.credits_delta} credits` : chargeEntry.details?.entitlement_used ? "" : "0 credits"}</p>}
             {isAdmin ? <p className="hub-panel-note">Asset report, rights manifest and run manifest are on the <Link className="text-link" href={`/projects/${projectId}/certificate`}>Delivery tab</Link>.</p> : <p className="hub-panel-note">Asset report, rights manifest and run manifest are recorded with the production.</p>}
           </> : <p className="hub-panel-note">No finished film yet. When a run completes, the film and its captions appear here.</p>}
         </section>

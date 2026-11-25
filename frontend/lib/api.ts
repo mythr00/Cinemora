@@ -251,6 +251,328 @@ export async function getAccountUsage(
   return apiRequest<AccountUsage>("/api/v1/account/usage", { signal });
 }
 
+// ---------------------------------------------------------------------
+// Billing, credits & subscriptions (Phase 8 MON — directive §§9, 14)
+// ---------------------------------------------------------------------
+
+export type BillingPlan = {
+  id: string;
+  name: string;
+  display_name: string | null;
+  price_monthly_cents: number | null;
+  price_annual_cents: number | null;
+  currency: string;
+  monthly_credits: number;
+  included_generations: number;
+  script_allowance: number;
+  thumbnail_allowance: number;
+  billing_mode: "legacy" | "metered" | string;
+  features: Record<string, unknown>;
+  is_public: boolean;
+  is_default: boolean;
+  max_concurrent_runs: number | null;
+  max_runs_per_period: number | null;
+  priority_tier: number;
+};
+
+export type BillingSubscription = {
+  id: string;
+  plan_id: string;
+  plan_name: string | null;
+  status: string;
+  billing_interval: string;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  pending_plan_name: string | null;
+  billing_provider: string | null;
+} | null;
+
+export type BillingPeriod = {
+  period_start: string;
+  period_end: string;
+  generations_used: number;
+  generations_included: number;
+  generations_remaining: number;
+  script_ops_used: number;
+  script_allowance: number;
+  script_remaining: number;
+  thumbnail_ops_used: number;
+  thumbnail_allowance: number;
+  thumbnail_remaining: number;
+} | null;
+
+export type WalletBucket = {
+  available: number;
+  reserved: number;
+  next_expiry_at: string | null;
+};
+
+export type BillingSummary = {
+  plan: BillingPlan | null;
+  subscription: BillingSubscription;
+  period: BillingPeriod;
+  wallet: {
+    subscription: WalletBucket;
+    purchased: WalletBucket;
+    promo: WalletBucket;
+    total_available: number;
+  };
+  available_plans: BillingPlan[];
+  topup_packages: {
+    id: string;
+    name: string;
+    credits: number;
+    price_cents: number;
+    currency: string;
+  }[];
+  payment_provider: {
+    name: string | null;
+    configured: boolean;
+    public_config: { client_token: string | null; environment: string };
+  };
+  credit_pricing: {
+    standard_generation_credits: number;
+    durations: { minutes: number; credits: number }[];
+  };
+};
+
+export type LedgerEntry = {
+  id: string;
+  entry_type: string;
+  bucket: string;
+  credits_delta: number;
+  balance_after: number | null;
+  project_id: string | null;
+  run_id: string | null;
+  description: string | null;
+  details: Record<string, unknown> | null;
+  expires_at: string | null;
+  created_at: string;
+};
+
+export type BillingPayment = {
+  id: string;
+  kind: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  provider: string | null;
+  description: string | null;
+  created_at: string;
+};
+
+export type UserNotification = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string | null;
+  read_at: string | null;
+  created_at: string;
+};
+
+export type GenerationEstimate = {
+  project_id: string;
+  estimated_seconds: number;
+  estimated_minutes: number;
+  cost_credits: number;
+  entitlement_available: boolean;
+  entitlement_covers_seconds: number;
+  credits_after_entitlement: number;
+  wallet_available: number;
+  sufficient: boolean;
+  plan_name: string | null;
+};
+
+export function getBillingSummary(signal?: AbortSignal) {
+  return apiRequest<BillingSummary>("/api/v1/account/billing", { signal });
+}
+
+export function getBillingTransactions(signal?: AbortSignal) {
+  return apiRequest<{ entries: LedgerEntry[] }>(
+    "/api/v1/account/billing/transactions",
+    { signal },
+  );
+}
+
+export function getBillingPayments(signal?: AbortSignal) {
+  return apiRequest<{ payments: BillingPayment[] }>(
+    "/api/v1/account/billing/payments",
+    { signal },
+  );
+}
+
+export function getNotifications(signal?: AbortSignal) {
+  return apiRequest<{ notifications: UserNotification[]; unread_count: number }>(
+    "/api/v1/account/notifications",
+    { signal },
+  );
+}
+
+export function markNotificationRead(notificationId: string) {
+  return apiRequest<{ notification: UserNotification }>(
+    `/api/v1/account/notifications/${notificationId}/read`,
+    { method: "POST" },
+  );
+}
+
+export function getGenerationEstimate(projectId: string, signal?: AbortSignal) {
+  return apiRequest<GenerationEstimate>(
+    `/api/v1/projects/${projectId}/generation-estimate`,
+    { signal },
+  );
+}
+
+export function startSubscriptionCheckout(planName: string, interval: string) {
+  return apiRequest<{ transaction_id: string; provider: string }>(
+    "/api/v1/account/billing/checkout/subscription",
+    {
+      method: "POST",
+      body: JSON.stringify({ plan_name: planName, interval }),
+    },
+  );
+}
+
+export function startTopupCheckout(packageId: string) {
+  return apiRequest<{ transaction_id: string; provider: string }>(
+    "/api/v1/account/billing/checkout/topup",
+    { method: "POST", body: JSON.stringify({ package_id: packageId }) },
+  );
+}
+
+export function changeSubscription(planName: string, interval: string) {
+  return apiRequest<{ status: string; effective: string }>(
+    "/api/v1/account/billing/subscription/change",
+    {
+      method: "POST",
+      body: JSON.stringify({ plan_name: planName, interval }),
+    },
+  );
+}
+
+export function cancelSubscription() {
+  return apiRequest<{ status: string; current_period_end: string | null }>(
+    "/api/v1/account/billing/subscription/cancel",
+    { method: "POST" },
+  );
+}
+
+export function getBillingManagementUrl() {
+  return apiRequest<{ url: string }>(
+    "/api/v1/account/billing/management-url",
+    { method: "POST" },
+  );
+}
+
+// §21 retention view attached to project outputs.
+export type RetentionVideo = {
+  id: string;
+  filename: string;
+  kind: string;
+  size_bytes: number | null;
+  created_at: string;
+  delete_after: string;
+  status: string;
+  downloaded: boolean;
+  download_count: number;
+  deleted_at: string | null;
+};
+
+export type RetentionView = {
+  headline: string;
+  retention_hours: number;
+  videos: RetentionVideo[];
+  next_expiry_at: string | null;
+} | null;
+
+// ---------------------------------------------------------------------
+// Admin monetization (Phase 8 MON — directive §12)
+// ---------------------------------------------------------------------
+
+export type AdminBillingReports = {
+  revenue: {
+    total_verified_cents: number;
+    by_status: Record<string, number>;
+  };
+  mrr_contracted_cents: number;
+  arr_contracted_cents: number;
+  subscriptions_by_plan: Record<string, number>;
+  arpu_cents: number | null;
+  credits: {
+    outstanding: { subscription: number; purchased: number; promo: number };
+    consumed_total: number;
+  };
+  production_cost: Record<string, unknown>;
+};
+
+export type AdminRetentionSummary = {
+  total_videos: number;
+  total_bytes: number;
+  active: number;
+  deleted: number;
+  delete_failed: number;
+  expired_awaiting_deletion: number;
+  by_user: { user_id: string; videos: number; bytes: number }[];
+  by_project: { project_id: string; videos: number; bytes: number }[];
+  failures: {
+    id: string;
+    project_id: string;
+    filename: string;
+    delete_attempts: number;
+    last_error: string | null;
+  }[];
+};
+
+export function getAdminBillingPlans(signal?: AbortSignal) {
+  return apiRequest<{ plans: BillingPlan[] }>("/api/v1/admin/billing/plans", {
+    signal,
+  });
+}
+
+export function updateAdminBillingPlan(
+  planId: string,
+  patch: Record<string, unknown>,
+) {
+  return apiRequest<BillingPlan>(`/api/v1/admin/billing/plans/${planId}`, {
+    method: "POST",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function getAdminBillingReports(signal?: AbortSignal) {
+  return apiRequest<AdminBillingReports>("/api/v1/admin/billing/reports", {
+    signal,
+  });
+}
+
+export function getAdminBillingRetention(signal?: AbortSignal) {
+  return apiRequest<AdminRetentionSummary>(
+    "/api/v1/admin/billing/retention",
+    { signal },
+  );
+}
+
+export function retryAdminRetention(videoId: string) {
+  return apiRequest<{ video: RetentionVideo }>(
+    `/api/v1/admin/billing/retention/${videoId}/retry`,
+    { method: "POST" },
+  );
+}
+
+export function getAdminBillingSubscriptions(signal?: AbortSignal) {
+  return apiRequest<{ subscriptions: Record<string, unknown>[] }>(
+    "/api/v1/admin/billing/subscriptions",
+    { signal },
+  );
+}
+
+export function getAdminBillingPayments(signal?: AbortSignal) {
+  return apiRequest<{ payments: Record<string, unknown>[] }>(
+    "/api/v1/admin/billing/payments",
+    { signal },
+  );
+}
+
 /**
  * Call a legacy (pre-v1) endpoint through the same client.
  *
@@ -499,6 +821,8 @@ export type ProjectOutputs = {
   run_manifest: OutputEntry;
   certificate_url: string | null;
   plan_url: string | null;
+  // Phase 8 (§21): generated-video retention registry view.
+  retention?: RetentionView;
 };
 
 /**

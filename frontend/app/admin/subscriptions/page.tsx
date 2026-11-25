@@ -13,8 +13,16 @@ import { useCallback, useEffect, useState } from "react";
 import { formatBytes, formatDateTime } from "@/components/admin-format";
 import { ErrorState, LoadingState } from "@/components/states";
 import {
+  getAdminBillingPlans,
+  getAdminBillingReports,
+  getAdminBillingRetention,
   getAdminSubscriptions,
+  retryAdminRetention,
+  updateAdminBillingPlan,
+  type AdminBillingReports,
+  type AdminRetentionSummary,
   type AdminSubscriptions,
+  type BillingPlan,
 } from "@/lib/api";
 
 function limit(value: number | null): string {
@@ -24,6 +32,13 @@ function limit(value: number | null): string {
 export default function AdminSubscriptionsPage() {
   const [data, setData] = useState<AdminSubscriptions | null>(null);
   const [error, setError] = useState<unknown>(null);
+  // Phase 8 MON (§12): the monetization dashboard — commercial
+  // plans, financial reports and the §21 retention registry.
+  const [billingPlans, setBillingPlans] = useState<BillingPlan[]>([]);
+  const [reports, setReports] = useState<AdminBillingReports | null>(null);
+  const [retention, setRetention] = useState<AdminRetentionSummary | null>(null);
+  const [planNote, setPlanNote] = useState<string | null>(null);
+  const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -31,7 +46,47 @@ export default function AdminSubscriptionsPage() {
     } catch (cause) {
       if (!signal?.aborted) setError(cause);
     }
+    // Monetization sections are best-effort: a failure leaves
+    // them empty rather than breaking the overview.
+    getAdminBillingPlans(signal)
+      .then((result) => setBillingPlans(result.plans))
+      .catch(() => undefined);
+    getAdminBillingReports(signal).then(setReports).catch(() => undefined);
+    getAdminBillingRetention(signal)
+      .then(setRetention)
+      .catch(() => undefined);
   }, []);
+
+  const savePrice = async (plan: BillingPlan) => {
+    const raw = priceEdits[plan.id];
+    const cents = raw === undefined ? null : Math.round(Number(raw) * 100);
+    if (cents === null || Number.isNaN(cents) || cents < 0) {
+      setPlanNote("Enter a valid monthly price.");
+      return;
+    }
+    try {
+      const updated = await updateAdminBillingPlan(plan.id, {
+        price_monthly_cents: cents,
+      });
+      setBillingPlans((current) =>
+        current.map((p) => (p.id === updated.id ? updated : p)),
+      );
+      setPlanNote(`Price updated for ${updated.name}.`);
+    } catch (cause) {
+      setPlanNote(
+        cause instanceof Error
+          ? cause.message
+          : "Price update failed (super-admin required).",
+      );
+    }
+  };
+
+  const retryRetention = async (videoId: string) => {
+    await retryAdminRetention(videoId).catch(() => undefined);
+    getAdminBillingRetention()
+      .then(setRetention)
+      .catch(() => undefined);
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -45,13 +100,15 @@ export default function AdminSubscriptionsPage() {
   return (
     <section>
       <div className="admin-heading">
-        <p className="eyebrow">SUBSCRIPTIONS &amp; PLANS — READ-ONLY OVERVIEW</p>
+        <p className="eyebrow">SUBSCRIPTIONS, PLANS &amp; MONETIZATION</p>
         <h1>Plans and who holds them.</h1>
         <p className="admin-intro">{data.billing_note}</p>
         <p className="admin-intro">
-          Read-only: plans and subscriptions cannot be edited here.
-          To move a user to another plan, open their account from
-          the Users page and use Plan assignment.
+          Plan limits below are the subscription records. Commercial
+          values (prices, credits, allowances) are managed in the
+          Monetization section — super-admin only, every change
+          audit-logged. To move a user to another plan, open their
+          account from the Users page and use Plan assignment.
         </p>
       </div>
       <h2 className="admin-section-title">Plans</h2>
@@ -124,6 +181,164 @@ export default function AdminSubscriptionsPage() {
             ))}
           </tbody>
         </table>
+      )}
+      <h2 className="admin-section-title">Monetization</h2>
+      {reports && (
+        <table className="admin-table">
+          <tbody>
+            <tr>
+              <td>Contracted MRR / ARR</td>
+              <td>
+                ${(reports.mrr_contracted_cents / 100).toFixed(2)} / $
+                {(reports.arr_contracted_cents / 100).toFixed(2)}
+              </td>
+            </tr>
+            <tr>
+              <td>Verified revenue (all time)</td>
+              <td>
+                ${(reports.revenue.total_verified_cents / 100).toFixed(2)}
+              </td>
+            </tr>
+            <tr>
+              <td>Credits outstanding (sub / purchased / promo)</td>
+              <td>
+                {reports.credits.outstanding.subscription} /{" "}
+                {reports.credits.outstanding.purchased} /{" "}
+                {reports.credits.outstanding.promo}
+              </td>
+            </tr>
+            <tr>
+              <td>Production cost</td>
+              <td>
+                {typeof reports.production_cost === "object" &&
+                reports.production_cost !== null &&
+                "status" in reports.production_cost &&
+                reports.production_cost.status === "unknown"
+                  ? "Unknown — no pricing rules configured"
+                  : "See the billing reports API for the priced rollup"}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+      {planNote && <p className="admin-intro">{planNote}</p>}
+      <table className="admin-table">
+        <thead>
+          <tr>
+            <th>Plan</th>
+            <th>Mode</th>
+            <th>Monthly price</th>
+            <th>Credits / month</th>
+            <th>Included generations</th>
+            <th>Script / thumbnail allowance</th>
+            <th>Public</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {billingPlans.map((plan) => (
+            <tr key={plan.id}>
+              <td>{plan.display_name || plan.name}</td>
+              <td>{plan.billing_mode}</td>
+              <td>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={
+                    plan.price_monthly_cents !== null
+                      ? (plan.price_monthly_cents / 100).toFixed(2)
+                      : ""
+                  }
+                  onChange={(event) =>
+                    setPriceEdits((current) => ({
+                      ...current,
+                      [plan.id]: event.target.value,
+                    }))
+                  }
+                  aria-label={`Monthly price for ${plan.name} in dollars`}
+                />
+              </td>
+              <td>{plan.monthly_credits}</td>
+              <td>{plan.included_generations}</td>
+              <td>
+                {plan.script_allowance} / {plan.thumbnail_allowance}
+              </td>
+              <td>{plan.is_public ? "Yes" : "No"}</td>
+              <td>
+                <button
+                  type="button"
+                  className="button button-quiet"
+                  onClick={() => void savePrice(plan)}
+                >
+                  Save price
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h2 className="admin-section-title">Generated-video retention (§21)</h2>
+      {retention ? (
+        <>
+          <table className="admin-table">
+            <tbody>
+              <tr>
+                <td>Registered videos</td>
+                <td>
+                  {retention.total_videos} ({formatBytes(retention.total_bytes)})
+                </td>
+              </tr>
+              <tr>
+                <td>Active / deleted</td>
+                <td>
+                  {retention.active} / {retention.deleted}
+                </td>
+              </tr>
+              <tr>
+                <td>Expired awaiting deletion</td>
+                <td>{retention.expired_awaiting_deletion}</td>
+              </tr>
+              <tr>
+                <td>Failed deletions</td>
+                <td>{retention.delete_failed}</td>
+              </tr>
+            </tbody>
+          </table>
+          {retention.failures.length > 0 && (
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>File</th>
+                  <th>Attempts</th>
+                  <th>Last error</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {retention.failures.map((failure) => (
+                  <tr key={failure.id}>
+                    <td>{failure.filename}</td>
+                    <td>{failure.delete_attempts}</td>
+                    <td>{failure.last_error ?? "—"}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="button button-quiet"
+                        onClick={() => void retryRetention(failure.id)}
+                      >
+                        Retry
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      ) : (
+        <p className="admin-empty">Retention registry unavailable.</p>
       )}
     </section>
   );

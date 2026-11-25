@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, LogOut, ShieldCheck, UserRound } from "lucide-react";
 import {
   getAccountUsage,
+  getNotifications,
   logout,
   type AccountUsage,
   type AccountUser,
@@ -28,6 +29,7 @@ export function AccountMenu({ user }: { user: AccountUser }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [usage, setUsage] = useState<AccountUsage | null>(null);
+  const [unread, setUnread] = useState(0);
   const [signingOut, setSigningOut] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -39,6 +41,15 @@ export function AccountMenu({ user }: { user: AccountUser }) {
       .catch(() => undefined);
     return () => controller.abort();
   }, [open, usage]);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    getNotifications(controller.signal)
+      .then((result) => setUnread(result.unread_count))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [open ]);
 
   useEffect(() => {
     if (!open) return;
@@ -117,6 +128,17 @@ export function AccountMenu({ user }: { user: AccountUser }) {
               </p>
             )}
           </div>
+          <Link
+            className="account-menu-item"
+            href="/billing"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+          >
+            Billing &amp; credits
+            {unread > 0 && (
+              <span className="account-menu-badge">{unread}</span>
+            )}
+          </Link>
           <Link
             className="account-menu-item"
             href="/reset-password"

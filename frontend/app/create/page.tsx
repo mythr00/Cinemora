@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import {
   createProject as apiCreateProject,
+  getBillingSummary,
   getConfigCatalogue,
   getConfigDefaults,
   getCurrentUser,
@@ -12,6 +13,7 @@ import {
   getVoiceCatalogue,
   submitRun,
   type ApiConnectionStatus,
+  type BillingSummary,
   type ConfigCatalogue,
   type ProductionConfig,
   type ProjectStatus,
@@ -147,6 +149,18 @@ export default function Home() {
   const [configCatalogue, setConfigCatalogue] = useState<ConfigCatalogue | null>(null);
   const [productionConfig, setProductionConfig] = useState<ProductionConfig>(emptyProductionConfig());
   const [configSeeded, setConfigSeeded] = useState(false);
+  // Phase 8 (§9): the billing summary drives the pre-Generate
+  // cost estimate in the summary card. Absence (legacy plan /
+  // load failure) simply omits the row — never an invented cost.
+  const [billing, setBilling] = useState<BillingSummary | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getBillingSummary(controller.signal)
+      .then(setBilling)
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
 
   const words = useMemo(() => script.trim().split(/\s+/).filter(Boolean).length, [script]);
   const duration = words ? Math.max(1, Math.round(words / 145)) : 0;
@@ -484,7 +498,7 @@ export default function Home() {
               <div><h2 id="review-title">Review &amp; start</h2><p>Exactly what will be submitted — nothing else is sent.</p></div>
             </div>
             <div className="summary-card">
-              <div className="summary-rows"><div><span>Narration voice</span><strong>{(configCatalogue ? productionConfig.narration.voice_id : null) || narrationVoiceId} · English (US)</strong></div><div><span>Captions</span><strong>{configCatalogue ? (productionConfig.captions.mode === "burn" ? "Burned in" : productionConfig.captions.mode === "sidecar" ? "Sidecar files" : "Off") : "Burned in"}</strong></div>{configCatalogue && <><div><span>Preset</span><strong>{productionConfig.preset === "custom" ? "Custom" : productionConfig.preset[0].toUpperCase() + productionConfig.preset.slice(1)}</strong></div><div><span>Motion graphics</span><strong>{productionConfig.motion_graphics.enabled ? "On" : "Off"}</strong></div><div><span>Visual theme</span><strong>{productionConfig.theme.id ? (productionConfig.theme.id === "custom" ? "Custom" : productionConfig.theme.id[0].toUpperCase() + productionConfig.theme.id.slice(1)) : "Genre pack default"}</strong></div><div><span>Music</span><strong>{!productionConfig.music.enabled ? "Off" : productionConfig.music.source === "upload" ? "Your upload (add it in the project's Configuration tab)" : productionConfig.music.source === "library" ? "Studio library" : "On — no track selected yet"}</strong></div></>}{isAdmin && <div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div>}<div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div><div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
+              <div className="summary-rows"><div><span>Narration voice</span><strong>{(configCatalogue ? productionConfig.narration.voice_id : null) || narrationVoiceId} · English (US)</strong></div><div><span>Captions</span><strong>{configCatalogue ? (productionConfig.captions.mode === "burn" ? "Burned in" : productionConfig.captions.mode === "sidecar" ? "Sidecar files" : "Off") : "Burned in"}</strong></div>{configCatalogue && <><div><span>Preset</span><strong>{productionConfig.preset === "custom" ? "Custom" : productionConfig.preset[0].toUpperCase() + productionConfig.preset.slice(1)}</strong></div><div><span>Motion graphics</span><strong>{productionConfig.motion_graphics.enabled ? "On" : "Off"}</strong></div><div><span>Visual theme</span><strong>{productionConfig.theme.id ? (productionConfig.theme.id === "custom" ? "Custom" : productionConfig.theme.id[0].toUpperCase() + productionConfig.theme.id.slice(1)) : "Genre pack default"}</strong></div><div><span>Music</span><strong>{!productionConfig.music.enabled ? "Off" : productionConfig.music.source === "upload" ? "Your upload (add it in the project's Configuration tab)" : productionConfig.music.source === "library" ? "Studio library" : "On — no track selected yet"}</strong></div></>}{isAdmin && <div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div>}<div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div>{billing?.plan?.billing_mode === "metered" && duration > 0 && (() => { const rate = billing.credit_pricing.standard_generation_credits; const estCredits = Math.ceil((duration * rate) / 15); const hasEntitlement = (billing.period?.generations_remaining ?? 0) > 0; const label = hasEntitlement ? (duration <= 15 ? "1 included generation · 0 credits" : `1 included generation + ${estCredits - rate} credits`) : `${estCredits} credits`; return <div><span>Generation cost (estimate)</span><strong>{label}</strong></div>; })()}<div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
               <div className="summary-footnote"><Info size={18} strokeWidth={1.7} aria-hidden /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
               <p className="status-message"><ApiConnectionBadge onStatus={setConnection} /></p>
               <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiBlocked}>

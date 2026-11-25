@@ -2634,3 +2634,32 @@ body { min-height: 100dvh; }
 .app-page, .project-editor-page { min-height: 100dvh; }
 .auth-page { min-height: 100dvh; }
 .admin-frame { min-height: 100dvh; }
+
+/* Phase 8 MON — billing page, retention warning, account badge. */
+.billing-page .panel { margin-bottom: 20px; }
+.billing-note { display: flex; gap: 10px; align-items: flex-start; }
+.billing-note p { margin: 0; }
+.billing-notice { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; background: var(--accent-soft); }
+.billing-plan-name { font-size: 20px; font-weight: 600; margin: 4px 0 10px; }
+.billing-warn { color: var(--danger-deep); font-weight: 600; }
+.billing-allowances { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 14px 0; }
+.billing-allowances span { display: block; color: var(--ink-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.billing-allowances strong { font-size: 15px; }
+.billing-interval { display: flex; gap: 8px; margin-bottom: 14px; }
+.billing-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.billing-plan-card { border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+.billing-plan-card h3 { margin: 0; }
+.billing-plan-card ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; flex: 1; }
+.billing-plan-card li { display: flex; gap: 6px; align-items: baseline; font-size: 13px; }
+.billing-price { font-size: 24px; font-weight: 700; margin: 0; }
+.billing-price span { font-size: 13px; font-weight: 400; color: var(--ink-muted); }
+.billing-footnote { color: var(--ink-muted); font-size: 13px; margin-top: 14px; }
+.billing-notifications { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.billing-notifications li { display: flex; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+.billing-notifications li.unread { border-color: var(--accent); }
+.billing-notifications p { margin: 2px 0; }
+.billing-notifications span { color: var(--ink-muted); font-size: 12px; }
+.retention-warning { border: 2px solid var(--danger); border-radius: 10px; padding: 16px; margin: 14px 0; }
+.retention-warning h3 { margin: 0 0 6px; color: var(--danger-deep); font-size: 17px; letter-spacing: 0.01em; }
+.retention-warning .retention-countdown { font-size: 20px; font-weight: 700; }
+.account-menu-badge { background: var(--danger); color: #fff; border-radius: 999px; font-size: 11px; padding: 0 6px; margin-left: auto; }
