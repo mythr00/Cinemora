@@ -26,6 +26,7 @@ SERVICE_MODULES = [
     "services.search_provider",
     "services.llm_client",
     "services.llm_provider",
+    "services.similarity_provider",
 ]
 
 

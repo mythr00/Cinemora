@@ -2684,6 +2684,14 @@ def detect_contradiction(candidate, scenario, bible, text, subject, subject_hit)
     Only POSITIVE mismatches count — the candidate must affirmatively
     name a different bible entity of the required kind while NOT
     naming the required one.
+
+    Phase 4c / D-06 honesty: this is METADATA-ONLY wrong-person
+    protection — name/context matching against the candidate's
+    title/snippet/description text. Cinemora has NO face or person
+    verification: nothing here (or anywhere in the pipeline) looks
+    at the image/frame to confirm who is pictured, so a
+    correctly-captioned but visually wrong-person asset cannot be
+    caught by this check.
     """
     entities = bible.get("entities", []) or []
 
@@ -2867,7 +2875,10 @@ def verify_candidate(candidate, scenario, bible):
     before); the list exists so rejection records can carry the
     contributing reasons the first-fail resolution used to destroy.
 
-    Scoring is deterministic and explainable:
+    Scoring is deterministic and explainable — LEXICAL similarity
+    only (Phase 4c / D-05): stemmed token overlap computed through
+    services.similarity_provider (TokenOverlapSimilarity). It is
+    NOT semantic or embedding-based similarity:
       subject alias hit ............ +0.45
       topical token overlap ........ +0.45 * min(1, overlap * 1.5)
       era year present ............. +0.10
@@ -2960,8 +2971,6 @@ def verify_candidate(candidate, scenario, bible):
     text = _norm(" ".join(str(candidate.get(k) or "") for k in ("title", "snippet", "description", "url", "source")))
     by_id = bible.get("by_id", {})
     reasons = []
-    score = 0.0
-    contributions = {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0}
 
     subject = by_id.get(scenario.get("subject_id"))
     subject_hit = False
@@ -2973,32 +2982,37 @@ def verify_candidate(candidate, scenario, bible):
                 aliases.add(parts[-1])
         subject_hit = any(_norm(a) and _norm(a) in text for a in aliases)
         if subject_hit:
-            score += 0.45
-            contributions["subject"] = 0.45
             reasons.append(f"mentions {subject['canonical']}")
         elif scenario.get("specificity") == "exact":
             reasons.append(f"missing required subject {subject['canonical']}")
 
+    # Phase 4c / D-05: the relevance score is computed through the
+    # similarity-provider seam (services.similarity_provider). Its
+    # sole implementation, TokenOverlapSimilarity, is deterministic
+    # stemmed TOKEN OVERLAP (lexical similarity) — not semantic /
+    # embedding similarity. The formula and weights are unchanged.
+    from services import similarity_provider as _similarity
+
+    _sim = _similarity.get_provider()
     wanted = set()
     for term in scenario.get("search_terms") or []:
         wanted |= _content_tokens(term)
     wanted |= _content_tokens(scenario.get("visual"))
     overlap = None
     if wanted:
-        overlap = len(wanted & {_stem(t) for t in text.split()}) / len(wanted)
-        topical = 0.45 * min(1.0, overlap * 1.5)
-        score += topical
-        contributions["topical"] = round(topical, 3)
+        overlap = _sim.topical_overlap(
+            wanted, {_stem(t) for t in text.split()}
+        )
         reasons.append(f"visual overlap {overlap:.2f}")
 
     era = _year_or_decade(scenario.get("era"))
-    if era and era[:4] in text:
-        score += 0.10
-        contributions["era"] = 0.10
+    era_hit = bool(era and era[:4] in text)
+    if era_hit:
         reasons.append("era match")
 
     # A named-person shot that names a DIFFERENT bible person and not the
     # subject is almost certainly the wrong photo.
+    wrong_person_hit = False
     if subject and not subject_hit:
         others = [
             e for e in bible.get("entities", [])
@@ -3006,9 +3020,17 @@ def verify_candidate(candidate, scenario, bible):
             and _norm(e["canonical"]) in text
         ]
         if others:
-            score -= 0.3
-            contributions["wrong_person"] = -0.3
+            wrong_person_hit = True
             reasons.append(f"names other person {others[0]['canonical']}")
+
+    _scored = _sim.score(
+        subject_hit=subject_hit,
+        topical_overlap=overlap,
+        era_hit=era_hit,
+        wrong_person_hit=wrong_person_hit,
+    )
+    score = _scored.total
+    contributions = _scored.components
 
     # Workstream A: a POSITIVE identity contradiction is a hard reject,
     # decided BEFORE the threshold comparison — generic specificity,

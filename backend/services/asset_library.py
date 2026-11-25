@@ -41,7 +41,7 @@ is that layer:
   obeys exactly the editor upload contexts (an editor revision, or
   a plan parked at approval; otherwise the same 404
   ``no_production_context`` uploads get). The production reuse caps
-  (3/3/3) and similarity thresholds are pipeline quality controls
+  (3/3/3) and lexical (token-overlap) similarity thresholds are pipeline quality controls
   and are NOT touched by anything here (audit §2.5).
 - DUPLICATES (audit §2.6) fall out of the hash grouping: an item
   whose content lives at more than one distinct file path is a

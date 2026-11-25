@@ -120,7 +120,7 @@ def _title_blob(candidate):
 #      requires, the direction Phase 4.3's accepted-stratum
 #      false-admit rate (33.3%) warns against.
 #
-# Nothing here touches the similarity thresholds (0.55/0.34/0.22),
+# Nothing here touches the lexical (token-overlap) similarity thresholds (0.55/0.34/0.22),
 # the reuse caps, or the category profiles: eligibility stays the
 # gate's, ranking stays the scorer's.
 # ---------------------------------------------------------------------------

@@ -130,7 +130,7 @@ AUTHORITY = (
 
 # ---------------------------------------------------------------------------
 # Detector thresholds. These are DETECTOR thresholds (Phase 1.1's
-# own knobs) — the similarity thresholds (0.55/0.34/0.22) and reuse
+# own knobs) — the lexical (token-overlap) similarity thresholds (0.55/0.34/0.22) and reuse
 # caps are a different, untouched system. Every value here is
 # recorded on the frame-check record's ``thresholds`` block so a
 # tuning change is visible in the artefacts it affected.
