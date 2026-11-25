@@ -1,6 +1,12 @@
 "use client";
 
-/** M8 — effective configuration, read-mostly and secret-safe. */
+/** M8 — effective configuration, read-only overview and secret-safe.
+ *
+ * Phase 6 (A-15): there are NO backend update endpoints for these
+ * settings — configuration is environment-based and applies on
+ * restart (services/admin_settings says so itself). The page is
+ * therefore labelled honestly as a read-only overview; no fake
+ * management controls are offered. */
 
 import { useCallback, useEffect, useState } from "react";
 import { ErrorState, LoadingState } from "@/components/states";
@@ -38,9 +44,14 @@ export default function AdminSettingsPage() {
   return (
     <section>
       <div className="admin-heading">
-        <p className="eyebrow">SYSTEM SETTINGS</p>
+        <p className="eyebrow">SYSTEM SETTINGS — READ-ONLY OVERVIEW</p>
         <h1>What the platform is actually running with.</h1>
         <p className="admin-intro">{settings.note}</p>
+        <p className="admin-intro">
+          Read-only: this page cannot change settings. Configuration
+          is set through the deployment environment and applies when
+          the service restarts.
+        </p>
       </div>
       {Object.entries(settings.groups).map(([group, entries]) => (
         <div key={group}>

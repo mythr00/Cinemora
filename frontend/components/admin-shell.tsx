@@ -29,11 +29,11 @@ const ADMIN_LINKS: Array<{ href: string; label: string }> = [
   { href: "/admin/health", label: "Health" },
   { href: "/admin/storage", label: "Storage" },
   { href: "/admin/users", label: "Users" },
-  { href: "/admin/subscriptions", label: "Subscriptions" },
+  { href: "/admin/subscriptions", label: "Subscriptions overview" },
   { href: "/admin/projects", label: "Projects" },
   { href: "/admin/developer", label: "Developer API" },
   { href: "/admin/audit", label: "Audit log" },
-  { href: "/admin/settings", label: "Settings" },
+  { href: "/admin/settings", label: "Settings overview" },
 ];
 
 function NotFoundView() {

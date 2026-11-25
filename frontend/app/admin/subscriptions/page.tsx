@@ -1,6 +1,13 @@
 "use client";
 
-/** Subscriptions & plans — records only; no payment collection. */
+/** Subscriptions & plans — read-only overview; records only, no
+ * payment collection.
+ *
+ * Phase 6 (A-15): no backend endpoint creates or edits plans or
+ * subscriptions, so this page is labelled honestly as a read-only
+ * overview. The one real management action — assigning a plan to
+ * a user — lives on the user detail page, where it is wired to
+ * POST /admin/users/{id}/plan. */
 
 import { useCallback, useEffect, useState } from "react";
 import { formatBytes, formatDateTime } from "@/components/admin-format";
@@ -38,9 +45,14 @@ export default function AdminSubscriptionsPage() {
   return (
     <section>
       <div className="admin-heading">
-        <p className="eyebrow">SUBSCRIPTIONS & PLANS</p>
+        <p className="eyebrow">SUBSCRIPTIONS &amp; PLANS — READ-ONLY OVERVIEW</p>
         <h1>Plans and who holds them.</h1>
         <p className="admin-intro">{data.billing_note}</p>
+        <p className="admin-intro">
+          Read-only: plans and subscriptions cannot be edited here.
+          To move a user to another plan, open their account from
+          the Users page and use Plan assignment.
+        </p>
       </div>
       <h2 className="admin-section-title">Plans</h2>
       <table className="admin-table">
