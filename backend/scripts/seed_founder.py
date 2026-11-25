@@ -137,6 +137,13 @@ def main() -> int:
     try:
         plans = ensure_plans(db)
 
+        # Phase 8: the founder-priced billing catalogue (metered
+        # plans + top-up packages). Idempotent; updates commercial
+        # fields only (services/billing/catalogue.py).
+        from services.billing import catalogue as billing_catalogue
+
+        catalogue_report = billing_catalogue.ensure_billing_catalogue(db)
+
         founder = (
             db.query(models.User).filter_by(email=email).one_or_none()
         )
@@ -207,6 +214,11 @@ def main() -> int:
         db.close()
 
     print(f"plans ensured: {', '.join(sorted(plans))}")
+    print(
+        "billing catalogue: "
+        f"created={catalogue_report['plans_created'] + catalogue_report['packages_created']} "
+        f"updated={len(catalogue_report['plans_updated']) + len(catalogue_report['packages_updated'])}"
+    )
     print(f"founder: {email} ({'created' if created else 'already existed'})")
     if password_changed:
         print(f"initial password written to: {password_file} (mode 0600)")
