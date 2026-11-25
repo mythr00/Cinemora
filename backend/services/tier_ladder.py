@@ -421,6 +421,21 @@ class EscalationLedger:
         self.deepening_searches += count - breadth
         self._need_searches[need_key] = prior + count
 
+    def fairness_reserve_downloads(self):
+        """Downloads that must survive deepening spends (Phase 3a /
+        C-01): one per registered need still waiting for its first
+        download, plus the lookahead for needs in scenes the stage
+        has not reached. Before Phase 3a the deepening gate priced
+        only the fixed lookahead, so within a scene an early
+        need's deepening downloads could consume the slots later
+        registered needs were counting on — the download-side twin
+        of the search starvation fairness_reserve() already
+        prevented."""
+        unserved = sum(
+            1 for spent in self._need_downloads.values() if spent <= 0
+        )
+        return unserved + FAIRNESS_LOOKAHEAD_DOWNLOADS
+
     # -- downloads --------------------------------------------------
     def _download_gate(self, need_key, wall_clock_binds):
         if wall_clock_binds and self.wall_clock_exceeded():
@@ -440,7 +455,7 @@ class EscalationLedger:
             return True
         return (
             self.downloads + self.speculative_downloads + 1
-            + FAIRNESS_LOOKAHEAD_DOWNLOADS
+            + self.fairness_reserve_downloads()
             <= PRODUCTION_MAX_EXTRA_DOWNLOADS
         )
 
@@ -581,6 +596,7 @@ class EscalationLedger:
             "needs_registered": self.needs_registered(),
             "needs_with_first_attempt": self.needs_with_first_attempt(),
             "fairness_reserve_searches": self.fairness_reserve(),
+            "fairness_reserve_downloads": self.fairness_reserve_downloads(),
             # Attempt idempotency accounting (additive, run-10 fix):
             # distinct completed batches on record, and how many
             # later identical batches were recognised as repeats

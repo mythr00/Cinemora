@@ -20,6 +20,14 @@ snapshot, it may ADOPT a prior run's completed stages, in order:
   the prior stage record says "completed", a resume payload was
   recorded, and every recorded artefact still exists and hashes to
   the recorded value;
+- the asset_manager stage must ALSO pass the C-01 coverage gate
+  (Phase 3a, services.asset_coverage): every sentence the stage
+  owed is covered, graphics-fallback-decided, or explicitly
+  unresolved after an attempted search. A starved or unrecorded
+  sentence refuses adoption and stops the chain — the retry
+  re-runs asset_manager in full (the registry/segment state the
+  stage owns is production-scoped, so a partial per-scene adoption
+  would corrupt reuse accounting; see Phase 3a report);
 - the first stage that fails validation stops the adoption chain —
   that stage and all later ones execute normally (a clean run from
   that boundary), and the fallback is recorded;
@@ -274,6 +282,37 @@ def _validate_stage(record, project_dir):
     return True, ""
 
 
+def _validate_asset_coverage(record, project_dir):
+    """C-01 coverage gate (Phase 3a): an asset_manager stage is
+    adoptable only when its coverage is COMPLETE — every sentence
+    it owed has an assigned asset, a recorded graphics fallback,
+    or an explicit unresolved marker backed by an actually-attempted
+    search (services.asset_coverage). Hash validation (integrity)
+    stays in _validate_stage; this is the additional gate that
+    stops a defective-but-intact stage — Petito attempt 7's, whose
+    sentence 23 was starved by the shared download budget before
+    its search ever ran — from being adopted as healthy."""
+    payload = _load_json(Path(project_dir) / str(record.get("resume_payload") or ""))
+    if not isinstance(payload, dict):
+        return False, "coverage_payload_unreadable"
+    processed = payload.get("processed_scenes")
+    if not isinstance(processed, list):
+        return False, "coverage_no_processed_scenes"
+    try:
+        from services import asset_coverage
+
+        assessment = asset_coverage.assess_asset_coverage(processed)
+    except Exception as error:  # fail closed: unassessable != complete
+        return False, f"coverage_assessment_error:{type(error).__name__}"
+    if not assessment["complete"]:
+        numbers = ",".join(
+            str(entry["sentence_number"])
+            for entry in assessment["incomplete"]
+        )
+        return False, f"coverage_incomplete:{numbers}"
+    return True, ""
+
+
 def _load_json(path):
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
@@ -341,6 +380,13 @@ def find_resume_source(project_dir, current_run_id, script_sha256,
         for stage in PRODUCTION_STAGES:
             record = (state.get("stages") or {}).get(stage)
             ok, reason = _validate_stage(record, project_dir)
+            if ok and stage == "asset_manager":
+                # C-01: integrity is not coverage — a hash-true
+                # asset stage with starved/unrecorded sentences is
+                # refused here, which also stops the adoption
+                # chain, so no later stage (motion/video_editor)
+                # can adopt over the gap.
+                ok, reason = _validate_asset_coverage(record, project_dir)
             if not ok:
                 stop_reason = f"{stage}:{reason}"
                 break
