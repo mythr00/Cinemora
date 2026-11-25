@@ -110,6 +110,25 @@
     "{name} primary sources archive",
     "{name} {place} history"
   ],
+  "source_hints": {
+    "archive": [
+      "collection:prelinger {subject}",
+      "creator:(\"Library of Congress\") {subject}",
+      "{subject} subject:(\"history\")"
+    ],
+    "web": [
+      "{query} site:loc.gov OR site:archives.gov",
+      "{query} site:si.edu OR site:nps.gov"
+    ],
+    "wikimedia_category": [
+      "incategory:\"Historical photographs\" {subject}",
+      "incategory:\"Historical maps\" {subject}"
+    ],
+    "wikimedia_query": [
+      "{subject} historical photograph",
+      "{subject} archive photograph"
+    ]
+  },
   "style_family": "history",
   "visual_profile": {
     "broll_vocabulary": {

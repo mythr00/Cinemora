@@ -208,7 +208,10 @@ def test_provider_backoff_is_shared_and_time_bounded(fake_redis):
     url = "https://upload.wikimedia.org/x.jpg"
     scope = provider_health.scope_for_url(url)
     assert not provider_health.is_backed_off(scope)
-    for _ in range(provider_health.RATE_LIMIT_TRIP_COUNT):
+    # Gate 2 (2026-11-26): Wikimedia scopes trip at their own
+    # retry-before-backoff count, not the generic one.
+    trip_count = provider_health.trip_count_for_scope(scope)
+    for _ in range(trip_count):
         provider_health.record_rate_limit(scope)
     # The backoff now lives in Redis: any other worker reading the
     # same store is backed off WITHOUT making a request.
@@ -221,7 +224,7 @@ def test_provider_backoff_is_shared_and_time_bounded(fake_redis):
     assert not provider_health.is_backed_off(scope)
 
     # A success from any worker clears the shared state.
-    for _ in range(provider_health.RATE_LIMIT_TRIP_COUNT):
+    for _ in range(trip_count):
         provider_health.record_rate_limit(scope)
     assert provider_health.is_backed_off(scope)
     provider_health.record_download_outcome(scope, True)

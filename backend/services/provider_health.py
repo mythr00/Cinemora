@@ -58,6 +58,62 @@ RATE_LIMIT_TRIP_COUNT = 3
 #: 429. Further 429s renew it; a success clears it early.
 BACKOFF_SECONDS = 600
 
+#: Gate 2 (footage-discovery directive, 2026-11-26): Wikimedia
+#: Commons scopes get retry-before-backoff. In the Container run,
+#: Commons throttling produced 17 provider_backed_off refusals —
+#: a transient 429 burst silenced the only licence-evidenced
+#: source for the rest of the production. Commons callers that go
+#: through services.licensed_media now make
+#: WIKIMEDIA_RETRY_ATTEMPTS bounded delayed retries (honouring
+#: Retry-After, capped at WIKIMEDIA_MAX_RETRY_DELAY_SECONDS so the
+#: delay stays inside the existing per-candidate timeout budget)
+#: BEFORE a 429 is recorded here at all; and the scope itself
+#: trips only at WIKIMEDIA_RATE_LIMIT_TRIP_COUNT consecutive
+#: recorded 429s, so one burst that a retry would have ridden out
+#: does not trip it. The backoff protection itself is unchanged:
+#: a persistent 429 stream still backs the scope off, for the
+#: same BACKOFF_SECONDS, with the same shared-state semantics.
+WIKIMEDIA_SCOPES = frozenset({
+    "commons.wikimedia.org",
+    "upload.wikimedia.org",
+    "wikimedia.org",
+})
+WIKIMEDIA_RETRY_ATTEMPTS = 2
+WIKIMEDIA_MAX_RETRY_DELAY_SECONDS = 5.0
+WIKIMEDIA_RATE_LIMIT_TRIP_COUNT = 6
+
+
+def is_wikimedia_scope(scope):
+    """Whether a provider scope is a Wikimedia Commons scope."""
+    return str(scope or "").lower() in WIKIMEDIA_SCOPES
+
+
+def trip_count_for_scope(scope):
+    """Consecutive recorded 429s that back a scope off."""
+    if is_wikimedia_scope(scope):
+        return WIKIMEDIA_RATE_LIMIT_TRIP_COUNT
+    return RATE_LIMIT_TRIP_COUNT
+
+
+def wikimedia_retry_delay(attempt, retry_after_seconds=None):
+    """Bounded delay before a Commons delayed retry (attempt is
+    1-based for the failure). A provider-supplied Retry-After is
+    honoured but capped at WIKIMEDIA_MAX_RETRY_DELAY_SECONDS;
+    without one, a short exponential delay applies, same cap."""
+    if retry_after_seconds is not None:
+        try:
+            return max(
+                0.0,
+                min(float(retry_after_seconds),
+                    WIKIMEDIA_MAX_RETRY_DELAY_SECONDS),
+            )
+        except (TypeError, ValueError):
+            pass
+    return min(
+        0.5 * (2 ** max(0, int(attempt) - 1)),
+        WIKIMEDIA_MAX_RETRY_DELAY_SECONDS,
+    )
+
 _LOCK = threading.Lock()
 _SCOPES = {}
 
@@ -102,7 +158,7 @@ def _shared_trip(scope):
         client = _redis()
         consec = client.incr(_consec_key(scope))
         client.expire(_consec_key(scope), BACKOFF_SECONDS * 2)
-        if consec >= RATE_LIMIT_TRIP_COUNT:
+        if consec >= trip_count_for_scope(scope):
             client.set(
                 _backoff_key(scope),
                 str(time.time() + BACKOFF_SECONDS),
@@ -156,6 +212,8 @@ def _entry(scope):
         "failed": 0,
         "rate_limited": 0,
         "consecutive_rate_limits": 0,
+        "delayed_retries": 0,
+        "delayed_retry_seconds": 0.0,
         "backed_off": False,
         "backed_off_reason": None,
     })
@@ -181,12 +239,39 @@ def record_download_outcome(scope, ok):
         _shared_clear(scope)
 
 
+def record_delayed_retry(scope, delay_seconds):
+    """Record one bounded delayed retry performed for a scope
+    BEFORE any backoff accounting (Gate 2 retry-before-backoff for
+    Wikimedia Commons). Purely observational: it never trips or
+    clears a backoff; it makes the retry visible in the per-run
+    snapshot / logs exactly like the 429 observations are."""
+    if not scope:
+        return
+    try:
+        delay = max(0.0, float(delay_seconds))
+    except (TypeError, ValueError):
+        delay = 0.0
+    with _LOCK:
+        entry = _entry(scope)
+        entry["delayed_retries"] += 1
+        entry["delayed_retry_seconds"] += delay
+    logger.info(
+        "provider_health: delayed retry for scope %s after %.2fs "
+        "(retry-before-backoff)",
+        scope, delay,
+    )
+
+
 def record_rate_limit(scope):
     """Record one observed HTTP 429 from a scope. Trips the shared
-    backoff at RATE_LIMIT_TRIP_COUNT consecutive 429s counted
-    platform-wide; returns True when the scope is backed off."""
+    backoff at the scope's trip count (RATE_LIMIT_TRIP_COUNT
+    consecutive 429s counted platform-wide; Wikimedia Commons
+    scopes trip at WIKIMEDIA_RATE_LIMIT_TRIP_COUNT because their
+    callers retry with delay before recording — see the Gate 2
+    note at the constants); returns True when backed off."""
     if not scope:
         return False
+    trip_count = trip_count_for_scope(scope)
     shared = _shared_trip(scope)
     with _LOCK:
         entry = _entry(scope)
@@ -195,7 +280,7 @@ def record_rate_limit(scope):
         if shared is None:
             # Redis unavailable: pre-8.4 local semantics.
             if (
-                entry["consecutive_rate_limits"] >= RATE_LIMIT_TRIP_COUNT
+                entry["consecutive_rate_limits"] >= trip_count
                 and not entry["backed_off"]
             ):
                 entry["backed_off"] = True
@@ -207,7 +292,7 @@ def record_rate_limit(scope):
         if shared:
             entry["backed_off"] = True
             entry["backed_off_reason"] = (
-                f"{RATE_LIMIT_TRIP_COUNT}+ consecutive HTTP 429 "
+                f"{trip_count}+ consecutive HTTP 429 "
                 f"responses platform-wide; backed off for "
                 f"{BACKOFF_SECONDS}s"
             )

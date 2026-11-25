@@ -465,10 +465,11 @@ def search_wikimedia_videos(query, limit=5):
     return output
 
 
-def search_archive_org_videos(query, limit=3):
+def search_archive_org_videos(query, limit=5):
     """Archive.org moving-image candidates (MS-4) — an independent
     provider with its own search + metadata, licence evidence included
-    when the item records it."""
+    when the item records it. Default limit matches the Wikimedia
+    video supplementary limit (Gate 2 parity, 2026-11-26)."""
     from services.archive_org import search_archive_videos
 
     query = str(query or "").strip()
@@ -535,8 +536,9 @@ def _uve_scenario_search(
     # build_shot_needs: scenario / composed / intent_queries;
     # search-internal queries carry their own labels), hits = raw
     # results returned for it, before cross-query dedupe.
-    # Supplementary-provider hits fold into the primary query's
-    # entry — they were issued FOR that query.
+    # Supplementary-provider hits fold into the entry of the query
+    # they were issued for (Gate 2: supplementary providers now run
+    # on every unique query, not only the primary).
     query_log = _QUERY_LOG_STACK[-1] if _QUERY_LOG_STACK else None
     _query_sources = {}
     for _qs in (need.get("query_sources") or []):
@@ -817,10 +819,22 @@ def _uve_scenario_search(
             seen_image_urls.add(image_url)
             images.append(image)
 
-    # MS-4: supplementary independent providers, queried once per
-    # scenario on its primary query. Each is failure-isolated: one
-    # provider being down or empty never blocks the others, and none
-    # of them is the centre of discovery — they join the same pool.
+    # MS-4 / Gate 2 (footage-discovery directive, 2026-11-26):
+    # supplementary independent providers, queried for EVERY unique
+    # scenario query — the same queries the Serper channels run on —
+    # not only the primary query. YouTube is one source among many;
+    # the keyless archival providers (Archive.org, Wikimedia Commons
+    # video) get parity of opportunity per query. Each provider call
+    # is failure-isolated per query: one provider being down or
+    # empty never blocks the others or the scenario, and none of
+    # them is the centre of discovery — they join the same pool.
+    # Budget accounting: there is no separate supplementary budget
+    # guard in this function; these searches are counted exactly as
+    # they were when they ran on the primary query only — through
+    # the providers' own run_metrics hooks (archive_org_search /
+    # wikimedia_search inside the provider modules) and through the
+    # AM-021 per-query log below, folded into the entry of the query
+    # they were issued for.
     if unique_queries:
         primary_query = unique_queries[0]
 
@@ -834,29 +848,44 @@ def _uve_scenario_search(
                 seen_video_urls.add(url)
                 videos.append(video)
 
-        try:
-            _archive_hits = _media_pipeline().search_archive_org_videos(primary_query, limit=3)
-            _log_query(
-                primary_query,
-                _query_sources.get(primary_query, "scenario"),
-                len(_archive_hits or []),
-            )
-            _merge_videos(_archive_hits)
-        except Exception as error:
-            _media_pipeline()._record_discovery_failure("archive.org", primary_query, error)
-            print(f"Archive.org search failed for '{primary_query}': {error}")
+        for supplementary_query in unique_queries:
+            try:
+                _archive_hits = _media_pipeline().search_archive_org_videos(
+                    supplementary_query, limit=5
+                )
+                _log_query(
+                    supplementary_query,
+                    _query_sources.get(supplementary_query, "scenario"),
+                    len(_archive_hits or []),
+                )
+                _merge_videos(_archive_hits)
+            except Exception as error:
+                _media_pipeline()._record_discovery_failure(
+                    "archive.org", supplementary_query, error
+                )
+                print(
+                    f"Archive.org search failed "
+                    f"for '{supplementary_query}': {error}"
+                )
 
-        try:
-            _wikimedia_hits = _media_pipeline().search_wikimedia_videos(primary_query, limit=5)
-            _log_query(
-                primary_query,
-                _query_sources.get(primary_query, "scenario"),
-                len(_wikimedia_hits or []),
-            )
-            _merge_videos(_wikimedia_hits)
-        except Exception as error:
-            _media_pipeline()._record_discovery_failure("wikimedia", primary_query, error)
-            print(f"Wikimedia video search failed for '{primary_query}': {error}")
+            try:
+                _wikimedia_hits = _media_pipeline().search_wikimedia_videos(
+                    supplementary_query, limit=5
+                )
+                _log_query(
+                    supplementary_query,
+                    _query_sources.get(supplementary_query, "scenario"),
+                    len(_wikimedia_hits or []),
+                )
+                _merge_videos(_wikimedia_hits)
+            except Exception as error:
+                _media_pipeline()._record_discovery_failure(
+                    "wikimedia", supplementary_query, error
+                )
+                print(
+                    f"Wikimedia video search failed "
+                    f"for '{supplementary_query}': {error}"
+                )
 
         # Targeted institutional search: only when general discovery
         # found no moving footage at all for this scenario.

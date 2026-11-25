@@ -47,15 +47,17 @@ def test_engineering_and_industrial_packs_carry_valid_hints():
 
 
 def test_packs_without_hints_resolve_empty():
-    for pack_id in ("general", "history", "true_crime"):
-        resolved = genre_packs.resolve_source_hints(
-            genre_packs.load_pack(pack_id)
-        )
-        assert resolved == {"hints": {}, "failures": []}
+    # Gate 2 (2026-11-26): general / history / true_crime gained
+    # source_hints blocks (covered in
+    # test_gate2_discovery_wiring.py) — the empty-resolution
+    # contract now applies to packs/inputs without a block.
     assert genre_packs.resolve_source_hints(None) == {
         "hints": {}, "failures": [],
     }
     assert genre_packs.resolve_source_hints({}) == {
+        "hints": {}, "failures": [],
+    }
+    assert genre_packs.resolve_source_hints({"id": "x"}) == {
         "hints": {}, "failures": [],
     }
 
@@ -212,8 +214,10 @@ def test_build_shot_needs_stamps_engineering_hints():
 def test_build_shot_needs_no_pack_no_hints():
     needs = mp.build_shot_needs(_beat(), {"entities": []})
     assert needs[0]["source_hint_queries"] == []
+    # Gate 2 (2026-11-26): the general pack now carries hints, so
+    # naming it stamps hint queries like every other pack.
     needs = mp.build_shot_needs(_beat(), _bible("general"))
-    assert needs[0]["source_hint_queries"] == []
+    assert needs[0]["source_hint_queries"] != []
 
 
 # ---------------------------------------------------------------------------

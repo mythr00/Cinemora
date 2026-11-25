@@ -111,6 +111,25 @@
     "{name} court records charges",
     "{name} police investigation"
   ],
+  "source_hints": {
+    "archive": [
+      "creator:(\"Federal Bureau of Investigation\") {subject}",
+      "{subject} subject:(\"criminal investigation\")",
+      "{subject} subject:(\"police\")"
+    ],
+    "web": [
+      "{query} site:fbi.gov OR site:archives.gov OR site:loc.gov",
+      "{query} court records site:loc.gov OR site:archives.gov"
+    ],
+    "wikimedia_category": [
+      "incategory:\"Law enforcement\" {subject}",
+      "incategory:\"Crime\" {subject}"
+    ],
+    "wikimedia_query": [
+      "{subject} police investigation",
+      "{subject} courthouse"
+    ]
+  },
   "style_family": "true_crime",
   "visual_profile": {
     "broll_vocabulary": {

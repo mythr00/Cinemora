@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import re
 import hashlib
+import time
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -15,13 +17,69 @@ try:
 except ImportError:  # pragma: no cover - flat-layout fallback
     import run_metrics
 
+try:
+    from . import provider_health
+except ImportError:  # pragma: no cover - flat-layout fallback
+    import provider_health
+
+logger = logging.getLogger(__name__)
+
 UA = "DocumentaryStudio/0.3 (local research tool)"
+
+COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php"
 
 
 def _session() -> requests.Session:
     s = requests.Session()
     s.headers.update({"User-Agent": UA})
     return s
+
+
+def _commons_request(url, *, params=None, timeout=30, stream=False):
+    """One Wikimedia Commons request with Gate 2 retry-before-
+    backoff (footage-discovery directive, 2026-11-26).
+
+    Commons throttling used to silence the only licence-evidenced
+    source for a whole production: a 429 burst tripped the
+    provider_health scope backoff and every later candidate was
+    refused pre-request. Here the request first makes a small
+    number of BOUNDED DELAYED retries — honouring Retry-After,
+    capped via provider_health.WIKIMEDIA_MAX_RETRY_DELAY_SECONDS
+    so the total delay stays inside the caller's existing timeout
+    budget — and each delayed retry is recorded in
+    provider_health's metrics. Only a request that is STILL 429
+    after those retries is recorded as a rate limit, so a
+    persistent 429 stream still backs the scope off exactly as
+    before; a transient burst that a retry rides out never reaches
+    the backoff accounting at all.
+    """
+    scope = provider_health.scope_for_url(url)
+
+    def _recorded_sleep(delay):
+        provider_health.record_delayed_retry(scope, delay)
+        time.sleep(delay)
+
+    kwargs = {"timeout": timeout}
+    if params is not None:
+        kwargs["params"] = params
+    if stream:
+        kwargs["stream"] = True
+    response = request_with_retry(
+        "GET",
+        url,
+        session=_session(),
+        max_attempts=1 + provider_health.WIKIMEDIA_RETRY_ATTEMPTS,
+        base_delay=0.5,
+        max_delay=provider_health.WIKIMEDIA_MAX_RETRY_DELAY_SECONDS,
+        sleep=_recorded_sleep,
+        **kwargs,
+    )
+    if getattr(response, "status_code", None) == 429:
+        # The bounded retries are spent and Commons is still
+        # throttling: this is backoff evidence, recorded once per
+        # exhausted request (never per raw 429).
+        provider_health.record_rate_limit(scope)
+    return response
 
 
 def search_licensed(req: VisualRequest, limit: int = 6) -> list[dict]:
@@ -59,7 +117,14 @@ def download_asset(hit: dict, dest_dir: Path) -> Path:
     path = dest_dir / name
     if path.exists() and path.stat().st_size > 1024:
         return path
-    r = request_with_retry("GET", url, session=_session(), timeout=60, stream=True)
+    if provider_health.is_wikimedia_scope(
+        provider_health.scope_for_url(url)
+    ):
+        # Commons downloads get the same retry-before-backoff
+        # discipline as Commons searches (Gate 2).
+        r = _commons_request(url, timeout=60, stream=True)
+    else:
+        r = request_with_retry("GET", url, session=_session(), timeout=60, stream=True)
     r.raise_for_status()
     tmp = path.with_suffix(path.suffix + ".part")
     with open(tmp, "wb") as f:
@@ -82,10 +147,8 @@ def search_wikimedia(query: str, limit: int = 6) -> list[dict]:
 
 def _wikimedia(q: str, limit: int) -> list[dict]:
     """PD / CC stills only. Useful later for verified archival images."""
-    r = request_with_retry(
-        "GET",
-        "https://commons.wikimedia.org/w/api.php",
-        session=_session(),
+    r = _commons_request(
+        COMMONS_API_URL,
         params={
             "action": "query",
             "format": "json",
@@ -147,10 +210,8 @@ def search_wikimedia_videos(query: str, limit: int = 5) -> list[dict]:
     """
     # Stage 0 metrics: one Commons search invocation.
     run_metrics.wikimedia_search()
-    r = request_with_retry(
-        "GET",
-        "https://commons.wikimedia.org/w/api.php",
-        session=_session(),
+    r = _commons_request(
+        COMMONS_API_URL,
         params={
             "action": "query",
             "format": "json",

@@ -104,6 +104,23 @@
     "target_seconds_per_sentence": 4.0
   },
   "research_query_templates": [],
+  "source_hints": {
+    "archive": [
+      "collection:prelinger {subject}",
+      "title:({subject})"
+    ],
+    "web": [
+      "{query} site:loc.gov OR site:archives.gov OR site:si.edu",
+      "{query} site:nps.gov OR site:archives.gov"
+    ],
+    "wikimedia_category": [
+      "{subject}"
+    ],
+    "wikimedia_query": [
+      "{subject} photograph",
+      "{subject} documentary"
+    ]
+  },
   "style_family": null,
   "visual_profile": {
     "broll_vocabulary": {
