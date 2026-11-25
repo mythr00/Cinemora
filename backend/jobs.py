@@ -330,6 +330,17 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
                 if isinstance(partial_analysis, dict)
                 else None
             ),
+            # C-07: a failed run's report carries the research
+            # outcome too (from the run state when recorded, else
+            # derived from the partial analysis's bible).
+            research=(
+                state.get("research")
+                if isinstance(state, dict)
+                and isinstance(state.get("research"), dict)
+                else _research_stage_record(
+                    {"analysis": partial_analysis}
+                )
+            ),
             run_failure={"stage": stage, "error": str(error)},
             execution=run_metrics.snapshot(),
             genre_pack=state.get("genre_pack"),
@@ -1245,6 +1256,90 @@ def _honour_quality_verdict(quality_verdicts, state=None):
     )
 
 
+def _research_stage_record(source):
+    """C-07 (Phase 3b): the research pass's own stage outcome,
+    derived from the bible's research_meta (services.story_
+    understanding.enrich_bible_with_research).
+
+    Research is not a dispatcher stage of its own — it executes
+    inside script analysis (plan_script, after the bible is built).
+    What C-07 changes is the RECORDING: the outcome is extracted
+    here and stored as its own record on the run (production state,
+    under the script_analysis stage record and at state level, and
+    in the asset report), so a research pass that gave up after the
+    failure limit is an explicit degraded marker on the run instead
+    of being silently folded into script_analysis's success.
+
+    `source` may be a production_data dict ({"bible": ...} and/or
+    {"analysis": {"bible": ...}}), an analysis dict, or a bible.
+    Returns a bounded record; a bible with no research_meta (legacy
+    / pre-3A artefact) yields outcome "not_recorded" — never a
+    fabricated success.
+    """
+    bible = {}
+    if isinstance(source, dict):
+        if isinstance(source.get("bible"), dict):
+            bible = source["bible"]
+        analysis = source.get("analysis")
+        if isinstance(analysis, dict) and isinstance(
+            analysis.get("bible"), dict
+        ):
+            bible = analysis["bible"]
+        elif "research_meta" in source:
+            bible = source
+    meta = bible.get("research_meta") if isinstance(bible, dict) else None
+    if not isinstance(meta, dict):
+        return {
+            "stage": "research",
+            "recorded": False,
+            "outcome": "not_recorded",
+            "degraded": False,
+        }
+    errors = meta.get("errors")
+    return {
+        "stage": "research",
+        "recorded": True,
+        "outcome": meta.get("outcome") or "recorded",
+        "degraded": bool(meta.get("degraded")),
+        "researched_at": meta.get("researched_at"),
+        "subjects_researched": meta.get("subjects_researched"),
+        "sources_attached": meta.get("sources_attached"),
+        "conflicts_found": meta.get("conflicts_found"),
+        "queries_attempted": meta.get("queries_attempted"),
+        "queries_failed": meta.get("queries_failed"),
+        "failure_limit": meta.get("failure_limit"),
+        "failure_limit_reached": bool(meta.get("failure_limit_reached")),
+        "errors": list(errors)[:10] if isinstance(errors, list) else [],
+        "error": meta.get("error"),
+    }
+
+
+def _record_research_outcome(state, source):
+    """Stamp the research stage record onto the run state (C-07):
+    at state level (state["research"]) and inside the
+    script_analysis stage record, so the degraded marker is visible
+    in production_state.json alongside the stage outcomes. Prints a
+    loud line when degraded. Returns the record."""
+    record = _research_stage_record(source)
+    if isinstance(state, dict):
+        state["research"] = record
+        stages = state.setdefault("stages", {})
+        stage_record = stages.setdefault("script_analysis", {})
+        if isinstance(stage_record, dict):
+            stage_record["research"] = record
+    if record.get("degraded"):
+        print(
+            "RESEARCH DEGRADED: the research pass outcome was "
+            f"{record.get('outcome')} (attempted="
+            f"{record.get('queries_attempted')}, failed="
+            f"{record.get('queries_failed')}, failure_limit_reached="
+            f"{record.get('failure_limit_reached')}); this run is "
+            "proceeding on a partially research-grounded bible and "
+            "the run record says so."
+        )
+    return record
+
+
 def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=None):
     print()
     print("=" * 70)
@@ -1647,6 +1742,9 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             sentences = production_data["sentences"]
             scenes = production_data["scenes"]
             script_hash = production_data.get("script_hash") or script_hash
+            # C-07: an adopted analysis still carries its research
+            # outcome — record it on this run too.
+            _record_research_outcome(state, production_data)
             _adopt_stage(
                 state, "script_analysis", project_dir, _resume_plan
             )
@@ -1670,6 +1768,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         sentences = production_data["sentences"]
         scenes = production_data["scenes"]
         script_hash = production_data.get("script_hash") or script_hash
+        # C-07 (Phase 3b): record the research pass's outcome as its
+        # own stage record on the run BEFORE script_analysis is
+        # finished — a degraded research pass must not be folded
+        # silently into this stage's success.
+        _record_research_outcome(state, production_data)
         print(f"Analyzed sentences: {len(sentences)}")
         print(f"Created production scenes: {len(scenes)}")
         print(f"Script hash: {script_hash}")
@@ -2623,6 +2726,13 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             renderer_audit=renderer_audit,
             analysis_mode=analysis.get("mode") if isinstance(analysis, dict) else None,
             planner=analysis.get("planner") if isinstance(analysis, dict) else None,
+            # C-07: the research stage outcome recorded at
+            # script_analysis time rides the report.
+            research=(
+                state.get("research")
+                if isinstance(state.get("research"), dict)
+                else _research_stage_record({"analysis": analysis})
+            ),
             execution=run_metrics.snapshot(),
             soundtrack=(
                 soundtrack_record

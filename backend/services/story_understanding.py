@@ -717,6 +717,8 @@ def enrich_bible_with_research(bible, script_text, sentences=None, genre_pack=No
         subjects_researched = 0
         sources_attached = 0
         failures = 0
+        attempts = 0
+        errors = []
         if search_fn is not None:
             for entity in subjects:
                 if failures >= _RESEARCH_FAILURE_LIMIT:
@@ -728,10 +730,19 @@ def enrich_bible_with_research(bible, script_text, sentences=None, genre_pack=No
                 for query in _research_queries_for(bible, entity, genre_pack=genre_pack):
                     if failures >= _RESEARCH_FAILURE_LIMIT:
                         break
+                    attempts += 1
                     try:
                         results = search_fn(query) or []
                     except Exception as error:
                         failures += 1
+                        # C-07 (Phase 3b): every failed attempt is
+                        # RECORDED (query + error), not just counted
+                        # in a local — the give-up must be diagnosable
+                        # from research_meta afterwards.
+                        errors.append({
+                            "query": query,
+                            "error": f"{type(error).__name__}: {error}",
+                        })
                         print(f"STORY RESEARCH: search failed for {query!r}: {error}")
                         continue
                     for result in results:
@@ -766,6 +777,20 @@ def enrich_bible_with_research(bible, script_text, sentences=None, genre_pack=No
             )
             if isinstance(_minimum, int) and search_fn is not None:
                 _min_sources_met = _primary_sources >= _minimum
+        # C-07 (Phase 3b): the pass's outcome is a first-class,
+        # bounded, recorded fact — how many queries were attempted,
+        # how many failed, whether the failure limit stopped the
+        # pass early, and what the errors were. "degraded" is the
+        # explicit marker jobs.py surfaces on the run (state +
+        # asset report) instead of the run silently continuing on
+        # an unenriched bible.
+        _limit_reached = failures >= _RESEARCH_FAILURE_LIMIT
+        if search_fn is None:
+            _outcome = "unavailable"  # no provider: nothing attempted
+        elif _limit_reached:
+            _outcome = "degraded"  # gave up after the failure limit
+        else:
+            _outcome = "completed"
         bible["research_meta"] = {
             "researched_at": researched_at,
             "subjects_researched": subjects_researched,
@@ -775,9 +800,40 @@ def enrich_bible_with_research(bible, script_text, sentences=None, genre_pack=No
             "research_requirements": research_requirements,
             "primary_subject_sources": _primary_sources,
             "primary_subject_min_sources_met": _min_sources_met,
+            "queries_attempted": attempts,
+            "queries_failed": failures,
+            "failure_limit": _RESEARCH_FAILURE_LIMIT,
+            "failure_limit_reached": _limit_reached,
+            "errors": errors,
+            "outcome": _outcome,
+            "degraded": _outcome != "completed",
         }
+        if _outcome == "degraded":
+            print(
+                "STORY RESEARCH: DEGRADED — failure limit "
+                f"({_RESEARCH_FAILURE_LIMIT}) reached after "
+                f"{attempts} queries ({failures} failed); the bible "
+                "is only partially research-grounded."
+            )
+        elif _outcome == "unavailable":
+            print(
+                "STORY RESEARCH: UNAVAILABLE — no search provider; "
+                "the bible is not research-grounded."
+            )
     except Exception as error:  # research must never crash a production
         print(f"STORY RESEARCH: pass failed ({error}) — facts stay script_asserted.")
+        # C-07: even a pass-level failure is recorded as the pass's
+        # outcome (the pre-try research_meta claimed zeroes, which
+        # read as "ran fine, found nothing").
+        try:
+            bible["research_meta"] = {
+                **(bible.get("research_meta") or {}),
+                "outcome": "failed",
+                "degraded": True,
+                "error": f"{type(error).__name__}: {error}",
+            }
+        except Exception:
+            pass
         try:
             for entry in bible.get("timeline") or []:
                 if isinstance(entry, dict):

@@ -100,7 +100,7 @@ def _timeline_items(timeline_result) -> list:
     return items
 
 
-def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None, genre_pack=None, final_audio=None, audio_provenance=None, planner=None) -> dict:
+def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None, genre_pack=None, final_audio=None, audio_provenance=None, planner=None, research=None) -> dict:
     """Build the report from real pipeline outputs.
 
     processed_scenes: scene result dicts from the media pipeline.
@@ -867,6 +867,14 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         # caller had no analysis (never fabricated); the
         # production report's q30 answers from this block.
         "planner": planner,
+        # Phase 3b / C-07: the research pass's own stage outcome
+        # (jobs._research_stage_record, derived from the bible's
+        # research_meta) — outcome, degraded marker, bounded retry
+        # accounting (attempts / failures / limit / errors). None
+        # when the caller had no analysis; a degraded research pass
+        # is visible here instead of silently folded into the
+        # script_analysis stage's success.
+        "research": research,
         # VA-07: a failed run still produces this report (from partial
         # state); run_failure names the stage and error. None means
         # the run completed.
