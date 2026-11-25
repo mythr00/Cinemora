@@ -1080,3 +1080,643 @@ def assistant_security_events(
         }
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------
+# Phase 8 — Monetization administration (directive §12)
+#
+# Plans, top-up packages, coupons, customer credit management,
+# subscriptions, payments, webhook events, financial reports,
+# pricing rules and the §21 retention registry. Reads: any admin.
+# Commercial mutations (prices, packages, coupons, credit
+# adjustments, pricing rules): super_admin, matching this
+# router's account-consequential tier — and every mutation is
+# written to the admin audit log in the same flow.
+# ---------------------------------------------------------------------
+
+import uuid as _uuid
+
+import models as _models
+from services.billing import account_view as _account_view
+from services.billing import costs as _billing_costs
+from services.billing import credits as _billing_credits
+from services.billing import retention as _billing_retention
+
+
+class BillingPlanIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str | None = Field(default=None, max_length=50)
+    price_monthly_cents: int | None = Field(default=None, ge=0)
+    price_annual_cents: int | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, max_length=3)
+    monthly_credits: int | None = Field(default=None, ge=0)
+    included_generations: int | None = Field(default=None, ge=0)
+    script_allowance: int | None = Field(default=None, ge=0)
+    thumbnail_allowance: int | None = Field(default=None, ge=0)
+    billing_mode: str | None = Field(
+        default=None, pattern="^(legacy|metered)$"
+    )
+    is_public: bool | None = None
+    max_concurrent_runs: int | None = Field(default=None, ge=1)
+    max_runs_per_period: int | None = Field(default=None, ge=0)
+    max_script_chars: int | None = Field(default=None, ge=0)
+    priority_tier: int | None = Field(default=None, ge=0, le=1)
+    features: dict | None = None
+
+
+class TopupPackageIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str | None = Field(default=None, max_length=80)
+    credits: int | None = Field(default=None, ge=1)
+    price_cents: int | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, max_length=3)
+    validity_months: int | None = Field(default=None, ge=1, le=120)
+    is_active: bool | None = None
+    sort_order: int | None = None
+    provider_price_id: str | None = Field(default=None, max_length=200)
+
+
+class CouponIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    code: str | None = Field(default=None, max_length=64)
+    kind: str | None = Field(
+        default=None, pattern="^(percent|fixed|credits)$"
+    )
+    percent_off: int | None = Field(default=None, ge=1, le=100)
+    amount_off_cents: int | None = Field(default=None, ge=0)
+    credits_grant: int | None = Field(default=None, ge=1)
+    promo_expires_at: datetime | None = None
+    max_redemptions: int | None = Field(default=None, ge=1)
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    is_active: bool | None = None
+
+
+class CreditAdjustIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    bucket: str = Field(pattern="^(subscription|purchased|promo)$")
+    delta: int = Field(ge=-1_000_000, le=1_000_000)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class PromoGrantIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    coupon_id: str = Field(min_length=1, max_length=64)
+
+
+class PricingRuleIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    provider: str = Field(min_length=1, max_length=64)
+    model: str | None = Field(default=None, max_length=128)
+    unit: str = Field(
+        pattern="^(per_1k_tokens|per_call|per_search|per_minute|per_gb_month)$"
+    )
+    rate_microusd: int = Field(ge=0)
+    effective_from: datetime
+    effective_to: datetime | None = None
+
+
+def _apply_fields(row, body: BaseModel, *, skip_none=True):
+    changed = {}
+    for field, value in body.model_dump().items():
+        if skip_none and value is None:
+            continue
+        if getattr(row, field) != value:
+            changed[field] = value
+            setattr(row, field, value)
+    return changed
+
+
+@router.get("/billing/plans")
+def billing_plans(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        plans = db.query(Plan).order_by(Plan.name.asc()).all()
+        return {"plans": [_account_view.plan_view(p) for p in plans]}
+    finally:
+        db.close()
+
+
+@router.post("/billing/plans", status_code=201)
+def billing_plan_create(
+    body: BillingPlanIn, principal=Depends(super_admin_guard)
+):
+    if not body.name:
+        raise ApiError(422, "validation_error", "name is required.")
+    db = SessionLocal()
+    try:
+        if db.query(Plan).filter_by(name=body.name).one_or_none():
+            raise ApiError(409, "plan_exists", "A plan with that name exists.")
+        plan = Plan(id=str(_uuid.uuid4()), name=body.name)
+        _apply_fields(plan, body)
+        db.add(plan)
+        db.commit()
+        admin_audit.record(
+            principal, "billing.plan_create",
+            target_type="plan", target_id=plan.id,
+            detail={"name": plan.name},
+        )
+        return _account_view.plan_view(plan)
+    finally:
+        db.close()
+
+
+@router.post("/billing/plans/{plan_id}")
+def billing_plan_update(
+    plan_id: str, body: BillingPlanIn,
+    principal=Depends(super_admin_guard),
+):
+    db = SessionLocal()
+    try:
+        plan = db.get(Plan, plan_id)
+        if plan is None:
+            raise ApiError(404, "plan_not_found", "No such plan.")
+        changed = _apply_fields(plan, body)
+        db.commit()
+        admin_audit.record(
+            principal, "billing.plan_update",
+            target_type="plan", target_id=plan.id,
+            detail={"changed": changed},
+        )
+        return _account_view.plan_view(plan)
+    finally:
+        db.close()
+
+
+@router.get("/billing/topup-packages")
+def billing_topup_packages(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(_models.TopupPackage)
+            .order_by(_models.TopupPackage.sort_order.asc())
+            .all()
+        )
+        return {
+            "packages": [
+                {
+                    "id": p.id, "name": p.name, "credits": p.credits,
+                    "price_cents": p.price_cents,
+                    "currency": p.currency,
+                    "validity_months": p.validity_months,
+                    "is_active": p.is_active,
+                    "sort_order": p.sort_order,
+                    "provider_price_id": p.provider_price_id,
+                }
+                for p in rows
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.post("/billing/topup-packages", status_code=201)
+def billing_topup_package_create(
+    body: TopupPackageIn, principal=Depends(super_admin_guard)
+):
+    if not body.name or body.credits is None or body.price_cents is None:
+        raise ApiError(
+            422, "validation_error",
+            "name, credits and price_cents are required.",
+        )
+    db = SessionLocal()
+    try:
+        package = _models.TopupPackage(
+            id=str(_uuid.uuid4()), name=body.name,
+            credits=body.credits, price_cents=body.price_cents,
+        )
+        _apply_fields(package, body)
+        db.add(package)
+        db.commit()
+        admin_audit.record(
+            principal, "billing.topup_create",
+            target_type="topup_package", target_id=package.id,
+            detail={"name": package.name},
+        )
+        return {"id": package.id, "name": package.name}
+    finally:
+        db.close()
+
+
+@router.post("/billing/topup-packages/{package_id}")
+def billing_topup_package_update(
+    package_id: str, body: TopupPackageIn,
+    principal=Depends(super_admin_guard),
+):
+    db = SessionLocal()
+    try:
+        package = db.get(_models.TopupPackage, package_id)
+        if package is None:
+            raise ApiError(404, "package_not_found", "No such package.")
+        changed = _apply_fields(package, body)
+        db.commit()
+        admin_audit.record(
+            principal, "billing.topup_update",
+            target_type="topup_package", target_id=package.id,
+            detail={"changed": changed},
+        )
+        return {"id": package.id, "changed": changed}
+    finally:
+        db.close()
+
+
+@router.get("/billing/coupons")
+def billing_coupons(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        rows = db.query(_models.Coupon).order_by(
+            _models.Coupon.created_at.desc()
+        ).all()
+        return {
+            "coupons": [
+                {
+                    "id": c.id, "code": c.code, "kind": c.kind,
+                    "percent_off": c.percent_off,
+                    "amount_off_cents": c.amount_off_cents,
+                    "credits_grant": c.credits_grant,
+                    "promo_expires_at": c.promo_expires_at,
+                    "max_redemptions": c.max_redemptions,
+                    "redeemed_count": c.redeemed_count,
+                    "is_active": c.is_active,
+                }
+                for c in rows
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.post("/billing/coupons", status_code=201)
+def billing_coupon_create(
+    body: CouponIn, principal=Depends(super_admin_guard)
+):
+    if not body.code or not body.kind:
+        raise ApiError(
+            422, "validation_error", "code and kind are required."
+        )
+    db = SessionLocal()
+    try:
+        if db.query(_models.Coupon).filter_by(code=body.code).one_or_none():
+            raise ApiError(409, "coupon_exists", "That code exists.")
+        coupon = _models.Coupon(
+            id=str(_uuid.uuid4()), code=body.code, kind=body.kind,
+            created_by=principal.user_id,
+        )
+        _apply_fields(coupon, body)
+        db.add(coupon)
+        db.commit()
+        admin_audit.record(
+            principal, "billing.coupon_create",
+            target_type="coupon", target_id=coupon.id,
+            detail={"code": coupon.code, "kind": coupon.kind},
+        )
+        return {"id": coupon.id, "code": coupon.code}
+    finally:
+        db.close()
+
+
+@router.post("/billing/coupons/{coupon_id}")
+def billing_coupon_update(
+    coupon_id: str, body: CouponIn,
+    principal=Depends(super_admin_guard),
+):
+    db = SessionLocal()
+    try:
+        coupon = db.get(_models.Coupon, coupon_id)
+        if coupon is None:
+            raise ApiError(404, "coupon_not_found", "No such coupon.")
+        changed = _apply_fields(coupon, body)
+        db.commit()
+        admin_audit.record(
+            principal, "billing.coupon_update",
+            target_type="coupon", target_id=coupon.id,
+            detail={"changed": changed},
+        )
+        return {"id": coupon.id, "changed": changed}
+    finally:
+        db.close()
+
+
+@router.get("/billing/users/{user_id}")
+def billing_user_detail(user_id: str, principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        if user is None:
+            raise ApiError(404, "user_not_found", "No such user.")
+        summary = _account_view.billing_summary(db, user_id)
+        summary["user"] = {"id": user.id, "email": user.email,
+                            "role": user.role, "status": user.status}
+        summary["recent_transactions"] = _account_view.ledger_view(
+            db, user_id, limit=20
+        )
+        return summary
+    finally:
+        db.close()
+
+
+@router.post("/billing/users/{user_id}/credits/adjust")
+def billing_credit_adjust(
+    user_id: str, body: CreditAdjustIn,
+    principal=Depends(super_admin_guard),
+):
+    db = SessionLocal()
+    try:
+        if db.get(User, user_id) is None:
+            raise ApiError(404, "user_not_found", "No such user.")
+        try:
+            entry, created = _billing_credits.adjust(
+                db, user_id, body.bucket, body.delta,
+                actor_id=principal.user_id, reason=body.reason,
+                idempotency_key=(
+                    f"admin-adjust:{_uuid.uuid4().hex}"
+                ),
+            )
+        except _billing_credits.InsufficientCreditsError as exc:
+            db.rollback()
+            raise ApiError(
+                409, "insufficient_credits",
+                f"Adjustment exceeds the available balance "
+                f"({exc.available}).",
+            ) from exc
+        db.commit()
+        admin_audit.record(
+            principal, "billing.credit_adjust",
+            target_type="user", target_id=user_id,
+            detail={
+                "bucket": body.bucket, "delta": body.delta,
+                "reason": body.reason, "ledger_entry_id": entry.id,
+            },
+        )
+        account = _billing_credits.get_or_create_account(db, user_id)
+        return {
+            "adjusted": created,
+            "wallet": _billing_credits.balances(account),
+        }
+    finally:
+        db.close()
+
+
+@router.post("/billing/users/{user_id}/promo-grant")
+def billing_promo_grant(
+    user_id: str, body: PromoGrantIn,
+    principal=Depends(super_admin_guard),
+):
+    """Grant a credits-kind coupon to one user (the redemption
+    path for promo credits; per-user once, cap enforced)."""
+    db = SessionLocal()
+    try:
+        if db.get(User, user_id) is None:
+            raise ApiError(404, "user_not_found", "No such user.")
+        coupon = db.get(_models.Coupon, body.coupon_id)
+        if coupon is None or coupon.kind != "credits" or not coupon.is_active:
+            raise ApiError(
+                404, "coupon_not_found",
+                "No active credits coupon with that id.",
+            )
+        if (
+            coupon.max_redemptions is not None
+            and coupon.redeemed_count >= coupon.max_redemptions
+        ):
+            raise ApiError(
+                409, "coupon_exhausted",
+                "This coupon has reached its redemption cap.",
+            )
+        redemption = _models.CouponRedemption(
+            id=str(_uuid.uuid4()), coupon_id=coupon.id,
+            user_id=user_id,
+        )
+        db.add(redemption)
+        try:
+            db.flush()
+        except Exception as exc:
+            db.rollback()
+            raise ApiError(
+                409, "coupon_already_redeemed",
+                "This user has already redeemed this coupon.",
+            ) from exc
+        coupon.redeemed_count = int(coupon.redeemed_count or 0) + 1
+        entry, _created = _billing_credits.grant(
+            db, user_id, "promo", int(coupon.credits_grant or 0),
+            entry_type="allocation_promo",
+            idempotency_key=f"coupon:{coupon.id}:{user_id}",
+            source="admin", actor_id=principal.user_id,
+            reason=f"promo coupon {coupon.code}",
+            expires_at=coupon.promo_expires_at,
+        )
+        db.commit()
+        admin_audit.record(
+            principal, "billing.promo_grant",
+            target_type="user", target_id=user_id,
+            detail={"coupon_id": coupon.id, "code": coupon.code,
+                    "credits": coupon.credits_grant},
+        )
+        return {"granted": True, "ledger_entry_id": entry.id}
+    finally:
+        db.close()
+
+
+@router.get("/billing/subscriptions")
+def billing_subscriptions(
+    status: str | None = None, principal=Depends(admin_guard)
+):
+    db = SessionLocal()
+    try:
+        query = db.query(UserSubscription)
+        if status:
+            query = query.filter_by(status=status)
+        rows = query.order_by(
+            UserSubscription.created_at.desc()
+        ).limit(200).all()
+        plans = {p.id: p.name for p in db.query(Plan).all()}
+        users = {u.id: u.email for u in db.query(User).all()}
+        return {
+            "subscriptions": [
+                {
+                    **_account_view.subscription_view(s),
+                    "user_id": s.user_id,
+                    "user_email": users.get(s.user_id),
+                    "plan_name": plans.get(s.plan_id),
+                }
+                for s in rows
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.get("/billing/payments")
+def billing_payments(
+    status: str | None = None, principal=Depends(admin_guard)
+):
+    db = SessionLocal()
+    try:
+        query = db.query(_models.Payment)
+        if status:
+            query = query.filter_by(status=status)
+        rows = query.order_by(
+            _models.Payment.created_at.desc()
+        ).limit(200).all()
+        users = {u.id: u.email for u in db.query(User).all()}
+        return {
+            "payments": [
+                {
+                    "id": p.id, "user_id": p.user_id,
+                    "user_email": users.get(p.user_id),
+                    "provider": p.provider, "kind": p.kind,
+                    "status": p.status,
+                    "amount_cents": p.amount_cents,
+                    "currency": p.currency,
+                    "refunded_amount_cents": p.refunded_amount_cents,
+                    "provider_transaction_id":
+                        p.provider_transaction_id,
+                    "created_at": p.created_at,
+                }
+                for p in rows
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.get("/billing/events")
+def billing_events(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        rows = db.query(_models.PaymentEvent).order_by(
+            _models.PaymentEvent.created_at.desc()
+        ).limit(200).all()
+        return {
+            "events": [
+                {
+                    "id": e.id, "provider": e.provider,
+                    "event_id": e.event_id,
+                    "event_type": e.event_type,
+                    "processed_at": e.processed_at,
+                    "processing_error": e.processing_error,
+                    "created_at": e.created_at,
+                }
+                for e in rows
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.get("/billing/reports")
+def billing_reports(days: int = 30, principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        return _billing_costs.financial_report(
+            db, days=max(1, min(days, 365))
+        )
+    finally:
+        db.close()
+
+
+@router.get("/billing/retention")
+def billing_retention(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        return _billing_retention.storage_summary(db)
+    finally:
+        db.close()
+
+
+@router.post("/billing/retention/{video_id}/retry")
+def billing_retention_retry(
+    video_id: str, principal=Depends(_write_guard)
+):
+    db = SessionLocal()
+    try:
+        row = db.get(_models.GeneratedVideo, video_id)
+        if row is None:
+            raise ApiError(404, "video_not_found", "No such video.")
+        row.status = "active"
+        row.delete_attempts = 0
+        row.last_delete_error = None
+        db.commit()
+        admin_audit.record(
+            principal, "billing.retention_retry",
+            target_type="generated_video", target_id=video_id,
+        )
+        return {"video_id": video_id, "status": "active"}
+    finally:
+        db.close()
+
+
+@router.get("/billing/pricing-rules")
+def billing_pricing_rules(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        rows = db.query(_models.PricingRule).order_by(
+            _models.PricingRule.provider.asc()
+        ).all()
+        return {
+            "rules": [
+                {
+                    "id": r.id, "provider": r.provider,
+                    "model": r.model, "unit": r.unit,
+                    "rate_microusd": r.rate_microusd,
+                    "effective_from": r.effective_from,
+                    "effective_to": r.effective_to,
+                    "configured_by": r.configured_by,
+                }
+                for r in rows
+            ]
+        }
+    finally:
+        db.close()
+
+
+@router.post("/billing/pricing-rules", status_code=201)
+def billing_pricing_rule_create(
+    body: PricingRuleIn, principal=Depends(super_admin_guard)
+):
+    db = SessionLocal()
+    try:
+        rule = _models.PricingRule(
+            id=str(_uuid.uuid4()),
+            provider=body.provider, model=body.model,
+            unit=body.unit, rate_microusd=body.rate_microusd,
+            effective_from=body.effective_from,
+            effective_to=body.effective_to,
+            configured_by=principal.user_id,
+        )
+        db.add(rule)
+        db.commit()
+        admin_audit.record(
+            principal, "billing.pricing_rule_create",
+            target_type="pricing_rule", target_id=rule.id,
+            detail={"provider": rule.provider, "unit": rule.unit,
+                    "rate_microusd": rule.rate_microusd},
+        )
+        return {"id": rule.id}
+    finally:
+        db.close()
+
+
+@router.delete("/billing/pricing-rules/{rule_id}")
+def billing_pricing_rule_delete(
+    rule_id: str, principal=Depends(super_admin_guard)
+):
+    db = SessionLocal()
+    try:
+        rule = db.get(_models.PricingRule, rule_id)
+        if rule is None:
+            raise ApiError(404, "rule_not_found", "No such rule.")
+        db.delete(rule)
+        db.commit()
+        admin_audit.record(
+            principal, "billing.pricing_rule_delete",
+            target_type="pricing_rule", target_id=rule_id,
+        )
+        return {"deleted": True}
+    finally:
+        db.close()

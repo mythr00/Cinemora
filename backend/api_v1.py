@@ -59,7 +59,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import jobs
 from database import SessionLocal
-from models import Plan, Project, User, UserPreference, UserSubscription
+from models import Plan, Project, User, UserNotification, UserPreference, UserSubscription
 from services import admin_audit
 from services import auth as auth_service
 from services import plans as plans_service
@@ -1104,6 +1104,132 @@ def billing_management_url(
     from services.billing import checkout
 
     return {"url": checkout.management_url(principal.user_id)}
+
+
+@router.get("/account/billing")
+def billing_summary(
+    principal: auth_service.Principal = Depends(require_user),
+):
+    """Phase 8 (§14): the caller's plan, subscription, benefit
+    period, wallet, allowances and the public catalogue."""
+    from services.billing import account_view
+
+    db = SessionLocal()
+    try:
+        summary = account_view.billing_summary(db, principal.user_id)
+        db.commit()
+        return summary
+    finally:
+        db.close()
+
+
+@router.get("/account/billing/transactions")
+def billing_transactions(
+    limit: int = 50,
+    offset: int = 0,
+    principal: auth_service.Principal = Depends(require_user),
+):
+    from services.billing import account_view
+
+    db = SessionLocal()
+    try:
+        return account_view.ledger_view(
+            db,
+            principal.user_id,
+            limit=max(1, min(limit, 200)),
+            offset=max(0, offset),
+        )
+    finally:
+        db.close()
+
+
+@router.get("/account/billing/payments")
+def billing_payments(
+    limit: int = 50,
+    offset: int = 0,
+    principal: auth_service.Principal = Depends(require_user),
+):
+    from services.billing import account_view
+
+    db = SessionLocal()
+    try:
+        return account_view.payments_view(
+            db,
+            principal.user_id,
+            limit=max(1, min(limit, 200)),
+            offset=max(0, offset),
+        )
+    finally:
+        db.close()
+
+
+@router.get("/account/notifications")
+def account_notifications(
+    principal: auth_service.Principal = Depends(require_user),
+):
+    """Phase 8 (§21): in-app notifications (retention reminders)
+    with the unread count for the account-menu badge."""
+    from services.billing import notifications as notifications_service
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(UserNotification)
+            .filter_by(user_id=principal.user_id)
+            .order_by(UserNotification.created_at.desc())
+            .limit(50)
+            .all()
+        )
+        return {
+            "unread_count": notifications_service.unread_count(
+                db, principal.user_id
+            ),
+            "notifications": [
+                {
+                    "id": n.id,
+                    "kind": n.kind,
+                    "title": n.title,
+                    "body": n.body,
+                    "project_id": n.project_id,
+                    "email_status": n.email_status,
+                    "read_at": n.read_at.isoformat()
+                    if n.read_at
+                    else None,
+                    "created_at": n.created_at.isoformat()
+                    if n.created_at
+                    else None,
+                }
+                for n in rows
+            ],
+        }
+    finally:
+        db.close()
+
+
+@router.post("/account/notifications/{notification_id}/read")
+def account_notification_read(
+    notification_id: str,
+    principal: auth_service.Principal = Depends(post_guard),
+):
+    from datetime import datetime, timezone
+
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(UserNotification)
+            .filter_by(id=notification_id, user_id=principal.user_id)
+            .one_or_none()
+        )
+        if row is None:
+            raise ApiError(
+                404, "notification_not_found", "No such notification."
+            )
+        if row.read_at is None:
+            row.read_at = datetime.now(timezone.utc)
+            db.commit()
+        return {"read": True}
+    finally:
+        db.close()
 
 
 # The Phase 8 account-admin endpoints that used to live here

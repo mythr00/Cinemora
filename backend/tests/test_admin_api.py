@@ -178,6 +178,36 @@ ADMIN_ROUTES = [
     ("GET", "/api/v1/admin/assistant/security-events", None),
     # Phase N — Developer API visibility (founder #16).
     ("GET", "/api/v1/admin/developer", None),
+    # Phase 6 (A-16) — admin-issued password reset link.
+    ("POST", "/api/v1/admin/users/{user_id}/reset-link", {}),
+    # Phase 8 — Monetization administration (§12).
+    ("GET", "/api/v1/admin/billing/plans", None),
+    ("POST", "/api/v1/admin/billing/plans", {"name": "x"}),
+    ("POST", "/api/v1/admin/billing/plans/{plan_id}", {}),
+    ("GET", "/api/v1/admin/billing/topup-packages", None),
+    ("POST", "/api/v1/admin/billing/topup-packages",
+     {"name": "x", "credits": 1, "price_cents": 1}),
+    ("POST", "/api/v1/admin/billing/topup-packages/{package_id}", {}),
+    ("GET", "/api/v1/admin/billing/coupons", None),
+    ("POST", "/api/v1/admin/billing/coupons",
+     {"code": "X", "kind": "credits"}),
+    ("POST", "/api/v1/admin/billing/coupons/{coupon_id}", {}),
+    ("GET", "/api/v1/admin/billing/users/{user_id}", None),
+    ("POST", "/api/v1/admin/billing/users/{user_id}/credits/adjust",
+     {"bucket": "promo", "delta": 1, "reason": "registry probe"}),
+    ("POST", "/api/v1/admin/billing/users/{user_id}/promo-grant",
+     {"coupon_id": "x"}),
+    ("GET", "/api/v1/admin/billing/subscriptions", None),
+    ("GET", "/api/v1/admin/billing/payments", None),
+    ("GET", "/api/v1/admin/billing/events", None),
+    ("GET", "/api/v1/admin/billing/reports", None),
+    ("GET", "/api/v1/admin/billing/retention", None),
+    ("POST", "/api/v1/admin/billing/retention/{video_id}/retry", {}),
+    ("GET", "/api/v1/admin/billing/pricing-rules", None),
+    ("POST", "/api/v1/admin/billing/pricing-rules",
+     {"provider": "x", "unit": "per_call", "rate_microusd": 1,
+      "effective_from": "2026-01-01T00:00:00Z"}),
+    ("DELETE", "/api/v1/admin/billing/pricing-rules/{rule_id}", None),
 ]
 
 
