@@ -1,9 +1,13 @@
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 
 from services.atomic_write import write_json_atomic, write_text_atomic
+
+
+logger = logging.getLogger(__name__)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -52,6 +56,104 @@ def _get_whisper_model():
     return _WHISPER_MODEL
 
 
+# ---------------------------------------------------------------------
+# B-01 (Phase 5a): decode the audio OURSELVES and hand the model an
+# array — the path form cannot run on the pinned stack.
+#
+# Root cause, reproduced 2026-11-25 against the installed
+# faster-whisper 1.2.1 x PyAV 19.0.2: faster-whisper's decode_audio
+# calls av.open(input, metadata_errors="ignore"), and PyAV 19's
+# av.open rejects that keyword — TypeError: open() got an
+# unexpected keyword argument 'metadata_errors'. Every non-array
+# input (path string AND open file object) routes through that
+# decode, so model.transcribe(str(path)) raised on every call;
+# build_captions caught the exception and silently degraded every
+# production's captions to proportional/provisional timing.
+# Passing a decoded numpy array bypasses decode_audio entirely.
+#
+# This decode mirrors faster-whisper's own decode_audio exactly
+# (s16 mono resample to 16 kHz, /32768 float conversion) minus the
+# rejected argument. It lives HERE, with the model singleton, and
+# services.transcription delegates to it — one decode
+# implementation, so the two consumers can never diverge again
+# (the divergence is what caused B-01: transcription got the
+# workaround, captions did not).
+# ---------------------------------------------------------------------
+
+
+def _decode_audio_array(audio_path):
+    """Decode an audio file to the 16 kHz mono float32 array the
+    model consumes, through PyAV directly. Raises RuntimeError
+    when no audio stream can be decoded."""
+    import gc
+    import io
+
+    import av
+    import numpy as np
+
+    resampler = av.audio.resampler.AudioResampler(
+        format="s16", layout="mono", rate=16000
+    )
+    raw_buffer = io.BytesIO()
+    dtype = None
+    with av.open(str(audio_path), mode="r") as container:
+        for frame in container.decode(audio=0):
+            for resampled in resampler.resample(frame):
+                array = resampled.to_ndarray()
+                dtype = array.dtype
+                raw_buffer.write(array)
+    del resampler
+    gc.collect()
+    if dtype is None:
+        raise RuntimeError(
+            f"No audio stream could be decoded from {audio_path}."
+        )
+    audio = np.frombuffer(raw_buffer.getbuffer(), dtype=dtype)
+    return audio.astype(np.float32) / 32768.0
+
+
+#: timing_source values recorded on every transcribe result, so
+#: the artefact (and the log) always say WHICH input form produced
+#: the timings — the B-01 degradation was invisible precisely
+#: because nothing recorded this.
+TIMING_SOURCE_ARRAY = "faster_whisper_array_decode"
+TIMING_SOURCE_PATH = "faster_whisper_path"
+
+
+def _transcribe_with_model(model, audio_path):
+    """Run the model and MATERIALISE the segments (the segment
+    iterator is lazy — decode errors surface during iteration, so
+    the fallback decision must be made inside this function).
+
+    Primary path: the decoded array (works on the pinned stack).
+    Fallback: the legacy path string, kept for stacks where the
+    array decode itself fails but faster-whisper's own decode
+    works. Returns (segments_list, info, timing_source)."""
+    try:
+        audio = _decode_audio_array(audio_path)
+        segments, info = model.transcribe(
+            audio,
+            beam_size=5,
+            word_timestamps=True,
+            vad_filter=True,
+        )
+        return list(segments), info, TIMING_SOURCE_ARRAY
+    except Exception as primary_error:
+        logger.warning(
+            "captions array-decode transcription failed "
+            "(%s: %s); falling back to the path input form",
+            type(primary_error).__name__,
+            primary_error,
+        )
+    segments, info = model.transcribe(
+        str(audio_path),
+        beam_size=5,
+        word_timestamps=True,
+        vad_filter=True,
+    )
+    return list(segments), info, TIMING_SOURCE_PATH
+
+
 def transcribe_audio(
     audio_file: str,
     output_json: str | None = None,
@@ -80,11 +182,16 @@ def transcribe_audio(
     print()
     print("Transcribing...")
 
-    segments, info = model.transcribe(
-        str(audio_path),
-        beam_size=5,
-        word_timestamps=True,
-        vad_filter=True,
+    # B-01: the decoded-array input form is the primary path —
+    # model.transcribe(str(path)) raises TypeError on the pinned
+    # faster-whisper 1.2.1 x PyAV 19 stack (see _decode_audio_array).
+    segments, info, timing_source = _transcribe_with_model(
+        model, audio_path
+    )
+    logger.info(
+        "captions_timing_source=%s audio=%s",
+        timing_source,
+        audio_path.name,
     )
 
     caption_segments = []
@@ -117,6 +224,9 @@ def transcribe_audio(
         "language_probability": info.language_probability,
         "duration": info.duration,
         "segments": caption_segments,
+        # B-01: which input form produced these timings, recorded
+        # on the artefact itself — never silently ambiguous again.
+        "timing_source": timing_source,
     }
 
     if output_json is None:
@@ -1032,6 +1142,13 @@ def _build_captions_measured(
         for key in ("language", "language_probability"):
             if key in whisper_result:
                 data[key] = whisper_result[key]
+        # B-01: keep the Whisper input form that produced the word
+        # timings visible on the measured artefact too (its own
+        # "timing_source" above describes the sentence windows).
+        if whisper_result.get("timing_source"):
+            data["whisper_timing_source"] = whisper_result[
+                "timing_source"
+            ]
     return data
 
 
@@ -1092,6 +1209,12 @@ def build_captions(narration_file, script_text, captions_json_path,
     elif segments:
         data = dict(whisper_result)
         data["segments"] = segments
+        # B-01: preserve which input form produced the timings
+        # before the artefact-level source label is stamped.
+        if whisper_result.get("timing_source"):
+            data["whisper_timing_source"] = whisper_result[
+                "timing_source"
+            ]
         data["timing_source"] = "whisper"
         data["provisional"] = False
     else:

@@ -58,40 +58,30 @@ def _decode_audio_array(audio_path: Path):
     """Decode an audio file to the 16 kHz mono float32 array
     the model consumes, through PyAV directly.
 
-    This mirrors faster-whisper's own decode_audio exactly
-    (s16 mono resample, /32768 float conversion) minus one
-    argument: the installed faster-whisper 1.2.1 passes
-    metadata_errors="ignore" to av.open, which the installed
-    PyAV 19 rejects (TypeError) — so the library's path-based
-    decode cannot run on this stack at all. Decoding here and
-    handing the model an array keeps the provider on the real
-    engine without patching site-packages."""
-    import gc
-    import io
+    The implementation lives in services.captions
+    (_decode_audio_array, B-01 / Phase 5a): ONE decode for both
+    Whisper consumers. It mirrors faster-whisper's own
+    decode_audio exactly (s16 mono resample, /32768 float
+    conversion) minus one argument: the installed faster-whisper
+    1.2.1 passes metadata_errors="ignore" to av.open, which the
+    installed PyAV 19 rejects (TypeError) — so the library's
+    path-based decode cannot run on this stack at all. Decoding
+    here and handing the model an array keeps the provider on
+    the real engine without patching site-packages. (Captions
+    originally kept calling the broken path form because this
+    workaround lived only in this module; the shared home ends
+    that divergence.) Decode failures keep this module's
+    TranscriptionError contract."""
+    from services.captions import _decode_audio_array as _decode
 
-    import av
-    import numpy as np
-
-    resampler = av.audio.resampler.AudioResampler(
-        format="s16", layout="mono", rate=16000
-    )
-    raw_buffer = io.BytesIO()
-    dtype = None
-    with av.open(str(audio_path), mode="r") as container:
-        for frame in container.decode(audio=0):
-            for resampled in resampler.resample(frame):
-                array = resampled.to_ndarray()
-                dtype = array.dtype
-                raw_buffer.write(array)
-    del resampler
-    gc.collect()
-    if dtype is None:
+    try:
+        return _decode(audio_path)
+    except TranscriptionError:
+        raise
+    except Exception as error:
         raise TranscriptionError(
-            "transcription_failed",
-            f"No audio stream could be decoded from {audio_path}.",
-        )
-    audio = np.frombuffer(raw_buffer.getbuffer(), dtype=dtype)
-    return audio.astype(np.float32) / 32768.0
+            "transcription_failed", str(error)
+        ) from error
 
 
 def _transcribe_faster_whisper(audio_path: Path) -> dict:
