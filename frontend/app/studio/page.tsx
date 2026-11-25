@@ -20,7 +20,7 @@ import {
 import { StageProgress } from "@/components/stage-progress";
 import { ApiConnectionBadge } from "@/components/connection-status";
 import { AuthenticatedVideo } from "@/components/authenticated-media";
-import { ArrowRight, ArrowUpRight, ChevronDown, Mic, Sparkles } from "lucide-react";
+import { ArrowRight, ArrowUpRight, ChevronDown, Sparkles } from "lucide-react";
 
 type Project = ProjectSummary;
 
@@ -48,7 +48,7 @@ const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
 
 // GoMotion redesign (2026-11-24): the desk is create-first. The
 // page opens on the step-numbered creation flow — 1 Input
-// (write a script, or the voiceover path), 2 Voice & story
+// (write a script), 2 Voice & story
 // (title, narration voice from the real catalogue),
 // 3 Start — and the desk's live data (summary counts, approvals
 // queue, active and recent productions) follows as cards.
@@ -57,6 +57,16 @@ const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
 // require_plan_approval), then submitRun — no new endpoints, and
 // the full configuration (presets, theme, music) stays one link
 // away on /create, named as such.
+//
+// Phase 6 (A-04): the desk's former "Upload a voiceover" input
+// mode is REMOVED. It left steps 2-3 (including the Start form)
+// on screen with no way to submit, and the mode it implied —
+// narration from an uploaded recording (production_config
+// narration.source "uploaded_voice") — is refused by the backend
+// (services/production_config, Phase 4c pin), so the UI must not
+// offer it. The legitimate voice path is unchanged and lives
+// where it always did: a project's Configuration tab transcribes
+// an uploaded recording INTO A SCRIPT the user reviews.
 export default function StudioPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [busy, setBusy] = useState(true);
@@ -65,7 +75,6 @@ export default function StudioPage() {
   const projectsRef = useRef<Project[]>([]);
 
   // --- Create flow state (mirrors app/create's flat path) ---
-  const [mode, setMode] = useState<"write" | "voiceover">("write");
   const [script, setScript] = useState("");
   const [title, setTitle] = useState("");
   const [voices, setVoices] = useState<VoiceCatalogueEntry[]>(FALLBACK_VOICES);
@@ -129,10 +138,6 @@ export default function StudioPage() {
 
   async function startProduction(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (mode !== "write") {
-      setCreateMessage("Voiceover productions start from a project's Configuration tab — choose a project in step 1.");
-      return;
-    }
     if (!script.trim()) {
       setCreateMessage("Add a script before starting production.");
       return;
@@ -251,13 +256,9 @@ export default function StudioPage() {
           <div className="gm-step-head">
             <span className="gm-step-num">1</span>
             <h2 id="dash-input-title">Input</h2>
-            {mode === "write" && <span className="required-tag">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span>}
+            <span className="required-tag">{script.length.toLocaleString()} / {MAX_SCRIPT_CHARS.toLocaleString()} characters</span>
           </div>
-          <div className="gm-segmented" role="group" aria-label="Input source">
-            <button type="button" aria-pressed={mode === "write"} onClick={() => setMode("write")}>Write a script</button>
-            <button type="button" aria-pressed={mode === "voiceover"} onClick={() => setMode("voiceover")}>Upload a voiceover</button>
-          </div>
-          {mode === "write" ? <>
+          <>
             <label className="sr-only" htmlFor="dash-script">Documentary script</label>
             <textarea
               id="dash-script"
@@ -273,11 +274,7 @@ export default function StudioPage() {
               <span>No script yet? <strong>Write one with AI</strong></span>
               <ArrowRight className="gm-ai-arrow" size={18} strokeWidth={1.8} aria-hidden />
             </Link>
-          </> : <div className="gm-upload-panel">
-            <Mic size={22} strokeWidth={1.7} aria-hidden />
-            <p>A recorded voiceover becomes a script inside a project: open a project, and its Configuration tab transcribes the recording into a script you review.</p>
-            <Link className="button button-primary" href="/projects">Choose a project <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link>
-          </div>}
+          </>
         </section>
 
         <section className="gm-card" aria-labelledby="dash-story-title">
