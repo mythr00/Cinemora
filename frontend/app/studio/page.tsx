@@ -7,6 +7,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { EmptyState, ErrorState, LoadingState } from "@/components/states";
 import {
   createProject as apiCreateProject,
+  getCurrentUser,
   getProjectStatus,
   getVoiceCatalogue,
   listProjects,
@@ -71,6 +72,12 @@ export default function StudioPage() {
   const [voiceId, setVoiceId] = useState("");
   const [catalogueState, setCatalogueState] = useState<"loading" | "api" | "fallback">("loading");
   const [requirePlanApproval, setRequirePlanApproval] = useState(false);
+  // FS-C (FS-5): the plan-approval queue links into the admin-only
+  // Visual Plan surface, and approval itself is an admin action —
+  // the queue renders only for admin/super_admin roles (fail-closed
+  // until the role is known). Ordinary users' submissions no longer
+  // park at the gate, so they never generate queue entries.
+  const [isAdmin, setIsAdmin] = useState(false);
   const [connection, setConnection] = useState<ApiConnectionStatus | null>(null);
   const [creating, setCreating] = useState(false);
   const [createMessage, setCreateMessage] = useState("");
@@ -85,6 +92,19 @@ export default function StudioPage() {
   // cannot be created through a rejected session or an
   // unreachable API, and the badge in step 3 says which it is.
   const apiBlocked = connection !== null && connection.state !== "connected";
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getCurrentUser(controller.signal)
+      .then((user) =>
+        setIsAdmin(
+          user !== null &&
+            (user.role === "admin" || user.role === "super_admin"),
+        ),
+      )
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -308,7 +328,7 @@ export default function StudioPage() {
         <p>Counts are computed from the live project list.</p>
       </section>
 
-      {!busy && !error && awaitingApproval.length > 0 && (
+      {!busy && !error && isAdmin && awaitingApproval.length > 0 && (
         <section className="dashboard-approvals" aria-label="Awaiting your approval">
           <div className="section-heading"><div><p className="eyebrow">NEEDS YOUR DECISION</p><h2>Awaiting your approval</h2></div></div>
           <ul className="approval-queue">

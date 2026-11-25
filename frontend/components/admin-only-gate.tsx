@@ -5,7 +5,12 @@
  *
  * Wraps the project-workspace diagnostic surfaces that are
  * admin-only — Asset Decisions (/assets), Delivery & Provenance
- * (/certificate) and the QA Report (/qa). Follows the AdminShell
+ * (/certificate) and the QA Report (/qa) — and, since FS-C
+ * (FS-1/FS-5/FS-6/FS-11/FS-13), the presentational internal
+ * surfaces: Visual Plan (/plan), Research (/research), Graphics
+ * (/graphics), Versions (/versions), project and account
+ * Intelligence (/intelligence), Library (/library) and Templates
+ * (/templates). Follows the AdminShell
  * pattern (components/admin-shell.tsx): the signed-in user is
  * loaded from /api/v1/auth/me and the children render only when
  * the account role is admin or super_admin. Anyone else —

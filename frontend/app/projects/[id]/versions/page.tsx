@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { AdminOnlyGate } from "@/components/admin-only-gate";
 import { StatusBadge } from "@/components/status-badge";
 import { ProjectTabs } from "@/components/project-tabs";
 import { ErrorState, LoadingState } from "@/components/states";
@@ -374,7 +375,7 @@ function ComparePanel({ result }: { result: VersionCompare }) {
 }
 
 
-export default function VersionsPage() {
+function VersionsPageContent() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const [view, setView] = useState<VersionsView | null>(null);
@@ -950,5 +951,20 @@ export default function VersionsPage() {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * FS-11: Versioning & Recovery is an admin-only presentational surface (FS-C).
+ * The page renders only behind AdminOnlyGate (role from
+ * /auth/me, the AdminShell pattern); a non-admin direct URL gets
+ * the plain not-found view and the content never mounts. The
+ * backend endpoints enforce the same rule server-side.
+ */
+export default function VersionsPage() {
+  return (
+    <AdminOnlyGate>
+      <VersionsPageContent />
+    </AdminOnlyGate>
   );
 }

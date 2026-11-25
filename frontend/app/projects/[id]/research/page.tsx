@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { AdminOnlyGate } from "@/components/admin-only-gate";
 import { ProjectTabs } from "@/components/project-tabs";
 import {
   AlertTriangle,
@@ -62,7 +63,7 @@ function tierLabel(tier: string) {
   return tier.replaceAll("_", " ");
 }
 
-export default function ResearchStudioPage() {
+function ResearchStudioPageContent() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
 
@@ -802,5 +803,20 @@ export default function ResearchStudioPage() {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * FS-6: Research & Source Library is an admin-only presentational surface (FS-C).
+ * The page renders only behind AdminOnlyGate (role from
+ * /auth/me, the AdminShell pattern); a non-admin direct URL gets
+ * the plain not-found view and the content never mounts. The
+ * backend endpoints enforce the same rule server-side.
+ */
+export default function ResearchStudioPage() {
+  return (
+    <AdminOnlyGate>
+      <ResearchStudioPageContent />
+    </AdminOnlyGate>
   );
 }

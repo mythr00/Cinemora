@@ -192,7 +192,7 @@ export default function ProjectPage() {
 
   const latestRun = overview?.runs[0] ?? null;
   const film = overview?.outputs?.film;
-  const nextAction = overview ? nextActionFor(overview.status.status, projectId) : null;
+  const nextAction = overview ? nextActionFor(overview.status.status, projectId, isAdmin) : null;
 
   return <main className="app-page"><AppNavigation /><ProjectTabs projectId={projectId} /><section className="projects-content"><Link href="/projects" className="editor-back"><ArrowLeft size={14} strokeWidth={2} aria-hidden /> Projects</Link>
     {!overview && loadError ? <>
@@ -275,9 +275,17 @@ export default function ProjectPage() {
 
 // The next real action, computed from the project's actual
 // status — never a generic CTA.
-function nextActionFor(status: string, projectId: string): { text: string; label: string; href: string } | null {
+function nextActionFor(status: string, projectId: string, isAdmin: boolean): { text: string; label: string; href: string } | null {
   switch (status) {
     case "awaiting_approval":
+      // FS-C (FS-5): the Visual Plan is admin-only and plan
+      // approval is an admin action; ordinary users' submissions
+      // no longer park here (the backend bypasses the gate for
+      // non-admin-owned projects), so a non-admin sees the status
+      // on this page only, with no link into the gated surface.
+      if (!isAdmin) {
+        return { text: "The production plan is ready and production is paused pending review.", label: "Stay on overview", href: `/projects/${projectId}` };
+      }
       return { text: "The production plan is ready and production is paused on your decision.", label: "Review the plan", href: `/projects/${projectId}/plan` };
     case "completed":
       return { text: "The film is finished. Open it in the editor, or check delivery and provenance.", label: "Open the editor", href: `/projects/${projectId}/edit` };
@@ -290,6 +298,10 @@ function nextActionFor(status: string, projectId: string): { text: string; label
     case "queued":
     case "pipeline_queued":
     case "running":
+      // FS-C (FS-5): the plan link is admin-only with the surface.
+      if (!isAdmin) {
+        return { text: "Production is under way. Follow its stages in the status panel.", label: "Stay on overview", href: `/projects/${projectId}` };
+      }
       return { text: "Production is under way. Follow its stages in the status panel.", label: "View the plan", href: `/projects/${projectId}/plan` };
     default:
       return null;

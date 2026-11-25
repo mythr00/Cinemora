@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { AdminOnlyGate } from "@/components/admin-only-gate";
 import { ProjectTabs } from "@/components/project-tabs";
 import { ItemThumb } from "@/components/editor/item-thumb";
 import { ClassificationChip } from "@/components/editor/classification-chip";
@@ -77,7 +78,7 @@ function formatTime(seconds: number) {
   return `${seconds.toFixed(1)}s`;
 }
 
-export default function ProjectGraphicsPage() {
+function ProjectGraphicsPageContent() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const [document, setDocument] = useState<EditorDocument | null>(null);
@@ -160,4 +161,19 @@ export default function ProjectGraphicsPage() {
       </div>
     </>}
   </section></main>;
+}
+
+/**
+ * FS-13: the Graphics review tab is an admin-only presentational surface (FS-C). The editor's own graphics features are unaffected — this page only reads the shared editor document.
+ * The page renders only behind AdminOnlyGate (role from
+ * /auth/me, the AdminShell pattern); a non-admin direct URL gets
+ * the plain not-found view and the content never mounts. The
+ * backend endpoints enforce the same rule server-side.
+ */
+export default function ProjectGraphicsPage() {
+  return (
+    <AdminOnlyGate>
+      <ProjectGraphicsPageContent />
+    </AdminOnlyGate>
+  );
 }

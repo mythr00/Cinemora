@@ -29,6 +29,19 @@ import { BellRing, CirclePlus, Ellipsis, FolderOpen, KeyRound, LayoutDashboard, 
 // Scripts, Templates, Library — the `phone` flag); the remaining
 // sections live in the bar's More panel, rendered below. Desktop
 // and tablet rails show every link exactly as before.
+//
+// FS-C (FS-1/FS-13): Templates, Library and Intelligence are
+// ADMIN-ONLY surfaces. Their entries render only when /auth/me
+// reports an admin or super_admin account role (fail-closed:
+// until the role is known, and for every ordinary user, they are
+// absent from the rail, the phone bar and the More panel alike).
+// The pages themselves are gated by components/admin-only-gate
+// .tsx and their backend endpoints enforce the same rule.
+const ADMIN_ONLY_HREFS: ReadonlySet<string> = new Set([
+  "/templates",
+  "/library",
+  "/intelligence",
+]);
 const links = [
   { href: "/studio", label: "Dashboard", Icon: LayoutDashboard, phone: false },
   { href: "/projects", label: "Projects", Icon: FolderOpen, phone: true },
@@ -73,7 +86,6 @@ export function AppNavigation({
   // never a second navigation system.
   const [moreOpen, setMoreOpen] = useState(false);
   useEffect(() => { setMoreOpen(false); }, [pathname]);
-  const moreActive = links.some((link) => !link.phone && active === link.href);
 
   // Session gate (Phase 8.5): every studio surface is per-user,
   // so an unresolved session means sign-in comes first. Only a
@@ -125,6 +137,16 @@ export function AppNavigation({
     };
   }, []);
 
+  // FS-C: role-gated global entries (see ADMIN_ONLY_HREFS above).
+  const isAdmin =
+    user !== null && (user.role === "admin" || user.role === "super_admin");
+  const visibleLinks = links.filter(
+    (link) => isAdmin || !ADMIN_ONLY_HREFS.has(link.href),
+  );
+  const moreActive = visibleLinks.some(
+    (link) => !link.phone && active === link.href,
+  );
+
   return (
     <>
       <header className="app-topbar">
@@ -143,7 +165,7 @@ export function AppNavigation({
         </div>
       </header>
       <nav className="app-rail" aria-label="Studio navigation">
-        {links.map(({ href, label, Icon, phone }) => (
+        {visibleLinks.map(({ href, label, Icon, phone }) => (
           <Link key={href} href={href} className={phone ? "rail-primary" : "rail-secondary"} aria-current={active === href ? "page" : undefined}>
             <Icon size={18} strokeWidth={1.8} aria-hidden />
             <span className="app-rail-label">{label}</span>
@@ -162,7 +184,7 @@ export function AppNavigation({
           </button>
           {moreOpen && (
             <div className="app-more-panel">
-              {links.filter((link) => !link.phone).map(({ href, label, Icon }) => (
+              {visibleLinks.filter((link) => !link.phone).map(({ href, label, Icon }) => (
                 <Link key={href} href={href} aria-current={active === href ? "page" : undefined} onClick={() => setMoreOpen(false)}>
                   <Icon size={18} strokeWidth={1.8} aria-hidden />
                   <span>{label}</span>

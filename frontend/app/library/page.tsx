@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { AdminOnlyGate } from "@/components/admin-only-gate";
 import {
   Copy,
   FileAudio,
@@ -182,7 +183,7 @@ function LibraryThumb({
   return <img className="media-thumb" src={media.url} alt={alt} />;
 }
 
-export default function AssetLibraryPage() {
+function AssetLibraryPageContent() {
   const [items, setItems] = useState<LibraryAsset[]>([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState<{
@@ -980,5 +981,20 @@ export default function AssetLibraryPage() {
         </section>
       </section>
     </main>
+  );
+}
+
+/**
+ * FS-1: the Library is an admin-only presentational surface (FS-C).
+ * The page renders only behind AdminOnlyGate (role from
+ * /auth/me, the AdminShell pattern); a non-admin direct URL gets
+ * the plain not-found view and the content never mounts. The
+ * backend endpoints enforce the same rule server-side.
+ */
+export default function AssetLibraryPage() {
+  return (
+    <AdminOnlyGate>
+      <AssetLibraryPageContent />
+    </AdminOnlyGate>
   );
 }

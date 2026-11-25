@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { AdminOnlyGate } from "@/components/admin-only-gate";
 import { ErrorState, LoadingState } from "@/components/states";
 import {
   Copy,
@@ -176,7 +177,7 @@ function optionSummary(template: TemplateRecord): string[] {
   return parts;
 }
 
-export default function TemplatesPage() {
+function TemplatesPageContent() {
   const [builtins, setBuiltins] = useState<TemplateRecord[]>([]);
   const [mine, setMine] = useState<TemplateRecord[]>([]);
   const [genres, setGenres] = useState<GenreCatalogueEntry[]>([]);
@@ -883,5 +884,20 @@ export default function TemplatesPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+/**
+ * FS-1: Templates is an admin-only presentational surface (FS-C).
+ * The page renders only behind AdminOnlyGate (role from
+ * /auth/me, the AdminShell pattern); a non-admin direct URL gets
+ * the plain not-found view and the content never mounts. The
+ * backend endpoints enforce the same rule server-side.
+ */
+export default function TemplatesPage() {
+  return (
+    <AdminOnlyGate>
+      <TemplatesPageContent />
+    </AdminOnlyGate>
   );
 }

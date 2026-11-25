@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { AdminOnlyGate } from "@/components/admin-only-gate";
 import { VerdictChip } from "@/components/verdict-chip";
 import { ErrorState, LoadingState } from "@/components/states";
 import {
@@ -22,7 +23,7 @@ import {
  * the tables they describe. Only your own projects are read —
  * nothing of another user's enters even a count.
  */
-export default function AccountIntelligencePage() {
+function AccountIntelligencePageContent() {
   const [view, setView] = useState<AccountIntelligence | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -220,5 +221,20 @@ export default function AccountIntelligencePage() {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * FS-13: account Intelligence is an admin-only presentational surface (FS-C).
+ * The page renders only behind AdminOnlyGate (role from
+ * /auth/me, the AdminShell pattern); a non-admin direct URL gets
+ * the plain not-found view and the content never mounts. The
+ * backend endpoints enforce the same rule server-side.
+ */
+export default function AccountIntelligencePage() {
+  return (
+    <AdminOnlyGate>
+      <AccountIntelligencePageContent />
+    </AdminOnlyGate>
   );
 }

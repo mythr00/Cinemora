@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
+import { AdminOnlyGate } from "@/components/admin-only-gate";
 import { StatusBadge } from "@/components/status-badge";
 import { ProjectTabs } from "@/components/project-tabs";
 import { MediaThumb } from "@/components/media-thumb";
@@ -54,7 +55,7 @@ const APPLIED_REPLACE_OUTCOMES = ["swapped", "recorded_pre_run"];
 // semantics. Visual Director Pass 1/Pass 2 data is NOT shown:
 // visual_plan is not API-exposed yet, and no chrome is faked
 // for it (§3.7 programme note).
-export default function PlanReviewPage() {
+function PlanReviewPageContent() {
   const params = useParams<{ id: string }>();
   const projectId = params.id;
   const [plan, setPlan] = useState<PlanDocument | null>(null);
@@ -465,5 +466,20 @@ export default function PlanReviewPage() {
         )}
       </section>
     </main>
+  );
+}
+
+/**
+ * FS-5: the Visual Plan is an admin-only presentational surface (FS-C).
+ * The page renders only behind AdminOnlyGate (role from
+ * /auth/me, the AdminShell pattern); a non-admin direct URL gets
+ * the plain not-found view and the content never mounts. The
+ * backend endpoints enforce the same rule server-side.
+ */
+export default function PlanReviewPage() {
+  return (
+    <AdminOnlyGate>
+      <PlanReviewPageContent />
+    </AdminOnlyGate>
   );
 }

@@ -28,6 +28,14 @@ import { getCurrentUser } from "@/lib/api";
  * presentation, not the barrier. The per-project collaboration
  * role (owner/editor/viewer) is NOT an admin signal and never
  * reveals these tabs.
+ *
+ * FS-C (FS-1/FS-5/FS-6/FS-11/FS-13): the presentational internal
+ * tabs — Visual Plan, Research, Graphics, Versions and
+ * Intelligence — join the same ADMIN-ONLY set, so the ordinary
+ * user's tab bar is: Overview, Configuration, Editor, Editor
+ * Studio, Thumbnails, Localization, Team. Nothing is deleted;
+ * admins keep every tab, and the pages/endpoints enforce the
+ * same rule server-side.
  */
 const TABS = [
   { suffix: "", label: "Overview" },
@@ -48,9 +56,16 @@ const TABS = [
 ] as const;
 
 const ADMIN_ONLY_SUFFIXES: ReadonlySet<string> = new Set([
+  // FS-B diagnostic surfaces (FS-7/FS-9/FS-10).
   "/assets",
   "/certificate",
   "/qa",
+  // FS-C presentational surfaces (FS-5/FS-6/FS-11/FS-13).
+  "/plan",
+  "/research",
+  "/graphics",
+  "/versions",
+  "/intelligence",
 ]);
 
 export function ProjectTabs({ projectId }: { projectId: string }) {
