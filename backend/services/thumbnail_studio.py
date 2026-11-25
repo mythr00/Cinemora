@@ -50,7 +50,7 @@ recorded material on the strongest graphics stack in the product
   recorded quantity/date facts). Headline suggestions are those
   recorded strings — the title and the primary subject's recorded
   name — never invented copy. An optional AI drafting action runs
-  through llm_client (the Script Studio's pattern: explicit,
+  through llm_provider (the Script Studio's pattern: explicit,
   user-triggered, proposal-only, 503 when no provider is
   configured, 502 when it fails) and is constrained to the
   recorded facts it is given.
@@ -82,7 +82,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from services import editor, frame_verification, llm_client, media_paths, media_probe, run_ledger
+from services import editor, frame_verification, llm_provider, media_paths, media_probe, run_ledger
 from services.atomic_write import write_json_atomic
 from services.motion_engine import core as motion_core
 from services.motion_engine.styles import FONT_BOLD
@@ -923,18 +923,18 @@ def analyse_image(project_id, base_id) -> dict:
 
 
 # ---------------------------------------------------------------------
-# AI headline drafting — llm_client only, proposals only
+# AI headline drafting — llm_provider only, proposals only
 # ---------------------------------------------------------------------
 
 
 def ai_available() -> bool:
-    return bool(getattr(llm_client, "BREWKEG_API_KEY", None))
+    return llm_provider.is_configured()
 
 
 def suggest_headlines_ai(project_id, project_title=None,
                          project_category=None) -> dict:
     """Draft headline proposals from the recorded brief through
-    llm_client. Proposals only: nothing is composed or stored by
+    llm_provider. Proposals only: nothing is composed or stored by
     this action. 503 when no provider is configured, 502 when it
     fails (the Script Studio's contract) — never canned text."""
     if not ai_available():
@@ -960,9 +960,10 @@ def suggest_headlines_ai(project_id, project_title=None,
         'Return JSON: {"headlines": ["...", "...", "..."]}'
     )
     try:
-        data = llm_client.llm_json(system, user)
+        data = llm_provider.complete_json(system, user)
     except RuntimeError as error:
-        if "BREWKEG_API_KEY is not configured" in str(error):
+        if isinstance(error, llm_provider.LLMProviderError) \
+                and error.kind == "not_configured":
             raise ThumbnailError(
                 503, "thumbnail_ai_unavailable",
                 "Headline drafting is unavailable: no LLM provider "

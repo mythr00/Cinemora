@@ -301,6 +301,7 @@ def post_message(
                 "state": outcome.state,
                 "tools": outcome.trace,
                 "unavailable_reason": outcome.unavailable_reason,
+                "provider_error_kind": outcome.provider_error_kind,
             },
             created_at=_now(),
         )

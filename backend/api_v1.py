@@ -3154,7 +3154,7 @@ def create_research_summary(
 # ---------------------------------------------------------------------------
 # YouTube Script Studio (founder priority #12) — the writing
 # workspace over services/script_studio.py: per-owner draft
-# documents, AI proposals through llm_client, the pipeline's own
+# documents, AI proposals through llm_provider, the pipeline's own
 # analysis + fact check, and send-to-production through the normal
 # project creation path. Drafts live in the caller's own store, so
 # another user's draft id is simply absent — a 404, never a leak.
@@ -3791,7 +3791,7 @@ def delete_thumbnail(project_id: str, thumb_id: str,
 # ---------------------------------------------------------------------------
 # Localization Studio (founder priority #14) — sub-phase 1 of the
 # audit's phasing (services/localization.py): the project's
-# recorded captions and its script translated through llm_client,
+# recorded captions and its script translated through llm_provider,
 # timings preserved exactly and proven against the written file,
 # the English narration retained and labelled as retained. There
 # is deliberately NO dub route: the narration adapter's installed

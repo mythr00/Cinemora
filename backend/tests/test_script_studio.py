@@ -5,11 +5,11 @@ The honesty rules under test (services/script_studio.py):
 - Metrics are arithmetic over the text at the codebase's recorded
   rate (145 wpm, the create page's number): word counts, sentence
   counts via the pipeline's own splitter, target budgets.
-- AI actions are proposals through llm_client only: with no
+- AI actions are proposals through llm_provider only: with no
   provider configured they refuse 503 script_ai_unavailable; a
   provider failure is a 502; a proposal NEVER modifies the stored
   draft until the user applies it through the normal update path.
-  Generation is sectioned (outline via llm_json, one llm_text call
+  Generation is sectioned (outline via complete_json, one complete_text call
   per section) and lands as a NEW draft.
 - Analysis is the pipeline's own script_analyzer (degraded mode
   here — no provider in the test env — and the recorded mode says
@@ -36,7 +36,7 @@ import main
 from database import SessionLocal, engine
 from models import Base, Plan, ProductionRun, Project
 from services import auth as auth_service
-from services import kb_client, llm_client, run_ledger
+from services import kb_client, llm_provider, run_ledger
 
 TOKEN = "script-studio-test-token"
 PASSWORD = "script-studio-test-password"
@@ -59,7 +59,7 @@ def _api_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CINEMORA_MEDIA_ROOT", str(tmp_path / "media"))
     # Deterministic AI availability: no provider unless a test
     # explicitly configures the stub.
-    monkeypatch.setattr(llm_client, "BREWKEG_API_KEY", None)
+    monkeypatch.setattr(llm_provider, "BREWKEG_API_KEY", None)
     api_v1.rate_limiter.reset()
     api_v1.auth_rate_limiter.reset()
     Base.metadata.create_all(bind=engine)
@@ -397,7 +397,7 @@ def test_ai_generation_target_out_of_range(client, users):
 
 
 def _configure_ai_stub(monkeypatch):
-    monkeypatch.setattr(llm_client, "BREWKEG_API_KEY", "test-key")
+    monkeypatch.setattr(llm_provider, "BREWKEG_API_KEY", "test-key")
 
 
 def test_ai_draft_generation_is_sectioned_and_creates_new_draft(
@@ -422,8 +422,8 @@ def test_ai_draft_generation_is_sectioned_and_creates_new_draft(
         calls["text"] += 1
         return f"Generated narration for call {calls['text']}."
 
-    monkeypatch.setattr(llm_client, "llm_json", fake_json)
-    monkeypatch.setattr(llm_client, "llm_text", fake_text)
+    monkeypatch.setattr(llm_provider, "complete_json", fake_json)
+    monkeypatch.setattr(llm_provider, "complete_text", fake_text)
     response = client.post(
         "/api/v1/script-studio/ai/draft",
         headers=headers,
@@ -447,7 +447,7 @@ def test_expand_is_a_proposal_until_applied(client, users, monkeypatch):
     draft = _create_draft(client, headers)
     _configure_ai_stub(monkeypatch)
     monkeypatch.setattr(
-        llm_client, "llm_text", lambda system, user, **kw: "Expanded prose."
+        llm_provider, "complete_text", lambda system, user, **kw: "Expanded prose."
     )
     response = client.post(
         f"/api/v1/script-studio/scripts/{draft['id']}/ai/expand", headers=headers
@@ -482,7 +482,7 @@ def test_tighten_proposal_reports_both_word_counts(client, users, monkeypatch):
     draft = _create_draft(client, headers)
     _configure_ai_stub(monkeypatch)
     monkeypatch.setattr(
-        llm_client, "llm_text", lambda system, user, **kw: "Tightened text."
+        llm_provider, "complete_text", lambda system, user, **kw: "Tightened text."
     )
     section_id = draft["sections"][0]["id"]
     response = client.post(
@@ -510,7 +510,7 @@ def test_ai_provider_failure_is_502_never_a_canned_draft(client, users, monkeypa
     def boom(system, user, **kwargs):
         raise RuntimeError("gateway exploded")
 
-    monkeypatch.setattr(llm_client, "llm_json", boom)
+    monkeypatch.setattr(llm_provider, "complete_json", boom)
     response = client.post(
         "/api/v1/script-studio/ai/draft",
         headers=headers,

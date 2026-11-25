@@ -11,7 +11,7 @@ import json
 import re
 from pathlib import Path
 
-from services.llm_client import get_llm
+from services.llm_provider import get_llm
 from services import story_understanding as story
 from services.atomic_write import write_json_atomic
 from services.scene_structure import derive_scenes
@@ -399,7 +399,7 @@ def dry_run_case_bible(script, project_dir, project_id="dry_run", llm="auto"):
 
 def analyze_script(script, project_id="", cache_path=None, llm="auto", genre_pack=None):
     """
-    llm="auto" -> use configured provider (services.llm_client.get_llm()).
+    llm="auto" -> use configured provider (services.llm_provider.get_llm()).
     llm=None   -> force degraded (no-LLM) mode.
     llm=callable(system, user) -> use that.
     genre_pack: a services.genre_packs pack dict (Stage 5A) shaping

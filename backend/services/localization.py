@@ -9,7 +9,7 @@ own phasing is what this module builds:
 
 - SUB-PHASE 1 (this module): subtitle/script localisation.
   Translate the project's recorded caption segments and its
-  script through the existing llm_client, keep the English
+  script through the provider interface (llm_provider), keep the English
   narration, and label every artefact as exactly that — a
   translation of the text assets, NOT a localised film.
 - SUB-PHASE 2 (deferred, honestly): full narration localisation.
@@ -36,7 +36,7 @@ How the built half works:
   the production's project-level captions.json. The source kind
   is recorded on every artefact — a translation never hides which
   captions it came from.
-- TRANSLATION runs through llm_client.llm_json only, in bounded
+- TRANSLATION runs through llm_provider.complete_json only, in bounded
   batches (25 caption segments / ~6 script paragraphs per call),
   with the source text carried as JSON data — it is translated,
   never obeyed. Every batch is verified before use: exactly one
@@ -94,7 +94,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from services import captions as captions_service
-from services import editor, llm_client, media_paths, narration
+from services import editor, llm_provider, media_paths, narration
 from services.atomic_write import write_json_atomic, write_text_atomic
 
 SCHEMA = "cinemora.localization/1"
@@ -227,7 +227,7 @@ def _language_name(language) -> str:
 
 
 def ai_available() -> bool:
-    return bool(getattr(llm_client, "BREWKEG_API_KEY", None))
+    return llm_provider.is_configured()
 
 
 def _require_ai():
@@ -240,15 +240,23 @@ def _require_ai():
         )
 
 
+def _is_not_configured(error) -> bool:
+    """Phase 4b: the typed not-configured provider failure (with the
+    pre-D-01 message shape kept as a fallback for stub callables)."""
+    if isinstance(error, llm_provider.LLMProviderError):
+        return error.kind == "not_configured"
+    return "BREWKEG_API_KEY is not configured" in str(error)
+
+
 def _ai_call(fn, *args, **kwargs):
-    """Run one llm_client call, mapping provider failures onto
+    """Run one provider call, mapping provider failures onto
     the studio's error shape (503 unconfigured / 502 failed) —
     neither is ever masked by canned or copied text."""
     _require_ai()
     try:
         return fn(*args, **kwargs)
     except RuntimeError as error:
-        if "BREWKEG_API_KEY is not configured" in str(error):
+        if _is_not_configured(error):
             raise LocalizationError(
                 503,
                 "localization_unavailable",
@@ -367,7 +375,7 @@ def _translate_batch(texts: list[str], indices: list[int],
         + json.dumps(payload, ensure_ascii=False)
     )
     result = _ai_call(
-        llm_client.llm_json,
+        llm_provider.complete_json,
         _TRANSLATOR_SYSTEM,
         prompt,
         max_tokens=12000,

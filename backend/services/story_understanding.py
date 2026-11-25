@@ -153,19 +153,37 @@ def _content_tokens(text, min_len=4):
 
 def _llm_failure_reason(error):
     """Classify an LLM call failure for the degraded_reason record
-    (Master Directive Phase 7 / DM-2(a)): the three failure paths
-    that used to be indistinguishable downstream —
+    (Master Directive Phase 7 / DM-2(a); Phase 4b / D-18 extends the
+    provider classes with the typed llm_provider taxonomy):
 
-      "no_key"          — no API key configured (the BLOCK-001
-                          point-of-use check in llm_client);
-      "provider_failure"— transport / HTTP / provider-side failure;
-      "invalid_plan"    — the provider answered but its response
-                          was unusable (llm_client.LLMResponseError:
-                          no text / truncated / empty / malformed),
-                          or the text did not parse as JSON.
+      "no_key"            — no API key configured (the BLOCK-001
+                            point-of-use check in llm_provider);
+      "provider_billing"  — HTTP 402: billing / quota exhausted
+                            (Phase 4b — previously folded into the
+                            generic provider_failure, so a dead
+                            credit balance silently degraded every
+                            production with no attributable cause);
+      "provider_auth"     — HTTP 401/403: the key was rejected;
+      "provider_rate_limit" — HTTP 429 after the bounded retries;
+      "provider_failure"  — transport / 5xx / other provider-side
+                            failure;
+      "invalid_plan"      — the provider answered but its response
+                            was unusable (llm_provider.LLMResponseError:
+                            no text / truncated / empty / malformed /
+                            invalid JSON), or the text did not parse
+                            as JSON.
     """
     if error is None:
         return "invalid_plan"
+    kind = getattr(error, "kind", None)
+    if type(error).__name__ == "LLMProviderError" and kind:
+        return {
+            "not_configured": "no_key",
+            "billing": "provider_billing",
+            "auth": "provider_auth",
+            "rate_limit": "provider_rate_limit",
+            "upstream": "provider_failure",
+        }.get(kind, "provider_failure")
     message = str(error)
     if "BREWKEG_API_KEY" in message and "not configured" in message:
         return "no_key"
@@ -196,6 +214,12 @@ def _call_llm_json(llm, system, user, retries=0, failure=None):
         if failure is not None and "reason" not in failure:
             failure.update({
                 "reason": _llm_failure_reason(error),
+                # Phase 4b: the typed provider/response failure kind
+                # (billing / auth / rate_limit / upstream /
+                # not_configured / no_text / truncated / ...) rides
+                # alongside the reason so the degraded marker is
+                # attributable to its exact cause class.
+                "kind": getattr(error, "kind", None),
                 "detail": str(error)[:200] if error is not None else "response did not parse as JSON",
             })
     return None
@@ -287,6 +311,7 @@ def build_case_bible(script_text, llm, sentences=None, max_chars=24000, _diag=No
                 else failure.get("reason") or "invalid_plan"
             )
             _diag["bible_failure_detail"] = failure.get("detail")
+            _diag["bible_error_kind"] = failure.get("kind")
         fallback = sentences or [p for p in re.split(r"(?<=[.!?])\s+", script_text) if p.strip()]
         data = _fallback_bible(fallback)
 
@@ -1020,6 +1045,7 @@ def analyze_sentences(sentences, bible, llm, batch_size=10, context_size=4, _dia
                         else failure.get("reason") or "invalid_plan"
                     )
                     _diag["sentence_failure_detail"] = failure.get("detail")
+                    _diag["sentence_error_kind"] = failure.get("kind")
                 from services import degraded_planner
 
                 if degraded_planner.planner_enabled():
@@ -3181,11 +3207,27 @@ def build_planner_block(bible, plans, mode, diag=None):
             diag.get("bible_reason") or diag.get("sentence_reason") or "no_key"
         )
 
+    # Phase 4b / D-18: the explicit degraded marker's cause class —
+    # the typed provider failure kind that engaged the fallback
+    # (billing / auth / rate_limit / upstream / not_configured, or a
+    # response kind like no_text / truncated). None when the plan
+    # was LLM-produced or the cause was not a typed failure (the
+    # degraded_reason above still names it). This block is stamped
+    # on the bible and surfaces in the asset report, production
+    # report and certificate (admin diagnostics); ordinary user
+    # surfaces keep the FS-A simple-status treatment.
+    failure_kind = None
+    if mode != "llm":
+        failure_kind = (
+            diag.get("bible_error_kind") or diag.get("sentence_error_kind")
+        )
+
     kb = bible.get("kb") if isinstance(bible.get("kb"), dict) else {}
     return {
         "mode": mode,
         "planner_version": planner_version,
         "degraded_reason": degraded_reason,
+        "failure_kind": failure_kind,
         "degraded_sentences": degraded_sentences,
         "sentences": len(plans),
         "kb": {
@@ -3283,7 +3325,7 @@ def plan_script(script_text, sentences, llm, cache_path=None, genre_pack=None):
     # (plan.json, asset report, production report, certificate)
     # states it. DM-6: the signage names the variable that
     # actually gates the LLM (BLOCK-001 moved the check to
-    # llm_client's point of use).
+    # llm_provider's point of use).
     bible["planner"] = build_planner_block(bible, plans, mode, diag)
     if llm is None:
         print("STORY: no LLM configured -> DEGRADED MODE (set BREWKEG_API_KEY for full understanding).")

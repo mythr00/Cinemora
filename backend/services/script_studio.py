@@ -21,7 +21,8 @@ built on the machinery that already exists, never a parallel one:
   notes state narration is NOT retimed to pacing targets, so no
   per-pack pace factor is invented here. A target's word budget is
   target_minutes x 145.
-- AI ACTIONS run through the existing llm_client (BrewKeg) only,
+- AI ACTIONS run through the provider interface (services.
+  llm_provider) only,
   are always explicit and user-triggered, and return PROPOSALS:
   generated text is never written over the user's words by the
   service — the client applies a proposal through the normal update
@@ -60,7 +61,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from services import llm_client, media_paths, script_analyzer, script_facts
+from services import llm_provider, media_paths, script_analyzer, script_facts
 from services.atomic_write import write_json_atomic
 
 STORE_FILENAME = "script_studio.json"
@@ -415,12 +416,12 @@ def restore_revision(user_id, script_id: str, revision_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------
-# AI actions (llm_client only; proposals, never silent overwrites)
+# AI actions (llm_provider only; proposals, never silent overwrites)
 # ---------------------------------------------------------------------
 
 
 def ai_available() -> bool:
-    return bool(getattr(llm_client, "BREWKEG_API_KEY", None))
+    return llm_provider.is_configured()
 
 
 def _require_ai():
@@ -433,8 +434,16 @@ def _require_ai():
         )
 
 
+def _is_not_configured(error) -> bool:
+    """Phase 4b: the typed not-configured provider failure (with the
+    pre-D-01 message shape kept as a fallback for stub callables)."""
+    if isinstance(error, llm_provider.LLMProviderError):
+        return error.kind == "not_configured"
+    return "BREWKEG_API_KEY is not configured" in str(error)
+
+
 def _ai_call(fn, *args, **kwargs):
-    """Run one llm_client call, mapping provider failures onto the
+    """Run one provider call, mapping provider failures onto the
     studio's error shape. An unconfigured provider is a 503 (the
     capability is absent); a provider that answered badly or not at
     all is a 502 (the capability failed). Neither is ever masked by
@@ -443,7 +452,7 @@ def _ai_call(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except RuntimeError as error:
-        if "BREWKEG_API_KEY is not configured" in str(error):
+        if _is_not_configured(error):
             raise ScriptError(
                 503,
                 "script_ai_unavailable",
@@ -515,7 +524,7 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
         )
     category = str(category or "").strip() or DEFAULT_CATEGORY
     outline = _ai_call(
-        llm_client.llm_json,
+        llm_provider.complete_json,
         "You design documentary script structures. Techniques and "
         "structure only — you never copy another creator's script "
         "or distinctive expression.",
@@ -562,7 +571,7 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
             else f"{index + 1} of {total}"
         )
         body = _ai_call(
-            llm_client.llm_text,
+            llm_provider.complete_text,
             _WRITER_SYSTEM,
             _section_prompt(topic, item["heading"], item["intent"],
                             item["word_budget"], position),
@@ -630,7 +639,7 @@ def expand_sections(user_id, script_id: str) -> dict:
                 "not invent specific dates, names or figures."
             )
         body = _ai_call(
-            llm_client.llm_text, _WRITER_SYSTEM, prompt, max_tokens=8000
+            llm_provider.complete_text, _WRITER_SYSTEM, prompt, max_tokens=8000
         )
         proposed.append(
             {
@@ -670,7 +679,7 @@ def tighten_passage(user_id, script_id: str, *, section_id: str,
         "voice. Return only the tightened passage.\n\n" + original
     )
     tightened = _ai_call(
-        llm_client.llm_text, _WRITER_SYSTEM, prompt, max_tokens=8000
+        llm_provider.complete_text, _WRITER_SYSTEM, prompt, max_tokens=8000
     )
     return {
         "script_id": script_id,

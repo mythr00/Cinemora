@@ -70,6 +70,11 @@ class TurnOutcome:
     pending_action: object | None = None
     tool_results: dict = field(default_factory=dict)
     unavailable_reason: str | None = None
+    # Phase 4b: typed provider failure kind (billing / auth /
+    # rate_limit / upstream / not_configured) when the turn was
+    # unavailable because of the LLM provider — recorded in the
+    # turn's diagnostics, never answered with canned content.
+    provider_error_kind: str | None = None
 
 
 def _max_steps() -> int:
@@ -178,6 +183,7 @@ def run_turn(db, principal, conversation, history: list[dict], user_text: str) -
                 trace=trace,
                 tool_results=tool_results,
                 unavailable_reason=error.reason,
+                provider_error_kind=error.provider_error_kind,
             )
         except llm.ProtocolError as error:
             corrections += 1

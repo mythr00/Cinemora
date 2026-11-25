@@ -25,6 +25,7 @@ SERVICE_MODULES = [
     "services.production_state",
     "services.search_provider",
     "services.llm_client",
+    "services.llm_provider",
 ]
 
 

@@ -891,6 +891,7 @@ def build_certificate(project, run, decisions, counts, planner=None):
                     "analysis_mode": planner.get("mode"),
                     "planner_version": planner.get("planner_version"),
                     "degraded_reason": planner.get("degraded_reason"),
+                    "failure_kind": planner.get("failure_kind"),
                     "planner_quality": planner.get("quality"),
                 }
                 if isinstance(planner, dict)

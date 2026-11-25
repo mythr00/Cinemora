@@ -8,7 +8,7 @@ The honesty rules under test (services/localization.py):
   Dubbing is reported unavailable with its recorded reasons (the
   narration adapter's installed voices are English-only); no dub
   route exists.
-- Translation runs through llm_client.llm_json in bounded,
+- Translation runs through llm_provider.complete_json in bounded,
   verified batches: no provider -> 503 localization_unavailable;
   an incomplete batch -> 502 with nothing written; a "translation"
   that returns the source text unchanged -> 502, never labelled
@@ -42,7 +42,7 @@ from database import SessionLocal, engine
 from models import Base, Plan, ProductionRun, User, UserSubscription
 from services import auth as auth_service
 from services import captions as captions_service
-from services import llm_client, localization, media_paths
+from services import llm_provider, localization, media_paths
 
 TOKEN = "loc-test-token-7f3a"
 PASSWORD = "loc-test-password-7f3a"
@@ -80,7 +80,7 @@ def _api_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CINEMORA_MEDIA_ROOT", str(tmp_path / "media"))
     # Deterministic AI availability: no provider unless a test
     # explicitly configures the stub.
-    monkeypatch.setattr(llm_client, "BREWKEG_API_KEY", None)
+    monkeypatch.setattr(llm_provider, "BREWKEG_API_KEY", None)
     api_v1.rate_limiter.reset()
     api_v1.auth_rate_limiter.reset()
     Base.metadata.create_all(bind=engine)
@@ -157,10 +157,10 @@ def _write_source_captions(project_id):
 
 def _stub_translator(monkeypatch, *, transform=None, drop_indices=()):
     """Configure the llm seam: a deterministic fake translator
-    over the real llm_json call shape. Default transform prefixes
+    over the real complete_json call shape. Default transform prefixes
     the target language, so translated text always differs from
     the source; tests may override per index."""
-    monkeypatch.setattr(llm_client, "BREWKEG_API_KEY", "test-key")
+    monkeypatch.setattr(llm_provider, "BREWKEG_API_KEY", "test-key")
     calls = []
 
     def fake_llm_json(system, user, **kwargs):
@@ -178,7 +178,7 @@ def _stub_translator(monkeypatch, *, transform=None, drop_indices=()):
             translations.append({"index": item["index"], "text": text})
         return {"translations": translations}
 
-    monkeypatch.setattr(llm_client, "llm_json", fake_llm_json)
+    monkeypatch.setattr(llm_provider, "complete_json", fake_llm_json)
     return calls
 
 

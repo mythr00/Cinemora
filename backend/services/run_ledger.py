@@ -2346,7 +2346,7 @@ def build_initial_manifest(run_id, project_id, script_text, options=None,
     except Exception:
         thresholds = None
     try:
-        from services.llm_client import BREWKEG_MODEL
+        from services.llm_provider import BREWKEG_MODEL
 
         llm_model = BREWKEG_MODEL
     except Exception:

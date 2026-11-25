@@ -38,7 +38,7 @@ import main
 from database import SessionLocal, engine
 from models import Base, Plan, ProductionRun, Project, User
 from services import auth as auth_service
-from services import genre_packs, llm_client, run_ledger
+from services import genre_packs, llm_provider, run_ledger
 
 TOKEN = "templates-test-token"
 PASSWORD = "templates-test-password"
@@ -59,7 +59,7 @@ def _api_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CINEMORA_API_TOKEN", TOKEN)
     monkeypatch.setenv("CINEMORA_ALLOW_OPERATOR_TOKEN", "1")  # E-21: explicit opt-in
     monkeypatch.setenv("CINEMORA_MEDIA_ROOT", str(tmp_path / "media"))
-    monkeypatch.setattr(llm_client, "BREWKEG_API_KEY", None)
+    monkeypatch.setattr(llm_provider, "BREWKEG_API_KEY", None)
     api_v1.rate_limiter.reset()
     api_v1.auth_rate_limiter.reset()
     Base.metadata.create_all(bind=engine)

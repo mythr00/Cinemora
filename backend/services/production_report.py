@@ -251,6 +251,7 @@ def _planner_answer(planner):
         "mode": planner.get("mode"),
         "planner_version": planner.get("planner_version"),
         "degraded_reason": planner.get("degraded_reason"),
+        "failure_kind": planner.get("failure_kind"),
         "degraded_sentences": planner.get("degraded_sentences"),
         "sentences": planner.get("sentences"),
         "quality": planner.get("quality"),

@@ -12,7 +12,7 @@ Ultimate Component Audit:
   shape (no asset report -> passed defaulted True) bypassed the
   gate and the run completed unaudited. The same shape sat in the
   editor's revision-export decision.
-- BLOCK-001: services/llm_client raised at IMPORT time when
+- BLOCK-001: services/llm_provider raised at IMPORT time when
   BREWKEG_API_KEY was unset, so the API (and every transitive
   importer) could not start without an LLM key.
 - BLOCK-002: worker.py started without the IA-09 schema gate the
@@ -36,7 +36,7 @@ import sys
 import pytest
 
 import jobs
-from services import final_video_auditor, llm_client
+from services import final_video_auditor, llm_provider
 
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -162,7 +162,7 @@ def _env_without_llm_key():
 
 def test_llm_client_imports_without_key():
     completed = subprocess.run(
-        [sys.executable, "-c", "import services.llm_client; print('import-ok')"],
+        [sys.executable, "-c", "import services.llm_provider; print('import-ok')"],
         cwd=BACKEND_DIR,
         env=_env_without_llm_key(),
         capture_output=True,
@@ -177,7 +177,7 @@ def test_llm_call_without_key_fails_at_use_with_clear_error():
     completed = subprocess.run(
         [
             sys.executable, "-c",
-            "from services import llm_client; llm_client.llm_text('sys', 'user')",
+            "from services import llm_provider; llm_provider.complete_text('sys', 'user')",
         ],
         cwd=BACKEND_DIR,
         env=_env_without_llm_key(),
@@ -190,17 +190,17 @@ def test_llm_call_without_key_fails_at_use_with_clear_error():
 
 
 def test_llm_request_without_key_raises_before_any_http(monkeypatch):
-    monkeypatch.setattr(llm_client, "BREWKEG_API_KEY", "")
+    monkeypatch.setattr(llm_provider, "BREWKEG_API_KEY", "")
 
     def forbidden_post(*args, **kwargs):
         raise AssertionError("HTTP must not be attempted without a key")
 
-    monkeypatch.setattr(llm_client.requests, "post", forbidden_post)
+    monkeypatch.setattr(llm_provider.requests, "post", forbidden_post)
     with pytest.raises(RuntimeError, match="BREWKEG_API_KEY is not configured"):
-        llm_client._request("sys", "user")
+        llm_provider._request("sys", "user")
     # get_llm() itself must not raise — only calling the returned
     # callable may fail.
-    llm = llm_client.get_llm()
+    llm = llm_provider.get_llm()
     with pytest.raises(RuntimeError, match="BREWKEG_API_KEY is not configured"):
         llm("sys", "user")
 

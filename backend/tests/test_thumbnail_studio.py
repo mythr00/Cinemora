@@ -433,7 +433,7 @@ def test_upload_base_and_reference_analysis(client, tmp_path):
 def test_ai_suggestions_refuse_without_provider(client, monkeypatch):
     from services import thumbnail_studio
 
-    monkeypatch.setattr(thumbnail_studio.llm_client, "BREWKEG_API_KEY", None)
+    monkeypatch.setattr(thumbnail_studio.llm_provider, "BREWKEG_API_KEY", None)
     project = _build_production(client)
     response = client.post(
         f"/api/v1/projects/{project['id']}/thumbnails/suggest-headlines",
@@ -446,7 +446,7 @@ def test_ai_suggestions_refuse_without_provider(client, monkeypatch):
 def test_ai_suggestions_are_proposals_from_the_recorded_brief(client, monkeypatch):
     from services import thumbnail_studio
 
-    monkeypatch.setattr(thumbnail_studio.llm_client, "BREWKEG_API_KEY", "test-key")
+    monkeypatch.setattr(thumbnail_studio.llm_provider, "BREWKEG_API_KEY", "test-key")
     seen = {}
 
     def fake_llm_json(system, user):
@@ -454,7 +454,7 @@ def test_ai_suggestions_are_proposals_from_the_recorded_brief(client, monkeypatc
         return {"headlines": ["Raised From The Deep", "40 Metres Down",
                               "This One Is Far Too Long To Be A Thumbnail Headline"]}
 
-    monkeypatch.setattr(thumbnail_studio.llm_client, "llm_json", fake_llm_json)
+    monkeypatch.setattr(thumbnail_studio.llm_provider, "complete_json", fake_llm_json)
     project = _build_production(client)
     response = client.post(
         f"/api/v1/projects/{project['id']}/thumbnails/suggest-headlines",

@@ -131,9 +131,9 @@ def treat_transcript(text, mode) -> dict:
         )
     if mode == "preserve":
         return {"mode": mode, "text": text, "source": "transcript_verbatim"}
-    from services import llm_client
+    from services import llm_provider
 
-    if not getattr(llm_client, "BREWKEG_API_KEY", None):
+    if not llm_provider.is_configured():
         raise production_config.ConfigError(
             503,
             "script_ai_unavailable",
@@ -148,9 +148,10 @@ def treat_transcript(text, mode) -> dict:
         "commentary, no headings, no markdown."
     )
     try:
-        proposal = llm_client.llm_text(system, text)
+        proposal = llm_provider.complete_text(system, text)
     except RuntimeError as error:
-        if "BREWKEG_API_KEY is not configured" in str(error):
+        if isinstance(error, llm_provider.LLMProviderError) \
+                and error.kind == "not_configured":
             raise production_config.ConfigError(
                 503,
                 "script_ai_unavailable",

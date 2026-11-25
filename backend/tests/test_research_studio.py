@@ -37,7 +37,7 @@ import main
 from database import SessionLocal, engine
 from models import Base, Plan, Project, User, UserSubscription
 from services import auth as auth_service
-from services import kb_client, llm_client, media_paths, research
+from services import kb_client, llm_provider, media_paths, research
 from services import research_studio as rs
 
 BACKEND = Path(__file__).resolve().parent.parent
@@ -565,7 +565,7 @@ def test_summary_requires_kept_sources_and_cites_them(project_id, monkeypatch):
 
     _session, source_id = _kept_source(project_id, monkeypatch)
     monkeypatch.setattr(
-        llm_client, "llm_text",
+        llm_provider, "complete_text",
         lambda system, user, **kw: "A brief summary [1].",
     )
     summary = rs.generate_summary(project_id)
@@ -580,7 +580,7 @@ def test_summary_llm_failure_is_502_not_fabrication(project_id, monkeypatch):
     def _boom(system, user, **kw):
         raise RuntimeError("no key")
 
-    monkeypatch.setattr(llm_client, "llm_text", _boom)
+    monkeypatch.setattr(llm_provider, "complete_text", _boom)
     with pytest.raises(rs.ResearchError) as caught:
         rs.generate_summary(project_id)
     assert caught.value.status_code == 502

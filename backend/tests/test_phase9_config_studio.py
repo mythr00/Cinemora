@@ -47,7 +47,7 @@ from models import Base, Plan, ProductionRun, Project, User
 from services import auth as auth_service
 from services import (
     graphics_pipeline,
-    llm_client,
+    llm_provider,
     music as music_service,
     narration,
     production_config,
@@ -526,7 +526,7 @@ def _api_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CINEMORA_ALLOW_OPERATOR_TOKEN", "1")  # E-21: explicit opt-in
     monkeypatch.setenv("CINEMORA_MEDIA_ROOT", str(tmp_path / "media"))
     monkeypatch.delenv("CINEMORA_MUSIC_CATALOGUE", raising=False)
-    monkeypatch.setattr(llm_client, "BREWKEG_API_KEY", None)
+    monkeypatch.setattr(llm_provider, "BREWKEG_API_KEY", None)
     api_v1.rate_limiter.reset()
     api_v1.auth_rate_limiter.reset()
     Base.metadata.create_all(bind=engine)
@@ -1000,9 +1000,9 @@ def test_voice_to_documentary_flow(client, users, tmp_path, monkeypatch):
     assert response.json()["error"]["code"] == "script_ai_unavailable"
 
     # Clean with a provider: a proposal, stored nowhere.
-    monkeypatch.setattr(llm_client, "BREWKEG_API_KEY", "test-key")
+    monkeypatch.setattr(llm_provider, "BREWKEG_API_KEY", "test-key")
     monkeypatch.setattr(
-        llm_client, "llm_text",
+        llm_provider, "complete_text",
         lambda system, user: "The harbour opened in 1956.",
     )
     response = client.post(
