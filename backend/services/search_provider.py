@@ -1,3 +1,25 @@
+"""Search provider (Master Project Directive Phase 4c / D-08).
+
+This module is the ONE client for Serper — Cinemora's sole search
+provider (web / images / videos). Every live caller reaches Serper
+through here: the request construction, the env-configured key
+(``SERPER_API_KEY``, resolved at call time), the bounded
+concurrency / retry policy, the result-cache and the call metrics
+all live in this single place. (The former duplicate client
+``services/asset_finder.py`` had zero importers anywhere in the
+repo and was removed in Phase 4c — see the D-08 census in
+PHASE4-CAPABILITY-DECISIONS.md's companion report / commit.)
+
+Failures are TYPED, following the llm_provider taxonomy style
+(Phase 4b): :class:`SearchProviderError` carries a ``kind`` —
+``not_configured`` / ``quota`` (HTTP 402) / ``auth`` (401/403) /
+``rate_limit`` (429, after the bounded retries) / ``upstream``
+(5xx after retries, other HTTP, transport errors) — so consumers
+branch on the kind instead of parsing message text. Pipeline
+behaviour (queries, per-production budgets, result shapes) is
+unchanged by the seam.
+"""
+
 import os
 import random
 import threading
@@ -33,10 +55,58 @@ SERPER_MAX_ATTEMPTS = 4
 _serper_sem = threading.BoundedSemaphore(SERPER_MAX_CONCURRENCY)
 
 
+class SearchProviderError(RuntimeError):
+    """Serper could not serve the call. ``kind`` is one of
+    ``not_configured``, ``quota``, ``auth``, ``rate_limit``,
+    ``upstream``; ``status_code`` is the HTTP status when one was
+    received (else None). A RuntimeError subclass, so pre-Phase-4c
+    callers that caught the old RuntimeError keep working."""
+
+    KINDS = ("not_configured", "quota", "auth", "rate_limit", "upstream")
+
+    def __init__(self, kind, message, status_code=None):
+        super().__init__(message)
+        self.kind = kind
+        self.status_code = status_code
+
+    @classmethod
+    def for_status(cls, status_code, body_text=""):
+        if status_code == 402:
+            kind = "quota"
+        elif status_code in (401, 403):
+            kind = "auth"
+        elif status_code == 429:
+            kind = "rate_limit"
+        else:
+            kind = "upstream"
+        return cls(
+            kind,
+            f"Serper request failed (HTTP {status_code}): "
+            f"{str(body_text)[:500]}",
+            status_code=status_code,
+        )
+
+
+def _api_key():
+    """The Serper key, resolved at CALL time (env wins; the
+    import-time module constant is the fallback), so deployment
+    config and test monkeypatching are honoured without a restart
+    of the import graph."""
+    return os.getenv("SERPER_API_KEY") or SERPER_API_KEY
+
+
+def _headers():
+    return {
+        "X-API-KEY": _api_key() or "",
+        "Content-Type": "application/json",
+    }
+
+
 def check_api_key():
-    if not SERPER_API_KEY:
-        raise RuntimeError(
-            "SERPER_API_KEY is missing from the .env file."
+    if not _api_key():
+        raise SearchProviderError(
+            "not_configured",
+            "SERPER_API_KEY is missing from the .env file.",
         )
 
 
@@ -67,22 +137,35 @@ def _post_with_retry(path: str, query: str) -> dict:
             try:
                 response = requests.post(
                     f"{SERPER_BASE}/{path}",
-                    headers=SERPER_HEADERS,
+                    headers=_headers(),
                     json={"q": query},
                     timeout=30,
                 )
             except requests.RequestException as exc:
-                last_exc = exc
+                # Transport failure: retryable, classified upstream
+                # if the bounded attempts are exhausted.
+                last_exc = SearchProviderError(
+                    "upstream", f"Serper request failed (transport): {exc}"
+                )
+                last_exc.__cause__ = exc
                 response = None
 
         if response is not None:
             if response.status_code == 429:
                 source_cache.bump("serper_429")
             if response.status_code != 429 and response.status_code < 500:
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    # Non-retryable HTTP failure (auth / quota /
+                    # client error): typed, raised immediately —
+                    # the same point the old raise_for_status() hit.
+                    raise SearchProviderError.for_status(
+                        response.status_code,
+                        getattr(response, "text", "") or "",
+                    )
                 return response.json()
-            last_exc = requests.HTTPError(
-                f"Serper HTTP {response.status_code}", response=response
+            last_exc = SearchProviderError.for_status(
+                response.status_code,
+                getattr(response, "text", "") or "",
             )
             retry_after = response.headers.get("Retry-After")
             delay = float(retry_after) if retry_after and retry_after.isdigit() else None
@@ -94,7 +177,9 @@ def _post_with_retry(path: str, query: str) -> dict:
                 delay = (2 ** attempt) + random.uniform(0, 0.5)
             time.sleep(min(delay, 20))
 
-    raise last_exc if last_exc else RuntimeError("Serper request failed")
+    raise last_exc if last_exc else SearchProviderError(
+        "upstream", "Serper request failed"
+    )
 
 
 def _cached_search(
