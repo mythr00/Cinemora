@@ -210,6 +210,22 @@ def _confirm(client, user, action_id):
     )
 
 
+def _promote_to_admin(user):
+    """FS-C follow-up: plan approve/generate/decisions endpoints are
+    admin-only, and the assistant write tools delegate to them — so
+    the acting user in the plan-approval tests must be an admin (the
+    FS-B/C precedent in test_fs_access_rules: a DB-created account
+    with an explicit account role). The session token stays valid;
+    the role is read from the account on each request."""
+    db = SessionLocal()
+    try:
+        row = db.query(User).filter_by(id=user["user"]["id"]).one()
+        row.role = "admin"
+        db.commit()
+    finally:
+        db.close()
+
+
 def _run_count(project_id):
     db = SessionLocal()
     try:
@@ -285,6 +301,7 @@ def test_confirmed_submit_run(client, user, monkeypatch):
 
 
 def test_confirmed_plan_decision_and_preference(client, user, monkeypatch):
+    _promote_to_admin(user)  # FS-C: plan decisions are admin-only
     project = _create_project(client, user)
     conversation = _conversation(client, user)
     _stub_llm(
@@ -438,6 +455,7 @@ def test_scenario_13_cancel_requires_confirmation(client, user, monkeypatch):
 
 
 def test_approve_plan_releases_awaiting_run(client, user, monkeypatch):
+    _promote_to_admin(user)  # FS-C: plan approval is admin-only
     project = _create_project(client, user)
     awaiting = _seed_run(
         user["user"]["id"],
