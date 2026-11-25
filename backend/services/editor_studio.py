@@ -130,6 +130,8 @@ def studio_view(project_id, revision_id) -> dict:
     from services.motion_engine import templates as engine
 
     view, doc = editor.get_revision(project_id, revision_id)
+    from services import editor_locks
+
     project_dir = _project_dir(project_id)
     index = plan_document.build_media_index(project_id, project_dir)
     tracks = doc.get("tracks") or {}
@@ -154,6 +156,8 @@ def studio_view(project_id, revision_id) -> dict:
 
     return {
         **view,
+        # Phase 6 (A-17): the project's server-persisted track locks.
+        "locked_tracks": editor_locks.locked_tracks(project_id),
         "duration_seconds": doc.get("duration_seconds"),
         "volumes": doc.get("volumes") or {},
         "render_state": doc.get("render_state"),

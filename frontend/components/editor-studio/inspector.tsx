@@ -24,12 +24,18 @@ export function Inspector({
   selection,
   poolSelection,
   busy,
+  locks,
   applyOps,
 }: {
   studio: StudioView;
   selection: StudioSelection;
   poolSelection: StudioPoolEntry | null;
   busy: boolean;
+  /** Phase 6 (A-17): server-persisted locked track ids. Controls
+   * for a locked track render disabled with a locked note — and
+   * the server enforces the same rule (409 track_locked), so this
+   * is presentation of a real constraint, not the constraint. */
+  locks: ReadonlySet<string>;
   applyOps: (operations: EditorOperation[], note: string) => void;
 }) {
   const visualTrack = studio.tracks.find((t) => t.id === "video");
@@ -50,16 +56,25 @@ export function Inspector({
         (() => {
           const item = allItems.find((i) => i.item_id === selection.itemId);
           if (!item) return <p className="studio-note">That item is no longer on the timeline.</p>;
+          const itemTrack = item.kind === "graphic" ? "graphics" : "video";
+          const itemLocked = locks.has(itemTrack);
           return (
-            <ItemInspector
-              key={item.item_id}
-              studio={studio}
-              item={item}
-              sentences={sentences}
-              poolSelection={poolSelection}
-              busy={busy}
-              applyOps={applyOps}
-            />
+            <>
+              {itemLocked && (
+                <p className="studio-note">
+                  The {itemTrack} track is locked — unlock it on the timeline to edit this item.
+                </p>
+              )}
+              <ItemInspector
+                key={item.item_id}
+                studio={studio}
+                item={item}
+                sentences={sentences}
+                poolSelection={poolSelection}
+                busy={busy || itemLocked}
+                applyOps={applyOps}
+              />
+            </>
           );
         })()}
       {selection?.kind === "caption" &&
@@ -69,13 +84,21 @@ export function Inspector({
             (s) => s.segment_index === selection.segmentIndex,
           );
           if (!segment) return <p className="studio-note">That caption is gone.</p>;
+          const captionsLocked = locks.has("captions");
           return (
-            <CaptionInspector
-              key={segment.segment_index}
-              segment={segment}
-              busy={busy}
-              applyOps={applyOps}
-            />
+            <>
+              {captionsLocked && (
+                <p className="studio-note">
+                  The captions track is locked — unlock it on the timeline to edit captions.
+                </p>
+              )}
+              <CaptionInspector
+                key={segment.segment_index}
+                segment={segment}
+                busy={busy || captionsLocked}
+                applyOps={applyOps}
+              />
+            </>
           );
         })()}
       {selection?.kind === "sentence" &&
@@ -84,27 +107,42 @@ export function Inspector({
             (s) => s.sentence_number === selection.sentenceNumber,
           );
           if (!sentence) return <p className="studio-note">That sentence is gone.</p>;
+          const narrationLocked = locks.has("narration");
           return (
-            <SentenceInspector
-              key={sentence.sentence_number}
-              sentence={sentence}
-              volume={studio.volumes.narration}
-              poolSelection={poolSelection}
-              busy={busy}
-              applyOps={applyOps}
-            />
+            <>
+              {narrationLocked && (
+                <p className="studio-note">
+                  The narration track is locked — unlock it on the timeline to edit narration.
+                </p>
+              )}
+              <SentenceInspector
+                key={sentence.sentence_number}
+                sentence={sentence}
+                volume={studio.volumes.narration}
+                poolSelection={poolSelection}
+                busy={busy || narrationLocked}
+                applyOps={applyOps}
+              />
+            </>
           );
         })()}
       {selection?.kind === "music" && musicTrack?.id === "music" && (
-        <MusicInspector
-          key="music"
-          fileName={musicTrack.file_name}
-          state={musicTrack.state}
-          volume={studio.volumes.music}
-          poolSelection={poolSelection}
-          busy={busy}
-          applyOps={applyOps}
-        />
+        <>
+          {locks.has("music") && (
+            <p className="studio-note">
+              The music track is locked — unlock it on the timeline to edit music.
+            </p>
+          )}
+          <MusicInspector
+            key="music"
+            fileName={musicTrack.file_name}
+            state={musicTrack.state}
+            volume={studio.volumes.music}
+            poolSelection={poolSelection}
+            busy={busy || locks.has("music")}
+            applyOps={applyOps}
+          />
+        </>
       )}
       {!selection && (
         <>
@@ -113,7 +151,16 @@ export function Inspector({
             edit it. Every edit is saved by the server as a new revision — Undo steps
             back through the revision chain.
           </p>
-          <VolumeFields studio={studio} busy={busy} applyOps={applyOps} />
+          {(locks.has("narration") || locks.has("music")) && (
+            <p className="studio-note">
+              Volume controls are disabled while the narration or music track is locked.
+            </p>
+          )}
+          <VolumeFields
+            studio={studio}
+            busy={busy || locks.has("narration") || locks.has("music")}
+            applyOps={applyOps}
+          />
           <hr className="studio-divider" />
           <p className="studio-note">
             {allItems.filter((i) => i.kind === "clip").length} clips ·{" "}

@@ -2612,12 +2612,28 @@ export type StudioView = RevisionView & {
   last_render_error: string | null;
   exports: RevisionExport[];
   tracks: StudioTrack[];
+  /** Phase 6 (A-17): server-persisted locked track ids. */
+  locked_tracks?: string[];
   catalogues: {
     transitions: string[];
     transition_reasons: string[];
     graphic_templates: string[];
   };
 };
+
+export function getTrackLocks(projectId: string, signal?: AbortSignal) {
+  return apiRequest<{ locked_tracks: string[] }>(
+    `/api/v1/projects/${projectId}/editor/track-locks`,
+    { signal },
+  );
+}
+
+export function setTrackLock(projectId: string, trackId: string, locked: boolean) {
+  return apiRequest<{ locked_tracks: string[] }>(
+    `/api/v1/projects/${projectId}/editor/track-locks/${trackId}`,
+    { method: "PUT", body: JSON.stringify({ locked }) },
+  );
+}
 
 export function getStudioView(projectId: string, revisionId: string, signal?: AbortSignal) {
   return apiRequest<StudioView>(

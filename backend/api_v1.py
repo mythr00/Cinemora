@@ -67,6 +67,7 @@ from services import (
     asset_library,
     collaboration,
     editor,
+    editor_locks,
     editor_studio,
     genre_packs,
     localization,
@@ -4311,6 +4312,47 @@ def get_studio(project_id: str, revision_id: str, principal=Depends(require_user
     return _studio_call(
         editor_studio.studio_view, project_id, revision_id, principal=principal
     )
+
+
+class TrackLockBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    locked: bool
+
+
+@router.get("/projects/{project_id}/editor/track-locks")
+def get_track_locks(project_id: str, principal=Depends(require_user)):
+    """Phase 6 (A-17): the project's server-persisted track locks."""
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal)
+    finally:
+        db.close()
+    _require_editor_access(project_id, principal)
+    return {"locked_tracks": editor_locks.locked_tracks(project_id)}
+
+
+@router.put("/projects/{project_id}/editor/track-locks/{track_id}")
+def set_track_lock(
+    project_id: str,
+    track_id: str,
+    body: TrackLockBody,
+    principal=Depends(post_guard),
+):
+    """Persist one track's lock state (A-17). Enforcement lives in
+    services/editor.apply_operations via editor_locks — a locked
+    track's operations are rejected 409 track_locked."""
+    db = SessionLocal()
+    try:
+        _get_owned_project_or_404(db, project_id, principal, write=True)
+    finally:
+        db.close()
+    _require_editor_access(project_id, principal)
+    try:
+        locked = editor_locks.set_track_lock(project_id, track_id, body.locked)
+    except ValueError as error:
+        raise ApiError(422, "unknown_track", str(error)) from error
+    return {"locked_tracks": locked}
 
 
 @router.get("/projects/{project_id}/revisions/{revision_id}/studio/pool")

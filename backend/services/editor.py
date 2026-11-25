@@ -2423,6 +2423,12 @@ def apply_operations(project_id, revision_id, operations, actor="operator"):
                 f"Unknown operation type {operation['type']}.",
             )
     parent_view, parent_doc = get_revision(project_id, revision_id)
+    # Phase 6 (A-17): server-persisted track locks bind here — a
+    # batch touching a locked track is rejected whole (409
+    # track_locked) before anything is applied or persisted.
+    from services import editor_locks
+
+    editor_locks.enforce_operations(project_id, parent_doc, operations)
     db = _session()
     try:
         parent_row = _get_row(db, project_id, revision_id)

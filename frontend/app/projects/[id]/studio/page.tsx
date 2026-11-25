@@ -24,6 +24,7 @@ import {
   getStudioWaveform,
   listRevisionExports,
   listRevisions,
+  setTrackLock,
   requestRevisionRender,
   type EditorOperation,
   type RevisionExport,
@@ -78,6 +79,11 @@ export default function StudioPage() {
   const [playhead, setPlayhead] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [pxPerSec, setPxPerSec] = useState(14);
+  // Phase 6 (A-17): track locks are server-persisted project state.
+  // They arrive with every Studio view (locked_tracks), toggling a
+  // lock PUTs it to the server, and the server rejects operations
+  // against a locked track with 409 track_locked — the local set is
+  // only a rendering of the server's state, never the authority.
   const [locks, setLocks] = useState<ReadonlySet<string>>(new Set());
   const preMuteRef = useRef<{ narration?: number; music?: number }>({});
 
@@ -109,6 +115,7 @@ export default function StudioPage() {
         getStudioWaveform(projectId, revisionId, "music").catch(() => null),
       ]);
       setStudio(view);
+      if (view.locked_tracks) setLocks(new Set(view.locked_tracks));
       setPool(poolPage);
       setWaves({ narration: narrationWave, music: musicWave });
       return view;
@@ -342,12 +349,33 @@ export default function StudioPage() {
   }
 
   function onToggleLock(trackId: string) {
+    const nextLocked = !locks.has(trackId);
+    // Optimistic render, then the server's answer is the truth:
+    // on failure the locks are re-read with the Studio view.
     setLocks((previous) => {
       const next = new Set(previous);
-      if (next.has(trackId)) next.delete(trackId);
-      else next.add(trackId);
+      if (nextLocked) next.add(trackId);
+      else next.delete(trackId);
       return next;
     });
+    void (async () => {
+      try {
+        const result = await setTrackLock(projectId, trackId, nextLocked);
+        setLocks(new Set(result.locked_tracks));
+        setNotice(
+          nextLocked
+            ? "Track locked — saved on the server."
+            : "Track unlocked — saved on the server.",
+        );
+      } catch (cause) {
+        setOpError(
+          cause instanceof Error
+            ? `The lock change was not saved. ${cause.message}`
+            : "The lock change was not saved.",
+        );
+        if (current) void refreshStudio(current.revision_id).catch(() => undefined);
+      }
+    })();
   }
 
   function onToggleMute(trackId: "narration" | "music") {
@@ -546,6 +574,7 @@ export default function StudioPage() {
               selection={selection}
               poolSelection={poolSelection}
               busy={busyOps}
+              locks={locks}
               applyOps={(operations, note) => void applyOps(operations, note)}
             />
           </div>

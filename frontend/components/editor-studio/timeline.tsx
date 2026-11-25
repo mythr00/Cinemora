@@ -26,8 +26,11 @@ type DragState = DragInfo | null;
 /**
  * The Studio multitrack timeline: video / motion-graphics /
  * captions / narration / music lanes over the revision document,
- * with a mini-overview, ruler, playhead, per-track lock (an
- * editing guard) and audio mute (a real set_volumes operation).
+ * with a mini-overview, ruler, playhead, per-track lock
+ * (server-persisted project state since Phase 6 A-17 — the page
+ * supplies the server's locked set and toggling persists it; the
+ * server rejects operations against a locked track) and audio
+ * mute (a real set_volumes operation).
  * Dragging a clip across sentence windows commits move_clip;
  * dragging an edge commits trim_clip (or set_graphic_duration on
  * the graphics lane) — every gesture ends in a server operation
