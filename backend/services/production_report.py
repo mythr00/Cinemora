@@ -25,7 +25,8 @@ from services.quality_verdict import (
     integrity_verdict,
     reliability_verdict,
 )
-from services import media_paths, visual_quality
+from services import media_paths, standard_tests as standard_tests_service
+from services import visual_quality
 
 
 def _load_json(path: Path, default):
@@ -446,9 +447,32 @@ def build_production_report(*, measurement, asset_report, timeline, rights_manif
         "quality": composite_quality_verdict(measurement, asset_report),
         "reliability": reliability_verdict(measurement, asset_report),
     }
+    # C-14 (Phase 7): the documentary standard's mute/radio tests.
+    # A FAILED computed check escalates the quality verdict to
+    # FAIL (never the reverse — this block can only worsen a
+    # verdict), feeding the C-06 completion gate exactly like any
+    # other QA failure. Manual items never flip a verdict; they
+    # hold inspection_status at "pending_manual_review".
+    standard = standard_tests_service.build_standard_tests(
+        measurement, asset_report
+    )
+    if standard["automatable_failed"]:
+        quality = verdicts["quality"]
+        quality = dict(quality) if isinstance(quality, dict) else {}
+        quality["verdict"] = "FAIL"
+        quality["fail_reasons"] = list(quality.get("fail_reasons") or []) + [
+            f"standard_tests: {check_id} failed (C-14 mute/radio test)"
+            for check_id in standard["automatable_failed"]
+        ]
+        quality["standard_tests_escalated"] = True
+        verdicts["quality"] = quality
     return {
         "schema": "cinemora.production_report/1",
         "verdicts": verdicts,
+        "standard_tests": standard,
+        "inspection_status": standard_tests_service.inspection_status(
+            verdicts, standard
+        ),
         "reconciliation": _reconciliation(
             measurement, asset_report, timeline, rights_manifest, renderer_audit
         ),

@@ -375,6 +375,23 @@ def _delivery_section(state, delivery):
     )
 
 
+def _standard_tests_section(state, report):
+    """C-14: the recorded mute/radio standard-tests checklist and
+    the inspection status, verbatim from the production report.
+    A report written before C-14 carries neither — shown as
+    not_recorded, never reconstructed as a pass."""
+    if state != RECORDED or not isinstance(report.get("standard_tests"), dict):
+        return _section(
+            NOT_RECORDED if state == RECORDED else state,
+            standard_tests=None, inspection_status=None,
+        )
+    return _section(
+        RECORDED,
+        standard_tests=report.get("standard_tests"),
+        inspection_status=report.get("inspection_status"),
+    )
+
+
 def _iso(value):
     return value.isoformat() if hasattr(value, "isoformat") else value
 
@@ -413,6 +430,14 @@ def build_qa_report(project_id: str, run: dict) -> dict:
         },
         "artefacts": states,
         "verdicts": _verdicts_section(pr_state, report),
+        "standard_tests": _standard_tests_section(pr_state, report),
+        # C-14: distinct from every verdict — "pending_manual_review"
+        # while mute/radio manual items are unreviewed, even when
+        # all verdicts pass; only a fully reviewed, unfailed
+        # production reads "passed_inspection".
+        "inspection_status": (
+            report.get("inspection_status") if pr_state == RECORDED else None
+        ),
         "reconciliation": _reconciliation_section(pr_state, report),
         "questions": _questions_section(pr_state, report),
         "coverage": _coverage_section(vq_state, measurement, ar_state, asset_report),
