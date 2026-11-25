@@ -3891,6 +3891,60 @@ def delete_localization_artefact(project_id: str, artefact_id: str,
 # with the revision id.
 
 
+def _require_editor_access(project_id: str, principal) -> None:
+    """FS-F (FS-8, FS-14): the Studio gate. Ordinary principals —
+    owners and collaborators alike (collaboration role does not
+    elevate, register A-9) — may use the editor endpoint family
+    ONLY when the project has a completed run AND its finished
+    video exists. The predicate keys on the completed RUN plus the
+    film artefact (FS-DISCOVERY §6.3 / A-10), never on the headline
+    project status: a project whose latest run failed but which
+    has an earlier completed run with its film stays editable.
+
+    - Completed run: any ProductionRun for the project with
+      status "completed", read through run_ledger.list_runs_for —
+      the same source services/editor.py's create_revision_zero
+      keys on.
+    - Finished video exists: _film_media_url(...) is not None —
+      the media index (plan_document.build_media_index) contains
+      the canonical film (plan_document.CANONICAL_OUTPUTS["film"],
+      resolved through media_paths.resolve_artefact's latest-run
+      view). This is the exact source _project_view and
+      GET /projects/{id}/outputs (film.exists) use to establish
+      that a film exists; no parallel flag is invented.
+
+    Refusal semantics extend services/editor.py's own: no
+    completed run at all -> 404 no_completed_run (the service's
+    answer for exactly this state, whatever the other runs'
+    statuses — none/queued/running/awaiting/failed/cancelled);
+    a completed run whose finished video is missing -> 404
+    no_finished_video. Admin and super_admin principals are
+    EXEMPT (the operator principal resolves to super_admin), so
+    support can inspect and repair any project; the Phase 1a
+    ownership choke point still runs before this gate, unchanged.
+    Service-layer callers never pass through here and are
+    unaffected (the pipeline and the library import machinery
+    call services/editor.py in-process)."""
+    if principal is None or getattr(principal, "is_admin", False):
+        return
+    runs = run_ledger.list_runs_for(project_id)
+    if not any(run.get("status") == "completed" for run in runs):
+        raise ApiError(
+            404,
+            "no_completed_run",
+            "This project has no completed production run to edit.",
+        )
+    project_dir = media_paths.project_dir(project_id)
+    if _film_media_url(project_id, project_dir) is None:
+        raise ApiError(
+            404,
+            "no_finished_video",
+            "This project has a completed production run, but its "
+            "finished video does not exist, so there is nothing "
+            "to edit yet.",
+        )
+
+
 def _editor_call(fn, *args, **kwargs):
     """Run an editor service call, mapping EditorError onto the v1
     error shape (status, code, message — details appended)."""
@@ -3930,6 +3984,7 @@ def get_editor(project_id: str, principal=Depends(require_user)):
         _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
+    _require_editor_access(project_id, principal)
     view, doc = _editor_call(editor.get_editor, project_id)
     return {**view, "document": doc}
 
@@ -3945,6 +4000,7 @@ def create_revision(
         _get_owned_project_or_404(db, project_id, principal, write=True)
     finally:
         db.close()
+    _require_editor_access(project_id, principal)
     view, _doc = _editor_call(
         editor.create_revision,
         project_id,
@@ -3961,6 +4017,7 @@ def list_revisions(project_id: str, principal=Depends(require_user)):
         _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
+    _require_editor_access(project_id, principal)
     return {"revisions": _editor_call(editor.list_revisions, project_id)}
 
 
@@ -3971,6 +4028,7 @@ def get_revision(project_id: str, revision_id: str, principal=Depends(require_us
         _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
+    _require_editor_access(project_id, principal)
     view, doc = _editor_call(editor.get_revision, project_id, revision_id)
     return {**view, "document": doc}
 
@@ -3990,6 +4048,7 @@ def apply_operations(
         _get_owned_project_or_404(db, project_id, principal, write=True)
     finally:
         db.close()
+    _require_editor_access(project_id, principal)
     view, _doc = _editor_call(
         editor.apply_operations,
         project_id,
@@ -4015,6 +4074,7 @@ def render_revision(
         _get_owned_project_or_404(db, project_id, principal, write=True)
     finally:
         db.close()
+    _require_editor_access(project_id, principal)
     return _editor_call(
         editor.request_render,
         project_id,
@@ -4030,6 +4090,7 @@ def list_exports(project_id: str, revision_id: str, principal=Depends(require_us
         _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
+    _require_editor_access(project_id, principal)
     _view, doc = _editor_call(editor.get_revision, project_id, revision_id)
     return {"exports": doc.get("exports") or []}
 
@@ -4073,6 +4134,7 @@ def get_revision_certificate(
         }
     finally:
         db.close()
+    _require_editor_access(project_id, principal)
     view, doc = _editor_call(editor.get_revision, project_id, revision_id)
     chain_ids = _editor_call(editor.revision_chain_ids, project_id, revision_id)
     decisions = _editor_call(
@@ -4108,11 +4170,13 @@ def get_revision_certificate(
 
 
 def _studio_call(fn, project_id, *args, **kwargs):
+    principal = kwargs.pop("principal")
     db = SessionLocal()
     try:
-        _get_owned_project_or_404(db, project_id, kwargs.pop("principal"))
+        _get_owned_project_or_404(db, project_id, principal)
     finally:
         db.close()
+    _require_editor_access(project_id, principal)
     return _editor_call(fn, project_id, *args, **kwargs)
 
 

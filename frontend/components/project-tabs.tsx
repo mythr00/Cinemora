@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getCurrentUser } from "@/lib/api";
+import { checkEditorGate } from "@/lib/editor-gate";
 
 /**
  * The tabbed project workspace (IA-11, extended by redesign F1/F2,
@@ -36,6 +37,16 @@ import { getCurrentUser } from "@/lib/api";
  * Studio, Thumbnails, Localization, Team. Nothing is deleted;
  * admins keep every tab, and the pages/endpoints enforce the
  * same rule server-side.
+ *
+ * FS-F (FS-8): the Editor and Editor Studio tabs are DISABLED
+ * (rendered as inert, aria-disabled spans, never links) for
+ * ordinary users until the project has a completed run and its
+ * finished video exists — the same predicate the editor pages
+ * and the backend gate apply (lib/editor-gate.ts). Admins are
+ * exempt. While the gate state is still loading the tabs render
+ * as links, matching this bar's existing role-loading behaviour
+ * for the admin-only set; the pages and backend refuse a
+ * not-ready project regardless.
  */
 const TABS = [
   { suffix: "", label: "Overview" },
@@ -55,6 +66,8 @@ const TABS = [
   { suffix: "/team", label: "Team" },
 ] as const;
 
+const EDITOR_SUFFIXES: ReadonlySet<string> = new Set(["/edit", "/studio"]);
+
 const ADMIN_ONLY_SUFFIXES: ReadonlySet<string> = new Set([
   // FS-B diagnostic surfaces (FS-7/FS-9/FS-10).
   "/assets",
@@ -72,6 +85,7 @@ export function ProjectTabs({ projectId }: { projectId: string }) {
   const pathname = usePathname() || "";
   const base = `/projects/${projectId}`;
   const [isAdmin, setIsAdmin] = useState(false);
+  const [editorReady, setEditorReady] = useState<boolean | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -86,6 +100,14 @@ export function ProjectTabs({ projectId }: { projectId: string }) {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    checkEditorGate(projectId, controller.signal)
+      .then((gate) => setEditorReady(gate.kind !== "not-ready"))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [projectId]);
+
   const visibleTabs = TABS.filter(
     ({ suffix }) => isAdmin || !ADMIN_ONLY_SUFFIXES.has(suffix),
   );
@@ -93,6 +115,18 @@ export function ProjectTabs({ projectId }: { projectId: string }) {
     <nav className="project-tabs" aria-label="Project workspace">
       {visibleTabs.map(({ suffix, label }) => {
         const href = `${base}${suffix}`;
+        if (EDITOR_SUFFIXES.has(suffix) && editorReady === false) {
+          return (
+            <span
+              key={label}
+              className="project-tab-disabled"
+              aria-disabled="true"
+              title="Editing opens when generation completes successfully and the finished video exists"
+            >
+              {label}
+            </span>
+          );
+        }
         return (
           <Link key={label} href={href} aria-current={pathname === href ? "page" : undefined}>
             {label}

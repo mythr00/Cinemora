@@ -11,6 +11,7 @@ import { PreviewViewer } from "@/components/editor-studio/preview-viewer";
 import { StudioTimeline } from "@/components/editor-studio/timeline";
 import { Inspector } from "@/components/editor-studio/inspector";
 import { sentenceAt, type StudioSelection } from "@/components/editor-studio/shared";
+import { checkEditorGate, editorGateMessage } from "@/lib/editor-gate";
 import {
   ApiClientError,
   applyEditorOperations,
@@ -64,6 +65,7 @@ export default function StudioPage() {
   const [revisions, setRevisions] = useState<RevisionView[]>([]);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [noProduction, setNoProduction] = useState(false);
+  const [gateFailed, setGateFailed] = useState(false);
 
   const [pool, setPool] = useState<Parameters<typeof MediaPool>[0]["pool"]>(null);
   const [poolSelection, setPoolSelection] = useState<StudioPoolEntry | null>(null);
@@ -128,6 +130,17 @@ export default function StudioPage() {
   const loadInitial = useCallback(async () => {
     setLoadError(null);
     setNoProduction(false);
+    setGateFailed(false);
+    // FS-F (FS-8): the Studio gate, same predicate as the
+    // classic Editor and the backend — no completed run +
+    // finished video, no editing UI for ordinary users.
+    const gate = await checkEditorGate(projectId);
+    if (gate.kind === "not-ready") {
+      setProjectTitle(gate.status?.title ?? null);
+      setGateFailed(gate.failed);
+      setNoProduction(true);
+      return;
+    }
     const editor = await getEditor(projectId);
     setCurrent(editor);
     previousStatusRef.current = editor.status;
@@ -143,7 +156,11 @@ export default function StudioPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       void loadInitial().catch((error) => {
-        if (error instanceof ApiClientError && error.code === "no_completed_run") {
+        if (
+          error instanceof ApiClientError &&
+          (error.code === "no_completed_run" ||
+            error.code === "no_finished_video")
+        ) {
           setNoProduction(true);
         } else {
           setLoadError(error);
@@ -480,14 +497,12 @@ export default function StudioPage() {
         </div>
       ) : !current && noProduction ? (
         <div className="studio-pane">
-          <h2>Nothing to edit yet</h2>
+          <h2>{editorGateMessage({ failed: gateFailed }).heading}</h2>
           <p className="studio-note">
-            This project has no completed production run, so there is no finished film
-            to revise. Complete a production first — revision 0 is created from it
-            automatically when you open the studio.
+            {editorGateMessage({ failed: gateFailed }).body}
           </p>
           <Link className="studio-btn is-primary" href={`/projects/${projectId}`}>
-            Open the project
+            Back to overview
           </Link>
         </div>
       ) : !current || !studio ? (

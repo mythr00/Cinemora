@@ -383,6 +383,10 @@ span.authenticated-media-state {
 }
 .project-tabs a:hover { color: var(--ink); }
 .project-tabs a[aria-current="page"] { border-bottom-color: var(--accent); color: var(--ink-strong); }
+.project-tabs span.project-tab-disabled {
+  padding: 10px 14px; border-bottom: 2px solid transparent; color: var(--ink-muted);
+  font-size: 13px; font-weight: 600; white-space: nowrap; opacity: 0.55; cursor: not-allowed;
+}
 
 /* Workspace content containers */
 .dashboard-content, .projects-content, .tool-page-content {
@@ -2363,6 +2367,7 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 }
 .project-tabs a { border-bottom: 0; border-radius: 999px; padding: 8px 13px; }
 .project-tabs a[aria-current="page"] { background: var(--accent); color: var(--on-accent); }
+.project-tabs span.project-tab-disabled { border-bottom: 0; border-radius: 999px; padding: 8px 13px; }
 
 /* ---------- Landing: sections become card stacks ---------- */
 .marketing-nav-wrap { background: var(--backdrop); border-bottom: 0; }

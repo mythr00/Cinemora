@@ -1055,3 +1055,354 @@ def test_fsc_admin_plan_approval_gate_still_parks(client, monkeypatch):
     )
     assert admin_answer.status_code == 409, admin_answer.text
     assert admin_answer.json()["error"]["code"] == "no_awaiting_run"
+
+
+# =====================================================================
+# FS-F (FS-8, FS-14) — Studio gating: ordinary users may enter the
+# editing Studio (classic Editor AND Editor Studio) only after
+# generation successfully completes AND the finished video exists.
+#
+# The backend gate (api_v1._require_editor_access) sits in every
+# editor-family handler after the Phase 1a ownership choke point:
+# - predicate: ANY ProductionRun with status "completed"
+#   (run_ledger.list_runs_for — editor.py's own source) AND the
+#   canonical film present in the media index
+#   (_film_media_url is not None — the same source _project_view
+#   and GET .../outputs use for film existence);
+# - no completed run (none / queued / running / failed) ->
+#   404 no_completed_run, services/editor.py's own semantics;
+# - completed run but the finished video artefact missing ->
+#   404 no_finished_video;
+# - admin / super_admin principals (and the operator principal,
+#   which resolves to super_admin) are EXEMPT;
+# - collaborators follow the same rule as owners (A-9).
+#
+# Seeding: DB rows + artefact files in the test media root, as the
+# existing editor tests do (stage6_fixture builds the one real
+# completed production whose editor must load exactly as before).
+# No production is ever run.
+# =====================================================================
+
+FILM_NAME = "documentary_final_output.mp4"
+
+
+def _seed_gate_project(owner_id, media_root, run_statuses=(),
+                       project_status="created", film=False):
+    """One project + one ProductionRun per status in
+    run_statuses (in order), optionally with the canonical
+    finished film file present in the project directory."""
+    script = "Alpha opens. Bravo continues. Charlie closes."
+    project_id = _uid()
+    run_ids = []
+    db = SessionLocal()
+    try:
+        db.add(
+            Project(
+                id=project_id,
+                owner_id=owner_id,
+                title="FS-F seeded project",
+                script=script,
+                category="Documentary",
+                status=project_status,
+            )
+        )
+        for status in run_statuses:
+            run_id = _uid()
+            run_ids.append(run_id)
+            db.add(
+                ProductionRun(
+                    id=run_id,
+                    project_id=project_id,
+                    owner_id=owner_id,
+                    status=status,
+                    stage="delivery" if status == "completed" else "video_editor",
+                    script_hash=run_ledger.script_sha256(script),
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+    if film:
+        project_dir = media_root / project_id
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / FILM_NAME).write_bytes(b"fs-f finished film bytes")
+    return project_id, run_ids
+
+
+def _editor_family_paths(project_id, revision_id="rev-fsf-any"):
+    """Every gated editor endpoint, both families (classic Editor
+    + Editor Studio), as (name, method, path, json) tuples."""
+    base = f"/api/v1/projects/{project_id}"
+    rev = f"{base}/revisions/{revision_id}"
+    return [
+        ("editor load", "get", f"{base}/editor", None),
+        ("revision create", "post", f"{base}/revisions", {}),
+        ("revision list", "get", f"{base}/revisions", None),
+        ("revision load", "get", rev, None),
+        (
+            "revision operations",
+            "post",
+            f"{rev}/operations",
+            {"operations": [{"type": "set_volumes", "music": 0.5}]},
+        ),
+        ("revision render", "post", f"{rev}/render", {}),
+        ("revision exports", "get", f"{rev}/exports", None),
+        ("revision certificate", "get", f"{rev}/certificate", None),
+        ("studio view", "get", f"{rev}/studio", None),
+        ("studio pool", "get", f"{rev}/studio/pool", None),
+        ("studio frame", "get", f"{rev}/studio/frame", None),
+        ("studio waveform", "get", f"{rev}/studio/waveform", None),
+    ]
+
+
+def _call(client, headers, spec):
+    name, method, path, payload = spec
+    if payload is None:
+        return name, client.get(path, headers=headers)
+    return name, client.post(path, headers=headers, json=payload)
+
+
+def _assert_gate_refusal(name, response, code):
+    assert response.status_code == 404, (name, response.status_code, response.text)
+    assert response.json()["error"]["code"] == code, (name, response.text)
+
+
+@pytest.mark.parametrize(
+    "run_statuses,project_status",
+    [
+        ((), "created"),
+        (("queued",), "queued"),
+        (("running",), "running"),
+        (("awaiting_approval",), "awaiting_approval"),
+        (("failed",), "failed"),
+        (("cancelled",), "cancelled"),
+    ],
+)
+def test_fsf_editor_family_refuses_without_completed_run(
+    client, media_root, run_statuses, project_status
+):
+    owner = _register(client, "fsf-owner")
+    project_id, _run_ids = _seed_gate_project(
+        owner["id"],
+        media_root,
+        run_statuses=run_statuses,
+        project_status=project_status,
+    )
+
+    for spec in _editor_family_paths(project_id):
+        name, response = _call(client, owner["headers"], spec)
+        _assert_gate_refusal(name, response, "no_completed_run")
+
+
+def test_fsf_completed_run_without_finished_video_is_refused(
+    client, media_root
+):
+    owner = _register(client, "fsf-owner")
+    project_id, _run_ids = _seed_gate_project(
+        owner["id"],
+        media_root,
+        run_statuses=("completed",),
+        project_status="completed",
+        film=False,
+    )
+
+    for spec in _editor_family_paths(project_id):
+        name, response = _call(client, owner["headers"], spec)
+        _assert_gate_refusal(name, response, "no_finished_video")
+
+    # The gate is a pure entry check: the underlying records are
+    # untouched (the completed run still reads back as completed).
+    runs = client.get(
+        f"/api/v1/projects/{project_id}/runs", headers=owner["headers"]
+    )
+    assert runs.status_code == 200, runs.text
+    assert runs.json()["runs"][0]["status"] == "completed"
+
+
+def test_fsf_collaborator_follows_the_same_completion_rule(
+    client, media_root
+):
+    owner = _register(client, "fsf-owner")
+    member = _register(client, "fsf-member")
+    project_id, _run_ids = _seed_gate_project(
+        owner["id"],
+        media_root,
+        run_statuses=("failed",),
+        project_status="failed",
+    )
+    _share(client, owner, member, project_id, role="editor")
+
+    for spec in _editor_family_paths(project_id):
+        name, response = _call(client, member["headers"], spec)
+        _assert_gate_refusal(f"collaborator {name}", response, "no_completed_run")
+
+
+def test_fsf_admin_and_operator_bypass_the_gate(client, media_root):
+    # Admin-owned project with only a RUNNING run and no film: the
+    # gate does not apply — the revision list loads (empty), and a
+    # studio load answers with the service's own revision error,
+    # never a gate code.
+    admin = _make_user("admin")
+    project_id, _run_ids = _seed_gate_project(
+        admin["id"],
+        media_root,
+        run_statuses=("running",),
+        project_status="running",
+    )
+    listing = client.get(
+        f"/api/v1/projects/{project_id}/revisions", headers=admin["headers"]
+    )
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["revisions"] == []
+
+    studio = client.get(
+        f"/api/v1/projects/{project_id}/revisions/rev-none/studio",
+        headers=admin["headers"],
+    )
+    assert studio.status_code == 404, studio.text
+    assert studio.json()["error"]["code"] not in (
+        "no_completed_run",
+        "no_finished_video",
+    ), studio.text
+
+    # Operator principal (resolves to super_admin) on a NULL-owner
+    # legacy project with only a FAILED run: same bypass.
+    project_id, _run_ids = _seed_gate_project(
+        None,
+        media_root,
+        run_statuses=("failed",),
+        project_status="failed",
+    )
+    headers = {"X-API-Key": TOKEN}
+    listing = client.get(
+        f"/api/v1/projects/{project_id}/revisions", headers=headers
+    )
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["revisions"] == []
+
+
+def _build_completed_production(media_root, project_id, owner_id):
+    """The stage6 synthetic production (the test_editor_e2e_contract
+    pattern): a real completed run + finished film + importable
+    artefacts, re-owned by the given user."""
+    import stage6_fixture as fx
+
+    production = fx.build_synthetic_production(media_root, project_id)
+    db = SessionLocal()
+    try:
+        project = db.get(Project, project_id)
+        project.owner_id = owner_id
+        for run in (
+            db.query(ProductionRun)
+            .filter(ProductionRun.project_id == project_id)
+            .all()
+        ):
+            run.owner_id = owner_id
+        db.commit()
+    finally:
+        db.close()
+    return production
+
+
+def test_fsf_completed_with_video_loads_edits_and_survives_later_failure(
+    client, media_root
+):
+    owner = _register(client, "fsf-owner")
+    member = _register(client, "fsf-member")
+    admin_member = _make_user("admin")
+    project_id = f"proj-fsf-{uuid.uuid4().hex[:8]}"
+    production = _build_completed_production(
+        media_root, project_id, owner["id"]
+    )
+    assert (media_root / project_id / FILM_NAME).is_file()
+    _share(client, owner, member, project_id, role="editor")
+    _share(client, owner, admin_member, project_id, role="editor")
+
+    # (2) Owner load works exactly as before, on both surfaces.
+    editor_view = client.get(
+        f"/api/v1/projects/{project_id}/editor", headers=owner["headers"]
+    )
+    assert editor_view.status_code == 200, editor_view.text
+    revision_id = editor_view.json()["revision_id"]
+    assert editor_view.json()["revision_number"] == 0
+
+    studio = client.get(
+        f"/api/v1/projects/{project_id}/revisions/{revision_id}/studio",
+        headers=owner["headers"],
+    )
+    assert studio.status_code == 200, studio.text
+
+    # A collaborator with the editor role loads it too.
+    member_view = client.get(
+        f"/api/v1/projects/{project_id}/editor", headers=member["headers"]
+    )
+    assert member_view.status_code == 200, member_view.text
+
+    # Editing works exactly as before: one operation batch creates
+    # the next revision, re-readable from the server.
+    applied = client.post(
+        f"/api/v1/projects/{project_id}/revisions/{revision_id}/operations",
+        headers=owner["headers"],
+        json={"operations": [{"type": "set_volumes", "music": 0.33}]},
+    )
+    assert applied.status_code == 201, applied.text
+    new_revision_id = applied.json()["revision_id"]
+    reread = client.get(
+        f"/api/v1/projects/{project_id}/revisions/{new_revision_id}",
+        headers=owner["headers"],
+    )
+    assert reread.status_code == 200, reread.text
+    assert reread.json()["document"]["volumes"]["music"] == 0.33
+
+    # The per-revision certificate (an Editor surface) loads.
+    certificate = client.get(
+        f"/api/v1/projects/{project_id}/revisions/{new_revision_id}/certificate",
+        headers=owner["headers"],
+    )
+    assert certificate.status_code == 200, certificate.text
+    assert certificate.json()["certificate_version"] == 2
+
+    # A-10: a LATER failed run (headline project status now
+    # "failed") does not lock the owner out — the gate keys on the
+    # completed run + film, which still exist.
+    db = SessionLocal()
+    try:
+        project = db.get(Project, project_id)
+        project.status = "failed"
+        db.add(
+            ProductionRun(
+                id=_uid(),
+                project_id=project_id,
+                owner_id=owner["id"],
+                status="failed",
+                stage="video_editor",
+                error="later run failed",
+                script_hash=run_ledger.script_sha256(production["script"]),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    still_open = client.get(
+        f"/api/v1/projects/{project_id}/editor", headers=owner["headers"]
+    )
+    assert still_open.status_code == 200, still_open.text
+
+    # (3)+(4) With the finished video artefact gone, the ordinary
+    # owner AND collaborator are refused (no_finished_video) even
+    # though revisions exist — while the admin member keeps full
+    # support access to the same editor state.
+    (media_root / project_id / FILM_NAME).unlink()
+    for label, headers in (
+        ("owner", owner["headers"]),
+        ("collaborator", member["headers"]),
+    ):
+        refused = client.get(
+            f"/api/v1/projects/{project_id}/editor", headers=headers
+        )
+        _assert_gate_refusal(label, refused, "no_finished_video")
+    admin_view = client.get(
+        f"/api/v1/projects/{project_id}/editor",
+        headers=admin_member["headers"],
+    )
+    assert admin_view.status_code == 200, admin_view.text
