@@ -655,7 +655,6 @@ function TemplatesPageContent() {
                     >
                       <option value="">Production default</option>
                       <option value="word">Word timing</option>
-                      <option value="syllable">Syllable timing</option>
                       <option value="off">Off</option>
                     </select>
                   </label>

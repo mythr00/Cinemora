@@ -687,7 +687,6 @@ export function ProductionConfigForm({
                 }
               >
                 <option value="word">Word-by-word (karaoke)</option>
-                <option value="syllable">Syllable timing (derived)</option>
                 <option value="off">Plain lines</option>
               </select>
               <ChevronDown size={18} strokeWidth={1.7} aria-hidden />

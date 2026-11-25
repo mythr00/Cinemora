@@ -108,7 +108,16 @@ def _new_id() -> str:
 # ---------------------------------------------------------------------
 
 _CAPTIONS_MODES = ("burn", "sidecar", "off")
-_CAPTION_SYNC_MODES = ("word", "syllable", "off")
+_CAPTION_SYNC_MODES = ("word", "off")
+# C-13 (Phase 7): "syllable" stays accepted for legacy templates
+# but is demoted to "word" at validation — derived syllable timing
+# is an internal renderer fallback, not a user-facing option.
+_CAPTION_SYNC_ACCEPTED = ("word", "syllable", "off")
+
+
+def _caption_sync(key, value):
+    cleaned = _enum(key, value, _CAPTION_SYNC_ACCEPTED)
+    return "word" if cleaned == "syllable" else cleaned
 
 
 def _number(key, value, *, lo, hi, exclusive_lo=False):
@@ -171,7 +180,7 @@ OPTION_VALIDATORS = {
     "genre": _genre,
     "voice_id": lambda k, v: _string(k, v, max_chars=120),
     "captions": lambda k, v: _enum(k, v, _CAPTIONS_MODES),
-    "caption_sync": lambda k, v: _enum(k, v, _CAPTION_SYNC_MODES),
+    "caption_sync": _caption_sync,
     "music_file": lambda k, v: _string(k, v, max_chars=1000),
     "music_enabled": _boolean,
     "music_volume": lambda k, v: _number(k, v, lo=0.0, hi=2.0),

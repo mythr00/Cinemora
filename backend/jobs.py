@@ -1425,6 +1425,13 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     caption_sync = str(options.get("caption_sync") or "word").lower()
     if caption_sync not in ("word", "syllable", "off"):
         caption_sync = "word"
+    if caption_sync == "syllable":
+        # C-13 (Phase 7): syllable sync is derived timing and is
+        # no longer a user-facing option. A legacy/stored request
+        # is accepted and demoted to the auto word sync (never a
+        # hard failure); the renderer's internal derived-syllable
+        # mechanism and its honesty stamp remain for diagnostics.
+        caption_sync = "word"
 
     # Stage 5A: resolve the genre pack BEFORE the ledger run
     # begins, so the resolved pack id lands in the run's options

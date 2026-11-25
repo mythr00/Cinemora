@@ -73,7 +73,16 @@ DEFAULTS_SECTION = "production_config"
 INTENSITIES = ("subtle", "moderate", "dynamic")
 AUTO_INTENSITY = "auto"
 CAPTION_MODES = ("burn", "sidecar", "off")
-CAPTION_SYNCS = ("word", "syllable", "off")
+#: C-13 (Phase 7): syllable sync is DERIVED timing (stamped as
+#: such by the caption renderer) and is no longer a user-facing
+#: option. CAPTION_SYNCS is the user-offered set; the legacy value
+#: "syllable" stays ACCEPTED at cleaning (existing clients and
+#: stored documents must not 422) and is normalised to "word" —
+#: accept-and-ignore, exactly like FS-3 graphics intensity. The
+#: renderer's internal derived-syllable mechanism is untouched
+#: and remains visible in admin diagnostics (the ASS header stamp).
+CAPTION_SYNCS = ("word", "off")
+CAPTION_SYNCS_ACCEPTED = ("word", "syllable", "off")
 MUSIC_SOURCES = ("none", "upload", "library")
 MUSIC_PLACEMENTS = ("throughout", "sections")
 NARRATION_SOURCES = ("ai",)
@@ -456,13 +465,18 @@ def clean_config(raw) -> dict:
     config["narration"] = cleaned_narration
 
     captions = _section(raw, "captions", {"mode", "sync"})
+    _sync = _enum(
+        "captions", "sync", captions.get("sync", "word"),
+        CAPTION_SYNCS_ACCEPTED,
+    )
     config["captions"] = {
         "mode": _enum(
             "captions", "mode", captions.get("mode", "burn"), CAPTION_MODES
         ),
-        "sync": _enum(
-            "captions", "sync", captions.get("sync", "word"), CAPTION_SYNCS
-        ),
+        # C-13: a submitted "syllable" is accepted and demoted to
+        # the auto word sync — derived timing is an internal
+        # renderer fallback, not a user choice.
+        "sync": "word" if _sync == "syllable" else _sync,
     }
     return config
 

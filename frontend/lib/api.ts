@@ -4246,7 +4246,7 @@ export type TemplateOptions = {
   genre?: string;
   voice_id?: string;
   captions?: "burn" | "sidecar" | "off";
-  caption_sync?: "word" | "syllable" | "off";
+  caption_sync?: "word" | "off";
   music_file?: string;
   music_enabled?: boolean;
   music_volume?: number;
