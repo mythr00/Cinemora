@@ -53,7 +53,14 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-logger = logging.getLogger(__name__)
+try:
+    from services import logging_setup
+except ImportError:  # pragma: no cover - flat-layout fallback
+    import logging_setup
+
+# B-13 (Phase 5c-1): dispatcher events ride the structured
+# cinemora logger tree.
+logger = logging_setup.get_logger("dispatcher")
 
 ACTIVE_STATUSES = ("queued", "running", "awaiting_approval")
 MAX_AUTO_RETRIES = 2
@@ -249,6 +256,15 @@ def _dispatch_pass() -> list[tuple[str, str | None]]:
                 waiting = [w for w in waiting if w[0].id != run.id]
                 continue
             run_ledger.mark_dispatched(run.id, job_id)
+            logging_setup.log_event(
+                logger,
+                logging.INFO,
+                "run_promoted",
+                run_id=run.id,
+                job_id=job_id,
+                project_id=run.project_id,
+                priority=is_priority,
+            )
             promoted.append((run.id, job_id))
             running_by_owner[run.owner_id] = (
                 running_by_owner.get(run.owner_id, 0) + 1

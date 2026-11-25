@@ -20,6 +20,7 @@ behaviour (queries, per-production budgets, result shapes) is
 unchanged by the seam.
 """
 
+import logging
 import os
 import random
 import threading
@@ -28,6 +29,15 @@ from typing import Callable, Dict, List
 
 import requests
 from dotenv import load_dotenv
+
+try:
+    from services import logging_setup
+except ImportError:  # pragma: no cover - flat-layout fallback
+    import logging_setup
+
+# B-13 (Phase 5c-1): real Serper requests emit one structured
+# event at the choke point below.
+logger = logging_setup.get_logger("search_provider")
 
 try:
     from services import source_cache
@@ -134,6 +144,14 @@ def _post_with_retry(path: str, query: str) -> dict:
             # point every real Serper request passes through (cache
             # hits never reach it), split by endpoint = search type.
             run_metrics.serper_call(path)
+            logging_setup.log_event(
+                logger,
+                logging.INFO,
+                "search_call",
+                provider="serper",
+                endpoint=path,
+                attempt=attempt + 1,
+            )
             try:
                 response = requests.post(
                     f"{SERPER_BASE}/{path}",

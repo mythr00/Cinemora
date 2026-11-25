@@ -30,6 +30,7 @@ this module; new code imports this module directly.
 """
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -37,8 +38,17 @@ from dataclasses import dataclass, field
 import requests
 from dotenv import load_dotenv
 
+try:
+    from services import logging_setup
+except ImportError:  # pragma: no cover - flat-layout fallback
+    import logging_setup
+
 
 load_dotenv(override=True)
+
+# B-13 (Phase 5c-1): structured events for provider calls ride the
+# cinemora logger tree (request_id-stamped when inside a request).
+logger = logging_setup.get_logger("llm_provider")
 
 
 # ---------------------------------------------------------------------
@@ -166,17 +176,23 @@ class LLMProvider:
     # -- the one wire method -------------------------------------------
 
     def complete(self, messages, *, system=None, model=None,
-                 temperature=0.1, max_tokens=16000) -> Completion:
+                 temperature=0.1, max_tokens=16000,
+                 usage_context=None) -> Completion:
         """Run one completion. ``messages`` is a list of
         {\"role\", \"content\"} dicts; ``system`` is the optional
-        system prompt. Returns a Completion; raises LLMProviderError
-        / LLMResponseError on failure — never returns invented text."""
+        system prompt. ``usage_context`` is an optional dict with
+        any of ``user_id`` / ``project_id`` / ``run_id`` /
+        ``context`` for the B-10 usage ledger — absent keys are
+        recorded as NULL, never fabricated. Returns a Completion;
+        raises LLMProviderError / LLMResponseError on failure —
+        never returns invented text."""
         raise NotImplementedError
 
     # -- conveniences built on complete() -------------------------------
 
     def complete_text(self, system_prompt, user_prompt, *, model=None,
-                      temperature=0.1, max_tokens=16000):
+                      temperature=0.1, max_tokens=16000,
+                      usage_context=None):
         """One system+user call returning plain text.
 
         A response counts as successful ONLY when it carries text
@@ -195,6 +211,7 @@ class LLMProvider:
                 model=model,
                 temperature=temperature,
                 max_tokens=budget,
+                usage_context=usage_context,
             )
 
             if completion.text and completion.stop_reason != "max_tokens":
@@ -221,7 +238,8 @@ class LLMProvider:
         raise last_error
 
     def complete_json(self, system_prompt, user_prompt, *, model=None,
-                      temperature=0.0, max_tokens=1600):
+                      temperature=0.0, max_tokens=1600,
+                      usage_context=None):
         """One system+user call returning parsed JSON.
 
         Handles markdown fences and JSON embedded in surrounding
@@ -244,6 +262,7 @@ class LLMProvider:
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            usage_context=usage_context,
         )
 
         text = str(text or "").strip()
@@ -468,7 +487,8 @@ class BrewKegProvider(LLMProvider):
     # -- interface -------------------------------------------------------
 
     def complete(self, messages, *, system=None, model=None,
-                 temperature=0.1, max_tokens=16000) -> Completion:
+                 temperature=0.1, max_tokens=16000,
+                 usage_context=None) -> Completion:
         # The BrewKeg wire carries exactly one user message in every
         # existing consumer flow; the interface's message list is
         # folded into that shape here, inside the provider.
@@ -476,20 +496,91 @@ class BrewKegProvider(LLMProvider):
         for message in messages or []:
             if isinstance(message, dict):
                 user_prompt = str(message.get("content") or user_prompt)
-        data = self._request(
-            system or "",
-            user_prompt,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return Completion(
+        try:
+            data = self._request(
+                system or "",
+                user_prompt,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except (LLMProviderError, LLMResponseError) as error:
+            logging_setup.log_event(
+                logger,
+                logging.WARNING,
+                "llm_call_failed",
+                provider=self.name,
+                model=model or self.model,
+                kind=getattr(error, "kind", None),
+            )
+            raise
+        completion = Completion(
             text=_extract_text(data),
             usage=data.get("usage") or {},
             model=model or self.model,
             provider=self.name,
             stop_reason=data.get("stop_reason"),
         )
+        _tokens = _usage_token_fields(completion.usage)
+        logging_setup.log_event(
+            logger,
+            logging.INFO,
+            "llm_call",
+            provider=completion.provider,
+            model=completion.model,
+            prompt_tokens=_tokens["prompt_tokens"],
+            completion_tokens=_tokens["completion_tokens"],
+            total_tokens=_tokens["total_tokens"],
+        )
+        # B-10 (Phase 5c-1): append the call to the provider usage
+        # ledger. Deferred import + the recorder's own fail-soft
+        # contract: a ledger problem must NEVER break the LLM call.
+        try:
+            from services import provider_usage
+
+            provider_usage.record_usage(
+                provider=completion.provider,
+                model=completion.model,
+                usage=completion.usage,
+                context=usage_context,
+            )
+        except Exception:
+            logger.warning(
+                "provider usage recording failed", exc_info=True
+            )
+        return completion
+
+
+def _usage_token_fields(usage) -> dict:
+    """Normalise a provider usage dict to prompt/completion/total
+    token fields. Providers report different key spellings
+    (Anthropic-shaped ``input_tokens``/``output_tokens`` vs
+    OpenAI-shaped ``prompt_tokens``/``completion_tokens``); a field
+    the provider did not report stays None — unknown, never
+    fabricated. Total falls back to prompt+completion only when
+    BOTH were reported."""
+    usage = usage if isinstance(usage, dict) else {}
+
+    def _pick(*keys):
+        for key in keys:
+            value = usage.get(key)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    prompt = _pick("prompt_tokens", "input_tokens")
+    completion = _pick("completion_tokens", "output_tokens")
+    total = _pick("total_tokens")
+    if total is None and prompt is not None and completion is not None:
+        total = prompt + completion
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": total,
+    }
 
 
 def _extract_text(data):

@@ -30,7 +30,10 @@ from services import production_report as production_report_service
 from services import visual_quality as visual_quality_service
 from services import stage_resume
 
+import logging
+
 from services import genre_packs
+from services import logging_setup
 from services import media_paths
 from services import scene_structure
 from services import media_probe
@@ -49,6 +52,10 @@ from services.production_state import (
     utc_now,
 )
 
+
+# B-13 (Phase 5c-1): run lifecycle events (enqueue / claim /
+# start / finish) ride the structured cinemora logger tree.
+logger = logging_setup.get_logger("jobs")
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 QUEUE_NAME = "video_generation"
@@ -394,13 +401,15 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
     # Phase 8.4: a terminal run frees capacity — let the dispatcher
     # promote the next queued production.
     _dispatch_quietly()
-    print()
-    print("========================================")
-    print("PIPELINE FAILED")
-    print("========================================")
-    print(f"Stage: {stage}")
-    print(f"Error: {error}")
-    print()
+    logging_setup.log_event(
+        logger,
+        logging.ERROR,
+        "run_failed",
+        project_id=Path(project_dir).name,
+        run_id=run_id,
+        stage=stage,
+        error=str(error),
+    )
     raise error
 
 
@@ -738,10 +747,12 @@ def enqueue_full_pipeline(project_id: str, script: str, options=None, run_id=Non
             options=run_options,
         )
     if submission and submission.get("deduplicated"):
-        print(
-            f"Duplicate submission for project {project_id}: active "
-            f"run {submission['run_id']} already covers this script; "
-            "no new job queued."
+        logging_setup.log_event(
+            logger,
+            logging.INFO,
+            "submission_deduplicated",
+            project_id=project_id,
+            run_id=submission["run_id"],
         )
         return submission["run_id"]
     run_id = submission["run_id"] if submission else None
@@ -761,11 +772,21 @@ def enqueue_full_pipeline(project_id: str, script: str, options=None, run_id=Non
 
         for promoted_run_id, job_id in dispatcher.dispatch_once():
             if promoted_run_id == run_id:
-                print(f"Queued full pipeline job: {job_id} (run {run_id})")
+                logging_setup.log_event(
+                    logger,
+                    logging.INFO,
+                    "run_enqueued",
+                    project_id=project_id,
+                    run_id=run_id,
+                    job_id=job_id,
+                )
                 return job_id
-        print(
-            f"Run {run_id} queued in the ledger backlog for project "
-            f"{project_id}; the dispatcher will promote it."
+        logging_setup.log_event(
+            logger,
+            logging.INFO,
+            "run_queued_backlog",
+            project_id=project_id,
+            run_id=run_id,
         )
         return None
     try:
@@ -783,7 +804,14 @@ def enqueue_full_pipeline(project_id: str, script: str, options=None, run_id=Non
                 run_id, "failed", error=f"enqueue failed: {error}"
             )
         raise
-    print(f"Queued full pipeline job: {job.id} (run {run_id})")
+    logging_setup.log_event(
+        logger,
+        logging.INFO,
+        "run_enqueued",
+        project_id=project_id,
+        run_id=run_id,
+        job_id=job.id,
+    )
     return job.id
 
 
@@ -809,7 +837,15 @@ def enqueue_analysis_phase(project_id: str, script: str, run_id: str, options=No
                 run_id, "failed", error=f"enqueue failed: {error}"
             )
         raise
-    print(f"Queued analysis-phase job: {job.id} (run {run_id})")
+    logging_setup.log_event(
+        logger,
+        logging.INFO,
+        "run_enqueued",
+        project_id=project_id,
+        run_id=run_id,
+        job_id=job.id,
+        kind="analysis_phase",
+    )
     return job.id
 
 
@@ -839,7 +875,15 @@ def enqueue_revision_render(project_id: str, revision_id: str, run_id: str):
                 run_id, "failed", error=f"enqueue failed: {error}"
             )
         raise
-    print(f"Queued revision-render job: {job.id} (run {run_id})")
+    logging_setup.log_event(
+        logger,
+        logging.INFO,
+        "run_enqueued",
+        project_id=project_id,
+        run_id=run_id,
+        job_id=job.id,
+        kind="revision_render",
+    )
     return job.id
 
 
@@ -1349,14 +1393,14 @@ def _record_research_outcome(state, source):
 
 
 def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=None):
-    print()
-    print("=" * 70)
-    print("DOCUMENTARY STUDIO")
-    print("FULL PRODUCTION PIPELINE")
-    print("=" * 70)
-    print(f"Project: {project_id}")
-    print("=" * 70)
-    print()
+    logging_setup.log_event(
+        logger,
+        logging.INFO,
+        "run_started",
+        project_id=project_id,
+        run_id=run_id,
+        entrypoint="run_full_pipeline",
+    )
 
     project_dir = media_paths.project_dir(project_id)
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -1473,9 +1517,13 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         if claimed is None:
             existing = run_ledger.get_run(run_id)
             if existing is not None:
-                print(
-                    f"Run {run_id} not claimable (status: "
-                    f"{existing['status']}); not executing."
+                logging_setup.log_event(
+                    logger,
+                    logging.WARNING,
+                    "run_not_claimable",
+                    project_id=project_id,
+                    run_id=run_id,
+                    status=existing["status"],
                 )
                 return {
                     "project_id": project_id,
@@ -1483,11 +1531,12 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                     "run_id": run_id,
                     "deduplicated_execution": True,
                 }
-            print(
-                f"Run {run_id} could not be claimed and its ledger "
-                "state could not be read; REFUSING to execute it "
-                "unclaimed (B-02). The run remains queued in the "
-                "ledger for a later delivery."
+            logging_setup.log_event(
+                logger,
+                logging.WARNING,
+                "run_claim_refused_unreadable",
+                project_id=project_id,
+                run_id=run_id,
             )
             return {
                 "project_id": project_id,
@@ -1496,6 +1545,13 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 "deduplicated_execution": True,
             }
         _run_id = run_id
+        logging_setup.log_event(
+            logger,
+            logging.INFO,
+            "run_claimed",
+            project_id=project_id,
+            run_id=_run_id,
+        )
     else:
         _run_id = run_ledger.begin_run(
             project_id,
@@ -3092,11 +3148,14 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     save_production_state(project_dir, state)
     _set_project_status(project_id, "completed")
 
-    print()
-    print("=" * 70)
-    print("DOCUMENTARY PIPELINE COMPLETE")
-    print("=" * 70)
-    print(f"FINAL VIDEO:\n{final_video}")
+    logging_setup.log_event(
+        logger,
+        logging.INFO,
+        "run_completed",
+        project_id=project_id,
+        run_id=state.get("_run_id"),
+        final_video=str(final_video),
+    )
     return result
 
 

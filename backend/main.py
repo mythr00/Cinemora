@@ -40,6 +40,7 @@ from api_admin import router as api_admin_router
 from api_assistant import router as api_assistant_router
 from api_developer import router as api_developer_router
 from api_public import router as api_public_router
+from services import logging_setup as logging_setup_service
 
 
 @asynccontextmanager
@@ -82,6 +83,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# B-13 (Phase 5c-1): structured logging for the cinemora logger
+# tree (idempotent) + request-ID middleware — honours a safe
+# incoming X-Request-ID or generates one, binds it to the logging
+# context for the request, and echoes it in the response header.
+logging_setup_service.setup_logging()
+app.add_middleware(logging_setup_service.RequestIdMiddleware)
 
 
 # Stage 4: the /api/v1 studio contract (api_v1.py). The v1 error
