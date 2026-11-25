@@ -119,6 +119,20 @@ def _write_mode(call: ast.Call):
     return mode
 
 
+# Append-mode exemption, ONE module, recorded justification:
+# services/worker_events.py (Phase 3b / C-15, commit 22e526c —
+# added AFTER this census) is an append-only JSONL forensic log,
+# not an artefact writer. record_event appends ONE line under a
+# lock, fail-soft; services.atomic_write replaces whole files
+# atomically and cannot append — rewriting the whole log per
+# event would break multi-writer append semantics and lose the
+# very crash evidence the store exists to keep. DATA-101 is about
+# torn whole-artefact writes, which an append-only log cannot
+# produce. The exemption covers append mode ("a") in this module
+# only; a whole-file write there still fails the census.
+_APPEND_LOG_MODULES = {"worker_events.py"}
+
+
 def test_writer_census_no_bare_text_writes_in_live_modules():
     """The provider-ban test is the pattern: a static census that
     fails on any NEW bare writer, so the DATA-101 class cannot
@@ -145,6 +159,11 @@ def test_writer_census_no_bare_text_writes_in_live_modules():
                 mode = None
                 if node.args and isinstance(node.args[0], ast.Constant):
                     mode = node.args[0].value
+                if (
+                    path.name in _APPEND_LOG_MODULES
+                    and mode == "a"
+                ):
+                    continue  # append-only forensic log; see above
                 if isinstance(mode, str) and any(c in mode for c in "wax") and "b" not in mode:
                     offenders.append(f"{path.name}:{node.lineno} Path.open(mode={mode!r})")
     assert not offenders, (
