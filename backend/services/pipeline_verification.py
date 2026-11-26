@@ -392,22 +392,288 @@ def _verdict_cache():
         return None
 
 
-def _verdict_cache_key(candidate, key, gate_need, verify_scenario):
-    """Fingerprint of everything the gate + scorer read: the
-    candidate's identity key and metadata text, the enriched gate
-    need, and the verify scenario. Two evaluations with the same
-    key are the same evaluation."""
+# ---------------------------------------------------------------------------
+# Phase 2 (Discovery Efficiency): verdict keying, the intrinsic index
+# and the durable discovery-memory hand-off.
+#
+# WHAT IS PORTABLE AND WHAT IS NOT — the precision this keying rests
+# on. A verification verdict (gate_shot_need + story.verify_candidate)
+# decomposes into:
+#
+# * CANDIDATE-INTRINSIC parts — functions of the candidate alone:
+#   banned provider, foreign provenance, social-platform source and
+#   meme format are hard rejections the scorer returns before any
+#   scenario field is read (the only scenario read on those paths is
+#   the visual category, which is stamped onto the record and changes
+#   no decision), and the gate enforces the first two identically.
+#   The watermark flag is likewise candidate-only. These verdicts are
+#   portable across EVERY sentence and context, so they are indexed
+#   separately (the intrinsic index) and a candidate killed
+#   intrinsically is never re-scored under another sentence.
+# * CONTEXTUAL parts — everything else genuinely depends on the
+#   evaluating context and is shared ONLY between identical decision
+#   contexts: subject match/mismatch and the wrong-person rules (the
+#   founder's person-mismatch protections), topical overlap against
+#   the sentence's terms, era compatibility, place match, and the
+#   gate's required/forbidden/contradiction contracts.
+#
+# The pre-Phase-2 key serialised the whole gate_need and scenario
+# dicts, so fields neither reader consults — the query list a
+# recovery round had just replaced, bookkeeping stamps — fragmented
+# the key: identical decision inputs hashed differently, the cache
+# missed, and the full gate + scorer ran again. That is the
+# mechanical cause of the Hyatt run's 58.2% repeat-evaluation rate
+# (Phase 0 root cause 2). The fingerprint below is a PROJECTION
+# enumerated field-by-field from gate_all_failures and
+# verify_candidate (incl. detect_contradiction and the intrinsic
+# helpers): every field either reader consults is in it, and derived
+# inputs enter as the derived values themselves (the scorer's
+# content-token set, the gate's type-token set, the resolved visual
+# categories), so two contexts that can produce different verdicts
+# never share an entry, and two that cannot always do.
+# ---------------------------------------------------------------------------
+
+#: Candidate fields read anywhere in the gate/scorer/intrinsic path.
+_VERDICT_CANDIDATE_FIELDS = (
+    "title", "snippet", "description",
+    "provider", "source", "source_domain", "project_id",
+    "type", "visual_type",
+    "url", "video_url", "image_url", "download_url", "link", "source_url",
+)
+
+#: Rejection reasons decided by the candidate alone (see header).
+_INTRINSIC_REJECTION_REASONS = frozenset({
+    story.BANNED_PROVIDER_REASON,
+    story.FOREIGN_PROVENANCE_REASON,
+    story.SOCIAL_PLATFORM_REASON,
+    story.MEME_FORMAT_REASON,
+})
+
+#: Run-cache key component for the intrinsic index: (candidate_id,
+#: _INTRINSIC_CACHE_KEY). The fingerprint component of a real key is
+#: a 64-char hex digest, so the sentinel can never collide with one.
+_INTRINSIC_CACHE_KEY = "intrinsic"
+
+
+def _sorted_texts(values):
+    return sorted(
+        str(value or "").strip()
+        for value in (values or [])
+        if str(value or "").strip()
+    )
+
+
+def _bible_fingerprint(bible):
+    """Fingerprint of the case-bible content the verdict path reads:
+    entity ids, canonical names, types and aliases (the scorer's
+    subject lookup and detect_contradiction) plus the by_id key set.
+    A changed bible — a different script cut of the same production —
+    changes the fingerprint, which is what voids durable verdict
+    records across script revisions: the durable record's stated
+    expiry rule, together with the verdict code version in the
+    store. Within one run the bible is fixed, so the run cache does
+    not key on it."""
     import hashlib
     import json
 
-    meta = "|".join(
-        str(candidate.get(k) or "")
-        for k in ("title", "snippet", "description", "provider", "source")
+    entities = []
+    for entity in (bible or {}).get("entities") or []:
+        if not isinstance(entity, dict):
+            continue
+        entities.append([
+            str(entity.get("id") or ""),
+            str(entity.get("canonical") or entity.get("name") or ""),
+            str(entity.get("type") or ""),
+            _sorted_texts(entity.get("aliases")),
+        ])
+    by_id = (bible or {}).get("by_id") or {}
+    payload = {
+        "entities": sorted(entities),
+        "by_id_keys": sorted(str(key) for key in by_id.keys()),
+    }
+    raw = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _verdict_context_fingerprint(candidate, gate_need, verify_scenario):
+    """sha256 over the decision-relevant projection of one
+    evaluation (see the Phase 2 header above)."""
+    import hashlib
+    import json
+
+    candidate = candidate or {}
+    need = gate_need or {}
+    scenario = verify_scenario or {}
+    wanted = set()
+    for term in scenario.get("search_terms") or []:
+        wanted |= story._content_tokens(term)
+    wanted |= story._content_tokens(scenario.get("visual"))
+    payload = {
+        "candidate": {
+            key: candidate.get(key) for key in _VERDICT_CANDIDATE_FIELDS
+        },
+        "scenario": {
+            "subject_id": scenario.get("subject_id"),
+            "specificity": scenario.get("specificity"),
+            "era": scenario.get("era"),
+            "place": scenario.get("place"),
+            "category": story.resolve_visual_category(scenario),
+            "wanted_tokens": sorted(wanted),
+        },
+        "need": {
+            "era": need.get("era"),
+            "required_subject": need.get("required_subject"),
+            "required_subject_id": need.get("required_subject_id"),
+            "place": need.get("place"),
+            "required_type": need.get("required_type"),
+            "specificity": need.get("specificity"),
+            "subject_entity_type": need.get("subject_entity_type"),
+            "category": story.resolve_visual_category(need),
+            "forbidden": _sorted_texts(need.get("forbidden")),
+            "other_people": _sorted_texts(need.get("other_people")),
+            "other_places": _sorted_texts(need.get("other_places")),
+            "subject_aliases": _sorted_texts(need.get("subject_aliases")),
+            "place_aliases": _sorted_texts(need.get("place_aliases")),
+            "type_tokens": sorted(
+                pipeline_assignment._gate_type_tokens(need)
+            ),
+        },
+    }
+    raw = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _verdict_cache_key(candidate, key, gate_need, verify_scenario):
+    """Run-cache key for one candidate in one decision context: the
+    caller's dedupe key plus the context fingerprint. Two
+    evaluations with the same key are the same evaluation; the
+    pre-Phase-2 whole-dict serialisation is gone (see header)."""
+    return (
+        key,
+        _verdict_context_fingerprint(candidate, gate_need, verify_scenario),
     )
-    payload = json.dumps(
-        [meta, gate_need, verify_scenario], sort_keys=True, default=str
-    )
-    return (key, hashlib.sha256(payload.encode("utf-8")).hexdigest())
+
+
+def _discovery_memory():
+    """The active production's durable discovery memory, or None.
+
+    Owned by media_pipeline (opened per project directory when a
+    scene's media processing starts) and resolved through its
+    namespace like the other shared state — including its scoping
+    rule: no durable memory under the default run context (see
+    media_pipeline._active_discovery_memory). Fail-soft: memory is
+    an optimisation and an honesty record, never a new failure
+    mode."""
+    try:
+        return _media_pipeline()._active_discovery_memory()
+    except Exception:
+        return None
+
+
+def _remember_verdict_durable(cache, cache_key, item, bible_fp,
+                              sentence_numbers):
+    """Persist one fresh evaluation beyond the run cache: the
+    durable verdict record (the built item, identified in the store
+    by candidate + context fingerprint + bible fingerprint + verdict
+    code version) and — when the item's rejection reason is
+    candidate-intrinsic — the intrinsic index, in-run and durable.
+    Gate and scorer items both qualify: the gate enforces the banned-
+    provider and foreign-provenance intrinsics with the same story
+    functions the scorer uses, so a gate item carrying one of those
+    reasons certifies the same candidate-only fact."""
+    memory = _discovery_memory()
+    if memory is not None and cache_key is not None:
+        try:
+            memory.record_verdict(
+                str(item.get("candidate_id") or ""), cache_key[1],
+                bible_fp, item, sentence_numbers=sentence_numbers,
+            )
+        except Exception:
+            pass
+    if str(item.get("reject_reason") or "") in _INTRINSIC_REJECTION_REASONS:
+        import copy
+
+        if cache is not None:
+            cache[(item.get("candidate_id"), _INTRINSIC_CACHE_KEY)] = (
+                copy.deepcopy(item)
+            )
+        if memory is not None:
+            try:
+                memory.record_intrinsic_verdict(
+                    str(item.get("candidate_id") or ""), item
+                )
+            except Exception:
+                pass
+
+
+def _durable_verdict_item(candidate_id, context_fp, bible_fp):
+    """A prior run's scored item for this exact decision context, or
+    None (Phase 2: verdicts survive the run that produced them). The
+    store keys candidates by candidate_id — not by the run key's
+    segment-aware dedupe key — so both identifiers travel
+    separately."""
+    memory = _discovery_memory()
+    if memory is None or not candidate_id:
+        return None
+    try:
+        item = memory.verdict(candidate_id, context_fp, bible_fp)
+    except Exception:
+        return None
+    return item if isinstance(item, dict) else None
+
+
+def _demotion_context_fingerprint(scenario, bible):
+    """Context identity for post-download demotions (frame check,
+    transcript check). Those checks judge the downloaded FILE against
+    the scenario's subject/place/era and the bible, so a demotion is
+    recorded under the projection of exactly those inputs: the same
+    candidate segment demoted for one sentence's transcript may be
+    perfectly valid for another sentence, and only an identical
+    context replays the demotion. No scenario (image fetches, where
+    the frame check is scenario-independent) fingerprints as the
+    empty context."""
+    import hashlib
+    import json
+
+    if not isinstance(scenario, dict):
+        return ""
+    wanted = set()
+    for term in scenario.get("search_terms") or []:
+        wanted |= story._content_tokens(term)
+    wanted |= story._content_tokens(scenario.get("visual"))
+    payload = {
+        "subject_id": scenario.get("subject_id"),
+        "place": scenario.get("place"),
+        "era": scenario.get("era"),
+        "specificity": scenario.get("specificity"),
+        "category": story.resolve_visual_category(scenario),
+        "wanted_tokens": sorted(wanted),
+        "bible_fp": _bible_fingerprint(bible),
+    }
+    raw = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _intrinsic_verdict_item(cache, candidate_id):
+    """A completed scored item whose rejection is candidate-intrinsic
+    (portable across all contexts — see the Phase 2 header), from the
+    run cache's intrinsic index or the durable store; None when the
+    candidate was never intrinsically judged. The caller re-stamps
+    the record-only category for the current scenario."""
+    import copy
+
+    if cache is not None:
+        item = cache.get((candidate_id, _INTRINSIC_CACHE_KEY))
+        if isinstance(item, dict):
+            return copy.deepcopy(item)
+    memory = _discovery_memory()
+    if memory is None or not candidate_id:
+        return None
+    try:
+        item = memory.intrinsic_verdict(candidate_id)
+    except Exception:
+        return None
+    return copy.deepcopy(item) if isinstance(item, dict) else None
 
 
 def _uve_verify_all(candidates, scenario, bible, shot_need=None):
@@ -480,6 +746,31 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
             story.resolve_visual_category(gate_need)
         )
 
+    # Phase 2: the durable identity of this call's evaluations — the
+    # bible fingerprint (voids durable records across script cuts)
+    # and the sentence numbers the records are attributed to
+    # (informational: which sentences a verdict was earned under is a
+    # separate dimension of the record, never part of its key).
+    _bible_fp = _bible_fingerprint(bible)
+    _sentence_numbers = set()
+    for _src in (scenario or {}, shot_need or {}):
+        for _value in (
+            _src.get("sentence_numbers") or _src.get("sentences") or []
+        ):
+            try:
+                _sentence_numbers.add(int(_value))
+            except (TypeError, ValueError):
+                pass
+        _single = _src.get("sentence_number")
+        if _single is None:
+            _single = _src.get("first_sentence_number")
+        if _single is not None:
+            try:
+                _sentence_numbers.add(int(_single))
+            except (TypeError, ValueError):
+                pass
+    _sentence_numbers = sorted(_sentence_numbers)
+
     for candidate in candidates:
         # Run-11 fix 1 (URL hygiene): a redirector wrapper is
         # resolved to its real destination BEFORE the candidate is
@@ -522,22 +813,36 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
 
         seen.add(key)
 
-        # Gate 4: an identical (candidate, need, scenario)
-        # evaluation already completed in this run is replayed from
-        # the verdict cache — no second gate execution, no second
-        # scorer call (see _verdict_cache). The replayed item is a
-        # deep copy: downstream stages stamp their own fields on
-        # the items they receive.
+        # Gate 4 + Phase 2: an identical decision-context evaluation
+        # already completed — in this run (the verdict cache) or in
+        # an earlier run of this production (the durable discovery
+        # memory) — is replayed, not recomputed: no second gate
+        # execution, no second scorer call. The replayed item is a
+        # deep copy: downstream stages stamp their own fields on the
+        # items they receive.
+        _memory = _discovery_memory()
         _cache_key = None
-        if _cache is not None:
+        if _cache is not None or _memory is not None:
             _cache_key = _verdict_cache_key(
                 candidate, key, gate_need, verify_scenario
             )
+        if _cache is not None and _cache_key is not None:
             _hit = _cache.get(_cache_key)
             if _hit is not None:
                 import copy
 
                 scored.append(copy.deepcopy(_hit))
+                continue
+        if _memory is not None and _cache_key is not None:
+            _stored = _durable_verdict_item(
+                candidate["candidate_id"], _cache_key[1], _bible_fp
+            )
+            if _stored is not None:
+                import copy
+
+                if _cache is not None:
+                    _cache[_cache_key] = copy.deepcopy(_stored)
+                scored.append(_stored)
                 continue
 
         def _remember(item):
@@ -545,6 +850,9 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
                 import copy
 
                 _cache[_cache_key] = copy.deepcopy(item)
+            _remember_verdict_durable(
+                _cache, _cache_key, item, _bible_fp, _sentence_numbers
+            )
 
         # Cheap metadata gate BEFORE expensive LLM verification.
         ok, reason = _media_pipeline().gate_shot_need(
@@ -596,6 +904,51 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
                     f"{_media_pipeline().result_title(candidate)[:80]}"
                 )
                 continue
+
+        # Phase 2 intrinsic shortcut: a candidate already judged
+        # intrinsically dead (banned provider / foreign provenance /
+        # social platform / meme format) by a completed evaluation —
+        # in this run or an earlier one — is never re-scored under
+        # another sentence: that verdict is a function of the
+        # candidate alone (see the Phase 2 keying header). The gate
+        # above still ran, so gate accounting (VA-11) is unchanged;
+        # only the scorer call is saved. The verdict's record-only
+        # category is re-stamped for the current scenario; every
+        # decision field replays verbatim. Intrinsic verdicts are
+        # always rejections, so no speculative-accept path applies.
+        _intrinsic = _intrinsic_verdict_item(
+            _cache, candidate["candidate_id"]
+        )
+        if _intrinsic is not None:
+            import copy
+
+            verdict = copy.deepcopy(_intrinsic.get("verification") or {})
+            verdict.setdefault("accepted", False)
+            verdict.setdefault("score", 0)
+            if not verdict.get("rejection_reason"):
+                verdict["rejection_reason"] = _intrinsic.get(
+                    "reject_reason"
+                )
+            if not verdict.get("failed_checks"):
+                verdict["failed_checks"] = [
+                    _intrinsic.get("reject_reason")
+                ]
+            verdict["category"] = story.resolve_visual_category(
+                verify_scenario
+            )
+            item = dict(candidate)
+            if absence_failures is not None:
+                item["gate_failures"] = list(absence_failures)
+            item["verification"] = verdict
+            item["universal_score"] = verdict["score"]
+            item["relevance_score"] = verdict["score"]
+            item["reject_reason"] = (
+                verdict.get("rejection_reason") or "below_threshold"
+            )
+            item["rejection_stage"] = "scoring"
+            _remember(item)
+            scored.append(item)
+            continue
 
         source_cache.bump("llm_verify_calls")
         verdict = story.verify_candidate(
@@ -704,6 +1057,50 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
             if candidate.get("segment_id")
             else None
         )
+
+        # Phase 2: durable demotion memory. A candidate segment that
+        # was downloaded once and then DEMOTED by a post-download
+        # check (frame verification, transcript mismatch, speculative
+        # unconfirmed) used to leave no guard behind: the file was
+        # deleted, the failure recorded, and the same candidate was
+        # re-downloaded and re-demoted under the next beat that drew
+        # it (Phase 0 §11 demotion leak). Demotions now persist in
+        # the production's discovery memory, keyed by candidate +
+        # realised segment + the demotion context fingerprint, and
+        # are honoured here BEFORE any download is attempted. A miss
+        # fails open (the download proceeds exactly as before).
+        _memory = _discovery_memory()
+        _demotion_fp = _demotion_context_fingerprint(
+            transcript_scenario, transcript_bible
+        )
+        _candidate_segment_key = _segment_guard_key or (
+            f"{candidate_key}|{candidate.get('clip_start')}"
+            if candidate.get("clip_start") is not None
+            else candidate_key
+        )
+
+        def _note_demotion(stage, reason, asset=None):
+            if _memory is None:
+                return
+            _cid = candidate.get("candidate_id")
+            if not _cid:
+                return
+            _keys = {_candidate_segment_key}
+            if isinstance(asset, dict):
+                if asset.get("segment_id"):
+                    _keys.add(f"seg:{asset['segment_id']}")
+                elif asset.get("clip_start") is not None:
+                    _keys.add(
+                        f"{candidate_key}|{asset.get('clip_start')}"
+                    )
+            for _seg_key in _keys:
+                try:
+                    _memory.record_demotion(
+                        _cid, _seg_key, _demotion_fp,
+                        stage=stage, reason=reason,
+                    )
+                except Exception:
+                    pass
         if candidate_url and (
             candidate_key in _media_pipeline()._FAILED_DOWNLOAD_URLS
             or (
@@ -736,6 +1133,38 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
         # download attempt is counted (nothing was requested), and
         # the loop moves on to candidates from scopes that
         # actually deliver.
+        # Phase 2 demotion pre-check (see the note above): a segment
+        # already demoted under this exact context is skipped
+        # without a download; the skip is recorded as a failure with
+        # the original stage and reason, marked as a replay.
+        if _memory is not None and candidate.get("candidate_id"):
+            _demotion = None
+            try:
+                _demotion = _memory.demotion(
+                    candidate["candidate_id"],
+                    _candidate_segment_key,
+                    _demotion_fp,
+                )
+            except Exception:
+                _demotion = None
+            if _demotion is not None:
+                if failures is not None:
+                    failures.append(download_taxonomy.annotate_failure(
+                        {
+                            "provider": candidate.get("provider")
+                            or candidate.get("source")
+                            or "unknown",
+                            "url": candidate_url,
+                            "reason": _demotion.get("reason")
+                            or "previously_demoted",
+                            "candidate_id": candidate.get("candidate_id"),
+                            "stage": _demotion.get("stage") or "download",
+                            "sentence_number": sentence_number,
+                            "previously_demoted": True,
+                        }
+                    ))
+                continue
+
         _health_scope = provider_health.scope_for_url(candidate_url)
         if _health_scope and provider_health.is_backed_off(_health_scope):
             if failures is not None:
@@ -826,6 +1255,48 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                     _media_pipeline()._FAILED_DOWNLOAD_URLS.add(f"seg:{_attempted_segment_id}")
                 else:
                     _media_pipeline()._FAILED_DOWNLOAD_URLS.add(candidate_key)
+            # Phase 2 write-through: the same failure enters the
+            # durable discovery memory under the same scope/key the
+            # in-run guard just used, so a later run of this
+            # production starts with the guard already populated
+            # (deterministic failures never expire in the store;
+            # transient ones expire after its stated TTL).
+            if _memory is not None and candidate_url:
+                _tax = candidate.get("_download_failure")
+                if isinstance(_tax, dict) and _tax.get("failure_class"):
+                    _fc = _tax.get("failure_class")
+                    _retry = bool(_tax.get("retryable"))
+                else:
+                    _ann = download_taxonomy.annotate_failure(
+                        {
+                            "reason": candidate.get("_download_error")
+                            or "download_failed",
+                        },
+                        sentence_number=sentence_number,
+                    )
+                    _fc = _ann.get("failure_class")
+                    _retry = bool(_ann.get("retryable"))
+                try:
+                    if _attempted_segment_id:
+                        _memory.record_download_failure(
+                            "segment", str(_attempted_segment_id),
+                            failure_class=_fc, retryable=_retry,
+                            reason=str(
+                                candidate.get("_download_error")
+                                or "download_failed"
+                            ),
+                        )
+                    else:
+                        _memory.record_download_failure(
+                            "source", candidate_key,
+                            failure_class=_fc, retryable=_retry,
+                            reason=str(
+                                candidate.get("_download_error")
+                                or "download_failed"
+                            ),
+                        )
+                except Exception:
+                    pass
             # MS-2: a failed download is recorded with its actual reason
             # (stashed on the candidate by the downloader) — never silent,
             # never substituted with unrelated footage.
@@ -933,6 +1404,11 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                 f"      FRAME CHECK REJECTED (demoted): "
                 f"{candidate_url} reason={frame_record.get('reason')}"
             )
+            _note_demotion(
+                "frame_verification",
+                str(frame_record.get("reason") or "frame_verification"),
+                asset,
+            )
             if failures is not None:
                 failures.append(download_taxonomy.annotate_failure({
                     "provider": candidate.get("provider")
@@ -976,6 +1452,12 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                     f"{candidate_url} frame outcome="
                     f"{(frame_record or {}).get('outcome')}"
                 )
+                _note_demotion(
+                    "frame_verification",
+                    rejection_diagnostics
+                    .SPECULATIVE_FRAME_UNCONFIRMED_REASON,
+                    asset,
+                )
                 if failures is not None:
                     failures.append(download_taxonomy.annotate_failure({
                         "provider": candidate.get("provider")
@@ -1016,6 +1498,10 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
                 print(
                     f"      TRANSCRIPT MISMATCH (demoted): "
                     f"{candidate_url} start={asset.get('clip_start')}"
+                )
+                _note_demotion(
+                    "transcript_verification", "transcript_mismatch",
+                    asset,
                 )
                 if failures is not None:
                     failures.append(download_taxonomy.annotate_failure({

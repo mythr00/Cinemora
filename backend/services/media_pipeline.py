@@ -635,6 +635,87 @@ _DOWNLOAD_URL_FAILURES: dict = {}
 _DOWNLOADED_ASSETS_BY_URL: dict = {}
 _COMMITTED_CONTENT_OWNERS: dict = {}
 
+# Phase 2 (Discovery Efficiency): the DURABLE discovery memory —
+# services.discovery_memory, one SQLite store per project directory.
+# The per-run containers above are now the run's working set, seeded
+# from this store when a production's media processing opens it and
+# written through on every new failure, so attempted URLs, rejections
+# and download failures survive scenes, runs and process restarts
+# (Phase 0 root cause 2: discovery had no memory beyond the run).
+# The handle is module state, NOT RunContext state: it is keyed by
+# project directory, opened lazily by _open_discovery_memory, and
+# every consumer treats None (store unavailable) as "no memory" —
+# the store is fail-soft by contract and never blocks a production.
+_discovery_memory = None
+_discovery_memory_project_dir: str | None = None
+
+
+def _open_discovery_memory(project_dir):
+    """Open (or reuse) the durable discovery memory for a project
+    directory and seed this run's failure guards from it.
+
+    Called when a scene's media processing starts (the first moment
+    the project directory is known). Seeding rules: durable download
+    failures re-enter _DOWNLOAD_URL_FAILURES with their recorded
+    taxonomy (retryable flag included — the dispatcher refuses
+    terminal failures and the store has already expired transient
+    ones past its TTL); durable source/segment failures re-enter
+    _FAILED_DOWNLOAD_URLS. Existing in-run entries win — seeding
+    never overwrites fresher run state. Returns the store or None."""
+    global _discovery_memory, _discovery_memory_project_dir
+    try:
+        from services import discovery_memory as _dm
+    except ImportError:  # flat-layout fallback
+        import discovery_memory as _dm
+    try:
+        store = _dm.DiscoveryMemory.open(project_dir)
+    except Exception:
+        store = None
+    _discovery_memory = store
+    _discovery_memory_project_dir = str(project_dir or "") or None
+    if store is None:
+        return None
+    try:
+        for scope, key, record in store.iter_download_failures():
+            if scope == "download_url":
+                _DOWNLOAD_URL_FAILURES.setdefault(key, {
+                    "retryable": bool(record.get("retryable")),
+                    "failure_class": record.get("failure_class"),
+                    "reason": record.get("reason"),
+                })
+            elif scope == "source":
+                _FAILED_DOWNLOAD_URLS.add(key)
+            elif scope == "segment":
+                # Store keys are bare segment ids; the in-run guard
+                # set carries them "seg:"-prefixed (AM-016).
+                _FAILED_DOWNLOAD_URLS.add(f"seg:{key}")
+    except Exception:
+        pass
+    return store
+
+
+def _active_discovery_memory():
+    """The durable discovery memory for the ACTIVE production run,
+    or None.
+
+    Scoping rule (mirrors pipeline_verification._verdict_cache):
+    the durable layer belongs to genuinely activated run contexts —
+    jobs activates one per production, and that production's scene
+    processing opens its store before any discovery runs, so the
+    module handle above always names the current production's store
+    by the time anything reads it. The DEFAULT context (unit tests,
+    ad-hoc calls) has NO durable memory: direct verification/fetch
+    calls evaluate exactly as they did before Phase 2, and one
+    test's scene processing can never leak verdicts into another
+    test's direct calls through a leftover handle."""
+    try:
+        ctx = run_context.current_context()
+        if ctx is None or ctx is run_context.default_context():
+            return None
+    except Exception:
+        return None
+    return _discovery_memory
+
 # Discovery failures recorded by _uve_scenario_search (provider, query,
 # error) so the asset report can distinguish DISCOVERY failures from
 # download and verification failures instead of losing them in prints.
@@ -2820,6 +2901,9 @@ def reset_media_caches():
     _SEGMENT_ATTEMPTS.clear()
     _SEGMENT_FAILURE_CAUSE.clear()
     _SEGMENT_FILE_CACHE.clear()
+    # Phase 2: the source-duration cache joins the reset set (it was
+    # the one discovery container that survived across productions).
+    _SOURCE_DURATION_CACHE.clear()
 
 
 # =====================================================================
@@ -2861,6 +2945,7 @@ _RUN_CONTEXT_BINDINGS = {
     "_DOWNLOAD_URL_FAILURES": "download_url_failures",
     "_DOWNLOADED_ASSETS_BY_URL": "downloaded_assets_by_url",
     "_COMMITTED_CONTENT_OWNERS": "committed_content_owners",
+    "_SOURCE_DURATION_CACHE": "source_duration_cache",
 }
 
 
@@ -2889,6 +2974,7 @@ _DEFAULT_RUN_CONTEXT = run_context.RunContext(
     download_url_failures=_DOWNLOAD_URL_FAILURES,
     downloaded_assets_by_url=_DOWNLOADED_ASSETS_BY_URL,
     committed_content_owners=_COMMITTED_CONTENT_OWNERS,
+    source_duration_cache=_SOURCE_DURATION_CACHE,
 )
 run_context.set_default(_DEFAULT_RUN_CONTEXT)
 run_context.register_binder(_bind_run_context)
@@ -5421,12 +5507,42 @@ def _uve_download_any_candidate(candidate, scene_dir, sentence_number, asset_ind
                     "failure_class": stamp.get("failure_class"),
                     "reason": stamp.get("reason"),
                 }
+                # Phase 2 write-through: the failure also enters
+                # the production's durable discovery memory, so the
+                # NEXT run's dispatcher refuses it from the seeded
+                # guard without any attempt (terminal classes), and
+                # transient classes stay retryable only until the
+                # store's stated TTL expires them.
+                _store = _active_discovery_memory()
+                if _store is not None:
+                    try:
+                        _store.record_download_failure(
+                            "download_url", dl_key,
+                            failure_class=stamp.get("failure_class"),
+                            retryable=bool(stamp.get("retryable")),
+                            reason=stamp.get("reason"),
+                        )
+                    except Exception:
+                        pass
         return None
 
     if dl_key:
         # A success supersedes any earlier (transient) failure
         # recorded for the URL in this run.
         _DOWNLOAD_URL_FAILURES.pop(dl_key, None)
+        _store = _active_discovery_memory()
+        if _store is not None:
+            try:
+                _store.record_download_success(
+                    dl_key,
+                    content_hash=asset.get("content_hash"),
+                    sentence_number=(
+                        sentence_key
+                        if isinstance(sentence_key, int) else None
+                    ),
+                )
+            except Exception:
+                pass
 
     if is_image:
         digest = asset.get("content_hash") or _uve_content_hash(
@@ -5463,6 +5579,7 @@ def _uve_search_and_pick(
     scene_dir, scene_stats, beat, beat_videos, beat_images,
     scenario_index, queries, review_records,
     query_pass="primary",
+    phase="full",
 ):
     """One full discovery pass for a scenario.
 
@@ -5483,6 +5600,23 @@ def _uve_search_and_pick(
     order (see the COVERAGE PASS block below) and likewise appended;
     the first coverage asset is returned when the primary fetch
     produced none.
+
+    Phase 2 (Discovery Efficiency) — the fair initial pass. The pass
+    runs in two phases: the INITIAL phase (search, verify, pool,
+    primary fetch, and the coverage draw over this pass's OWN
+    verified pool) and the EXTENDED phase (tier-ladder escalation,
+    the variety draw, and the candidate-record/review accounting),
+    which lives in _uve_search_and_pick_extended and consumes the
+    state dict the initial phase assembles. With phase="full" (the
+    default — every historical caller) both phases run back to back
+    and the behaviour is exactly the pre-split pass. With
+    phase="initial" the function returns (primary_asset, state) and
+    the caller MUST later run _uve_search_and_pick_extended(state):
+    the scene driver does this for every beat of a scene only after
+    EVERY beat has had its initial phase, so no sentence's extended
+    effort can precede another sentence's first search (Phase 0 root
+    cause 3: Hyatt S13/S14 absorbed 527 evaluations each while
+    S20/S21 were never searched).
     """
     _query_log = []
     _QUERY_LOG_STACK.append(_query_log)
@@ -6378,6 +6512,134 @@ def _uve_search_and_pick(
             _coverage_failures,
             _budget_blocked=_budget_blocked, _draw_stats=_draw_stats,
         )
+        _coverage_state = {
+            "drawn_ids": _drawn_ids,
+            "blocked": _blocked,
+            "budget_blocked": _budget_blocked,
+            "draw_stats": _draw_stats,
+            "coverage_failures": _coverage_failures,
+        }
+    else:
+        _coverage_state = None
+
+    # Phase 2 measured saturation (see run_metrics): this pass's
+    # evaluation evidence for the beat's sentences — evaluations
+    # made, the verified candidates that were NEW to each sentence,
+    # and the distinct query signatures executed. Measurement only:
+    # no stopping rule reads it, and no budget derives from it.
+    run_metrics.sentence_pass(
+        list((beat or {}).get("sentence_numbers") or []),
+        evaluations=len(_scored_all),
+        verified_candidate_keys={
+            str(_item.get("candidate_id"))
+            for _item in _scored_all
+            if (_item.get("verification") or {}).get("accepted")
+            and _item.get("candidate_id")
+        },
+        query_signatures={
+            _query_signature(_entry["query"]) for _entry in _query_log
+        },
+    )
+
+    _state = {
+        "scenario": scenario,
+        "shot_need": shot_need,
+        "search_cache": search_cache,
+        "project_id": project_id,
+        "bible": bible,
+        "registry": registry,
+        "used_keys": used_keys,
+        "scene_dir": scene_dir,
+        "scene_stats": scene_stats,
+        "beat": beat,
+        "beat_videos": beat_videos,
+        "beat_images": beat_images,
+        "scenario_index": scenario_index,
+        "queries": queries,
+        "review_records": review_records,
+        "query_pass": query_pass,
+        "raw_videos": raw_videos,
+        "raw_web_sources": raw_web_sources,
+        "raw_images": raw_images,
+        "scored_videos": scored_videos,
+        "scored_web_sources": scored_web_sources,
+        "scored_images": scored_images,
+        "combined_pool": combined_pool,
+        "picks": picks,
+        "fetch_failures": fetch_failures,
+        "asset": asset,
+        "accepted_asset": accepted_asset,
+        "coverage_accepted_assets": coverage_accepted_assets,
+        "variety_accepted_assets": variety_accepted_assets,
+        "sentence_count": _sentence_count,
+        "shortfall": _shortfall,
+        "coverage_state": _coverage_state,
+        "draw_reserves": _draw_reserves,
+        "escalate_pool": _escalate_pool,
+    }
+    if phase == "initial":
+        return accepted_asset, _state
+    return _uve_search_and_pick_extended(_state)
+
+
+def _uve_search_and_pick_extended(_state):
+    """The EXTENDED phase of one discovery pass (Phase 2 split):
+    tier-ladder escalation over the initial phase's pool, the
+    variety draw, and the candidate-record / review accounting,
+    finishing with the pass's return value (the primary asset, else
+    the first coverage asset, else the first variety asset, else
+    None — the pre-split contract).
+
+    Consumes the state dict _uve_search_and_pick's initial phase
+    assembled. The draw/escalation closures ride in the state: they
+    capture the initial phase's frame, which stays alive through
+    them, so escalation spends against the same ledger accounts and
+    pool objects the initial phase built. Every historical caller
+    reaches this through phase="full"; the scene driver calls it
+    separately, only after every beat of the scene has had its
+    initial phase (the fair-initial-pass guarantee)."""
+    scenario = _state["scenario"]
+    shot_need = _state["shot_need"]
+    search_cache = _state["search_cache"]
+    project_id = _state["project_id"]
+    bible = _state["bible"]
+    registry = _state["registry"]
+    used_keys = _state["used_keys"]
+    scene_dir = _state["scene_dir"]
+    scene_stats = _state["scene_stats"]
+    beat = _state["beat"]
+    beat_videos = _state["beat_videos"]
+    beat_images = _state["beat_images"]
+    scenario_index = _state["scenario_index"]
+    queries = _state["queries"]
+    review_records = _state["review_records"]
+    query_pass = _state["query_pass"]
+    raw_videos = _state["raw_videos"]
+    raw_web_sources = _state["raw_web_sources"]
+    raw_images = _state["raw_images"]
+    scored_videos = _state["scored_videos"]
+    scored_web_sources = _state["scored_web_sources"]
+    scored_images = _state["scored_images"]
+    combined_pool = _state["combined_pool"]
+    picks = _state["picks"]
+    fetch_failures = _state["fetch_failures"]
+    asset = _state["asset"]
+    accepted_asset = _state["accepted_asset"]
+    coverage_accepted_assets = _state["coverage_accepted_assets"]
+    variety_accepted_assets = _state["variety_accepted_assets"]
+    _sentence_count = _state["sentence_count"]
+    _shortfall = _state["shortfall"]
+    _coverage_state = _state["coverage_state"]
+    _draw_reserves = _state["draw_reserves"]
+    _escalate_pool = _state["escalate_pool"]
+
+    if _coverage_state is not None:
+        _drawn_ids = _coverage_state["drawn_ids"]
+        _blocked = _coverage_state["blocked"]
+        _budget_blocked = _coverage_state["budget_blocked"]
+        _draw_stats = _coverage_state["draw_stats"]
+        _coverage_failures = _coverage_state["coverage_failures"]
+
         # Tier ladder (B2): the draw above exhausted this pass's
         # own verified pool with sentences still uncovered — the
         # recorded shortfall is the ladder's only trigger. Derived
@@ -6444,6 +6706,7 @@ def _uve_search_and_pick(
             "tier_attempts": _tier_attempts,
             "escalation_accepted": _escalation_accepted,
         })
+
     # ------------------------------------------------------------
     # VARIETY PASS (Master Directive Phase 5 / AM-003 + FP-4):
     # coverage being POSSIBLE is not the same as a film worth
@@ -7363,6 +7626,12 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
     scene_dir = os.path.join(project_dir, f"scene_{scene_number}")
     os.makedirs(scene_dir, exist_ok=True)
 
+    # Phase 2: open this production's durable discovery memory (and
+    # seed the run's failure guards from it) before any discovery
+    # happens in this scene. Fail-soft: None means "no memory", and
+    # the scene proceeds exactly as it did before Phase 2.
+    _open_discovery_memory(project_dir)
+
     print()
     print("=" * 78)
     print(f"STORY-DRIVEN VISUAL ENGINE - SCENE {scene_number}")
@@ -7417,6 +7686,20 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
     all_images, all_videos, sentence_results = [], [], []
     results_by_number = {}
 
+    # Phase 2 — the fair initial pass. The scene's beats run in TWO
+    # passes over _beat_states: pass 1 (this loop) gives every beat
+    # its INITIAL discovery — the unsearched-role ladder entry for
+    # unsearchable beats, or the initial phase of every scenario's
+    # search-and-pick for searchable ones — and pass 2 (the loop
+    # after this one) runs the extended effort (each scenario's
+    # extended phase, then coverage recovery) and the beat tails.
+    # Extended effort for any sentence therefore cannot precede the
+    # initial pass of another sentence in the scene (Phase 0 root
+    # cause 3). Each beat also leaves pass 1 with a discovery_state
+    # naming what actually happened to it, so a never-searched
+    # sentence is distinguishable from a genuine coverage gap in
+    # every downstream record.
+    _beat_states = []
     for beat in beats:
         print()
         print("*" * 78)
@@ -7434,8 +7717,19 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
         scenarios = _beat_scenarios(beat)
         beat_videos, beat_images = [], []
         review_records = []
+        _bstate = {
+            "beat": beat,
+            "scenarios": scenarios,
+            "beat_videos": beat_videos,
+            "beat_images": beat_images,
+            "review_records": review_records,
+            "pending_extended": [],
+            "discovery_state": None,
+        }
+        _beat_states.append(_bstate)
 
         if not beat.get("searchable", True):
+            _bstate["discovery_state"] = "unsearched_role"
             print(f"  NO SEARCH (role={beat.get('role')})")
             # B-roll B0 (§3.3/§11): an unsearched-role beat's
             # sentences are NAMED in the scene stats — they used to
@@ -7483,29 +7777,53 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                             "reason": rejection_diagnostics.UNSEARCHED_ROLE,
                             "role": beat.get("role"),
                             "tier_attempts": _entry_attempts,
+                            "discovery_state": "unsearched_role",
                         }
                     )
                     run_context.note_missing_visual()
         else:
+            _searched_any = False
             for scenario_index, scenario in enumerate(scenarios, start=1):
                 print(f"  SHOT {scenario_index}: [{scenario.get('specificity')}/{scenario.get('kind')}] {scenario.get('visual')}")
-                queries = scenario.get("queries") or []
-                for query in queries:
-                    print(f"      query: {query}")
-                if not queries:
-                    print("      (no queries - skipped)")
-                    continue
-
                 shot_need = {}
                 for need in beat.get("shot_needs") or []:
                     if need.get("shot_index") == scenario_index:
                         shot_need = need
                         break
+                # Phase 2 (fair pass / gap honesty): the shot need
+                # is resolved BEFORE the queries check, and the
+                # effective query list is the need's queries, else
+                # the scenario's, else the scenario's visual text —
+                # the same fallback _uve_scenario_search itself
+                # applies. The pre-Phase-2 order checked the
+                # scenario's own queries first and silently skipped
+                # the scenario when they were empty, even when its
+                # shot need carried queries: the sentence was never
+                # searched, yet surfaced downstream as an ordinary
+                # coverage gap.
+                queries = list(
+                    shot_need.get("queries")
+                    or scenario.get("queries")
+                    or (
+                        [scenario["visual"]]
+                        if scenario.get("visual") else []
+                    )
+                )
+                for query in queries:
+                    print(f"      query: {query}")
+                if not queries:
+                    print("      (no queries - skipped)")
+                    continue
                 if shot_need.get("queries"):
                     scenario = dict(scenario)
                     scenario["queries"] = shot_need["queries"]
                 print("      routed=youtube,web,images")
-                _uve_search_and_pick(
+                _searched_any = True
+                # Fair initial pass: only the INITIAL phase runs
+                # here; the extended phase is deferred to pass 2,
+                # after every beat of the scene has had its own
+                # initial phase.
+                _asset, _pending = _uve_search_and_pick(
                     scenario, shot_need,
                     search_cache=search_cache, project_id=project_id,
                     bible=bible, registry=registry, used_keys=used_keys,
@@ -7513,7 +7831,47 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     beat_videos=beat_videos, beat_images=beat_images,
                     scenario_index=scenario_index, queries=queries,
                     review_records=review_records,
+                    phase="initial",
                 )
+                _bstate["pending_extended"].append(_pending)
+            if not scenarios:
+                _bstate["discovery_state"] = "no_scenarios"
+            elif _searched_any:
+                _bstate["discovery_state"] = "searched"
+            else:
+                _bstate["discovery_state"] = "no_queries"
+            # The never-searched NAMING (uncovered_unsearched) and
+            # the durable sentence states are written in pass 2,
+            # from the beat's EFFECTIVE state: coverage recovery can
+            # still search a beat the initial pass skipped, and only
+            # a beat nothing ever searched may be named as such.
+
+        # Phase 2: an unsearched-role beat's discovery state is
+        # final here (its ladder entry above is its whole
+        # discovery), so it is written to the durable memory's
+        # sentence-state table immediately; searchable beats are
+        # noted in pass 2 with their effective state.
+        _store = _active_discovery_memory()
+        if _store is not None and _bstate["discovery_state"] == "unsearched_role":
+            for _number in beat.get("sentence_numbers") or []:
+                try:
+                    _store.note_sentence_state(
+                        _number, _bstate["discovery_state"]
+                    )
+                except Exception:
+                    pass
+
+    # Pass 2 (Phase 2 fair initial pass): extended effort and beat
+    # tails, in beat order, only now that every beat has had its
+    # initial pass above.
+    for _bstate in _beat_states:
+        beat = _bstate["beat"]
+        scenarios = _bstate["scenarios"]
+        beat_videos = _bstate["beat_videos"]
+        beat_images = _bstate["beat_images"]
+        review_records = _bstate["review_records"]
+        for _pending in _bstate["pending_extended"]:
+            _uve_search_and_pick_extended(_pending)
 
         recovery_rounds_done = 0
         if beat.get("searchable", True) and not beat_videos and not beat_images and scenarios:
@@ -7537,6 +7895,15 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     beat, tried_queries, broad=(round_no > 1),
                 )
                 if not recovery_queries:
+                    # Phase 2 measured saturation: the recovery
+                    # PLANNER has no untried query left for this
+                    # beat — recorded as saturation evidence on the
+                    # beat's sentences (measurement only; the
+                    # round-count bound above is a scheduling
+                    # limit, not evidence, and is not what fired).
+                    run_metrics.sentence_recovery_exhausted(
+                        beat.get("sentence_numbers") or []
+                    )
                     break
                 recovery_rounds_done = round_no
                 # Stage 0 metrics: a recovery round is actually
@@ -7583,6 +7950,35 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     )
                     break
 
+        # Phase 2: the beat's EFFECTIVE discovery state — the
+        # initial-pass outcome, upgraded to "searched" when the beat
+        # was covered or coverage recovery executed rounds for it
+        # (recovery is real discovery: a beat recovery searched and
+        # failed is a genuine gap, and its records must say
+        # "searched"). The durable sentence states are noted with
+        # this final state.
+        _effective_discovery_state = _bstate["discovery_state"]
+        if beat.get("searchable", True):
+            if (
+                _effective_discovery_state == "searched"
+                or recovery_rounds_done > 0
+                or beat_videos
+                or beat_images
+            ):
+                _effective_discovery_state = "searched"
+            _store = _active_discovery_memory()
+            if _store is not None and _effective_discovery_state:
+                for _number in beat.get("sentence_numbers") or []:
+                    try:
+                        _store.note_sentence_state(
+                            _number, _effective_discovery_state
+                        )
+                    except Exception:
+                        pass
+        _bstate["effective_discovery_state"] = (
+            _effective_discovery_state
+        )
+
         if beat.get("searchable", True) and not beat_videos and not beat_images:
             # NO placeholder is created here. The generated text-card
             # fallback was removed permanently (founder directive):
@@ -7593,6 +7989,27 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
             # holdover of real media — never a fabricated card.
             need = (beat.get("shot_needs") or [{}])[0]
             numbers = beat.get("sentence_numbers") or []
+            # Phase 2 gap honesty: a beat that NOTHING ever searched
+            # (the initial pass skipped it and recovery never ran
+            # for it) NAMES its sentences in uncovered_unsearched
+            # with the state as the reason — the same naming
+            # unsearched-role beats get — so no downstream consumer
+            # can mistake them for a genuine searched-and-failed
+            # coverage gap.
+            if _effective_discovery_state in (
+                "no_queries", "no_scenarios"
+            ):
+                for _number in numbers:
+                    scene_stats.setdefault(
+                        "uncovered_unsearched", []
+                    ).append(
+                        {
+                            "sentence_number": _number,
+                            "beat_id": beat.get("beat_id"),
+                            "role": beat.get("role"),
+                            "reason": _effective_discovery_state,
+                        }
+                    )
             # Coverage fix: when this beat's verified pools were
             # drawn by the coverage pass and STILL came up empty,
             # the missing record says so — a coverage failure is
@@ -7634,6 +8051,16 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     "specificity": str(need.get("specificity") or ""),
                     "recovery_rounds": recovery_rounds_done,
                     "coverage_pool_exhausted": bool(_pool_exhausted),
+                    # Phase 2 gap honesty: the beat's EFFECTIVE
+                    # discovery state (initial outcome upgraded by
+                    # recovery/coverage — see the pass-2 block
+                    # above), so the coverage assessment can
+                    # distinguish a never-searched sentence from a
+                    # genuine gap by data, not by which list the
+                    # entry sits in.
+                    "discovery_state": (
+                        _effective_discovery_state or "searched"
+                    ),
                 }
                 if _graphic_preferred is not None:
                     _missing_entry["reason"] = "graphic_preferred"

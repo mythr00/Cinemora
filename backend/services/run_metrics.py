@@ -59,6 +59,12 @@ def _fresh_state():
         "downloads_succeeded": 0,
         "bytes_downloaded": 0,
         "coverage_recovery_rounds": 0,
+        # Phase 2 (Discovery Efficiency): per-sentence saturation
+        # evidence — see sentence_pass(). Keyed by sentence number;
+        # values hold counters plus the run-wide set of verified
+        # candidate keys and executed query signatures for that
+        # sentence (identity sets, converted at snapshot time).
+        "sentence_saturation": {},
         "failures": 0,
         "stage_started_at": {},
         "stage_durations": {},
@@ -265,6 +271,86 @@ def coverage_recovery_round():
         pass
 
 
+def sentence_pass(sentence_numbers, *, evaluations=0,
+                  verified_candidate_keys=(), query_signatures=()):
+    """Phase 2 measured saturation: record one discovery pass's
+    evaluation evidence for the sentences it served.
+
+    Per sentence the record accumulates: total candidate evaluations,
+    how many verified candidates were NEW to that sentence (candidate
+    identity is production-stable, so a candidate verified again for
+    the same sentence in a later pass is not new yield), the trailing
+    count of evaluations since the last new verified candidate — the
+    new-candidate-yield-over-trailing-window evidence — and the set
+    of distinct query signatures executed for it.
+
+    This is a MEASUREMENT, not a budget: nothing in the pipeline
+    stops, caps or throttles discovery because of it. The founder's
+    economic rulings forbid arbitrary search quotas; saturation is
+    judged on this evidence, and any future stopping policy is a
+    founder decision informed by it (Phase 0 §11 unit 4)."""
+    try:
+        with _LOCK:
+            block = _bound_state()["sentence_saturation"]
+            new_keys = {str(k) for k in (verified_candidate_keys or ()) if k}
+            evals = int(evaluations or 0)
+            for number in sentence_numbers or ():
+                try:
+                    number = int(number)
+                except (TypeError, ValueError):
+                    continue
+                record = block.setdefault(number, {
+                    "evaluations": 0,
+                    "new_verified": 0,
+                    "evaluations_since_new_verified": 0,
+                    "verified_keys": set(),
+                    "query_signatures": set(),
+                    "recovery_exhausted": False,
+                })
+                fresh = new_keys - record["verified_keys"]
+                record["verified_keys"] |= new_keys
+                record["new_verified"] += len(fresh)
+                record["evaluations"] += evals
+                if fresh:
+                    record["evaluations_since_new_verified"] = 0
+                else:
+                    record["evaluations_since_new_verified"] += evals
+                record["query_signatures"] |= {
+                    str(s) for s in (query_signatures or ()) if s
+                }
+    except Exception:
+        pass
+
+
+def sentence_recovery_exhausted(sentence_numbers):
+    """Phase 2 measured saturation: the recovery-query PLANNER
+    produced no further untried query for these sentences — the
+    production's own query-generation machinery is exhausted for
+    them (distinct from the recovery round-count bound, which is a
+    scheduling limit, not evidence). Recorded as the saturation
+    marker on the sentences' saturation records; like sentence_pass
+    it changes no behaviour."""
+    try:
+        with _LOCK:
+            block = _bound_state()["sentence_saturation"]
+            for number in sentence_numbers or ():
+                try:
+                    number = int(number)
+                except (TypeError, ValueError):
+                    continue
+                record = block.setdefault(number, {
+                    "evaluations": 0,
+                    "new_verified": 0,
+                    "evaluations_since_new_verified": 0,
+                    "verified_keys": set(),
+                    "query_signatures": set(),
+                    "recovery_exhausted": False,
+                })
+                record["recovery_exhausted"] = True
+    except Exception:
+        pass
+
+
 def stage_started(stage):
     try:
         with _LOCK:
@@ -416,6 +502,31 @@ def snapshot(run_id=None):
                 "coverage_recovery_rounds": state[
                     "coverage_recovery_rounds"
                 ],
+                # Phase 2: the per-sentence saturation evidence
+                # (measurement only — see sentence_pass). A sentence
+                # reads as saturated when the recovery planner was
+                # exhausted for it; the trailing no-new-yield
+                # evaluation count rides along as the raw evidence.
+                "sentence_saturation": [
+                    {
+                        "sentence_number": number,
+                        "evaluations": record["evaluations"],
+                        "new_verified": record["new_verified"],
+                        "evaluations_since_new_verified": record[
+                            "evaluations_since_new_verified"
+                        ],
+                        "distinct_queries": len(
+                            record["query_signatures"]
+                        ),
+                        "recovery_exhausted": bool(
+                            record["recovery_exhausted"]
+                        ),
+                        "saturated": bool(record["recovery_exhausted"]),
+                    }
+                    for number, record in sorted(
+                        (state.get("sentence_saturation") or {}).items()
+                    )
+                ],
                 "failures": state["failures"],
                 "monetary_cost_usd": None,
                 "monetary_cost_note": _COST_NOTE,
@@ -440,6 +551,7 @@ def snapshot(run_id=None):
                 "bytes_downloaded": 0,
             },
             "coverage_recovery_rounds": 0,
+            "sentence_saturation": [],
             "failures": 0,
             "monetary_cost_usd": None,
             "monetary_cost_note": _COST_NOTE,

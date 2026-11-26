@@ -98,6 +98,19 @@ def _attempt_was_starved(attempt):
 
 def _entry_search_evidence(entry):
     """(searched, starved) for one missing_visuals entry."""
+    # Phase 2 (Discovery Efficiency): the entry's recorded
+    # discovery_state — what the scene driver MEASURED happening for
+    # the beat — outranks every inference below. A beat recorded as
+    # never searched (no_queries / no_scenarios / unsearched_role)
+    # is STARVED even when its entry also carries the legacy
+    # no_verified_asset reason: before Phase 2, a searchable beat
+    # whose scenarios were silently skipped for having no queries
+    # produced exactly that shape and was misread here as searched.
+    discovery_state = str(entry.get("discovery_state") or "")
+    if discovery_state == "searched":
+        return True, False
+    if discovery_state in ("no_queries", "no_scenarios", "unsearched_role"):
+        return False, True
     attempts = entry.get("tier_attempts") or []
     if attempts:
         if any(_attempt_executed_queries(a) > 0 for a in attempts):

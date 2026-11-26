@@ -55,6 +55,7 @@ class RunContext:
         download_url_failures=None,
         downloaded_assets_by_url=None,
         committed_content_owners=None,
+        source_duration_cache=None,
     ):
         self.run_id = run_id if run_id is not None else uuid.uuid4().hex
         self.project_id = project_id
@@ -138,6 +139,15 @@ class RunContext:
             committed_content_owners
             if committed_content_owners is not None
             else {}
+        )
+        # Phase 2 (Discovery Efficiency): media_pipeline's source-
+        # duration cache was the ONE discovery container never bound
+        # to a context and never reset — durations measured for one
+        # production silently leaked into the next production's
+        # segment maths in the same worker process (Phase 0 §11 fix
+        # list). It is per-run state like everything else here.
+        self.source_duration_cache = (
+            source_duration_cache if source_duration_cache is not None else {}
         )
         self.missing_visual_count = int(missing_visual_count or 0)
         # Informational snapshot taken at construction; the pipeline's
