@@ -258,24 +258,24 @@ export default function BillingPage() {
           {period && (
             <div className="billing-allowances">
               <div>
-                <span>Documentary generations</span>
+                <span>Documentaries delivered</span>
                 <strong>
-                  {period.generations_used} of {period.generations_included} used
-                  {" · "}{period.generations_remaining} remaining
+                  {period.generations.used} of {period.generations.granted} used
+                  {" · "}{period.generations.remaining} remaining
                 </strong>
               </div>
               <div>
-                <span>Script operations</span>
+                <span>AI script operations</span>
                 <strong>
-                  {period.script_ops_used} of {period.script_allowance} used
-                  {" · "}{period.script_remaining} remaining
+                  {period.scripts.used} of {period.scripts.granted} used
+                  {" · "}{period.scripts.remaining} remaining
                 </strong>
               </div>
               <div>
-                <span>Thumbnail operations</span>
+                <span>AI thumbnail operations</span>
                 <strong>
-                  {period.thumbnail_ops_used} of {period.thumbnail_allowance} used
-                  {" · "}{period.thumbnail_remaining} remaining
+                  {period.thumbnails.used} of {period.thumbnails.granted} used
+                  {" · "}{period.thumbnails.remaining} remaining
                 </strong>
               </div>
               <div>
@@ -375,15 +375,25 @@ export default function BillingPage() {
                   </p>
                   <ul>
                     <li>
-                      <Check size={13} aria-hidden /> {candidate.monthly_credits} credits monthly
+                      <Check size={13} aria-hidden /> {candidate.monthly_credits} video credits monthly
+                    </li>
+                    {candidate.generation_credits_per_minute !== null && (
+                      <li>
+                        <Check size={13} aria-hidden /> {candidate.generation_credits_per_minute} credits
+                        per finished minute · 15-min documentary{" "}
+                        {candidate.standard_generation_credits} credits
+                      </li>
+                    )}
+                    <li>
+                      <Check size={13} aria-hidden /> {candidate.included_generations} standard
+                      15-minute documentaries / month
+                      {candidate.effective_cost_per_standard_video_cents !== null
+                        ? ` (≈${money(candidate.effective_cost_per_standard_video_cents, candidate.currency)} per video)`
+                        : ""}
                     </li>
                     <li>
-                      <Check size={13} aria-hidden /> {candidate.included_generations} included
-                      15-minute documentaries
-                    </li>
-                    <li>
-                      <Check size={13} aria-hidden /> {candidate.script_allowance} script
-                      operations · {candidate.thumbnail_allowance} thumbnail operations
+                      <Check size={13} aria-hidden /> {candidate.script_allowance} AI scripts ·{" "}
+                      {candidate.thumbnail_allowance} AI thumbnails included
                     </li>
                     <li>
                       <Check size={13} aria-hidden /> Same production engine and quality on every plan
@@ -408,12 +418,19 @@ export default function BillingPage() {
             })}
           </div>
           <p className="billing-footnote">
-            A standard generation is up to 15 minutes and uses one
-            included generation. Longer generations use an included
-            generation plus credits for the extra minutes at{" "}
-            {summary.credit_pricing.standard_generation_credits} credits
-            per 15 minutes. Failed generations are always fully
-            restored — credits and included generations.
+            Generations are charged for the finished minutes you
+            actually receive, at your plan&apos;s per-minute rate —
+            never for internal steps, and never for undelivered
+            duration. Each delivered video also counts as one
+            toward your plan&apos;s monthly documentary count,
+            whatever its length. Script and thumbnail allowances
+            are tracked separately and never use video credits;
+            beyond them, a script costs{" "}
+            {summary.credit_pricing.script_operations.draft ?? 3} credits
+            and a thumbnail{" "}
+            {summary.credit_pricing.thumbnail_operations.compose ?? 5} credits.
+            Failed generations are always fully restored — credits
+            and the monthly count.
           </p>
         </div>
 

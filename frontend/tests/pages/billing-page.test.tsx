@@ -132,8 +132,8 @@ describe("BillingPage with a configured provider", () => {
     await screen.findByText(/Creator · active/);
     expect(container.textContent).toContain("3 of 11 used");
     expect(container.textContent).toContain("8 remaining");
-    expect(container.textContent).toContain("5 of 40 used");
-    expect(container.textContent).toContain("2 of 40 used");
+    expect(container.textContent).toContain("5 of 11 used");
+    expect(container.textContent).toContain("2 of 11 used");
   });
 
   it("renders the three credit buckets from the wallet data", async () => {
@@ -148,12 +148,15 @@ describe("BillingPage with a configured provider", () => {
     render(<BillingPage />);
     const studioCard = (await screen.findByRole("heading", { name: "Studio" }))
       .closest("article")!;
-    expect(within(studioCard).getByText(/\$79\.00/)).toBeInTheDocument();
+    expect(within(studioCard).getByText(/\$63\.00/)).toBeInTheDocument();
     expect(
-      within(studioCard).getByText(/3600 credits monthly/),
+      within(studioCard).getByText(/2325 video credits monthly/),
     ).toBeInTheDocument();
     expect(
-      within(studioCard).getByText(/29 included\s+15-minute documentaries/),
+      within(studioCard).getByText(/5 credits\s+per finished minute/),
+    ).toBeInTheDocument();
+    expect(
+      within(studioCard).getByText(/31 standard\s+15-minute documentaries \/ month/),
     ).toBeInTheDocument();
   });
 

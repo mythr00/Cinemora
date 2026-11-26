@@ -275,6 +275,13 @@ export type BillingPlan = {
   max_concurrent_runs: number | null;
   max_runs_per_period: number | null;
   priority_tier: number;
+  // Restructure pricing fields (2026-11-26), computed by the
+  // backend from the plan's synced catalogue figures; null on
+  // legacy plans.
+  generation_credits_per_minute: number | null;
+  standard_generation_credits: number | null;
+  standard_documentaries_per_month: number | null;
+  effective_cost_per_standard_video_cents: number | null;
 };
 
 export type BillingSubscription = {
@@ -290,18 +297,20 @@ export type BillingSubscription = {
   billing_provider: string | null;
 } | null;
 
+export type BillingAllowance = {
+  granted: number;
+  used: number;
+  remaining: number;
+};
+
 export type BillingPeriod = {
   period_start: string;
   period_end: string;
-  generations_used: number;
-  generations_included: number;
-  generations_remaining: number;
-  script_ops_used: number;
-  script_allowance: number;
-  script_remaining: number;
-  thumbnail_ops_used: number;
-  thumbnail_allowance: number;
-  thumbnail_remaining: number;
+  // The backend's period view: one allowance block per kind —
+  // delivered videos (generations), AI scripts, AI thumbnails.
+  generations: BillingAllowance;
+  scripts: BillingAllowance;
+  thumbnails: BillingAllowance;
 } | null;
 
 export type WalletBucket = {
@@ -335,7 +344,20 @@ export type BillingSummary = {
   };
   credit_pricing: {
     standard_generation_credits: number;
-    durations: { minutes: number; credits: number }[];
+    duration_cost_table: { minutes: number; credits: number }[];
+    // Restructure (2026-11-26): the default (entry-tier) rate
+    // and the authoritative per-plan rate tables.
+    default_credits_per_minute: number;
+    plans: Record<
+      string,
+      {
+        credits_per_minute: number;
+        standard_generation_credits: number;
+        duration_cost_table: { minutes: number; credits: number }[];
+      }
+    >;
+    script_operations: Record<string, number>;
+    thumbnail_operations: Record<string, number>;
   };
 };
 
