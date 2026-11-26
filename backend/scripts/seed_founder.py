@@ -266,8 +266,14 @@ def main() -> int:
         # happens when the seed is re-run after the upgrade.
         if billing_ready:
             from services.billing import catalogue as billing_catalogue
+            from services.billing import costs as billing_costs
 
             catalogue_report = billing_catalogue.ensure_billing_catalogue(db)
+            # Master Implementation Part 4: seed the known search
+            # pricing rules so recorded search usage prices in the
+            # cost rollups (idempotent; never overwrites an
+            # admin-configured rate).
+            billing_costs.ensure_pricing_rules(db)
         else:
             catalogue_report = {
                 "plans_created": [], "packages_created": [],

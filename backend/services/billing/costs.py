@@ -2,12 +2,20 @@
 directive §13).
 
 Costs are computed from the B-10 provider usage ledger and the
-admin-configured pricing_rules table. The table ships EMPTY:
-with no rule configured, a cost is unknown (None) — never zero,
-never estimated, never invented (the platform's standing F-14
-rule). Every aggregate reports its priced coverage
-(priced_events / total_events) so partial knowledge is visible
-instead of silently averaged in.
+pricing_rules table. With no rule configured, a cost is unknown
+(None) — never zero, never estimated, never invented (the
+platform's standing F-14 rule). Every aggregate reports its
+priced coverage (priced_events / total_events) so partial
+knowledge is visible instead of silently averaged in.
+
+Master Implementation (2026-11-26, Part 4): the table no longer
+ships empty for SEARCH. ensure_pricing_rules() seeds the two
+search rules whose prices are actually known (see
+SEEDED_PRICING_RULES below). Everything else — the LLM provider's
+billed rate above all — stays unseeded and therefore honestly
+"unknown" until an admin configures a verified rate; the
+profitability reporting labels those components ESTIMATED from
+measured usage instead of inventing a ledger price.
 
 Report metrics that cannot be computed from real records return
 {"value": None, "status": "unknown", "reason": ...} — the B-10
@@ -16,9 +24,63 @@ honesty pattern — rather than a fabricated number.
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import models
+
+
+#: Search cost rules seeded by ensure_pricing_rules (Master
+#: Implementation Part 4). Serper's Scale plan is $0.50 per 1,000
+#: calls = $0.0005 per call = 500 microusd (verified against
+#: serper.dev pricing in the 2026-11-26 pricing audit). SearXNG is
+#: self-hosted: its MARGINAL cost per search is $0. The instance's
+#: infrastructure cost is attributed in the profitability report
+#: from measured resource use — never folded into a per-search
+#: price, which would misstate both numbers. effective_from is
+#: set in the past so every recorded search event prices.
+SEEDED_PRICING_RULES = (
+    {"provider": "serper", "model": None, "unit": "per_search",
+     "rate_microusd": 500},
+    {"provider": "searxng", "model": None, "unit": "per_search",
+     "rate_microusd": 0},
+)
+
+_SEED_EFFECTIVE_FROM = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def ensure_pricing_rules(db) -> dict:
+    """Seed the known search pricing rules (idempotent).
+
+    Only fills gaps: an existing rule for the same
+    provider/model/unit (e.g. an admin-adjusted rate) is never
+    overwritten.
+    """
+    created: list[str] = []
+    for spec in SEEDED_PRICING_RULES:
+        exists = (
+            db.query(models.PricingRule)
+            .filter_by(
+                provider=spec["provider"],
+                model=spec["model"],
+                unit=spec["unit"],
+            )
+            .first()
+        )
+        if exists is not None:
+            continue
+        db.add(models.PricingRule(
+            id=str(uuid.uuid4()),
+            provider=spec["provider"],
+            model=spec["model"],
+            unit=spec["unit"],
+            rate_microusd=spec["rate_microusd"],
+            effective_from=_SEED_EFFECTIVE_FROM,
+        ))
+        created.append(spec["provider"])
+    if created:
+        db.flush()
+    return {"pricing_rules_created": created}
 
 
 def _aware(value):
@@ -79,8 +141,13 @@ def price_event(rule, event) -> int | None:
         if tokens is None:
             return None
         return int(tokens * int(rule.rate_microusd) / 1000)
-    # per_search / per_minute / per_gb_month rules price other
-    # record types, not LLM usage events.
+    if rule.unit == "per_search":
+        # One usage-ledger event == one search call: the search
+        # provider choke point records one event per attempt
+        # (Master Implementation Parts 1/4).
+        return int(rule.rate_microusd)
+    # per_minute / per_gb_month rules price other record types,
+    # not usage-ledger events.
     return None
 
 
