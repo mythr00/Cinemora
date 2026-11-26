@@ -39,6 +39,11 @@ try:
 except ImportError:  # flat-layout fallback
     import rejection_diagnostics
 
+try:
+    from services import authenticity
+except ImportError:  # flat-layout fallback
+    import authenticity
+
 
 # ============================================================
 # CONFIGURATION
@@ -237,6 +242,29 @@ def _visual_tier(visual, assignment=None):
     if isinstance(visual, dict):
         return rejection_diagnostics.normalise_tier(visual.get("tier"))
     return "direct"
+
+
+def _visual_classification(visual, assignment=None):
+    """The authenticity classification of a timeline item (Phase 3,
+    acceptance #9): EVERY timeline visual carries one. A generated
+    graphic classifies as such; every other item inherits the
+    classification stamped on its visual at verification/commit;
+    an unstamped visual is classified from its own provenance by
+    services.authenticity — and an asset with no usable provenance
+    is ``unknown``, never authentic by default. (The tier axis
+    above keeps its own legacy default; tier is the relation axis,
+    classification is the honesty axis, and only the honesty axis
+    was ever the defect.)"""
+    if isinstance(visual, dict) and (
+        assignment == "motion_graphic"
+        or visual.get("motion_graphic")
+        or visual.get("type") == "motion_graphic"
+        or visual.get("source") == "cinemora_motion_graphics"
+    ):
+        return authenticity.GENERATED_GRAPHIC
+    if isinstance(visual, dict):
+        return authenticity.classify_visual(visual)
+    return authenticity.UNKNOWN
 
 
 def visual_exists(visual):
@@ -1220,6 +1248,11 @@ def build_scene_timeline(
             # tier). Always stamped: the tier vocabulary is closed
             # and today's visuals resolve to "direct".
             item["tier"] = _visual_tier(visual, assignment)
+            # Phase 3: authenticity classification stamp (see
+            # _visual_classification — every item carries one).
+            item["classification"] = _visual_classification(
+                visual, assignment
+            )
 
             # FP-5: a window the duration floor extended is
             # stamped padded (absent otherwise — an unpadded item
@@ -1656,6 +1689,8 @@ def build_scene_timeline(
             ),
             # B-roll B0: tier stamp (see the sentence-window path).
             "tier": _visual_tier(video),
+            # Phase 3: authenticity classification stamp.
+            "classification": _visual_classification(video),
             # Stage 3F: segment offset for the renderer (MA-15).
             "clip_start": get_clip_start(video),
         })
@@ -1736,6 +1771,8 @@ def build_scene_timeline(
             ),
             # B-roll B0: tier stamp (see the sentence-window path).
             "tier": _visual_tier(image),
+            # Phase 3: authenticity classification stamp.
+            "classification": _visual_classification(image),
         })
 
         current_time += item_duration

@@ -61,6 +61,11 @@ Stage 6 / R5 completion adds:
 
 import hashlib
 
+try:
+    from services import authenticity as _authenticity
+except ImportError:  # flat-layout fallback
+    import authenticity as _authenticity
+
 # Pipeline execution order of the stages that can terminate a
 # candidate's evaluation. Used only to document which reason is
 # "primary" (the one emitted by the terminating stage); events are
@@ -71,6 +76,9 @@ STAGE_ORDER = (
     "metadata_gate",
     "scoring",
     "selection",
+    # Phase 3: the global-assignment reservation refusal, stamped
+    # by _uve_pick alongside the selection checks it precedes.
+    "global_assignment",
     "segment_evidence",
     "download",
     "transcript_verification",
@@ -154,8 +162,17 @@ REJECTION_REASON_REGISTRY = {
     "missing_required_subject": ("scoring",),
     "no_topical_evidence": ("scoring",),
     "below_threshold": ("scoring",),
+    # Phase 3 (authenticity taxonomy): illustrative stock refused
+    # for a direct-evidence (evidence category) need, stamped by
+    # verify_candidate alongside its other hard rules.
+    "illustrative_stock_not_direct_evidence": ("scoring",),
     # selection (_uve_pick / VisualRegistry.can_use)
     "source_usage_limit": ("selection",),
+    # Phase 3 (global assignment): a verified candidate the
+    # scene's global plan reserved for another unit, refused by
+    # _uve_pick under its own stage so the record can tell an
+    # assignment apart from a discovery gap.
+    "global_assignment_reserved": ("global_assignment",),
     "already_used_file": ("selection",),
     "already_used_clip": ("selection",),
     "segment_overlap": ("selection",),
@@ -414,6 +431,7 @@ def build_event(
     sentence_numbers=None,
     segment_id=None,
     tier="direct",
+    classification=None,
 ):
     """One evaluation-event record (the candidate_records schema).
 
@@ -487,6 +505,14 @@ def build_event(
         # search the pipeline runs today is a direct search; the
         # escalation tiers (B2/B3) stamp their own.
         "tier": normalise_tier(tier),
+        # Phase 3 (authenticity taxonomy): the candidate's
+        # authenticity classification (services.authenticity),
+        # computed by the caller from the candidate's provenance.
+        # An invalid or missing value records "unknown": the
+        # honesty default, never a fabricated authentic.
+        "classification": _authenticity.normalise_classification(
+            classification
+        ),
     }
 
 

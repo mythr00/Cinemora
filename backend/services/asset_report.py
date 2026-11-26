@@ -37,6 +37,7 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
 
+from services import authenticity
 from services import download_taxonomy
 from services import rejection_diagnostics
 from services import visual_identity
@@ -101,7 +102,7 @@ def _timeline_items(timeline_result) -> list:
     return items
 
 
-def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None, genre_pack=None, final_audio=None, audio_provenance=None, planner=None, research=None) -> dict:
+def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=None, analysis_mode=None, run_failure=None, execution=None, soundtrack=None, genre_pack=None, final_audio=None, audio_provenance=None, planner=None, research=None, evidence_ledger=None) -> dict:
     """Build the report from real pipeline outputs.
 
     processed_scenes: scene result dicts from the media pipeline.
@@ -564,6 +565,29 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         and len(cards) == 0
         and len(unverified) == 0
     )
+    # Phase 3 (authenticity taxonomy): the classification census.
+    # Every accepted asset and every timeline item is counted under
+    # its authenticity classification (services.authenticity) — the
+    # stamp it carries, re-derived from its provenance when a seam
+    # produced it unstamped, "unknown" when there is no provenance
+    # to derive from. Illustrative stock is therefore counted as
+    # what it is: legitimate material that is NOT verified-genuine
+    # footage of the event. The "authentic" verdict above predates
+    # the taxonomy and its semantics are pinned by the report's
+    # consumers; it is unchanged, and this census rides beside it.
+    # (The taxonomy module is aliased here: this function has
+    # always named its own verdict dict "authenticity".)
+    from services import authenticity as _taxonomy
+
+    _classification_counts = Counter(
+        _taxonomy.classify_visual(a) for a in accepted
+    )
+    _timeline_classification_counts = Counter(
+        _taxonomy.normalise_classification(item.get("classification"))
+        if isinstance(item, dict)
+        else _taxonomy.UNKNOWN
+        for item in items
+    )
     authenticity = {
         "authentic": authentic,
         "verified_genuine_assets": len(verified_videos) + len(verified_images),
@@ -573,6 +597,64 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             "placeholder_clips": placeholder_clips,
             "unverified_assets": len(unverified),
         },
+        "classification_counts": {
+            name: _classification_counts.get(name, 0)
+            for name in _taxonomy.CLASSIFICATIONS
+            if _classification_counts.get(name, 0)
+        },
+        "illustrative_stock_assets": _classification_counts.get(
+            _taxonomy.ILLUSTRATIVE_STOCK, 0
+        ),
+        "unknown_classification_assets": _classification_counts.get(
+            _taxonomy.UNKNOWN, 0
+        ),
+        "timeline_classification_counts": {
+            name: _timeline_classification_counts.get(name, 0)
+            for name in _taxonomy.CLASSIFICATIONS
+            if _timeline_classification_counts.get(name, 0)
+        },
+        "timeline_items_without_classification": sum(
+            1
+            for item in items
+            if not isinstance(item, dict)
+            or not _taxonomy.is_valid_classification(
+                item.get("classification")
+            )
+        ),
+    }
+
+    # ---- evidence ledger (Phase 3) -----------------------------------
+    # The production's durable evidence ledger (services
+    # .discovery_memory), emitted by the caller: one row per
+    # (candidate, sentence) the verifier accepted, upgraded at the
+    # fetch commit point with the secured bytes' content hash.
+    # Byte-identical photographs appear as ONE distinct content
+    # with the later rows linked as duplicates — never as separate
+    # evidence (acceptance #11). Absent rows report "not_recorded":
+    # an empty ledger is a fact about the record, never hidden.
+    _ledger_entries = [
+        entry for entry in (evidence_ledger or [])
+        if isinstance(entry, dict)
+    ]
+    evidence_section = {
+        "state": "recorded" if _ledger_entries else "not_recorded",
+        "entries": _ledger_entries,
+        "verified_candidates": sum(
+            1 for entry in _ledger_entries
+            if entry.get("outcome") == "verified"
+        ),
+        "accepted_assets": sum(
+            1 for entry in _ledger_entries
+            if entry.get("outcome") == "accepted"
+        ),
+        "distinct_content_hashes": len({
+            entry.get("content_hash")
+            for entry in _ledger_entries
+            if entry.get("content_hash") and not entry.get("duplicate_of")
+        }),
+        "duplicate_rows": sum(
+            1 for entry in _ledger_entries if entry.get("duplicate_of")
+        ),
     }
 
     # ---- provenance: provider funnel + single-provider reliance --------
@@ -1264,6 +1346,7 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
         },
         "substitutions": substitutions,
         "authenticity": authenticity,
+        "evidence_ledger": evidence_section,
         "authentic": authentic,
         "format_mix": {
             "accepted": dict(format_mix),
@@ -1442,6 +1525,12 @@ def build_rights_manifest(processed_scenes, soundtrack=None) -> list:
             or asset.get("url")
             or "",
             "creator": asset.get("creator") or asset.get("channel") or "",
+            # Phase 3: the asset's authenticity classification
+            # rides the rights manifest — the stamp it carries,
+            # re-derived from its provenance when unstamped, so a
+            # manifest reader can tell authentic evidence from
+            # licensed illustrative stock at a glance.
+            "classification": authenticity.classify_visual(asset),
             "license": asset.get("license") or "unknown",
             "license_url": asset.get("license_url") or "",
             "rights_status": asset.get("rights_status") or "verify_before_publish",

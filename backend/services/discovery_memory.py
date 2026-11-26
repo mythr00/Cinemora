@@ -86,7 +86,11 @@ SCHEMA_VERSION = 1
 #: the stored verdict items. Bump when the meaning of a verdict
 #: changes; old rows become unreachable by construction because
 #: every verdict lookup keys on the CURRENT value.
-VERDICT_CODE_VERSION = "1"
+#: "2" (Phase 3): verify_candidate gained the illustrative-stock
+#: vs direct-evidence rule — a verdict recorded under "1" may
+#: accept an illustrative candidate for an evidence need that "2"
+#: rejects, so "1" verdicts must never be served again.
+VERDICT_CODE_VERSION = "2"
 
 #: How long a retryable (transient) download failure is trusted
 #: after it was last seen. See the expiry rules in the module
@@ -157,6 +161,24 @@ CREATE TABLE IF NOT EXISTS sentence_states (
     detail TEXT,
     updated REAL
 );
+CREATE TABLE IF NOT EXISTS evidence (
+    candidate_id TEXT,
+    sentence_number INTEGER,
+    scene_number INTEGER,
+    beat_id TEXT,
+    url TEXT,
+    provider TEXT,
+    kind TEXT,
+    tier TEXT,
+    classification TEXT,
+    score REAL,
+    outcome TEXT,
+    content_hash TEXT,
+    segment_id TEXT,
+    duplicate_of TEXT,
+    recorded_at REAL,
+    PRIMARY KEY(candidate_id, sentence_number)
+);
 """
 
 _TABLES = (
@@ -166,6 +188,7 @@ _TABLES = (
     "intrinsic_verdicts",
     "demotions",
     "sentence_states",
+    "evidence",
 )
 
 
@@ -879,6 +902,226 @@ class DiscoveryMemory:
                 }
         except Exception:
             return {}
+
+    # ------------------------------------------------- evidence ledger
+    #
+    # Phase 3: the per-production evidence ledger — one row per
+    # (candidate, sentence) the verifier accepted, upgraded at the
+    # fetch commit point with the downloaded bytes' content hash
+    # and the accepted outcome. It is the authoritative record the
+    # global assignment pass, the duplicate-content guard and the
+    # asset report read: what evidence was secured, for which
+    # sentence, from which source, at which tier and with which
+    # authenticity classification. Rows are keyed
+    # (candidate_id, sentence_number); a re-record never weakens a
+    # row — outcome strength is accepted > verified, and a known
+    # content hash / duplicate link is never erased by a later
+    # hash-less record.
+
+    _EVIDENCE_OUTCOME_RANK = {"verified": 1, "accepted": 2}
+
+    def record_evidence(self, entry):
+        """Insert or strengthen one evidence row. Returns True when
+        recorded. Never raises (the store's fail-soft contract)."""
+        if not isinstance(entry, dict):
+            return False
+        candidate_id = entry.get("candidate_id")
+        sentence_number = entry.get("sentence_number")
+        if _blank(candidate_id) or sentence_number is None:
+            return False
+        try:
+            sentence_number = int(sentence_number)
+        except (TypeError, ValueError):
+            return False
+        outcome = str(entry.get("outcome") or "verified")
+        try:
+            with self._lock:
+                conn = self._write_conn()
+                if conn is None:
+                    return False
+                row = conn.execute(
+                    "SELECT outcome, content_hash, duplicate_of"
+                    " FROM evidence"
+                    " WHERE candidate_id=? AND sentence_number=?",
+                    (str(candidate_id), sentence_number),
+                ).fetchone()
+                if row is not None:
+                    old_rank = self._EVIDENCE_OUTCOME_RANK.get(
+                        row["outcome"], 0
+                    )
+                    new_rank = self._EVIDENCE_OUTCOME_RANK.get(outcome, 0)
+                    if new_rank < old_rank:
+                        outcome = row["outcome"]
+                conn.execute(
+                    "INSERT INTO evidence"
+                    "(candidate_id, sentence_number, scene_number,"
+                    " beat_id, url, provider, kind, tier,"
+                    " classification, score, outcome, content_hash,"
+                    " segment_id, duplicate_of, recorded_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    " ON CONFLICT(candidate_id, sentence_number)"
+                    " DO UPDATE SET"
+                    " scene_number=COALESCE(excluded.scene_number,"
+                    " evidence.scene_number),"
+                    " beat_id=COALESCE(excluded.beat_id,"
+                    " evidence.beat_id),"
+                    " url=excluded.url,"
+                    " provider=excluded.provider,"
+                    " kind=excluded.kind,"
+                    " tier=excluded.tier,"
+                    " classification=excluded.classification,"
+                    " score=excluded.score,"
+                    " outcome=excluded.outcome,"
+                    " content_hash=COALESCE(excluded.content_hash,"
+                    " evidence.content_hash),"
+                    " segment_id=COALESCE(excluded.segment_id,"
+                    " evidence.segment_id),"
+                    " duplicate_of=COALESCE(excluded.duplicate_of,"
+                    " evidence.duplicate_of),"
+                    " recorded_at=excluded.recorded_at",
+                    (
+                        str(candidate_id),
+                        sentence_number,
+                        entry.get("scene_number"),
+                        entry.get("beat_id"),
+                        str(entry.get("url") or ""),
+                        str(entry.get("provider") or "unknown"),
+                        str(entry.get("kind") or ""),
+                        str(entry.get("tier") or "direct"),
+                        str(entry.get("classification") or "unknown"),
+                        entry.get("score"),
+                        outcome,
+                        entry.get("content_hash"),
+                        entry.get("segment_id"),
+                        entry.get("duplicate_of"),
+                        self._now(),
+                    ),
+                )
+                conn.commit()
+                return True
+        except Exception:
+            return False
+
+    def mark_evidence_duplicate(self, candidate_id, sentence_number,
+                                *, content_hash=None, duplicate_of=None):
+        """Link an existing evidence row to the bytes it turned out
+        to duplicate: sets ``content_hash`` and ``duplicate_of``
+        without touching the row's verification fields. Used by the
+        download dispatcher's cross-beat duplicate guard (in-run and
+        durable) so the ledger itself records that these bytes are
+        the owning sentence's evidence, not a second piece of it.
+        Returns True when a row was updated."""
+        if _blank(candidate_id) or sentence_number is None:
+            return False
+        try:
+            number = int(sentence_number)
+        except (TypeError, ValueError):
+            return False
+        try:
+            with self._lock:
+                conn = self._write_conn()
+                if conn is None:
+                    return False
+                cursor = conn.execute(
+                    "UPDATE evidence SET"
+                    " content_hash=COALESCE(?, content_hash),"
+                    " duplicate_of=COALESCE(?, duplicate_of)"
+                    " WHERE candidate_id=? AND sentence_number=?",
+                    (
+                        content_hash,
+                        duplicate_of,
+                        str(candidate_id),
+                        number,
+                    ),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception:
+            return False
+
+    def _evidence_row(self, row):
+        return {
+            "candidate_id": row["candidate_id"],
+            "sentence_number": row["sentence_number"],
+            "scene_number": row["scene_number"],
+            "beat_id": row["beat_id"],
+            "url": row["url"],
+            "provider": row["provider"],
+            "kind": row["kind"],
+            "tier": row["tier"],
+            "classification": row["classification"],
+            "score": row["score"],
+            "outcome": row["outcome"],
+            "content_hash": row["content_hash"],
+            "segment_id": row["segment_id"],
+            "duplicate_of": row["duplicate_of"],
+            "recorded_at": row["recorded_at"],
+        }
+
+    def evidence_for_sentence(self, sentence_number):
+        """All evidence rows for one sentence, strongest first."""
+        if sentence_number is None:
+            return []
+        try:
+            number = int(sentence_number)
+        except (TypeError, ValueError):
+            return []
+        try:
+            with self._lock:
+                conn = self._read_conn()
+                if conn is None:
+                    return []
+                rows = conn.execute(
+                    "SELECT * FROM evidence WHERE sentence_number=?"
+                    " ORDER BY score DESC",
+                    (number,),
+                ).fetchall()
+                return [self._evidence_row(row) for row in rows]
+        except Exception:
+            return []
+
+    def evidence_entries(self):
+        """Every evidence row in the ledger, sentence order."""
+        try:
+            with self._lock:
+                conn = self._read_conn()
+                if conn is None:
+                    return []
+                rows = conn.execute(
+                    "SELECT * FROM evidence"
+                    " ORDER BY sentence_number, score DESC"
+                ).fetchall()
+                return [self._evidence_row(row) for row in rows]
+        except Exception:
+            return []
+
+    def evidence_content_owner(self, content_hash):
+        """The accepted evidence row owning *content_hash*, or
+        None. Only ACCEPTED rows own content: a verified-but-never-
+        downloaded candidate's hash is unknown by construction, and
+        a duplicate row (``duplicate_of`` set) never owns — ownership
+        belongs to the first accepted row with those bytes, which is
+        what makes byte-identical photographs one piece of evidence,
+        not two (acceptance #11)."""
+        if _blank(content_hash):
+            return None
+        try:
+            with self._lock:
+                conn = self._read_conn()
+                if conn is None:
+                    return None
+                row = conn.execute(
+                    "SELECT * FROM evidence"
+                    " WHERE content_hash=? AND outcome='accepted'"
+                    " AND duplicate_of IS NULL"
+                    " ORDER BY recorded_at ASC LIMIT 1",
+                    (str(content_hash),),
+                ).fetchone()
+                if row is None:
+                    return None
+                return self._evidence_row(row)
+        except Exception:
+            return None
 
     # -------------------------------------------------------------- summary
 

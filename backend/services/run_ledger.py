@@ -1476,6 +1476,9 @@ def _verification_with_segment(asset):
         return verification
     segment_id = asset.get("segment_id") if isinstance(asset, dict) else None
     tier = asset.get("tier") if isinstance(asset, dict) else None
+    classification = (
+        asset.get("classification") if isinstance(asset, dict) else None
+    )
     swap_override = (
         asset.get("swap_override") if isinstance(asset, dict) else None
     )
@@ -1483,6 +1486,10 @@ def _verification_with_segment(asset):
         verification = {**verification, "segment_id": segment_id}
     if tier:
         verification = {**verification, "tier": tier}
+    if classification:
+        # Phase 3: the asset's authenticity classification rides
+        # the same copy, so the certificate can state it.
+        verification = {**verification, "classification": classification}
     if isinstance(swap_override, dict) and swap_override:
         verification = {**verification, "swap_override": swap_override}
     return verification

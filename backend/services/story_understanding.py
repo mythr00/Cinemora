@@ -2470,6 +2470,13 @@ def is_banned_provider(candidate):
 WATERMARKED_PREVIEW_FIELD = "watermarked_preview"
 SOCIAL_PLATFORM_REASON = "social_platform_source"
 MEME_FORMAT_REASON = "meme_format_source"
+# Phase 3 (authenticity taxonomy): licensed illustrative stock may
+# serve a representative/generic need, but it is not evidence of the
+# real event and can never satisfy a direct-evidence (evidence
+# category) need. The classification itself lives in
+# services.authenticity; this reason is the verdict the chain
+# records when the rule fires.
+ILLUSTRATIVE_NOT_EVIDENCE_REASON = "illustrative_stock_not_direct_evidence"
 CONTRADICTORY_GEOGRAPHY = "contradictory_geography"
 UNRELATED_NAMED_PERSON = "unrelated_named_person"
 
@@ -3448,6 +3455,37 @@ def verify_candidate(candidate, scenario, bible):
                 "dimension_results": _unevaluated_dimensions(),
                 WATERMARKED_PREVIEW_FIELD: watermarked_preview,
             }
+
+    # Phase 3 (authenticity taxonomy, acceptance #10): licensed
+    # illustrative stock is not evidence of the real event. When the
+    # scenario resolves to the evidence category (specificity
+    # "exact" / evidence role / document-object shot), an
+    # illustrative candidate is rejected by the verification chain
+    # itself, however relevant its metadata looks — the same
+    # hard-reject standing as the rules above. The rule is
+    # CONTEXTUAL (it depends on the need), so it never enters the
+    # portable intrinsic-verdict index. For every other category the
+    # candidate is scored normally: illustrative stock stays
+    # legitimate B-roll/context material (founder B-roll principle).
+    try:
+        from services import authenticity as _authenticity
+    except ImportError:  # flat-layout fallback
+        import authenticity as _authenticity
+    if (
+        _authenticity.is_illustrative_stock(candidate)
+        and resolve_visual_category(scenario) == "evidence"
+    ):
+        return {
+            "accepted": False,
+            "score": 0.0,
+            "reasons": ["illustrative stock is not direct evidence"],
+            "contributions": {"subject": 0.0, "topical": 0.0, "era": 0.0, "wrong_person": 0.0},
+            "rejection_reason": ILLUSTRATIVE_NOT_EVIDENCE_REASON,
+            "failed_checks": [ILLUSTRATIVE_NOT_EVIDENCE_REASON],
+            "category": resolve_visual_category(scenario),
+            "dimension_results": _unevaluated_dimensions(),
+            WATERMARKED_PREVIEW_FIELD: watermarked_preview,
+        }
 
     text = _norm(" ".join(str(candidate.get(k) or "") for k in ("title", "snippet", "description", "url", "source")))
     by_id = bible.get("by_id", {})

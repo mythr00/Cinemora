@@ -31,8 +31,8 @@ Unpatched, each resolves to exactly the object it always was.
 WHAT STAYED in media_pipeline, and why (Phase 5.4 coupling note):
 _uve_download_any_candidate and the two downloaders
 (_uve_download_video_candidate / _uve_download_image_candidate) own
-six RunContext-bound containers (_SEGMENT_BASIS / _SEGMENT_ATTEMPTS /
-_SEGMENT_FAILURE_CAUSE / _SEGMENT_FILE_CACHE / _yt_segment_uses /
+five RunContext-bound containers (_SEGMENT_BASIS / _SEGMENT_ATTEMPTS /
+_SEGMENT_FAILURE_CAUSE / _SEGMENT_FILE_CACHE /
 _FAILED_DOWNLOAD_URLS) and call the most-patched helpers in the
 codebase (download_video_clip, validate_video,
 _segment_start_detailed); _apply_transcript_check stays with the
@@ -44,6 +44,7 @@ access through another namespace — a behaviour risk, not a move.
 
 import os
 
+from services import authenticity
 from services import download_taxonomy
 from services import frame_verification
 from services import pipeline_assignment
@@ -237,8 +238,8 @@ def _uve_candidate_key(candidate):
 
     # Search candidates do not have a timestamp yet.
     # The timestamp is assigned later by _youtube_start().
-    # Do not use _yt_segment_uses here because it contains
-    # a list of timestamps, not one timestamp.
+    # Do not use the registry's planned-segment ranges here
+    # because they contain lists of timestamps, not one timestamp.
     start = candidate.get("clip_start")
 
     if start is not None:
@@ -434,11 +435,16 @@ def _verdict_cache():
 # ---------------------------------------------------------------------------
 
 #: Candidate fields read anywhere in the gate/scorer/intrinsic path.
+#: Phase 3: ``illustrative_stock`` / ``provenance`` / ``license``
+#: joined the set — verify_candidate's illustrative-vs-evidence rule
+#: reads them, so two projections differing only in the stock stamp
+#: must never share a verdict-cache entry.
 _VERDICT_CANDIDATE_FIELDS = (
     "title", "snippet", "description",
     "provider", "source", "source_domain", "project_id",
     "type", "visual_type",
     "url", "video_url", "image_url", "download_url", "link", "source_url",
+    "illustrative_stock", "provenance", "license",
 )
 
 #: Rejection reasons decided by the candidate alone (see header).
@@ -1005,6 +1011,51 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
         key=lambda c: c["universal_score"],
         reverse=True,
     )
+
+    # Phase 3 (authenticity taxonomy + evidence ledger): every
+    # scored item leaves with its authenticity classification,
+    # computed here — the one point every exit path (fresh verdict,
+    # run-cache replay, durable replay, gate rejection) passes.
+    # The stamp is a pure function of the item, so cached copies
+    # stored without it are re-stamped identically on replay.
+    # Verifier-ACCEPTED items are also written to the production's
+    # durable evidence ledger (Phase 3): the per-sentence record of
+    # what evidence discovery secured, which the global assignment
+    # pass and the asset report read. Fail-soft by the store's own
+    # contract — a ledger write can never fail verification.
+    _ledger = _discovery_memory()
+    for _item in scored:
+        try:
+            _item["classification"] = authenticity.classify_candidate(
+                _item, _item.get("verification")
+            )
+        except Exception:
+            _item["classification"] = authenticity.UNKNOWN
+        if _ledger is not None and (
+            (_item.get("verification") or {}).get("accepted")
+        ):
+            for _sentence in _sentence_numbers:
+                _ledger.record_evidence({
+                    "candidate_id": _item.get("candidate_id"),
+                    "sentence_number": _sentence,
+                    "url": (
+                        _item.get("url") or _item.get("video_url")
+                        or _item.get("image_url") or ""
+                    ),
+                    "provider": str(
+                        _item.get("provider")
+                        or _item.get("source") or "unknown"
+                    ),
+                    "kind": str(
+                        _item.get("kind") or _item.get("type") or ""
+                    ),
+                    "tier": str(_item.get("tier") or "direct"),
+                    "classification": _item["classification"],
+                    "score": (_item.get("verification") or {}).get(
+                        "score"
+                    ),
+                    "outcome": "verified",
+                })
 
     return scored
 
@@ -1597,6 +1648,49 @@ def _uve_fetch_first(candidates, downloader, scene_dir, sentence_number, asset_i
             )
             if _hash:
                 asset["content_hash"] = _hash
+
+        # Phase 3 (evidence ledger): the commit point upgrades the
+        # candidate's ledger row to ACCEPTED with the downloaded
+        # bytes' content hash, so the durable ledger records not
+        # just that the candidate verified but that THIS production
+        # secured those exact bytes for this sentence. The asset
+        # also leaves with its authenticity classification (stamped
+        # at verification; re-derived here only if a seam produced
+        # the asset without one). Fail-soft throughout.
+        if isinstance(asset, dict):
+            if not authenticity.is_valid_classification(
+                asset.get("classification")
+            ):
+                asset["classification"] = authenticity.classify_visual(
+                    asset
+                )
+            _ledger = _discovery_memory()
+            if _ledger is not None and candidate.get("candidate_id"):
+                _ledger.record_evidence({
+                    "candidate_id": candidate.get("candidate_id"),
+                    "sentence_number": sentence_number,
+                    "url": (
+                        candidate.get("url")
+                        or candidate.get("video_url")
+                        or candidate.get("image_url") or ""
+                    ),
+                    "provider": str(
+                        candidate.get("provider")
+                        or candidate.get("source") or "unknown"
+                    ),
+                    "kind": str(
+                        candidate.get("kind")
+                        or candidate.get("type") or ""
+                    ),
+                    "tier": str(candidate.get("tier") or "direct"),
+                    "classification": asset["classification"],
+                    "score": (
+                        candidate.get("verification") or {}
+                    ).get("score"),
+                    "outcome": "accepted",
+                    "content_hash": asset.get("content_hash"),
+                    "segment_id": asset.get("segment_id"),
+                })
 
         return asset
 

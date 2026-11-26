@@ -820,6 +820,16 @@ def build_certificate(project, run, decisions, counts, planner=None):
                     if isinstance(decision.get("verification"), dict)
                     else None
                 ),
+                # Phase 3: the authenticity classification recorded
+                # in the decision's verification JSON, under the
+                # same doctrine as tier — "unknown" when the row
+                # carries a classification field that says so, None
+                # (unstated) on rows recorded before the carry.
+                "classification": (
+                    decision.get("verification", {}).get("classification")
+                    if isinstance(decision.get("verification"), dict)
+                    else None
+                ),
                 "verification": _verification_outcome(
                     decision.get("verification")
                 ),
