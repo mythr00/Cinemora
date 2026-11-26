@@ -21,19 +21,46 @@ import { ErrorState, LoadingState } from "@/components/states";
 import { getCurrentUser, type AccountUser } from "@/lib/api";
 import { ShieldCheck } from "lucide-react";
 
-const ADMIN_LINKS: Array<{ href: string; label: string }> = [
-  { href: "/admin", label: "Overview" },
-  { href: "/admin/runs", label: "Productions" },
-  { href: "/admin/workers", label: "Workers & queues" },
-  { href: "/admin/providers", label: "Provider usage" },
-  { href: "/admin/health", label: "Health" },
-  { href: "/admin/storage", label: "Storage" },
-  { href: "/admin/users", label: "Users" },
-  { href: "/admin/subscriptions", label: "Subscriptions overview" },
-  { href: "/admin/projects", label: "Projects" },
-  { href: "/admin/developer", label: "Developer API" },
-  { href: "/admin/audit", label: "Audit log" },
-  { href: "/admin/settings", label: "Settings overview" },
+/**
+ * Admin navigation, grouped (A-12 closure, 2026-11-26,
+ * completeness S-4): the twelve destinations render under
+ * three section labels — Operations (the production system),
+ * Accounts & billing (the customer estate) and System
+ * (platform plumbing and records). Grouping is presentation
+ * only: the same hrefs, labels and active-state rule as the
+ * previous flat list; no page or capability changed.
+ */
+const ADMIN_LINK_GROUPS: Array<{
+  label: string;
+  links: Array<{ href: string; label: string }>;
+}> = [
+  {
+    label: "Operations",
+    links: [
+      { href: "/admin", label: "Overview" },
+      { href: "/admin/runs", label: "Productions" },
+      { href: "/admin/workers", label: "Workers & queues" },
+      { href: "/admin/providers", label: "Provider usage" },
+      { href: "/admin/health", label: "Health" },
+      { href: "/admin/storage", label: "Storage" },
+    ],
+  },
+  {
+    label: "Accounts & billing",
+    links: [
+      { href: "/admin/users", label: "Users" },
+      { href: "/admin/subscriptions", label: "Subscriptions overview" },
+      { href: "/admin/projects", label: "Projects" },
+    ],
+  },
+  {
+    label: "System",
+    links: [
+      { href: "/admin/developer", label: "Developer API" },
+      { href: "/admin/audit", label: "Audit log" },
+      { href: "/admin/settings", label: "Settings overview" },
+    ],
+  },
 ];
 
 function NotFoundView() {
@@ -104,16 +131,35 @@ export function AdminShell({ children }: { children: ReactNode }) {
         </p>
       </header>
       <nav className="admin-nav" aria-label="Administration">
-        {ADMIN_LINKS.map((link) => (
-          <Link
-            key={link.href}
-            href={link.href}
-            className={
-              pathname === link.href ? "admin-nav-link is-active" : "admin-nav-link"
-            }
-          >
-            {link.label}
-          </Link>
+        {ADMIN_LINK_GROUPS.map((group) => (
+          <span key={group.label} style={{ display: "contents" }}>
+            <span
+              className="admin-nav-group-label"
+              style={{
+                alignSelf: "center",
+                padding: "6px 4px 6px 14px",
+                color: "var(--ink-muted)",
+                fontSize: 11,
+                fontWeight: 650,
+                letterSpacing: "0.07em",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {group.label}
+            </span>
+            {group.links.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={
+                  pathname === link.href ? "admin-nav-link is-active" : "admin-nav-link"
+                }
+              >
+                {link.label}
+              </Link>
+            ))}
+          </span>
         ))}
       </nav>
       <main className="admin-page">{children}</main>
