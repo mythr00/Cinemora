@@ -4387,6 +4387,27 @@ def channel_thumbnail_analysis(
     )
 
 
+@router.post(
+    "/projects/{project_id}/thumbnails/uploads", status_code=201
+)
+def upload_thumbnail_base(
+    project_id: str,
+    file: UploadFile = File(...),
+    principal=Depends(post_guard),
+):
+    """Item 5: upload an image DIRECTLY to the Thumbnail Studio
+    — a working base with no production context required (the
+    editor's upload route rightly refuses a project with no
+    plan/run/revision; the studio must not depend on one)."""
+    _thumb_project(project_id, principal, write=True)
+    return _thumb_call(
+        thumbnail_studio.store_studio_upload,
+        project_id,
+        file.filename,
+        file.file,
+    )
+
+
 @router.get("/projects/{project_id}/thumbnails")
 def get_thumbnails(project_id: str, principal=Depends(require_user)):
     project = _thumb_project(project_id, principal)

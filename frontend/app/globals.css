@@ -3121,3 +3121,14 @@ body { min-height: 100dvh; }
 @media (max-width: 900px) {
   .app-rail a { padding: 10px; }
 }
+
+/* Affiliate page title: icon + text on one flex line (the icon
+   must never overlap the eyebrow above). */
+.affiliate-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.affiliate-title svg {
+  flex: none;
+}

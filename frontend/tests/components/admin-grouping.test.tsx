@@ -146,7 +146,7 @@ describe("ProjectTabs grouping", () => {
 });
 
 describe("AdminShell navigation grouping", () => {
-  it("renders the twelve destinations under three group labels for an admin", async () => {
+  it("renders the thirteen destinations under three group labels for an admin", async () => {
     mockUser.mockResolvedValue(makeUser("super_admin"));
     render(
       <AdminShell>
@@ -160,10 +160,13 @@ describe("AdminShell navigation grouping", () => {
       expect(within(nav).getByText(group)).toBeInTheDocument();
     }
     const links = within(nav).getAllByRole("link");
-    expect(links).toHaveLength(12);
+    expect(links).toHaveLength(13);
     expect(
       within(nav).getByRole("link", { name: "Subscriptions overview" }),
     ).toHaveAttribute("href", "/admin/subscriptions");
+    expect(
+      within(nav).getByRole("link", { name: "Affiliates" }),
+    ).toHaveAttribute("href", "/admin/affiliates");
     expect(screen.getByText("Admin home")).toBeInTheDocument();
   });
 

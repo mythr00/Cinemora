@@ -1415,6 +1415,17 @@ export type ThumbnailAnalysis = {
   luminance: { mean: number; spread: number };
 };
 
+/** Item 5: upload an image directly to the Thumbnail Studio —
+ * a working base with no production context required. */
+export function uploadThumbnailBase(projectId: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return apiRequest<ThumbnailBase>(
+    `/api/v1/projects/${projectId}/thumbnails/uploads`,
+    { method: "POST", body: form },
+  );
+}
+
 export function getThumbnails(projectId: string, signal?: AbortSignal) {
   return apiRequest<ThumbnailStudioView>(`/api/v1/projects/${projectId}/thumbnails`, { signal });
 }

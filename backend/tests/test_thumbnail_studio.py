@@ -519,3 +519,61 @@ def test_cross_tenant_404_on_all_thumbnail_routes(client):
     ]:
         response = client.request(method, path, **kwargs)
         assert response.status_code == 404, (method, path, response.status_code, response.text)
+
+
+# ---------------------------------------------------------------------
+# Item 5: studio-direct uploads — a base with NO production at all
+# ---------------------------------------------------------------------
+
+
+def test_studio_upload_is_a_base_on_a_fresh_project(client, tmp_path):
+    """A brand-new project (no plan, no run, no revision) accepts
+    a Thumbnail Studio upload directly, lists it as a base, and
+    composes from it — the studio never depends on a completed
+    video. The editor's own upload route keeps its production-
+    context rule; this is the studio's separate door."""
+    project = _create_project(client, title="Fresh Project")
+    image_path = tmp_path / "base.png"
+    Image.new("RGB", (1280, 720), (40, 80, 120)).save(
+        image_path, format="PNG"
+    )
+    with open(image_path, "rb") as handle:
+        response = client.post(
+            f"/api/v1/projects/{project['id']}/thumbnails/uploads",
+            headers=HEADERS,
+            files={"file": ("base.png", handle, "image/png")},
+        )
+    assert response.status_code == 201, response.text
+    base = response.json()
+    assert base["base_id"].startswith("studio-upload:")
+    assert base["kind"] == "upload"
+
+    view = _get(client, project["id"]).json()
+    assert view["bases"]["film"]["frames"] == []
+    studio_bases = [
+        u for u in view["bases"]["uploads"]
+        if u["base_id"] == base["base_id"]
+    ]
+    assert len(studio_bases) == 1
+
+    composed = client.post(
+        f"/api/v1/projects/{project['id']}/thumbnails",
+        headers=HEADERS,
+        json={"base_id": base["base_id"], "headline": "Fresh Base",
+              "layout": "bottom_band"},
+    )
+    assert composed.status_code == 201, composed.text
+    assert composed.json()["base"]["kind"] == "upload"
+    assert composed.json()["checks"]["dimensions"] == [1280, 720]
+
+    # A non-image is refused honestly and leaves no base behind.
+    text_path = tmp_path / "notes.txt"
+    text_path.write_text("not an image")
+    with open(text_path, "rb") as handle:
+        refused = client.post(
+            f"/api/v1/projects/{project['id']}/thumbnails/uploads",
+            headers=HEADERS,
+            files={"file": ("notes.txt", handle, "text/plain")},
+        )
+    assert refused.status_code == 422
+    assert refused.json()["error"]["code"] == "not_an_image"

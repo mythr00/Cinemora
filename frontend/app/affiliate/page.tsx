@@ -94,8 +94,8 @@ export default function AffiliatePage() {
       <AppNavigation />
       <section className="plan-content">
         <p className="eyebrow">ACCOUNT</p>
-        <h1>
-          <HandCoins size={22} /> Affiliate programme
+        <h1 className="affiliate-title">
+          <HandCoins size={22} aria-hidden /> Affiliate programme
         </h1>
         <p className="plan-intro">
           Earn {dashboard?.rate_percent ?? 12}% lifetime commission on every

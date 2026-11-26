@@ -14,7 +14,7 @@ import {
   listProjects,
   thumbnailDownloadPath,
   thumbnailImagePath,
-  uploadAsset,
+  uploadThumbnailBase,
   type ChannelStyleVideo,
   type ProjectSummary,
   type ThumbnailBase,
@@ -210,7 +210,7 @@ export default function ThumbnailStudioPage() {
     setWorking("upload");
     setActionError(null);
     try {
-      await uploadAsset(projectId, file);
+      await uploadThumbnailBase(projectId, file);
       setNotice("Uploaded — it is now available as a base and as a measurable reference.");
       await loadView(projectId);
     } catch (caught) {

@@ -171,6 +171,94 @@ def _save_store(project_id, store: dict) -> dict:
     return store
 
 
+# ---------------------------------------------------------------------
+# Studio uploads (item 5): images uploaded DIRECTLY to the
+# Thumbnail Studio. The editor's upload machinery refuses a
+# project with no production context (no revision, no completed
+# run, no plan awaiting approval) — correct for the editor, but
+# the Thumbnail Studio must work before any of that exists. A
+# studio upload lives in the studio's own store, is a base the
+# moment it lands, and never pretends to be production material.
+# ---------------------------------------------------------------------
+
+STUDIO_UPLOAD_MAX_BYTES = 25 * 1024 * 1024  # images, not footage
+
+
+def _studio_uploads_path(project_id) -> Path:
+    return _store_dir(project_id) / "uploads.json"
+
+
+def _load_studio_uploads(project_id) -> list[dict]:
+    data = _read_json(_studio_uploads_path(project_id))
+    if isinstance(data, dict) and isinstance(data.get("uploads"), list):
+        return data["uploads"]
+    return []
+
+
+def _save_studio_uploads(project_id, uploads: list[dict]) -> None:
+    store_dir = _store_dir(project_id)
+    store_dir.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(
+        _studio_uploads_path(project_id), {"uploads": uploads}
+    )
+
+
+def store_studio_upload(project_id, filename, fileobj) -> dict:
+    """Store one image as a Thumbnail Studio base. Validates
+    that the bytes really are an image (the media probe decides;
+    anything else is refused and removed). Returns the base
+    record list_bases will report."""
+    store_dir = _store_dir(project_id)
+    uploads_dir = store_dir / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    upload_id = _new_id("stu")
+    suffix = Path(str(filename or "image")).suffix.lower()
+    if suffix not in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+        suffix = ".img"
+    stored_name = f"{upload_id}{suffix}"
+    path = uploads_dir / stored_name
+    written = 0
+    try:
+        with path.open("wb") as out:
+            while True:
+                chunk = fileobj.read(1024 * 256)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > STUDIO_UPLOAD_MAX_BYTES:
+                    raise ThumbnailError(
+                        413, "upload_too_large",
+                        "That image is larger than the Thumbnail "
+                        "Studio's 25 MB upload limit.",
+                    )
+                out.write(chunk)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    if media_probe.probe_image(path) is None:
+        path.unlink(missing_ok=True)
+        raise ThumbnailError(
+            422, "not_an_image",
+            "That file is not an image the studio can use.",
+        )
+    record = {
+        "upload_id": upload_id,
+        "file_name": Path(str(filename or "image")).name,
+        "stored_name": stored_name,
+        "created_at": _now_iso(),
+    }
+    uploads = _load_studio_uploads(project_id)
+    uploads.append(record)
+    _save_studio_uploads(project_id, uploads)
+    return {
+        "base_id": f"studio-upload:{upload_id}",
+        "kind": "upload",
+        "label": record["file_name"],
+        "upload_id": upload_id,
+        "file_name": record["file_name"],
+    }
+
+
 def list_variants(project_id) -> list[dict]:
     """Recorded variants, newest first. A variant whose file has
     disappeared from disk is listed with available=False — the
@@ -406,6 +494,22 @@ def list_bases(project_id) -> dict:
             }
         )
 
+    for record in _load_studio_uploads(project_id):
+        stored = _store_dir(project_id) / "uploads" / str(
+            record.get("stored_name") or ""
+        )
+        if not stored.is_file():
+            continue
+        uploads.append(
+            {
+                "base_id": f"studio-upload:{record.get('upload_id')}",
+                "kind": "upload",
+                "label": record.get("file_name") or stored.name,
+                "upload_id": record.get("upload_id"),
+                "file_name": record.get("file_name"),
+            }
+        )
+
     return {
         "film": {
             "state": "recorded" if film is not None else "not_recorded",
@@ -501,6 +605,25 @@ def resolve_base(project_id, base_id: str):
         raise ThumbnailError(
             404, "base_not_found",
             "No recorded verified still with that identity is on disk.",
+        )
+
+    if kind == "studio-upload":
+        for record in _load_studio_uploads(project_id):
+            if record.get("upload_id") == rest:
+                path = _store_dir(project_id) / "uploads" / str(
+                    record.get("stored_name") or ""
+                )
+                if path.is_file() and (
+                    media_probe.probe_image(path) is not None
+                ):
+                    return path, {
+                        "kind": "upload",
+                        "upload_id": rest,
+                        "file_name": record.get("file_name"),
+                    }
+        raise ThumbnailError(
+            404, "base_not_found",
+            "No studio-uploaded image with that identity is on disk.",
         )
 
     if kind == "upload":
