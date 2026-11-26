@@ -205,8 +205,11 @@ def test_verdict_miss_after_code_version_change(store, monkeypatch):
     item = {"accepted": True, "score": 0.9}
     store.record_verdict("cand:1", "ctx:1", "bible:1", item)
     assert store.verdict("cand:1", "ctx:1", "bible:1") == item
+    # Any value different from the current code version must miss
+    # (Phase 3 bumped the current version to "2", so the patched
+    # value is deliberately far from every real one).
     monkeypatch.setattr(
-        discovery_memory, "VERDICT_CODE_VERSION", "2"
+        discovery_memory, "VERDICT_CODE_VERSION", "999"
     )
     assert store.verdict("cand:1", "ctx:1", "bible:1") is None
 
@@ -307,6 +310,8 @@ def test_summary_counts(store):
         "intrinsic_verdicts": 1,
         "demotions": 1,
         "sentence_states": 1,
+        # Phase 3: the evidence ledger table rides the same store.
+        "evidence": 0,
     }
 
 
@@ -393,6 +398,7 @@ def test_blank_keys_are_noops(store):
         "intrinsic_verdicts": 0,
         "demotions": 0,
         "sentence_states": 0,
+        "evidence": 0,
     }
 
 

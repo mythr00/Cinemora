@@ -479,9 +479,17 @@ def pipeline(monkeypatch, tmp_path):
     )
     for name in (
         "write_plan_document", "write_visual_plan_document",
-        "write_visual_plan_v2_document", "write_graphics_manifest_document",
     ):
         monkeypatch.setattr(plan_document, name, lambda *a, **k: None)
+    # Phase 3: Pass-2 is non-bypassable — a v2/manifest write that
+    # reports failure (None) fails the stage, so these doubles model
+    # a successful write (a path), not the fail-soft None.
+    for name in (
+        "write_visual_plan_v2_document", "write_graphics_manifest_document",
+    ):
+        monkeypatch.setattr(
+            plan_document, name, lambda *a, **k: Path("/tmp/stubbed")
+        )
     monkeypatch.setattr(
         plan_document, "visual_plan_from_analysis",
         lambda *a, **k: {"version": 1},

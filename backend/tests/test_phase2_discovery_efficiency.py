@@ -452,15 +452,28 @@ def _scene_fixture(monkeypatch, tmp_path, events):
         }],
     }
 
+    _fake_cache = {}
+
     def fake_search(scenario_, cache, pid, shot_need=None):
-        events.append(("initial", scenario_["visual"]))
+        # The real _uve_scenario_search is cache-first per query:
+        # a repeated search for the same scenario returns the
+        # cached results without re-issuing (and without a new
+        # "initial" event). Phase 3's global-assignment survey
+        # searches every scenario once up front, so the real
+        # passes that follow are cache hits — this double models
+        # that documented contract.
+        visual = scenario_["visual"]
+        if visual in _fake_cache:
+            return _fake_cache[visual]
+        events.append(("initial", visual))
         good = {
-            "url": f"https://media.example.org/{scenario_['visual']}",
-            "title": f"{scenario_['visual']} 1989",
-            "snippet": scenario_["visual"],
+            "url": f"https://media.example.org/{visual}",
+            "title": f"{visual} 1989",
+            "snippet": visual,
             "provider": "youtube",
         }
-        return ([good], [], [])
+        _fake_cache[visual] = ([good], [], [])
+        return _fake_cache[visual]
 
     def download(candidate, scene_dir, sentence_number, asset_index):
         path = Path(scene_dir) / f"asset-{sentence_number}.mp4"
@@ -575,16 +588,26 @@ def test_never_searched_beat_is_named_and_starved(monkeypatch, tmp_path):
         }],
     }
     searched = []
+    _fake_cache = {}
 
     def fake_search(scenario_, cache, pid, shot_need=None):
-        searched.append(list(scenario_.get("queries") or []))
+        # Cache-first per query, like the real _uve_scenario_search:
+        # Phase 3's survey searches the beat once up front and the
+        # real pass is then a cache hit, so the query list is
+        # recorded exactly once.
+        _queries = list(scenario_.get("queries") or [])
+        _key = tuple(_queries)
+        if _key in _fake_cache:
+            return _fake_cache[_key]
+        searched.append(_queries)
         good = {
             "url": "https://media.example.org/cranes",
             "title": "Harbour cranes loading a ship",
             "snippet": "cranes loading",
             "provider": "youtube",
         }
-        return ([good], [], [])
+        _fake_cache[_key] = ([good], [], [])
+        return _fake_cache[_key]
 
     def download(candidate, scene_dir, sentence_number, asset_index):
         path = Path(scene_dir) / "asset.mp4"

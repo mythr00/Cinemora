@@ -18,7 +18,11 @@ from services.visual_registry import VisualRegistry
 
 def test_reset_media_caches_clears_cross_project_state():
     url = "https://youtube.com/watch?v=shared"
-    media_pipeline._yt_segment_uses[url] = [(0, 8)]
+    # Phase 3: planned segments live on the registry now — seed one
+    # through the pipeline's own planning helper, the way the
+    # timestamp selectors do.
+    media_pipeline._note_planned_segment(url, 0, 8)
+    assert media_pipeline._segment_ranges_in_use(url) == [(0.0, 8.0)]
     media_pipeline._youtube_metadata_cache[url] = {"_full": True}
     media_pipeline._youtube_transcript_cache[url] = [{"text": "x"}]
     media_pipeline._yt_info_failed.add(url)
@@ -26,7 +30,7 @@ def test_reset_media_caches_clears_cross_project_state():
 
     media_pipeline.reset_media_caches()
 
-    assert media_pipeline._yt_segment_uses == {}
+    assert media_pipeline._segment_ranges_in_use(url) == []
     assert media_pipeline._youtube_metadata_cache == {}
     assert media_pipeline._youtube_transcript_cache == {}
     assert media_pipeline._yt_info_failed == set()

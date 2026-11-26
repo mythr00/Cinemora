@@ -37,7 +37,9 @@ def test_default_context_wraps_original_containers():
     assert mp._SEGMENT_BASIS is default.segment_basis
     assert mp._SEGMENT_ATTEMPTS is default.segment_attempts
     assert mp._SEGMENT_FAILURE_CAUSE is default.segment_failure_cause
-    assert mp._yt_segment_uses is default.yt_segment_uses
+    # Phase 3: segment-planning state is no longer a context
+    # container — it lives on the production's VisualRegistry.
+    assert not hasattr(default, "yt_segment_uses")
     assert mp._youtube_metadata_cache is default.youtube_metadata_cache
     assert mp._youtube_transcript_cache is default.youtube_transcript_cache
     assert mp._yt_info_failed is default.yt_info_failed
@@ -141,7 +143,7 @@ def test_run_context_fresh_defaults():
     assert ctx.failed_download_urls == set()
     assert ctx.discovery_failures == []
     assert ctx.segment_basis == {}
-    assert ctx.yt_segment_uses == {}
+    assert not hasattr(ctx, "yt_segment_uses")
     assert ctx.yt_info_failed == set()
     assert ctx.search_failure_state == {
         "consecutive_failures": 0,

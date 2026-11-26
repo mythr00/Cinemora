@@ -24,7 +24,10 @@ def _clean_segment_state():
     mp._SEGMENT_ATTEMPTS.clear()
     mp._SEGMENT_FAILURE_CAUSE.clear()
     mp._SOURCE_DURATION_CACHE.clear()
-    mp._yt_segment_uses.clear()
+    # Phase 3: planned segments live on the registries.
+    from services.visual_registry import clear_all_planned_segments
+
+    clear_all_planned_segments()
     yield
 
 

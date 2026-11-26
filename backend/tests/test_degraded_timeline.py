@@ -372,7 +372,9 @@ def test_17_project_b_can_select_url_project_a_used_or_failed(tmp_path):
 
     url = "https://www.youtube.com/watch?v=SHARED0017"
     # Project A's per-run state, in the long-lived worker process.
-    mp._yt_segment_uses[url] = [(0, 8)]
+    # Phase 3: planned segments live on the registry — seed through
+    # the pipeline's planning helper, as the selectors do.
+    mp._note_planned_segment(url, 0, 8)
     mp._yt_info_failed.add(url)
     mp._yt_transcript_failed.add(url)
     mp._FAILED_DOWNLOAD_URLS.add(canonical_source_key(url))
@@ -387,7 +389,7 @@ def test_17_project_b_can_select_url_project_a_used_or_failed(tmp_path):
     reset_registry(project_b)
     registry_b = get_registry(project_b)
     try:
-        assert mp._yt_segment_uses == {}
+        assert mp._segment_ranges_in_use(url) == []
         assert mp._FAILED_DOWNLOAD_URLS == set()
         assert registry_b.source_usage_count(url) == 0
         allowed, _ = registry_b.can_use(
