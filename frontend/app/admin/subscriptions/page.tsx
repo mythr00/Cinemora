@@ -39,6 +39,7 @@ export default function AdminSubscriptionsPage() {
   const [retention, setRetention] = useState<AdminRetentionSummary | null>(null);
   const [planNote, setPlanNote] = useState<string | null>(null);
   const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
+  const [referenceEdits, setReferenceEdits] = useState<Record<string, string>>({});
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -77,6 +78,40 @@ export default function AdminSubscriptionsPage() {
         cause instanceof Error
           ? cause.message
           : "Price update failed (super-admin required).",
+      );
+    }
+  };
+
+  // Reference (strikethrough) price: stored on the plan record's
+  // features and shown on pricing surfaces only when set and
+  // above the selling price. Enter ONLY a genuine, founder-
+  // approved standard price — never an invented anchor. Blank
+  // clears it and disables the strikethrough.
+  const saveReferencePrice = async (plan: BillingPlan) => {
+    const raw = referenceEdits[plan.id];
+    if (raw === undefined) return;
+    const features: Record<string, unknown> = { ...(plan.features ?? {}) };
+    if (raw.trim() === "") {
+      delete features.reference_price_monthly_cents;
+    } else {
+      const cents = Math.round(Number(raw) * 100);
+      if (Number.isNaN(cents) || cents < 0) {
+        setPlanNote("Enter a valid reference price, or leave it blank to disable.");
+        return;
+      }
+      features.reference_price_monthly_cents = cents;
+    }
+    try {
+      const updated = await updateAdminBillingPlan(plan.id, { features });
+      setBillingPlans((current) =>
+        current.map((p) => (p.id === updated.id ? updated : p)),
+      );
+      setPlanNote(`Reference price updated for ${updated.name}.`);
+    } catch (cause) {
+      setPlanNote(
+        cause instanceof Error
+          ? cause.message
+          : "Reference price update failed (super-admin required).",
       );
     }
   };
@@ -221,6 +256,12 @@ export default function AdminSubscriptionsPage() {
           </tbody>
         </table>
       )}
+      <p className="admin-intro">
+        Reference price: the strikethrough shown beside a plan&apos;s
+        price on the billing page. Enter only a genuine, approved
+        standard price for that plan — never an invented anchor.
+        Leave it blank to disable the strikethrough.
+      </p>
       {planNote && <p className="admin-intro">{planNote}</p>}
       <table className="admin-table">
         <thead>
@@ -228,6 +269,7 @@ export default function AdminSubscriptionsPage() {
             <th>Plan</th>
             <th>Mode</th>
             <th>Monthly price</th>
+            <th>Reference price</th>
             <th>Credits / month</th>
             <th>Included generations</th>
             <th>Script / thumbnail allowance</th>
@@ -259,6 +301,26 @@ export default function AdminSubscriptionsPage() {
                   aria-label={`Monthly price for ${plan.name} in dollars`}
                 />
               </td>
+              <td>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={
+                    typeof plan.features?.reference_price_monthly_cents === "number"
+                      ? (plan.features.reference_price_monthly_cents / 100).toFixed(2)
+                      : ""
+                  }
+                  placeholder="—"
+                  onChange={(event) =>
+                    setReferenceEdits((current) => ({
+                      ...current,
+                      [plan.id]: event.target.value,
+                    }))
+                  }
+                  aria-label={`Reference price for ${plan.name} in dollars (blank disables the strikethrough)`}
+                />
+              </td>
               <td>{plan.monthly_credits}</td>
               <td>{plan.included_generations}</td>
               <td>
@@ -272,6 +334,13 @@ export default function AdminSubscriptionsPage() {
                   onClick={() => void savePrice(plan)}
                 >
                   Save price
+                </button>{" "}
+                <button
+                  type="button"
+                  className="button button-quiet"
+                  onClick={() => void saveReferencePrice(plan)}
+                >
+                  Save reference
                 </button>
               </td>
             </tr>

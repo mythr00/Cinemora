@@ -346,10 +346,30 @@ export default function BillingPage() {
                   ? candidate.price_annual_cents
                   : candidate.price_monthly_cents;
               const isCurrent = plan?.id === candidate.id;
+              // Reference (strikethrough) price: rendered only when
+              // a genuine reference price is configured on the plan
+              // record by a super-admin (Admin → Subscriptions →
+              // Monetization) and exceeds the selling price. Unset
+              // by default — nothing is pre-filled.
+              const referenceRaw =
+                interval === "annual"
+                  ? candidate.features?.reference_price_annual_cents
+                  : candidate.features?.reference_price_monthly_cents;
+              const referenceCents =
+                typeof referenceRaw === "number" &&
+                cents !== null &&
+                referenceRaw > cents
+                  ? referenceRaw
+                  : null;
               return (
                 <article key={candidate.id} className="billing-plan-card">
                   <h3>{candidate.display_name || candidate.name}</h3>
                   <p className="billing-price">
+                    {referenceCents !== null && (
+                      <s className="price-reference">
+                        {money(referenceCents, candidate.currency)}
+                      </s>
+                    )}
                     {money(cents, candidate.currency)}
                     <span>{interval === "annual" ? " / year" : " / month"}</span>
                   </p>
