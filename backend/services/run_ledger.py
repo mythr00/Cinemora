@@ -39,6 +39,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
+class RunOwnershipLost(Exception):
+    """Phase 1 durability: raised inside an execution that has
+    POSITIVE evidence it no longer owns its run — the run was
+    requeued after a heartbeat loss and claimed by another worker
+    (same-run resume), and this (zombie) execution woke up and
+    reached a stage boundary. The zombie must stop WITHOUT
+    finishing the run or writing run artefacts: the run belongs
+    to its new owner now. jobs.fail_pipeline special-cases this
+    exception for exactly that reason."""
+
+
 class RunCancelled(Exception):
     """Raised at a stage boundary when cancellation was requested for
     the run (2B cooperative cancellation). jobs.fail_pipeline turns it
@@ -970,6 +981,29 @@ def _touch_run(run_id, worker_id=None):
     except Exception as error:
         print(f"WARNING: run heartbeat failed: {error}")
         return "error"
+
+
+def ownership_lost(run_id) -> bool:
+    """Phase 1: True only on POSITIVE evidence that this process
+    no longer owns the run — the row is "running" and its recorded
+    owner is a DIFFERENT worker (the same-run-resume takeover:
+    this execution's heartbeat went stale, the reconciler requeued
+    the run, and another worker claimed it). Every other state —
+    we own it, it is queued/terminal, the row or its owner stamp
+    is missing, the ledger is unavailable — returns False: this
+    check feeds an abort decision, so it must be fail-soft in the
+    direction of NOT aborting (a transient ledger problem must
+    never kill a healthy production)."""
+    if not run_id:
+        return False
+    try:
+        run = get_run(run_id)
+        if not run or run.get("status") != "running":
+            return False
+        owner = (run.get("progress") or {}).get("worker_id")
+        return owner is not None and owner != current_worker_id()
+    except Exception:
+        return False
 
 
 def touch_run(run_id, worker_id=None) -> bool:

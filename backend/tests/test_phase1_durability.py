@@ -866,3 +866,67 @@ def test_kill_during_discovery_same_run_resumes_from_checkpoint(
         project_dir / "runs" / run_id
     ).exists()
     assert run_ledger.get_run(run_id)["status"] == "completed"
+
+
+# ---------------------------------------------------------------------
+# 8. Ownership-loss abort (zombie execution guard)
+# ---------------------------------------------------------------------
+
+
+def _set_owner(run_id, worker_id):
+    db = SessionLocal()
+    try:
+        row = db.get(ProductionRun, str(run_id))
+        progress = dict(row.progress or {})
+        progress["worker_id"] = worker_id
+        row.progress = progress
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_ownership_lost_only_on_positive_evidence(project_id):
+    run_id = run_ledger.begin_run(project_id, _unique_script("own"))
+    # We own it (begin_run stamped this process's worker id).
+    assert run_ledger.ownership_lost(run_id) is False
+    # Another worker's stamp on a running run: positive evidence.
+    _set_owner(run_id, "someone-else:1:deadbeef")
+    assert run_ledger.ownership_lost(run_id) is True
+    # Terminal runs are never "lost" — their lifecycle is over.
+    run_ledger.finish_run(run_id, "completed")
+    assert run_ledger.ownership_lost(run_id) is False
+    # Unknown runs read as not-lost (fail-soft toward not aborting).
+    assert run_ledger.ownership_lost("no-such-run") is False
+    assert run_ledger.ownership_lost(None) is False
+
+
+def test_run_stage_aborts_superseded_execution(project_id, tmp_path):
+    run_id = run_ledger.begin_run(project_id, _unique_script("zombie"))
+    _set_owner(run_id, "someone-else:1:deadbeef")
+    state = create_production_state()
+    state["_run_id"] = run_id
+    with pytest.raises(run_ledger.RunOwnershipLost):
+        jobs.run_stage(state, "asset_manager", tmp_path)
+
+
+def test_fail_pipeline_ownership_abort_touches_nothing(
+    project_id, tmp_path
+):
+    run_id = run_ledger.begin_run(project_id, _unique_script("hands-off"))
+    _set_owner(run_id, "someone-else:1:deadbeef")
+    state = create_production_state()
+    state["_run_id"] = run_id
+    project_dir = tmp_path / project_id
+    project_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(jobs._OwnershipLostAbort):
+        jobs.fail_pipeline(
+            state,
+            "asset_manager",
+            run_ledger.RunOwnershipLost("superseded"),
+            project_dir,
+        )
+    # The run is NOT finished, NOT failed, and no state file was
+    # written over the owner's records.
+    run = run_ledger.get_run(run_id)
+    assert run["status"] == "running"
+    assert not (project_dir / "runs" / run_id / "production_state.json").exists()

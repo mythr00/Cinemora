@@ -229,6 +229,16 @@ class _StageAdopted(Exception):
     stage's own ``except _StageAdopted`` clause. Never a failure."""
 
 
+class _OwnershipLostAbort(Exception):
+    """Internal control flow (Phase 1 durability): this execution
+    discovered at a stage boundary that it no longer owns its run
+    (same-run resume handed the run to another worker) and stopped
+    WITHOUT touching the run's ledger state or artefacts.
+    fail_pipeline converts RunOwnershipLost into this abort; it
+    propagates out of run_full_pipeline so the (already superseded)
+    RQ job ends, while the run itself continues under its owner."""
+
+
 def _finish_executed_stage(state, stage, project_dir, artefact_dir, payload=None):
     """finish_stage + Phase 5.1 resume bookkeeping for a stage that
     EXECUTED in this run: record its artefact hashes + resume
@@ -273,6 +283,18 @@ def run_stage(state: dict, stage: str, project_dir: Path):
         # if the run's heartbeat thread died, crossing into a new
         # stage refreshes the run's liveness evidence.
         run_ledger.touch_run(run_id)
+        # Phase 1: a stage boundary is also the zombie checkpoint.
+        # If this execution's heartbeat went stale, the run was
+        # requeued and another worker claimed it (same-run resume)
+        # — this execution must stop here rather than run in
+        # parallel with the run's owner. Positive evidence only
+        # (ownership_lost is fail-soft toward not aborting).
+        if run_ledger.ownership_lost(run_id):
+            raise run_ledger.RunOwnershipLost(
+                f"Run {run_id} is owned by another worker "
+                "(resumed after heartbeat loss); this superseded "
+                "execution stops at the stage boundary."
+            )
     start_stage(state, stage)
     run_metrics.stage_started(stage)
     save_production_state(project_dir, state)
@@ -290,6 +312,29 @@ def finish_stage(state: dict, stage: str, project_dir: Path):
 
 
 def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
+    # Phase 1: an ownership-lost abort is NOT a failure of the
+    # run — the run is healthy under its new owner. This execution
+    # must not finish the run, settle its billing, or write any
+    # run artefact (state, reports, manifest): all of those belong
+    # to the owner. Log, release the run context, and convert to
+    # the internal abort that ends this superseded job quietly.
+    if isinstance(error, run_ledger.RunOwnershipLost):
+        run_id = state.get("_run_id") if isinstance(state, dict) else None
+        logging_setup.log_event(
+            logger,
+            logging.WARNING,
+            "run_ownership_lost_abort",
+            project_id=Path(project_dir).name,
+            run_id=run_id,
+            stage=stage,
+        )
+        print(
+            f"OWNERSHIP LOST: superseded execution of run {run_id} "
+            f"stopping at stage '{stage}' without touching the run."
+        )
+        if isinstance(state, dict) and "_run_context_previous" in state:
+            run_context.deactivate(state.pop("_run_context_previous"))
+        raise _OwnershipLostAbort(str(error))
     fail_stage(state, stage, str(error))
     # AUD-30: a failed run is still a finished run — stamp the
     # completion time the state machine previously never set.
