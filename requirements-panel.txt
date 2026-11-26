@@ -1,0 +1,134 @@
+# CINEMORA backend dependencies — PANEL (Pterodactyl/generic-python) hosts.
+#
+# This is backend/requirements.txt MINUS the Manim source-build tree.
+# manimpango and pycairo publish no prebuilt wheels: they compile against
+# system Pango/Cairo libraries that generic panel images do not carry, so
+# a pip install of the full file aborts partway on such hosts and leaves
+# the environment half-empty (the 2026-11-26 Nodaroo failure: pip died on
+# the Manim tree and even alembic was missing at startup). Every pin below
+# installs from a prebuilt wheel on CPython 3.12 (verified by a binary-only
+# resolution of the full set) — srt is the one sdist-only pin, and it is
+# pure Python, so it installs anywhere.
+#
+# What the panel host loses: only the Manim motion-graphics renderer.
+# services/motion_engine/manim_templates.py never imports manim itself;
+# without it those templates refuse with the typed "manim_unavailable"
+# reason and the PIL/matplotlib template families carry production, by
+# design. Docker and CI keep using backend/requirements.txt (the image
+# installs the cairo/pango system packages first).
+#
+# Keep this file in sync with backend/requirements.txt minus the excluded
+# set — tests/test_panel_requirements.py enforces exactly that.
+# Excluded: manim, manimpango, pycairo, moderngl, moderngl-window,
+# glcontext, pyglet, pyglm, skia-pathops, isosurfaces, svgelements,
+# mapbox-earcut, screeninfo, cloup, pydub (manim-tree only).
+alembic==1.20.1
+annotated-doc==0.0.7
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.2.0
+annotated-types==0.8.0
+anyio==4.16.0
+attrs==26.1.0
+av==19.0.2
+beautifulsoup4==4.15.0
+certifi==2026.10.23
+charset-normalizer==3.5.3
+click==8.5.1
+cloudpickle==3.1.3
+contourpy==1.4.0
+croniter==7.0.0
+cycler==0.12.1
+ctranslate2==4.9.0
+decorator==5.3.2
+dlinfo==2.0.0
+espeakng-loader==0.2.4
+fakeredis==2.40.0
+fastapi==0.165.0
+faster-whisper==1.2.1
+filelock==4.2.12
+flatbuffers==25.12.19
+fonttools==4.69.1
+fsspec==2026.9.0
+h11==0.16.0
+hf-xet==1.8.0
+httpcore2==2.16.2
+hypothesis==6.170.17
+httptools==0.9.0
+httpx2==2.16.2
+huggingface_hub==2.4.0
+idna==3.20
+iniconfig==2.3.1
+joblib==1.6.0
+kiwisolver==1.5.1
+kokoro-onnx==0.6.1
+Mako==1.4.3
+matplotlib==3.10.9
+markdown-it-py==4.3.0
+MarkupSafe==3.0.4
+mdurl==0.1.2
+networkx==3.7
+numpy==2.5.5
+onnxruntime==1.32.0
+opencv-python==5.1.0.95
+opentelemetry-api==1.45.2
+packaging==26.3
+pathvalidate==3.3.1
+phonemizer==3.6.0
+pillow==13.0.0
+piper-tts==1.8.0
+platformdirs==4.14.8
+pluggy==1.7.0
+protobuf==7.36.2
+psycopg2-binary==2.9.13
+psycopg[binary]==3.2.9
+pyclipper==1.4.0
+pydantic==2.14.3
+pydantic_core==2.50.4
+Pygments==2.21.0
+pyparsing==3.3.3
+pytest==9.2.0
+python-dateutil==4.0.0
+python-dotenv==1.2.4
+python-multipart==0.0.34
+PyYAML==6.0.3
+RapidFuzz==3.14.6
+courlan==1.5.0
+cryptography==50.0.2
+dateparser==1.5.1
+htmldate==1.11.0
+lxml==6.1.3
+pdfminer.six==20260107
+pdfplumber==0.11.11
+pypdf==7.1.1
+pypdfium2==5.15.2
+pytz==2026.6
+rapidocr-onnxruntime==1.4.4
+redis==8.1.0
+regex==2026.11.24
+requests==2.34.2
+rich==15.0.0
+rq==3.0.0
+scipy==1.18.1
+scenedetect==0.7.3
+shapely==2.2.0
+six==1.17.0
+soupsieve==4.1.3
+sortedcontainers==2.4.0
+SQLAlchemy==2.1.9
+srt==3.5.3
+starlette==1.10.0
+tokenizers==0.23.3
+tqdm==4.70.1
+trafilatura==2.4.0
+truststore==0.10.5
+typing-inspection==0.4.5
+typing_extensions==4.16.0
+tzdata==2026.6
+tzlocal==5.4.5
+urllib3==2.8.0
+uvicorn==0.54.0
+uvloop==0.23.0
+watchdog==7.1.1
+watchfiles==1.3.0
+websockets==17.4
+yt-dlp==2026.10.26
