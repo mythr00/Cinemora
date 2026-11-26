@@ -43,17 +43,17 @@ const IN_PRODUCTION_STATUSES = ["created", "queued", "pipeline_queued", "running
 // same limit the production form enforces.
 const MAX_SCRIPT_CHARS = 60000;
 
-// The canonical narration voice (the installed Piper model), and
-// the honest catalogue fallback — the same fact app/create
+// The canonical narration voice (the primary Kokoro-82M voice),
+// and the honest catalogue fallback — the same fact app/create
 // falls back to when the catalogue endpoint cannot be reached:
-// the one installed voice. It is labelled as a fallback whenever
-// it is shown. FS-2: there is no genre selection on this desk —
-// the documentary treatment (genre pack) is derived by the
-// backend from the script, and is never a user choice.
-const NARRATION_VOICE_ID = "en_US-lessac-medium";
+// the primary installed voice. It is labelled as a fallback
+// whenever it is shown. FS-2: there is no genre selection on
+// this desk — the documentary treatment (genre pack) is derived
+// by the backend from the script, and is never a user choice.
+const NARRATION_VOICE_ID = "af_heart";
 const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
-  { id: NARRATION_VOICE_ID, is_default: false, alias_of: null, model: "en_US-lessac-medium.onnx", model_file: "en_US-lessac-medium.onnx", config_file: "en_US-lessac-medium.onnx.json", installed: true },
-  { id: "default", is_default: true, alias_of: NARRATION_VOICE_ID, model: "en_US-lessac-medium.onnx", model_file: "en_US-lessac-medium.onnx", config_file: "en_US-lessac-medium.onnx.json", installed: true },
+  { id: NARRATION_VOICE_ID, is_default: false, alias_of: null, model: "kokoro-v1.0.onnx", model_file: "kokoro-v1.0.onnx", config_file: "voices-v1.0.bin", installed: true },
+  { id: "default", is_default: true, alias_of: NARRATION_VOICE_ID, model: "kokoro-v1.0.onnx", model_file: "kokoro-v1.0.onnx", config_file: "voices-v1.0.bin", installed: true },
 ];
 
 // GoMotion redesign (2026-11-24): the desk is create-first. The

@@ -42,29 +42,30 @@ import {
 // (GET /api/v1/catalogues/voices — the installed voice
 // catalogue). The constant below is ONLY the honest fallback
 // used when that endpoint cannot be reached: it states the same
-// previously-static truthful facts (the one installed voice and
-// its default alias), and the UI labels it as a fallback
-// whenever it is shown — no option is ever silently invented.
+// previously-static truthful facts (the primary installed
+// Kokoro voice and its default alias), and the UI labels it as
+// a fallback whenever it is shown — no option is ever silently
+// invented.
 // FS-2: there is no genre selection on this form — the
 // documentary treatment (genre pack) is derived by the backend
 // from the script, and is never a user choice.
 const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
   {
-    id: "en_US-lessac-medium",
+    id: "af_heart",
     is_default: false,
     alias_of: null,
-    model: "en_US-lessac-medium.onnx",
-    model_file: "en_US-lessac-medium.onnx",
-    config_file: "en_US-lessac-medium.onnx.json",
+    model: "kokoro-v1.0.onnx",
+    model_file: "kokoro-v1.0.onnx",
+    config_file: "voices-v1.0.bin",
     installed: true,
   },
   {
     id: "default",
     is_default: true,
-    alias_of: "en_US-lessac-medium",
-    model: "en_US-lessac-medium.onnx",
-    model_file: "en_US-lessac-medium.onnx",
-    config_file: "en_US-lessac-medium.onnx.json",
+    alias_of: "af_heart",
+    model: "kokoro-v1.0.onnx",
+    model_file: "kokoro-v1.0.onnx",
+    config_file: "voices-v1.0.bin",
     installed: true,
   },
 ];
@@ -81,12 +82,13 @@ const stageOrder = [
   ["video_editor", "Final edit"],
 ] as const;
 
-// The one narration voice actually installed in the backend
-// (Stage 3J catalogue): a built-in Piper voice. IA-06: the voice
-// panel below is rendered from GET /api/v1/catalogues/voices;
-// this constant is only the fallback canonical id used when the
-// catalogue cannot be reached (see FALLBACK_VOICES).
-const NARRATION_VOICE_ID = "en_US-lessac-medium";
+// The primary narration voice actually installed in the backend
+// (Stage 3J catalogue, Kokoro-82M since 2026-11-26): af_heart.
+// IA-06: the voice panel below is rendered from
+// GET /api/v1/catalogues/voices; this constant is only the
+// fallback canonical id used when the catalogue cannot be
+// reached (see FALLBACK_VOICES).
+const NARRATION_VOICE_ID = "af_heart";
 
 // The backend's real script cap (api_v1 MAX_SCRIPT_CHARS). The form
 // previously enforced a lower, wrong limit and labelled a character
