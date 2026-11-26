@@ -366,3 +366,32 @@ def test_checkout_custom_data_carries_attribution(client):
         ) == {}
     finally:
         db.close()
+
+
+def test_recurring_commission_on_later_payments(client):
+    """Lifetime means LATER verified payments from the same
+    referred customer keep accruing — e.g. monthly renewals and
+    a resubscription after cancellation (the attribution row is
+    never deleted, so accrual simply resumes)."""
+    owner, _headers, _code, customer = _setup_affiliate(client)
+    customer_id = customer["user"]["id"]
+    db = SessionLocal()
+    try:
+        affiliate_id = affiliates.profile_for(
+            db, owner["user"]["id"]
+        ).id
+    finally:
+        db.close()
+    _pay_subscription(customer_id, txn="txn_aff_m1")
+    _pay_subscription(customer_id, txn="txn_aff_m2")
+    _pay_subscription(customer_id, txn="txn_aff_m3", amount=7900)
+    entries = _entries(affiliate_id)
+    assert len(entries) == 3
+    assert sorted(e.commission_cents for e in entries) == [
+        348, 348, 948,  # 12% of 2900, 2900, 7900
+    ]
+    dashboard = affiliates.dashboard(
+        SessionLocal(), owner["user"]["id"]
+    )
+    assert dashboard["metrics"]["lifetime_earnings_cents"] == 348 + 348 + 948
+    assert dashboard["metrics"]["pending_cents"] == 348 + 348 + 948
