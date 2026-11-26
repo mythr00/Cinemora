@@ -30,6 +30,7 @@ from models import (
 )
 from services import auth as auth_service
 from services import run_ledger
+from services.billing import credits as billing_credits
 from services.assistant import llm as assistant_llm
 from services.assistant import orchestrator
 
@@ -380,6 +381,21 @@ def test_battery_project_and_subresources(client, users):
 
 def test_battery_run_access_and_cancel(client, users):
     a, b = users
+    # Item 8 (2026-11-26): begin_run reserves through the billing
+    # choke point and an ordinary zero-credit tenant is refused.
+    # This battery's intent is run ACCESS control, so fund A the
+    # item-8 way (purchased top-up grant, source="test") first.
+    db = SessionLocal()
+    try:
+        billing_credits.grant(
+            db, a["user"]["id"], "purchased", 100,
+            entry_type="topup",
+            idempotency_key=f"test-funding:{a['user']['id']}",
+            source="test",
+        )
+        db.commit()
+    finally:
+        db.close()
     project = _a_project(client, a)
     run_id = run_ledger.begin_run(project["id"], project["script"])
     assert run_id

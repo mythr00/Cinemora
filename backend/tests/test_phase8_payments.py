@@ -173,10 +173,10 @@ def test_subscription_webhook_activates_and_allocates(db, configured):
                 "kind": "subscription",
                 "plan_id": plan.id,
                 "billing_interval": "month",
-                "amount_cents": 2900,
+                "amount_cents": 2800,
                 "currency": "USD",
             },
-            "details": {"totals": {"grand_total": "2900"}},
+            "details": {"totals": {"grand_total": "2800"}},
         },
         event_id="evt_sub_1",
     )
@@ -193,7 +193,7 @@ def test_subscription_webhook_activates_and_allocates(db, configured):
     assert sub.billing_provider == "paddle"
     # The first benefit period allocated the monthly credits.
     account = credits.get_or_create_account(db, user.id)
-    assert account.subscription_available == 1300
+    assert account.subscription_available == 990
 
 
 def test_subscription_state_events(db, configured):
@@ -299,8 +299,9 @@ def test_local_upgrade_and_downgrade_rules(db):
     sub = db.get(models.UserSubscription, sub.id)
     assert sub.plan_id == studio.id
     account = credits.get_or_create_account(db, user.id)
-    # Half the period remains: ~half of the 2300 difference.
-    assert 1000 < account.subscription_available <= 1150
+    # Half the period remains: ~half of the 1335 difference
+    # (Studio 2325 - Creator 990, restructure figures).
+    assert 600 < account.subscription_available <= 667
 
     result = checkout.change_subscription(user.id, creator.id)
     assert result["effective"] == "next_period"
