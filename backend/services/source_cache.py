@@ -57,6 +57,8 @@ STATS = {
     "search_miss": 0,
     "serper_calls": 0,
     "serper_429": 0,
+    "searxng_calls": 0,
+    "search_fallbacks": 0,
     "profile_hit": 0,
     "profile_miss": 0,
     "ytdlp_calls": 0,

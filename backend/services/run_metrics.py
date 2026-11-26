@@ -45,6 +45,17 @@ def _fresh_state():
     return {
         "started_monotonic": None,
         "serper": {"total": 0, "web": 0, "images": 0, "video": 0},
+        # Master Implementation 2026-11-26: multi-provider search
+        # counters. `serper` above keeps its original meaning (real
+        # Serper HTTP requests, whichever route served the query);
+        # this block adds the SearXNG side plus the routing events
+        # (fallbacks to Serper, SearXNG failures) so a run's search
+        # cost can be attributed per provider.
+        "search": {
+            "searxng": {"total": 0, "web": 0, "images": 0, "video": 0},
+            "searxng_failures": 0,
+            "fallback_events": 0,
+        },
         "llm": {"total": 0, "total_tokens": 0},
         "archive_org_searches": 0,
         "wikimedia_searches": 0,
@@ -133,6 +144,67 @@ def serper_call(path):
             _bound_state()["serper"]["total"] += 1
             if kind:
                 _bound_state()["serper"][kind] += 1
+    except Exception:
+        pass
+
+
+def bound_run_id():
+    """The real run id currently bound, or None when the binding
+    is an ad-hoc holder (choke points firing outside a run).
+    Used by the search choke point to attribute provider-usage
+    ledger rows to the run that caused them."""
+    try:
+        with _LOCK:
+            key = _BOUND_RUN_KEY
+        if key and not str(key).startswith("adhoc-"):
+            return str(key)
+    except Exception:
+        pass
+    return None
+
+
+def search_call(provider, path):
+    """One real search-provider HTTP request (Master
+    Implementation 2026-11-26). `provider` is "searxng" (Serper
+    requests keep their historical counter in serper_call);
+    `path` is the endpoint kind ("search" / "images" / "videos")
+    mapped through the same kind table as Serper's."""
+    try:
+        kind = _SERPER_KINDS.get(str(path or "").strip().lower())
+        with _LOCK:
+            block = _bound_state()["search"].setdefault(
+                str(provider),
+                {"total": 0, "web": 0, "images": 0, "video": 0},
+            )
+            block["total"] += 1
+            if kind:
+                block[kind] += 1
+    except Exception:
+        pass
+
+
+def search_provider_failure(provider):
+    """The primary search provider failed a logical call (after
+    its bounded retries) and routing fell back or raised."""
+    try:
+        with _LOCK:
+            block = _bound_state()["search"]
+            key = f"{provider}_failures"
+            block[key] = int(block.get(key) or 0) + 1
+    except Exception:
+        pass
+
+
+def search_fallback():
+    """One routing fallback event: the primary provider was
+    unavailable or returned an unusable (empty) result and the
+    fallback provider was consulted for the same query."""
+    try:
+        with _LOCK:
+            block = _bound_state()["search"]
+            block["fallback_events"] = (
+                int(block.get("fallback_events") or 0) + 1
+            )
     except Exception:
         pass
 
@@ -259,6 +331,8 @@ def process_totals() -> dict:
         with _LOCK:
             serper = {"total": 0, "web": 0, "images": 0, "video": 0}
             llm = {"total": 0, "total_tokens": 0}
+            searxng = {"total": 0, "web": 0, "images": 0, "video": 0}
+            search_events = {"searxng_failures": 0, "fallback_events": 0}
             for state in _STATES.values():
                 for key in serper:
                     serper[key] += int(state["serper"].get(key) or 0)
@@ -266,11 +340,29 @@ def process_totals() -> dict:
                 llm["total_tokens"] += int(
                     state["llm"].get("total_tokens") or 0
                 )
-            return {"serper_calls": serper, "llm_calls": llm}
+                block = state.get("search") or {}
+                sx = block.get("searxng") or {}
+                for key in searxng:
+                    searxng[key] += int(sx.get(key) or 0)
+                for key in search_events:
+                    search_events[key] += int(block.get(key) or 0)
+            return {
+                "serper_calls": serper,
+                "llm_calls": llm,
+                "search_calls": {
+                    "searxng": searxng,
+                    **search_events,
+                },
+            }
     except Exception:
         return {
             "serper_calls": {"total": 0, "web": 0, "images": 0, "video": 0},
             "llm_calls": {"total": 0, "total_tokens": 0},
+            "search_calls": {
+                "searxng": {"total": 0, "web": 0, "images": 0, "video": 0},
+                "searxng_failures": 0,
+                "fallback_events": 0,
+            },
         }
 
 
@@ -288,10 +380,23 @@ def snapshot(run_id=None):
             )
             attempted = state["downloads_attempted"]
             succeeded = state["downloads_succeeded"]
+            search_block = state.get("search") or {}
             return {
                 "wall_time_seconds": wall,
                 "stage_durations_seconds": dict(state["stage_durations"]),
                 "serper_calls": dict(state["serper"]),
+                "search_calls": {
+                    "searxng": dict(
+                        search_block.get("searxng")
+                        or {"total": 0, "web": 0, "images": 0, "video": 0}
+                    ),
+                    "searxng_failures": int(
+                        search_block.get("searxng_failures") or 0
+                    ),
+                    "fallback_events": int(
+                        search_block.get("fallback_events") or 0
+                    ),
+                },
                 "llm_calls": dict(state["llm"]),
                 "archive_org_searches": state["archive_org_searches"],
                 "wikimedia_searches": state["wikimedia_searches"],
@@ -314,6 +419,11 @@ def snapshot(run_id=None):
             "wall_time_seconds": None,
             "stage_durations_seconds": {},
             "serper_calls": {"total": 0, "web": 0, "images": 0, "video": 0},
+            "search_calls": {
+                "searxng": {"total": 0, "web": 0, "images": 0, "video": 0},
+                "searxng_failures": 0,
+                "fallback_events": 0,
+            },
             "llm_calls": {"total": 0, "total_tokens": 0},
             "archive_org_searches": 0,
             "wikimedia_searches": 0,
