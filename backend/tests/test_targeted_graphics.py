@@ -455,15 +455,36 @@ def test_real_renders_probe_ok(rendered):
 
 
 def test_countup_frames_change(rendered):
-    # Integer value (eif expression path): early frame shows a
-    # smaller number than the final frame.
-    assert _frame_hash(rendered["stat"], 0.3) != _frame_hash(
-        rendered["stat"], 3.8
-    )
-    # Decimal value (stepped-layer path): same requirement.
-    assert _frame_hash(rendered["stat_decimal"], 0.3) != _frame_hash(
-        rendered["stat_decimal"], 3.8
-    )
+    # Gate 4 (B1) supersedes the count-up contract: the Hyatt
+    # stat card read "88 MILLION DOLLARS" mid-animation on its
+    # way to the sentence's own 140M — an interim number is a
+    # false number. The headline is now verbatim from frame 0,
+    # so early and late frames of a stat card agree (mean diff
+    # ~0; a 4px codec artefact on the decimal card is the only
+    # measured residue, hence the tolerance instead of a hash).
+    import subprocess as _sp
+
+    from PIL import Image, ImageChops
+
+    def _mean_diff(path, a, b, tmp):
+        frames = []
+        for tag, at in (("a", a), ("b", b)):
+            out = tmp / f"{tag}.png"
+            _sp.run(
+                ["ffmpeg", "-v", "error", "-ss", str(at), "-i",
+                 str(path), "-frames:v", "1", str(out)],
+                check=True)
+            frames.append(Image.open(out).convert("RGB"))
+        diff = ImageChops.difference(*frames).resize((320, 180))
+        px = list(diff.getdata())
+        return sum(sum(c) for c in px) / (len(px) * 3)
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        from pathlib import Path as _P
+        assert _mean_diff(rendered["stat"], 0.3, 3.8, _P(td)) < 2.0
+        assert _mean_diff(
+            rendered["stat_decimal"], 0.3, 3.8, _P(td)) < 2.0
 
 
 def test_timeline_reveal_frames_change(rendered):

@@ -57,6 +57,39 @@ def _clean(value):
     return " ".join(str(value or "").split()).strip()
 
 
+# Gate 4 (B4): shared label fitting for text-bearing templates.
+SAFE_MARGIN = 38  # outer 2% of the 1920px frame
+
+
+def _clamped_text_x(center_x, text_width):
+    """Left x for text centred at center_x, clamped so the whole
+    line stays inside the frame safe area."""
+    return min(
+        max(SAFE_MARGIN, center_x - text_width / 2),
+        max(SAFE_MARGIN, WIDTH - SAFE_MARGIN - text_width),
+    )
+
+
+def _fit_label(draw, text, tokens, max_width=320, sizes=(27, 22, 19),
+               max_lines=3, bold=True):
+    """Wrap `text` at word boundaries, shrinking the font until
+    the wrapped lines fit `max_lines`. Returns (lines, font).
+    The full text is preserved across lines — never truncated,
+    never split mid-word."""
+    text = _clean(text)
+    if not text:
+        return [], load_font(tokens["font_bold"] if bold else tokens["font"],
+                             sizes[0])
+    font_path = tokens["font_bold"] if bold else tokens["font"]
+    for size in sizes:
+        font = load_font(font_path, size)
+        lines = wrap_text(draw, text, font, max_width)
+        if len(lines) <= max_lines:
+            return lines, font
+    font = load_font(font_path, sizes[-1])
+    return wrap_text(draw, text, font, max_width), font
+
+
 def _dark_photo(path, size=(WIDTH, HEIGHT), darkness=0.45):
     try:
         img = Image.open(path).convert("RGB")
@@ -879,22 +912,48 @@ def outcome_path(data, style, out_path, duration=5.0, sentence_index=None, scene
             num = str(i + 1)
             nw = d.textlength(num, font=fonts["num"])
             d.text((x - nw / 2, y - 19), num, font=fonts["num"], fill=(255, 255, 255, 255))
-            label = _clean(outcome.get("label"))[:34]
-            result = _clean(outcome.get("outcome"))[:40]
+            # Gate 4 (B4): labels wrap at word boundaries and
+            # shrink-to-fit a 320px box, clamped inside the frame
+            # safe area (outer 2% = 38px). The historical [:34]
+            # slice truncated labels mid-word ("…using two sh")
+            # and centred them unclamped, so the first/last
+            # labels ran off the frame edge.
+            label = _clean(outcome.get("label"))
+            result = _clean(outcome.get("outcome"))
+            label_lines, label_font = _fit_label(
+                d, label, tokens, max_width=320, sizes=(27, 22, 19),
+                max_lines=3)
+            result_lines, result_font = _fit_label(
+                d, result, tokens, max_width=320, sizes=(24, 20, 17),
+                max_lines=2, bold=False)
             if above:
                 d.line([x, y - 30, x, y - 78], fill=(255, 255, 255, 160), width=2)
-                lw = d.textlength(label, font=fonts["label"])
-                d.text((x - lw / 2, y - 138), label, font=fonts["label"], fill=(255, 255, 255, 255))
-                if result:
-                    rw = d.textlength(result, font=fonts["small"])
-                    d.text((x - rw / 2, y - 102), result, font=fonts["small"], fill=tokens["accent"] + (255,))
+                _lh = label_font.size + 7
+                _top = y - 84 - len(label_lines) * _lh
+                for _line in label_lines:
+                    _top += _lh
+                    lw = d.textlength(_line, font=label_font)
+                    d.text((_clamped_text_x(x, lw), _top - _lh), _line,
+                           font=label_font, fill=(255, 255, 255, 255))
+                _ry = y - 102
+                for _line in result_lines:
+                    rw = d.textlength(_line, font=result_font)
+                    d.text((_clamped_text_x(x, rw), _ry), _line,
+                           font=result_font, fill=tokens["accent"] + (255,))
+                    _ry += result_font.size + 6
             else:
                 d.line([x, y + 30, x, y + 78], fill=(255, 255, 255, 160), width=2)
-                lw = d.textlength(label, font=fonts["label"])
-                d.text((x - lw / 2, y + 92), label, font=fonts["label"], fill=(255, 255, 255, 255))
-                if result:
-                    rw = d.textlength(result, font=fonts["small"])
-                    d.text((x - rw / 2, y + 128), result, font=fonts["small"], fill=tokens["accent"] + (255,))
+                _ly = y + 92
+                for _line in label_lines:
+                    lw = d.textlength(_line, font=label_font)
+                    d.text((_clamped_text_x(x, lw), _ly), _line,
+                           font=label_font, fill=(255, 255, 255, 255))
+                    _ly += label_font.size + 7
+                for _line in result_lines:
+                    rw = d.textlength(_line, font=result_font)
+                    d.text((_clamped_text_x(x, rw), _ly), _line,
+                           font=result_font, fill=tokens["accent"] + (255,))
+                    _ly += result_font.size + 6
         top = canvas.new_layer("titles")
         td = ImageDraw.Draw(top.image, "RGBA")
         if title_left:

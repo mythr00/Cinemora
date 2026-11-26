@@ -551,25 +551,32 @@ def _captured_stamp(monkeypatch, fact_basis_marker):
 
 
 def test_stat_card_stamps_script_claim_by_default(tmp_path, monkeypatch):
+    # Gate 4 (B6) supersedes MG-09's burned-in stamp: the fact
+    # basis is recorded on the asset record, NEVER rendered. No
+    # internal classification label may appear in the render
+    # inputs for any basis.
     commands = _captured_stamp(monkeypatch, None)
     graphics_pipeline._render_stat_graphic(
         tmp_path / "s.mp4", "$25 MILLION", "subtext", duration=4.0
     )
     joined = " ".join(commands)
-    assert "DATA / SCRIPT CLAIM" in joined
+    assert "DATA / SCRIPT CLAIM" not in joined
     assert "DATA / VERIFIED" not in joined
 
 
 def test_stat_card_stamps_verified_only_for_research_basis(
     tmp_path, monkeypatch
 ):
+    # Gate 4 (B6): even a research-supported basis renders no
+    # stamp — provenance lives in the manifest, not the frame.
     commands = _captured_stamp(monkeypatch, None)
     graphics_pipeline._render_stat_graphic(
         tmp_path / "s.mp4", "$25 MILLION", "subtext", duration=4.0,
         fact_basis="research_supported",
     )
     joined = " ".join(commands)
-    assert "DATA / VERIFIED" in joined
+    assert "DATA / VERIFIED" not in joined
+    assert "DATA / SCRIPT CLAIM" not in joined
 
 
 def test_stat_asset_records_script_claim_basis(tmp_path, monkeypatch):

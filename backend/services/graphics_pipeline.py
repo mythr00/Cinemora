@@ -468,6 +468,29 @@ _STAT_STAMPS = {
     FACT_BASIS_SCRIPT: "DATA / SCRIPT CLAIM",
 }
 
+# Gate 4 (B6): the _STAT_STAMPS strings above are INTERNAL
+# classification/provenance labels. They live on asset records and
+# in manifests only — they must NEVER be rendered into pixels.
+# Founder rule (2026-11-23, reaffirmed Gate 4): provenance belongs
+# in the manifest, not the frame. Renderers refuse any display
+# text carrying one of these labels (or a source/provenance label
+# of the same class) instead of burning it in.
+INTERNAL_DISPLAY_LABELS = frozenset(
+    list(_STAT_STAMPS.values())
+    + [
+        "SCRIPT CLAIM", "VERIFIED ASSET", "DATA / VERIFIED",
+        "SOURCE •", "SOURCE:", "PROVENANCE", "FACT BASIS",
+        "RESEARCH_SUPPORTED", "SCRIPT_CLAIM", "VERIFIED_ASSET_METADATA",
+    ]
+)
+
+
+def _contains_internal_label(text):
+    """True when display text carries an internal classification /
+    provenance label that must never reach a rendered frame."""
+    upper = clean_text(text).upper()
+    return any(label in upper for label in INTERNAL_DISPLAY_LABELS)
+
 
 def validate_graphic_output(path, expected_duration=None, expected_fps=FPS):
     """Validate one rendered graphic file against the production
@@ -1249,13 +1272,17 @@ def _render_stat_graphic(
     fact_basis=FACT_BASIS_SCRIPT,
 ):
     duration = _graphic_duration(0, duration, 3.0, 8.0)
-    # MG-09: the card's evidence stamp follows the value's fact
-    # basis. Script-derived values are labelled as script claims;
-    # the VERIFIED stamp is reserved for research-supported values
-    # (whose evidence chain the caller must have recorded — see
-    # _make_stat's downgrade rule). An unknown basis falls back to
-    # the weakest label, never to VERIFIED.
-    stamp = _STAT_STAMPS.get(fact_basis, _STAT_STAMPS[FACT_BASIS_SCRIPT])
+    # Gate 4 (B6): the fact basis is recorded on the asset record /
+    # recipe by the caller — it is NEVER drawn. The historical
+    # MG-09 stamp ("DATA / SCRIPT CLAIM" etc.) burned an internal
+    # provenance label into the frame (Gate 4 frame s19). Display
+    # text on this card is only the designed payload: the headline
+    # figure and the designed subtext.
+    if _contains_internal_label(headline) or _contains_internal_label(subtext):
+        raise ValueError(
+            "stat graphic display text carries an internal "
+            "classification/provenance label; refusing to render"
+        )
 
     filters = _graphic_background()
 
@@ -1284,19 +1311,25 @@ def _render_stat_graphic(
         "color=white@0.85:"
         "t=fill",
 
-        _ffmpeg_text_filter(
-            stamp,
-            "190",
-            "235",
-            24,
-            GRAPHIC_TEXT,
-            0.65,
-        ),
     ]
 
-    # Stage B: the headline value counts up to its verbatim final
-    # value instead of sitting static from frame 0.
-    filters += _countup_headline_filters(headline, 190, 445, 100, duration)
+    # Gate 4 (B1): the headline is the sentence's own quantity,
+    # rendered VERBATIM from the first frame. The historical
+    # count-up animation displayed intermediate values as finished
+    # statements — the Hyatt stat card (bound correctly to
+    # "140 million dollars") read "88 MILLION DOLLARS" at the
+    # sentence midpoint, a factual self-contradiction in the
+    # film's largest type. An interim number is a false number:
+    # no count-up on factual headlines. The font shrinks to fit
+    # the panel instead of overflowing it.
+    _headline_len = max(len(clean_text(headline)), 1)
+    _headline_size = min(100, max(40, int(1580 / (0.62 * _headline_len))))
+    filters += [
+        _ffmpeg_text_filter(
+            headline, "190", "445", _headline_size, GRAPHIC_TEXT, 1.0,
+            bold=True,
+        )
+    ]
 
     if subtext:
         filters += [
@@ -1483,6 +1516,75 @@ def _timeline_label_rows(positions, close_distance=220.0):
     return rows
 
 
+# Gate 4 (B4): timeline labels must fit their boxes. The
+# historical renderer shortened labels to 20/34 characters with
+# shorten() — mid-word truncation ("July 17, 1981, 7:…",
+# "tore f…") — and estimated label x from character counts, so
+# labels ran off the frame edges. Labels now wrap at word
+# boundaries and shrink-to-fit; nothing is ever cut mid-word and
+# every label box is clamped inside the frame safe area (the
+# outer 2% border: 38px at 1920 wide).
+TIMELINE_SAFE_MARGIN = 38
+
+
+def _wrap_words(text, max_chars):
+    """Greedy word wrap. Words are never split."""
+    words = clean_text(text).split()
+    lines, current = [], ""
+    for word in words:
+        trial = f"{current} {word}".strip()
+        if len(trial) <= max_chars or not current:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _fit_label_lines(text, max_width_px, base_fontsize, min_fontsize=15,
+                     max_lines=3):
+    """Fit `text` into a box `max_width_px` wide: wrap at word
+    boundaries, shrinking the font until the wrapped lines fit
+    `max_lines`, and return (lines, fontsize, widest_line_px).
+    Character width is estimated conservatively (0.62 em — wider
+    than DejaVu's average) so estimated boxes over-, never
+    under-state the real text width. The full text is always
+    present across the returned lines: no truncation."""
+    text = clean_text(text)
+    if not text:
+        return [], base_fontsize, 0
+    for size in range(base_fontsize, min_fontsize - 1, -2):
+        chars = max(4, int(max_width_px / (0.62 * size)))
+        lines = _wrap_words(text, chars)
+        widest = max((len(line) for line in lines), default=0)
+        if len(lines) <= max_lines and widest * 0.62 * size <= max_width_px:
+            return lines, size, int(widest * 0.62 * size)
+    size = min_fontsize
+    chars = max(4, int(max_width_px / (0.62 * size)))
+    lines = _wrap_words(text, chars)
+    widest = max((len(line) for line in lines), default=0)
+    return lines, size, int(widest * 0.62 * size)
+
+
+def _label_box(center_x, text, max_width_px, base_fontsize, max_lines=3):
+    """The layout box for one centred label: fitted lines, font
+    size, and an x clamped so the whole box stays inside the
+    frame safe area. This is the layout-data contract the Gate 4
+    render test asserts against."""
+    lines, size, width = _fit_label_lines(
+        text, max_width_px, base_fontsize, max_lines=max_lines)
+    left = min(
+        max(TIMELINE_SAFE_MARGIN, center_x - width / 2),
+        max(TIMELINE_SAFE_MARGIN, 1920 - TIMELINE_SAFE_MARGIN - width),
+    )
+    return {
+        "lines": lines, "fontsize": size, "width": width,
+        "x": int(left), "right": int(left + width),
+    }
+
+
 def _render_timeline_graphic(
     output_file,
     events,
@@ -1548,22 +1650,15 @@ def _render_timeline_graphic(
         when_y = 405 - row * 78
         what_y = 585 + row * 78
 
-        when = shorten(
-            event.get("when", ""),
-            20,
-        )
-
-        what = shorten(
-            event.get("what", ""),
-            34,
-        )
-
-        when_x = min(
-            max(80, x - 20), max(80, 1900 - len(when) * 15)
-        )
-        what_x = min(
-            max(80, x - 45), max(80, 1900 - len(what) * 13)
-        )
+        # Gate 4 (B4): labels wrap + shrink-to-fit inside a 360px
+        # box clamped to the safe area — never shorten()ed, never
+        # off-frame. `when` gets up to 2 lines stacked upward from
+        # when_y; `what` up to 3 lines stacked downward from
+        # what_y.
+        when_box = _label_box(x - 20, event.get("when", ""), 360, 27,
+                              max_lines=2)
+        what_box = _label_box(x - 45, event.get("what", ""), 360, 22,
+                              max_lines=3)
 
         # Stage B: the node and its labels appear when the scan line
         # reaches them, not all from frame 0.
@@ -1589,26 +1684,24 @@ def _render_timeline_graphic(
             f"t=fill:"
             f"enable='{enable}'",
 
-            _ffmpeg_text_filter(
-                when,
-                str(when_x),
-                str(when_y),
-                27,
-                GRAPHIC_TEXT,
-                0.85,
-                enable=enable,
-            ),
-
-            _ffmpeg_text_filter(
-                what,
-                str(what_x),
-                str(what_y),
-                22,
-                GRAPHIC_TEXT,
-                0.68,
-                enable=enable,
-            ),
         ]
+        # Wrapped label lines: `when` stacks upward ending at
+        # when_y, `what` stacks downward starting at what_y.
+        _when_lines = when_box["lines"]
+        for _li, _line in enumerate(_when_lines):
+            filters.append(_ffmpeg_text_filter(
+                _line, str(when_box["x"]),
+                str(when_y - (len(_when_lines) - 1 - _li) * 34),
+                when_box["fontsize"], GRAPHIC_TEXT, 0.85,
+                enable=enable,
+            ))
+        for _li, _line in enumerate(what_box["lines"]):
+            filters.append(_ffmpeg_text_filter(
+                _line, str(what_box["x"]),
+                str(what_y + _li * 30),
+                what_box["fontsize"], GRAPHIC_TEXT, 0.68,
+                enable=enable,
+            ))
 
     # Moving scan line gives the timeline actual motion. It sweeps
     # the line on the compressed TIMELINE_SCAN_FRACTION clock (and
@@ -2744,6 +2837,23 @@ def build_motion_graphics_assets(
         # taken — a script claim is never promoted on request.
         _verified = (target or {}).get("verified_data")
         _evidence_ref = (target or {}).get("evidence_ref")
+        # Gate 4 (B1): a verified/script fact may serve this stat
+        # ONLY when it is attached to THIS sentence. A fact whose
+        # recorded sentence_number names a different sentence is
+        # another sentence's number — borrowing it is exactly the
+        # cross-sentence contradiction class Gate 4 flagged. Such
+        # a fact is ignored here; the sentence's own extraction
+        # below decides.
+        if isinstance(_verified, dict):
+            _fact_sentence = _verified.get("sentence_number")
+            if _fact_sentence is None and isinstance(_evidence_ref, dict):
+                _fact_sentence = _evidence_ref.get("sentence_number")
+            if (
+                _fact_sentence is not None
+                and sentence_number is not None
+                and _fact_sentence != sentence_number
+            ):
+                _verified = None
         if (
             isinstance(_verified, dict)
             and _verified.get("display")
@@ -2795,6 +2905,28 @@ def build_motion_graphics_assets(
             elif sentence_record and sentence_record.get("money"):
                 record_for_stat = sentence_record
             info = extract_stat(text, sentence_record=record_for_stat)
+        # Gate 4 (B1): when the sentence itself states a quantity,
+        # the card's headline MUST be that quantity. A verified /
+        # script-fact display that disagrees with the sentence's
+        # own extracted quantity is replaced by the sentence's own
+        # value (script_claim) — never rendered alongside or
+        # instead of it. Numbers are compared by their first
+        # numeric token, normalised.
+        if info and info.get("source") in (
+            "script_fact_table", "verified_asset_metadata",
+        ):
+            _own_record = None
+            if target and target.get("money"):
+                _own_record = {"money": target.get("money")}
+            elif sentence_record and sentence_record.get("money"):
+                _own_record = sentence_record
+            _own = extract_stat(text, sentence_record=_own_record)
+            if _own and _own.get("display"):
+                def _num(display):
+                    m = re.search(r"\d[\d,]*(?:\.\d+)?", str(display or ""))
+                    return m.group(0).replace(",", "") if m else None
+                if _num(_own["display"]) != _num(info.get("display")):
+                    info = _own
         if not info:
             return False, "no_usable_statistic", ""
         if info.get("kind") == "range_unrepresentable":
@@ -3250,8 +3382,13 @@ def build_motion_graphics_assets(
         if len(events) < 2:
             return None
         return {
+            # Gate 4 (B4): labels ride FULL — shorten() truncated
+            # them mid-word ("Havens Steel proposed using two
+            # sh…") and the template then clipped them at the
+            # frame edge. The outcome_path template now wraps /
+            # shrinks / clamps labels itself.
             "outcomes": [
-                {"label": shorten(e, 40)} for e in events[:6]
+                {"label": e} for e in events[:6]
             ],
         }
 
@@ -4619,19 +4756,59 @@ def build_motion_graphics_assets(
         the coverage guarantee, and a Director preference order
         is not a veto over it."""
         candidates = []
-        payload = facts.get("payload") or ""
         title = facts.get("title") or ""
         kicker = clean_text((case_bible or {}).get("title") or "")
-        data = {"quote": payload}
-        if kicker:
-            data["kicker"] = kicker
-        candidates.append(("closing_card", data))
-        headline = (
-            (facts["names"] or [None])[0]
-            or (facts["labels"] or [None])[0]
-            or (facts["places"] or [None])[0]
-            or title
-            or ""
+        # Gate 4 (B3): one closing-card candidate per DISTINCT
+        # short payload the beat's facts offer (its own payload,
+        # then its names / dates / places / labels), so the
+        # repetition guard in the sweep can move a beat whose
+        # first payload already serves another sentence onto a
+        # different designed element instead of repeating the
+        # identical card. A payload equal to the production title
+        # / kicker is NOT a beat payload at all — it produced the
+        # Gate 4 S21 title-only card (the film's own title under
+        # its thesis sentence) — and is excluded.
+        _payload_options = []
+        for _option in (
+            [facts.get("payload") or ""]
+            + list(facts.get("names") or [])
+            + list(facts.get("dates") or [])
+            + list(facts.get("places") or [])
+            + list(facts.get("labels") or [])
+        ):
+            _option = clean_text(_option)
+            if (
+                _option
+                and _option.lower() not in
+                [p.lower() for p in _payload_options]
+                and _option.lower() != kicker.lower()
+                and _option.lower() != title.lower()
+            ):
+                _payload_options.append(_option)
+        for _option in _payload_options:
+            data = {"quote": _option}
+            if kicker:
+                data["kicker"] = kicker
+            candidates.append(("closing_card", data))
+        if not candidates:
+            # Keep the historical empty-payload attempt so the
+            # template's own refusal is the recorded outcome when
+            # a beat truly carries no designed payload.
+            data = {"quote": ""}
+            if kicker:
+                data["kicker"] = kicker
+            candidates.append(("closing_card", data))
+        headline = next(
+            (
+                v for v in (
+                    (facts["names"] or [None])[0],
+                    (facts["labels"] or [None])[0],
+                    (facts["places"] or [None])[0],
+                    title,
+                )
+                if v and v.lower() != kicker.lower()
+            ),
+            "",
         )
         if headline:
             data = {"title": headline}
@@ -4648,6 +4825,61 @@ def build_motion_graphics_assets(
         return candidates
 
     _legacy_stats_created = 0
+
+    # Gate 4 (B3): repetition guard + quality-defect record.
+    # Identical graphic content (same template/family + same
+    # designed payload) must not silently serve multiple
+    # sentences — Gate 4 found the identical "steel hanger rods"
+    # closing card on five sentences. The guard tracks every
+    # payload assigned in this build; the terminal sweep uses it
+    # to pick a distinct payload, and any duplication that still
+    # occurs (e.g. a bible-global timeline serving as designed)
+    # is stamped on the record and listed in
+    # graphic_quality_defects — explicit data, never silent.
+    _assigned_payloads = {}
+    _assigned_payload_texts = set()
+    graphic_quality_defects = []
+
+    def _payload_key_for_record(record):
+        recipe = record.get("graphic_recipe") or {}
+        inputs = recipe.get("inputs") or {}
+        family = record.get("family") or record.get("graphic_type")
+        template = record.get("template") or recipe.get("template")
+        payload = {
+            k: v for k, v in inputs.items()
+            if k not in ("kicker", "fact_basis", "style")
+        }
+        try:
+            blob = json.dumps(payload, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            blob = str(payload)
+        return f"{family}/{template}:{blob.lower()}"
+
+    def _register_assigned_payload(record):
+        """Register one produced record's payload; on a duplicate,
+        stamp the record + defect list and return the defect."""
+        if record is None:
+            return None
+        key = _payload_key_for_record(record)
+        _inputs = (record.get("graphic_recipe") or {}).get("inputs") or {}
+        for _field in ("quote", "headline"):
+            if _inputs.get(_field):
+                _assigned_payload_texts.add(
+                    clean_text(_inputs[_field]).lower())
+        first = _assigned_payloads.get(key)
+        if first is None:
+            _assigned_payloads[key] = record.get("sentence_number")
+            return None
+        defect = {
+            "type": "duplicate_graphic_payload",
+            "sentence_number": record.get("sentence_number"),
+            "duplicate_of_sentence_number": first,
+            "payload_key": key,
+        }
+        record["quality_defect"] = "duplicate_graphic_payload"
+        record["duplicate_of_sentence_number"] = first
+        graphic_quality_defects.append(defect)
+        return defect
 
     # MG-11: stamp each target with its sentence slot's measured
     # duration (narration parts, keyed by sentence_number) so
@@ -5162,6 +5394,7 @@ def build_motion_graphics_assets(
             _facts = _terminal_facts(target, text)
             _terminal_attempted = []
             _soft_floor_refusal = False
+            _dup_candidate = None
             for _tname, _tdata in _terminal_candidates(
                 target, text, _facts
             ):
@@ -5174,7 +5407,26 @@ def build_motion_graphics_assets(
                     # HARD closing-card failure, not a second
                     # opinion on a soft refusal.
                     continue
-                _terminal_attempted.append(_tname)
+                if (
+                    _tname == "closing_card"
+                    and clean_text(_tdata.get("quote") or "").lower()
+                    in _assigned_payload_texts
+                ):
+                    # Gate 4 (B3) repetition guard: this exact
+                    # card already serves another sentence — try
+                    # the beat's next distinct payload instead of
+                    # silently repeating it. If every distinct
+                    # payload is exhausted the produced block below
+                    # still fills the beat (Gate 2 guarantee) and
+                    # records the duplication as a quality defect.
+                    if _dup_candidate is None:
+                        _dup_candidate = (_tname, _tdata)
+                    continue
+                # attempted_families records each FAMILY once
+                # (Gate 2 semantics), however many distinct
+                # payloads of it were tried (Gate 4 B3).
+                if _tname not in _terminal_attempted:
+                    _terminal_attempted.append(_tname)
                 _card_ok, _guarantee_reason, _guarantee_detail = (
                     _make_engine_graphic(
                         target, _tname, _tdata,
@@ -5209,6 +5461,40 @@ def build_motion_graphics_assets(
                             _record["terminal_guarantee"] = _tname
                             break
                     break
+            if produced_family is None and _dup_candidate is not None:
+                # Gate 4 (B3) + Gate 2 guarantee: no distinct
+                # payload exists, but a (duplicate) designed
+                # payload does — the beat is still filled, and
+                # the produced block stamps the duplication as an
+                # explicit quality defect rather than repeating
+                # silently.
+                _tname, _tdata = _dup_candidate
+                if _tname not in _terminal_attempted:
+                    _terminal_attempted.append(_tname)
+                _card_ok, _guarantee_reason, _guarantee_detail = (
+                    _make_engine_graphic(
+                        target, _tname, _tdata,
+                        style=_style_for_target(
+                            target, _style_for("editorial")
+                        ),
+                    )
+                )
+                if _card_ok:
+                    produced_family = "motion_engine"
+                    produced_reason = "coverage_guarantee:closing_card"
+                    _guarantee_reason = None
+                    _guarantee_detail = ""
+                    for _record in reversed(assets):
+                        if (
+                            _record.get("template") == _tname
+                            and _record.get("scene_number")
+                            == target["scene_number"]
+                            and _record.get("sentence_index")
+                            == target["sentence_index"]
+                        ):
+                            _record["coverage_guarantee"] = True
+                            _record["terminal_guarantee"] = _tname
+                            break
             if produced_family is not None:
                 # The floor covers the beat; it does not erase
                 # why the beat needed it. A stage failure above
@@ -5263,7 +5549,57 @@ def build_motion_graphics_assets(
             covered.add(key)
             targeted_generated += 1
             _last_family = produced_family
+            # Gate 4 (B3): repetition guard + assigned-family
+            # honesty. Find this beat's produced record, register
+            # its payload (a duplicate is stamped as an explicit
+            # quality defect), and — when the Director assigned
+            # exactly one family (event_schematic) and a different
+            # family actually filled the beat — record the
+            # substitution explicitly: a schematic that declined
+            # must never silently reappear as a generic card
+            # carrying the schematic assignment.
+            _produced_record = next(
+                (
+                    _r for _r in reversed(assets)
+                    if _r.get("scene_number") == target["scene_number"]
+                    and _r.get("sentence_index")
+                    == target["sentence_index"]
+                ),
+                None,
+            )
+            _dup_defect = _register_assigned_payload(_produced_record)
+            _assigned = target.get("family_candidates") or []
+            if (
+                _produced_record is not None
+                and len(_assigned) == 1
+                and _assigned[0] == "event_schematic"
+                and produced_family != "event_schematic"
+            ):
+                _produced_record["assigned_family"] = "event_schematic"
+                _produced_record["family_substitution"] = {
+                    "assigned": "event_schematic",
+                    "delivered": produced_family,
+                    "schematic_reason": _schematic_reason,
+                }
+                graphic_quality_defects.append({
+                    "type": "assigned_family_not_delivered",
+                    "sentence_number": target["sentence_number"],
+                    "assigned_family": "event_schematic",
+                    "delivered_family": produced_family,
+                    "schematic_reason": _schematic_reason,
+                })
             _record_outcome(target, "generated", produced_family, produced_reason)
+            if _dup_defect is not None:
+                target_outcomes[-1]["quality_defect"] = (
+                    "duplicate_graphic_payload"
+                )
+            if (
+                _produced_record is not None
+                and _produced_record.get("family_substitution")
+            ):
+                target_outcomes[-1]["family_substitution"] = (
+                    _produced_record["family_substitution"]
+                )
         else:
             # MG-08: ONE typed reason from the closed vocabulary,
             # chosen by specificity — an attempted render/validation
@@ -5588,6 +5924,10 @@ def build_motion_graphics_assets(
             # labels excluded from every graphic in this build,
             # with the reason — recorded, never silent.
             "fact_exclusions": _fact_exclusions,
+            # Gate 4 (B3): duplicate payloads and assigned-family
+            # substitutions that occurred in this build, as
+            # explicit quality defects — never silent repetition.
+            "graphic_quality_defects": graphic_quality_defects,
             # MG-05: graphics that were rendered but refused
             # registration (validation) or failed to render —
             # recorded with their original failure information,
