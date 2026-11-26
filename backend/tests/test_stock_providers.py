@@ -361,14 +361,17 @@ def test_scenario_search_merges_stock_hits(monkeypatch):
             }]
         return _search
 
+    # _resolve_stock_provider prefers the media_pipeline namespace (the
+    # established patch-parity convention), so the doubles must be installed
+    # on mp, not pipeline_discovery — otherwise the real keyless wrappers run.
     monkeypatch.setattr(
-        pipeline_discovery, "search_pexels_videos", stock_video("pexels"))
+        mp, "search_pexels_videos", stock_video("pexels"))
     monkeypatch.setattr(
-        pipeline_discovery, "search_pixabay_videos", stock_video("pixabay"))
+        mp, "search_pixabay_videos", stock_video("pixabay"))
     monkeypatch.setattr(
-        pipeline_discovery, "search_pexels_images", stock_image("pexels"))
+        mp, "search_pexels_images", stock_image("pexels"))
     monkeypatch.setattr(
-        pipeline_discovery, "search_pixabay_images", stock_image("pixabay"))
+        mp, "search_pixabay_images", stock_image("pixabay"))
 
     scenario = {"queries": ["police van street"], "visual": "police van"}
     videos, _web, images = mp._uve_scenario_search(scenario, {}, "gate2-ws4")
