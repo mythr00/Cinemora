@@ -105,7 +105,7 @@ def test_entitlement_generation_settles_free(db):
     assert reservation.status == "settled"
     assert reservation.charged_credits == 0
     wallet = _wallet(db, user.id)
-    assert wallet["subscription"]["available"] == 1350
+    assert wallet["subscription"]["available"] == 1300
     assert wallet["lifetime_spent"] == 0
 
 
@@ -130,7 +130,7 @@ def test_long_generation_charges_excess_minutes_only(db):
     assert reservation.status == "settled"
     assert reservation.charged_credits == 84
     wallet = _wallet(db, user.id)
-    assert wallet["subscription"]["available"] == 1350 - 84
+    assert wallet["subscription"]["available"] == 1300 - 84
     assert wallet["lifetime_spent"] == 84
 
 
@@ -147,7 +147,7 @@ def test_failed_generation_restores_everything(db):
     reservation = _reservation_for(db, run_id)
     assert reservation.status == "released"
     wallet = _wallet(db, user.id)
-    assert wallet["subscription"]["available"] == 1350
+    assert wallet["subscription"]["available"] == 1300
     assert wallet["subscription"]["reserved"] == 0
     period = periods.current_period(db, user.id)
     assert period.generations_used == 0  # entitlement restored
@@ -164,7 +164,7 @@ def test_queued_cancel_restores_reservation(db):
     db.expire_all()
     reservation = _reservation_for(db, submission["run_id"])
     assert reservation.status == "released"
-    assert _wallet(db, user.id)["subscription"]["available"] == 1350
+    assert _wallet(db, user.id)["subscription"]["available"] == 1300
 
 
 def test_insufficient_credits_rejects_and_charges_nothing(db):
@@ -261,7 +261,7 @@ def test_retry_after_failure_charges_once(db):
     )
     assert run_ledger.finish_run(first["run_id"], "failed")
     db.expire_all()
-    assert _wallet(db, user.id)["subscription"]["available"] == 1350
+    assert _wallet(db, user.id)["subscription"]["available"] == 1300
 
     retry = run_ledger.submit_production(
         project.id, project.script,

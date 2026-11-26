@@ -99,7 +99,7 @@ def test_user_billing_summary_and_transactions(client):
     body = response.json()
     assert body["plan"]["name"] == "creator"
     assert body["plan"]["billing_mode"] == "metered"
-    assert body["wallet"]["subscription"]["available"] == 1350
+    assert body["wallet"]["subscription"]["available"] == 1300
     assert body["period"]["generations"]["remaining"] == 11
     assert len(body["available_plans"]) == 3
     assert len(body["topup_packages"]) == 5

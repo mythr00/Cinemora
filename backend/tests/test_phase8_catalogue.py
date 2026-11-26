@@ -41,8 +41,8 @@ def test_advertised_allowances_are_deliverable():
     # credits ALONE can pay for the advertised count at the
     # platform rate — the allowance never depends on hidden math.
     rate = catalogue.standard_generation_credits()
-    advertised = {"creator": (1350, 11), "studio": (2500, 29),
-                  "agency": (5000, 59)}
+    advertised = {"creator": (1300, 11), "studio": (3600, 29),
+                  "agency": (7200, 59)}
     for spec in catalogue.METERED_PLANS:
         credits, docs = advertised[spec["name"]]
         assert spec["monthly_credits"] == credits

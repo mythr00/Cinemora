@@ -65,9 +65,12 @@ def standard_generation_credits() -> int:
 
     Chosen so every plan can deliver its advertised documentaries
     from credits alone if entitlements were ever exhausted early:
-    the binding constraint is Agency (5000 / 59 ≈ 84.7), so the
-    rate is 84 — at that rate Creator's 1,350 credits alone cover
-    16 standard generations and Studio's 2,500 cover 29.
+    the binding constraint is Creator (1,300 / 11 ≈ 118.2 credits
+    per included generation, founder decision 2026-11-26), and
+    the rate stays 84 — at that rate Creator's 1,300 credits alone
+    cover 15 standard generations, Studio's 3,600 cover 42 and
+    Agency's 7,200 cover 85, each above its included entitlement
+    (11 / 29 / 59).
     """
     raw = os.environ.get("CINEMORA_STANDARD_GENERATION_CREDITS")
     if raw:
@@ -129,7 +132,7 @@ METERED_PLANS: list[dict] = [
         "name": "creator",
         "price_monthly_cents": 2900,
         "price_annual_cents": 27840,
-        "monthly_credits": 1350,
+        "monthly_credits": 1300,
         "included_generations": 11,
         "script_allowance": 30,
         "thumbnail_allowance": 30,
@@ -141,7 +144,7 @@ METERED_PLANS: list[dict] = [
         "name": "studio",
         "price_monthly_cents": 7900,
         "price_annual_cents": 75840,
-        "monthly_credits": 2500,
+        "monthly_credits": 3600,
         "included_generations": 29,
         "script_allowance": 90,
         "thumbnail_allowance": 90,
@@ -153,7 +156,7 @@ METERED_PLANS: list[dict] = [
         "name": "agency",
         "price_monthly_cents": 17900,
         "price_annual_cents": 171840,
-        "monthly_credits": 5000,
+        "monthly_credits": 7200,
         "included_generations": 59,
         "script_allowance": 300,
         "thumbnail_allowance": 300,

@@ -64,7 +64,7 @@ def test_allowance_consumed_first(db):
     db.expire_all()
     period = periods.current_period(db, user.id)
     assert period.scripts_used == 1
-    assert _available(db, user.id) == 1350  # wallet untouched
+    assert _available(db, user.id) == 1300  # wallet untouched
 
 
 def test_allowance_refunded_on_failure(db):
@@ -88,10 +88,10 @@ def test_credits_charged_beyond_allowance_and_refunded(db):
     receipt = operations.begin_operation(user.id, "scripts", "draft")
     assert receipt["via"] == "credits"
     assert receipt["credits_charged"] == 12  # catalogue price
-    assert _available(db, user.id) == 1350 - 12
+    assert _available(db, user.id) == 1300 - 12
 
     operations.refund_operation(user.id, receipt)
-    assert _available(db, user.id) == 1350
+    assert _available(db, user.id) == 1300
     db.expire_all()
     account = credits.get_or_create_account(db, user.id)
     assert account.lifetime_spent == 0  # refund un-spends
@@ -202,4 +202,4 @@ def test_spend_is_idempotent(db):
         reason="test",
     )
     assert split1 == split2 == {"subscription": 50}
-    assert _available(db, user.id) == 1350 - 50
+    assert _available(db, user.id) == 1300 - 50

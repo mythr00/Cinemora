@@ -61,7 +61,7 @@ export function makePlan(partial: Partial<BillingPlan> = {}): BillingPlan {
     price_monthly_cents: 2900,
     price_annual_cents: 27840,
     currency: "USD",
-    monthly_credits: 1350,
+    monthly_credits: 1300,
     included_generations: 11,
     script_allowance: 40,
     thumbnail_allowance: 40,
@@ -86,7 +86,7 @@ export function makeBillingSummary(
     display_name: "Studio",
     price_monthly_cents: 7900,
     price_annual_cents: 75840,
-    monthly_credits: 2500,
+    monthly_credits: 3600,
     included_generations: 29,
   });
   return {

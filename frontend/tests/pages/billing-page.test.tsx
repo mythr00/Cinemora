@@ -150,7 +150,7 @@ describe("BillingPage with a configured provider", () => {
       .closest("article")!;
     expect(within(studioCard).getByText(/\$79\.00/)).toBeInTheDocument();
     expect(
-      within(studioCard).getByText(/2500 credits monthly/),
+      within(studioCard).getByText(/3600 credits monthly/),
     ).toBeInTheDocument();
     expect(
       within(studioCard).getByText(/29 included\s+15-minute documentaries/),

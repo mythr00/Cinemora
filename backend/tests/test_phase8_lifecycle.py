@@ -70,14 +70,14 @@ def test_rollover_expires_old_credits_and_allocates_new(db):
     db.commit()
     credits.spend(db, user.id, 350, idempotency_key="op:spend1")
     db.commit()
-    assert _available(db, user.id) == 1000
+    assert _available(db, user.id) == 950
 
     summary = lifecycle.run_lifecycle_tick(now=AFTER)
     assert summary["rolled_over"] >= 1
     db.expire_all()
     # Old remainder (1000) expired; the new period allocated a
-    # fresh 1350 — not 2350.
-    assert _available(db, user.id) == 1350
+    # fresh 1300 — not 2250.
+    assert _available(db, user.id) == 1300
     sub = db.get(models.UserSubscription, sub.id)
     # SQLite round-trips DateTime(timezone=True) naive; normalise
     # before comparing (the house _aware pattern).
@@ -95,7 +95,7 @@ def test_rollover_expires_old_credits_and_allocates_new(db):
     # A second tick changes nothing (idempotent).
     lifecycle.run_lifecycle_tick(now=AFTER)
     db.expire_all()
-    assert _available(db, user.id) == 1350
+    assert _available(db, user.id) == 1300
 
 
 def test_rollover_enabled_carries_credits(db, monkeypatch):
@@ -105,7 +105,7 @@ def test_rollover_enabled_carries_credits(db, monkeypatch):
     db.commit()
     lifecycle.run_lifecycle_tick(now=AFTER)
     db.expire_all()
-    assert _available(db, user.id) == 1350 + 1350
+    assert _available(db, user.id) == 1300 + 1300
 
 
 def test_cancel_at_period_end(db):
@@ -143,7 +143,7 @@ def test_scheduled_downgrade_applies_at_boundary(db):
     period = periods.current_period(db, user.id)
     # New period grants come from the NEW plan.
     assert period.generations_granted == 29
-    assert _available(db, user.id) == 2500
+    assert _available(db, user.id) == 3600
 
 
 def test_annual_subscription_distributes_monthly(db):
@@ -156,7 +156,7 @@ def test_annual_subscription_distributes_monthly(db):
     # Benefit period advanced ~one month, not one year.
     assert sub.current_period_start.month in (11,)
     assert sub.current_period_start.year == 2026
-    assert _available(db, user.id) == 1350
+    assert _available(db, user.id) == 1300
 
 
 def test_purchased_lot_expires_fifo(db):
@@ -216,7 +216,7 @@ def test_stale_reservation_reconciled(db):
         run_id=run.id,
     )
     db.commit()
-    assert _available(db, user.id) == 1350 - 84
+    assert _available(db, user.id) == 1300 - 84
 
     summary = lifecycle.run_lifecycle_tick(now=START)
     assert summary["reservations_reconciled"] >= 1
@@ -225,4 +225,4 @@ def test_stale_reservation_reconciled(db):
         models.GenerationReservation, reservation.id
     )
     assert reservation.status == "released"
-    assert _available(db, user.id) == 1350
+    assert _available(db, user.id) == 1300
