@@ -71,6 +71,7 @@ enforced here at the choke point, so no API path bypasses it.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 
@@ -81,6 +82,45 @@ from services.billing import catalogue, credits
 from services.billing import periods as periods_service
 
 TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+
+# ---------------------------------------------------------------------
+# THE BILLING SWITCH POINT — delivered-but-not-release-grade films
+# (Phase 4; founder decision #1, founder-gated, NOT decided here).
+#
+# A run can now finish technically valid yet held at
+# release_status="not_release_grade" (coverage gaps, prohibited
+# substitutions, unclassified visuals, illustrative material
+# presented as evidence, or a composite quality FAIL — see
+# services/release_status.py). Whether the customer pays for such
+# a delivered film is a FOUNDER decision that is still pending.
+# This is the single switch point for that policy:
+#
+# - "restore" (DEFAULT) = today's behaviour, exactly: the
+#   reservation is fully restored (credits + delivered-video
+#   entitlement), the customer pays nothing.
+# - "settle" = charge the delivered minutes at the tier rate,
+#   like any other completed run.
+#
+# The default MUST stay "restore" until the founder decides
+# otherwise; flipping it is a one-line env change
+# (CINEMORA_RELEASE_SETTLEMENT_POLICY=settle), never a code hunt.
+# ---------------------------------------------------------------------
+RELEASE_SETTLEMENT_RESTORE = "restore"
+RELEASE_SETTLEMENT_SETTLE = "settle"
+
+
+def release_settlement_policy() -> str:
+    """The founder-gated settlement policy for delivered-but-not-
+    release-grade films: "restore" (default) or "settle". Any
+    unrecognised value falls back to "restore" — the behaviour
+    that charges the customer nothing."""
+    raw = os.environ.get(
+        "CINEMORA_RELEASE_SETTLEMENT_POLICY", "restore"
+    )
+    value = str(raw or "").strip().lower()
+    if value in (RELEASE_SETTLEMENT_RESTORE, RELEASE_SETTLEMENT_SETTLE):
+        return value
+    return RELEASE_SETTLEMENT_RESTORE
 
 
 class BillingRejected(credits.BillingError):
@@ -574,7 +614,8 @@ def claim_billing_check(run_id) -> tuple[bool, str | None]:
         db.close()
 
 
-def settle_for_run(run_id, status, execution=None) -> None:
+def settle_for_run(run_id, status, execution=None,
+                   release_status=None) -> None:
     """Settle or restore the reservation for a finished run.
 
     Fail-soft by contract (it is called from the ledger's finish
@@ -583,6 +624,13 @@ def settle_for_run(run_id, status, execution=None) -> None:
     sweeper to reconcile rather than losing the user's money
     silently. Idempotent: a non-active reservation is untouched,
     and a run that is not actually terminal is never settled.
+
+    Phase 4: a COMPLETED run held at
+    release_status="not_release_grade" follows the founder-gated
+    switch point (release_settlement_policy above): under the
+    default "restore" policy its reservation is fully restored
+    exactly like a failure; under "settle" it is charged like any
+    completed run.
     """
     if not run_id:
         return
@@ -617,7 +665,15 @@ def settle_for_run(run_id, status, execution=None) -> None:
         if run_row is not None and run_row.status not in TERMINAL_STATUSES:
             return
 
-        if status == "completed":
+        # The billing switch point (see the policy block at module
+        # level): a completed-but-not-release-grade run charges
+        # only when the founder-gated policy says "settle".
+        charge_as_completed = (status == "completed") and not (
+            release_status == "not_release_grade"
+            and release_settlement_policy() == RELEASE_SETTLEMENT_RESTORE
+        )
+
+        if status == "completed" and charge_as_completed:
             actual = _extract_actual_seconds(reservation, execution)
             if reservation.source == "admin":
                 # Admin-source reservations are recorded, never
@@ -661,6 +717,20 @@ def settle_for_run(run_id, status, execution=None) -> None:
             reservation.charged_credits = charged
             reservation.actual_seconds = actual
         else:
+            if status == "completed":
+                # The held case: delivered but not release grade,
+                # under the default "restore" policy — full
+                # restoration, exactly as the failure branch below
+                # performs it, with the held reason recorded.
+                release_reason = (
+                    "delivered not-release-grade: full restoration "
+                    "under the pending founder billing decision "
+                    "(CINEMORA_RELEASE_SETTLEMENT_POLICY=restore)"
+                )
+            else:
+                release_reason = (
+                    f"generation {status}: full restoration"
+                )
             if reservation.credits_reserved:
                 credits.release_reservation(
                     db,
@@ -669,7 +739,7 @@ def settle_for_run(run_id, status, execution=None) -> None:
                     run_id=reservation.run_id,
                     project_id=reservation.project_id,
                     source="system",
-                    reason=f"generation {status}: full restoration",
+                    reason=release_reason,
                 )
             if reservation.entitlement_reserved and reservation.billing_period_id:
                 period = db.get(
