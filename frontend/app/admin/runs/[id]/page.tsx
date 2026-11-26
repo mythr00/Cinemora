@@ -90,7 +90,7 @@ export default function AdminRunDetailPage() {
   }
 
   const execution = (run.execution ?? {}) as Record<string, unknown>;
-  const serper = (execution.serper_calls ?? {}) as Record<string, number>;
+  const search = ((execution.search_calls as Record<string, unknown> | undefined)?.searxng ?? {}) as Record<string, number>;
   const llm = (execution.llm_calls ?? {}) as Record<string, number>;
   const downloads = (execution.downloads ?? {}) as Record<string, number>;
   const report = (run.asset_report ?? {}) as Record<string, unknown>;
@@ -167,7 +167,7 @@ export default function AdminRunDetailPage() {
       <h2 className="admin-section-title">Execution metrics</h2>
       {run.execution ? (
         <dl className="admin-detail-grid">
-          <div><dt>Serper calls</dt><dd>{serper.total ?? 0} (web {serper.web ?? 0} · images {serper.images ?? 0} · video {serper.video ?? 0})</dd></div>
+          <div><dt>Search calls</dt><dd>{search.total ?? 0} (web {search.web ?? 0} · images {search.images ?? 0} · video {search.video ?? 0})</dd></div>
           <div><dt>LLM calls</dt><dd>{llm.total ?? 0} · {llm.total_tokens ?? 0} tokens</dd></div>
           <div><dt>Downloads</dt><dd>{downloads.succeeded ?? 0} of {downloads.attempted ?? 0} succeeded</dd></div>
           <div>

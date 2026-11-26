@@ -31,9 +31,9 @@ export default function AdminProvidersPage() {
   const totals = usage.totals;
   const cards = [
     {
-      label: `Serper calls (${usage.window_days}d)`,
-      value: String(totals.serper_calls.total),
-      hint: `web ${totals.serper_calls.web} · images ${totals.serper_calls.images} · video ${totals.serper_calls.video}`,
+      label: `Search calls (${usage.window_days}d)`,
+      value: String(totals.search_calls.total),
+      hint: `web ${totals.search_calls.web} · images ${totals.search_calls.images} · video ${totals.search_calls.video}`,
     },
     {
       label: "BrewKeg LLM calls",
@@ -96,14 +96,14 @@ export default function AdminProvidersPage() {
             <tr>
               <th>Run</th>
               <th>Status</th>
-              <th>Serper</th>
+              <th>Search</th>
               <th>LLM</th>
               <th>Downloads</th>
             </tr>
           </thead>
           <tbody>
             {usage.per_run.map((row) => {
-              const serper = (row.serper_calls ?? {}) as { total?: number };
+              const search = (row.search_calls ?? {}) as { total?: number };
               const llm = (row.llm_calls ?? {}) as { total?: number };
               const downloads = (row.downloads ?? {}) as {
                 attempted?: number;
@@ -113,7 +113,7 @@ export default function AdminProvidersPage() {
                 <tr key={String(row.run_id)}>
                   <td>{String(row.run_id).slice(0, 8)}…</td>
                   <td>{String(row.status)}</td>
-                  <td>{serper.total ?? 0}</td>
+                  <td>{search.total ?? 0}</td>
                   <td>{llm.total ?? 0}</td>
                   <td>
                     {downloads.succeeded ?? 0} / {downloads.attempted ?? 0}

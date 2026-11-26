@@ -91,8 +91,8 @@ export default function AdminOverviewPage() {
       value: formatSeconds(overview.median_wall_seconds_window),
     },
     {
-      label: `Serper calls (${overview.window_days}d)`,
-      value: String(overview.serper_calls_window),
+      label: `Search calls (${overview.window_days}d)`,
+      value: String(overview.search_calls_window),
     },
     {
       label: `LLM calls (${overview.window_days}d)`,

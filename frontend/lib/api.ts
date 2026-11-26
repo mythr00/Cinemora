@@ -3395,7 +3395,7 @@ export type AdminOverview = {
   completion_rate_window: number | null;
   median_wall_seconds: number | null;
   median_wall_seconds_window: number | null;
-  serper_calls_window: number;
+  search_calls_window: number;
   llm_calls_window: number;
   active_runs: number;
   latest_failures: Array<{
@@ -3454,7 +3454,7 @@ export type AdminProviderUsage = {
   window_days: number;
   runs_with_execution: number;
   totals: {
-    serper_calls: { total: number; web: number; images: number; video: number };
+    search_calls: { total: number; web: number; images: number; video: number };
     llm_calls: { total: number; total_tokens: number };
     archive_org_searches: number;
     wikimedia_searches: number;
