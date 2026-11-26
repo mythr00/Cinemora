@@ -1,0 +1,67 @@
+# SearXNG settings for Cinemora's self-hosted search instance
+# (Master Implementation 2026-11-26, Part 1). Mounted into the
+# searxng container at /etc/searxng/settings.yml by
+# docker-compose.yml. Validated locally against SearXNG
+# 2026.11.23+a7163d0 (see README.md in this directory).
+#
+# SECURITY: this instance is INTERNAL ONLY. It has no API key by
+# design; the compose service publishes no port, so only the
+# backend/worker containers on the compose network can reach it.
+# Never expose it publicly without enabling the limiter and a
+# real secret_key.
+
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "Cinemora SearXNG"
+  # Metrics power the /healthz-adjacent operational checks.
+  enable_metrics: true
+
+server:
+  # Inside the container; compose `expose` keeps it off the host.
+  port: 8888
+  bind_address: "0.0.0.0"
+  # CHANGE-ME: replace with a random hex string before deploying
+  # (python -c "import secrets; print(secrets.token_hex(32))").
+  secret_key: "CHANGE-ME-generate-a-random-hex"
+  # The limiter guards PUBLIC instances against bots. This one
+  # is reachable only from the compose network, and the limiter
+  # would reject the backend's header-less API calls, so it is
+  # off — the internal-only binding is the control. Turn it on
+  # (and set up the valkey URL below) if that ever changes.
+  limiter: false
+  image_proxy: true
+  method: "GET"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  # json is REQUIRED: the backend speaks the JSON API.
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 25.0
+  pool_connections: 50
+  pool_maxsize: 20
+  enable_http2: true
+  # If the production host must egress through a proxy, add it
+  # here (never commit a credentialed proxy URL to the repo):
+  # proxies:
+  #   all://:
+  #     - "http://proxy-host:3128"
+
+# No result cache server: the backend already caches searches
+# for 30 days in its own source_cache; a second cache layer
+# would only blur provider attribution.
+valkey:
+  url: false
+
+# Engine selection stays at SearXNG defaults (the validated
+# configuration); per-kind overrides can be set from the backend
+# via SEARXNG_ENGINES_WEB / SEARXNG_ENGINES_IMAGES /
+# SEARXNG_ENGINES_VIDEOS without touching this file.

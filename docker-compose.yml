@@ -32,6 +32,11 @@ x-backend-env: &backend-env
   CINEMORA_API_TOKEN: ${CINEMORA_API_TOKEN:-}
   SERPER_API_KEY: ${SERPER_API_KEY:-}
   BREWKEG_API_KEY: ${BREWKEG_API_KEY:-}
+  # Search (Master Implementation 2026-11-26): the self-hosted
+  # SearXNG service below is the primary search provider; Serper
+  # stays the fallback. Internal compose hostname only — never
+  # point this at a public URL.
+  SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8888}
 
 services:
 
@@ -81,6 +86,32 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      # Not a hard dependency: with SearXNG down the backend
+      # falls back to Serper (circuit breaker). Started first
+      # only so the common path is warm.
+      searxng:
+        condition: service_started
+
+  # Self-hosted metasearch (Master Implementation 2026-11-26):
+  # the primary search provider. INTERNAL ONLY — `expose`, no
+  # published port; only backend/worker on this network can reach
+  # it. Settings: deploy/searxng/settings.yml (runbook beside it).
+  # Measured footprint at validation: ~190 MB RSS, negligible CPU.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: documentary-searxng
+    restart: unless-stopped
+    expose:
+      - "8888"
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8888/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   worker:
     build:
