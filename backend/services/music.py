@@ -1103,6 +1103,25 @@ def denoise_audio_file(input_file, output_file):
     return {"filter": filter_string, "measured_floor_db": floor_db}
 
 
+#: Encode headroom for the loudnorm true-peak target (Gate 4 fix,
+#: 2026-11-26). loudnorm normalises the soundtrack WAV, but the
+#: LAST audio stage in the chain is the AAC encode in
+#: audio_mixer.add_narration (jobs.py / editor mux), and a lossy
+#: encode raises inter-sample peaks AFTER loudnorm's measurement.
+#: Measured on the Hyatt test production (run cdfcc130): the
+#: normalised soundtrack.wav sat at exactly -1.00 dBTP — the
+#: ceiling, with zero headroom — and the delivered MP4 measured
+#: -0.91 dBTP (+0.09 dB of encode overshoot), failing the C-06
+#: radio.audio_levels gate (-1.0 dBTP ceiling) while loudness
+#: passed. So loudnorm's TP target is the delivery ceiling MINUS
+#: this headroom; the ceiling itself (config / standard test) is
+#: unchanged. 1.0 dB is ~10x the observed overshoot and matches
+#: common lossy-delivery practice (target -2.0 dBTP for a -1.0
+#: ceiling); loudness is unaffected in kind — loudnorm's TP
+#: constraint was already the binding one on peaky narration.
+ENCODE_TRUE_PEAK_HEADROOM_DB = 1.0
+
+
 def _normalise_audio(input_file, output_file, config):
     """Normalise input_file to the configured loudness target and
     write output_file. Returns the normalisation record.
@@ -1110,18 +1129,26 @@ def _normalise_audio(input_file, output_file, config):
     Method: loudnorm TWO-PASS — a measured analysis pass, then the
     linear apply with the measured values (the architecture allows
     two passes: the soundtrack is a standalone file before muxing,
-    so nothing forces the single-pass dynamic mode). The result is
-    then MEASURED; if its true peak still exceeds the ceiling, an
-    alimiter stage is the backstop (never clip silently). Any
-    failure degrades to copying the unnormalised mix and RECORDING
-    that — a failed normalisation is a provenance fact, not a
-    silent skip and not a reason to kill a production whose mix is
-    otherwise sound."""
+    so nothing forces the single-pass dynamic mode). loudnorm's TP
+    target carries ENCODE_TRUE_PEAK_HEADROOM_DB of headroom below
+    the delivery ceiling, because the AAC encode at mux time raises
+    true peaks after this stage measures them (see the constant).
+    The result is then MEASURED; if its true peak still exceeds the
+    headroom-adjusted target, an alimiter stage is the backstop
+    (never clip silently). Any failure degrades to copying the
+    unnormalised mix and RECORDING that — a failed normalisation is
+    a provenance fact, not a silent skip and not a reason to kill a
+    production whose mix is otherwise sound."""
+    loudnorm_tp = (
+        config["max_true_peak_dbtp"] - ENCODE_TRUE_PEAK_HEADROOM_DB
+    )
     record = {
         "applied": False,
         "method": None,
         "target_lufs": config["target_lufs"],
         "max_true_peak_dbtp": config["max_true_peak_dbtp"],
+        "loudnorm_true_peak_dbtp": loudnorm_tp,
+        "encode_headroom_db": ENCODE_TRUE_PEAK_HEADROOM_DB,
         "pre_integrated_lufs": None,
         "pre_true_peak_dbtp": None,
         "post_integrated_lufs": None,
@@ -1141,7 +1168,7 @@ def _normalise_audio(input_file, output_file, config):
     record["pre_integrated_lufs"] = analysis["input_i"]
     record["pre_true_peak_dbtp"] = analysis["input_tp"]
     loudnorm = (
-        f"loudnorm=I={config['target_lufs']}:TP={config['max_true_peak_dbtp']}"
+        f"loudnorm=I={config['target_lufs']}:TP={loudnorm_tp}"
         f":LRA=11"
         f":measured_I={analysis['input_i']}"
         f":measured_TP={analysis['input_tp']}"
@@ -1168,15 +1195,17 @@ def _normalise_audio(input_file, output_file, config):
     levels = measure_audio_levels(output_file)
     record["post_integrated_lufs"] = levels["integrated_lufs"]
     record["post_true_peak_dbtp"] = levels["true_peak_dbtp"]
-    ceiling = config["max_true_peak_dbtp"]
+    ceiling = loudnorm_tp
     if (
         levels["true_peak_dbtp"] is not None
         and levels["true_peak_dbtp"] > ceiling + 0.05
     ):
         # Limiter backstop: loudnorm's linear mode can leave peaks
-        # above the ceiling on peaky material. alimiter with
+        # above the target on peaky material. alimiter with
         # level=false applies no makeup gain — it only holds the
-        # ceiling — and the result is measured again and recorded.
+        # (headroom-adjusted) target, so a backstopped soundtrack
+        # keeps the same encode headroom as a clean loudnorm pass —
+        # and the result is measured again and recorded.
         limit = min(0.999, 10 ** (ceiling / 20.0))
         limited = Path(output_file).with_name(
             Path(output_file).stem + ".limited.wav"

@@ -260,6 +260,59 @@ def test_normalisation_respects_true_peak_ceiling(tmp_path):
     assert abs(levels["integrated_lufs"] - (-14.0)) <= 1.0
 
 
+def test_normalisation_targets_encode_headroom_below_ceiling(tmp_path):
+    """Gate 4 regression: loudnorm must NOT aim at the delivery
+    ceiling itself. The AAC encode at mux time (audio_mixer
+    .add_narration) raises true peaks after loudnorm measured
+    them — the Hyatt production's WAV sat at exactly -1.00 dBTP
+    and its MP4 measured -0.91 dBTP, failing radio.audio_levels.
+    The record keeps the ceiling (-1.0) AND states the
+    headroom-adjusted loudnorm target beside it."""
+    narration = _bursts_narration(tmp_path / "narration.wav", amplitude=0.95)
+    record = music.prepare_soundtrack(
+        str(narration), str(tmp_path / "soundtrack.wav")
+    )
+    normalisation = record["mix"]["normalisation"]
+    assert normalisation["max_true_peak_dbtp"] == -1.0
+    assert normalisation["encode_headroom_db"] == (
+        music.ENCODE_TRUE_PEAK_HEADROOM_DB
+    )
+    assert normalisation["loudnorm_true_peak_dbtp"] == (
+        -1.0 - music.ENCODE_TRUE_PEAK_HEADROOM_DB
+    )
+    levels = music.measure_audio_levels(tmp_path / "soundtrack.wav")
+    # The WAV itself now sits at/below the headroom target (small
+    # measurement slack), not merely at the delivery ceiling.
+    assert levels["true_peak_dbtp"] <= -1.0 - 0.5
+    assert abs(levels["integrated_lufs"] - (-14.0)) <= 3.0
+
+
+def test_normalised_soundtrack_survives_aac_encode(tmp_path):
+    """Gate 4 end-to-end proof at unit scale: normalise peaky
+    narration, then run the soundtrack through the SAME AAC
+    encode the mux applies (-c:a aac -b:a 192k, audio_mixer
+    .add_narration) and measure the ENCODED file with the same
+    measurement the standard test uses — true peak must stay at
+    or below the -1.0 dBTP ceiling and loudness inside the
+    standard test's ±3 LU tolerance of the -14 target."""
+    narration = _bursts_narration(tmp_path / "narration.wav", amplitude=0.95)
+    music.prepare_soundtrack(
+        str(narration), str(tmp_path / "soundtrack.wav")
+    )
+    encoded = tmp_path / "soundtrack.m4a"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error", "-i",
+            str(tmp_path / "soundtrack.wav"),
+            "-c:a", "aac", "-b:a", "192k", str(encoded),
+        ],
+        check=True, timeout=120,
+    )
+    levels = music.measure_audio_levels(encoded)
+    assert levels["true_peak_dbtp"] <= -1.0
+    assert abs(levels["integrated_lufs"] - (-14.0)) <= 3.0
+
+
 def test_normalisation_can_be_disabled_and_records_it(tmp_path):
     narration = _bursts_narration(tmp_path / "narration.wav", amplitude=0.05)
     config = music.resolve_mix_config(options={"music_normalise": False})
