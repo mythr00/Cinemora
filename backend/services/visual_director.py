@@ -495,13 +495,25 @@ def _family_candidates(row, outcome, production_context):
     return families
 
 
-def _composition_decision(row, outcome, pack, scene_labelled):
+def _composition_decision(row, outcome, pack, scene_labelled,
+                          bible_identifier=None):
     """The lower-third composition decision for a covered beat, or
     None. Requires: the pack's composition_affinities favour
     lower_third_card (weight >= 1 and >= every other non-full-frame
-    pattern), the beat is its scene's first covered beat, and the
-    covering asset carries a recorded title to label with. The
-    label is the asset's own title — never invented text."""
+    pattern) and the beat is its scene's first covered beat.
+
+    UV-03 (Unified Visual Audit): the label text prefers the
+    beat's recorded BIBLE identifier — the scenario's place, else
+    the date the bible timeline records for this sentence —
+    over the covering asset's raw search title (a search-result
+    string, never an identifier the production recorded for the
+    beat). The other identifier becomes the sublabel. Only when
+    the beat carries neither place nor date does the historical
+    behaviour apply: the asset's own title as label, scenario
+    place/era as sublabel. A label is a place/date identifier
+    only — never a file name, a source label or a sentence —
+    and never invented text: every candidate comes from a
+    recorded field."""
     if scene_labelled:
         return None
     profile = (pack or {}).get("visual_profile") or {}
@@ -516,17 +528,36 @@ def _composition_decision(row, outcome, pack, scene_labelled):
     ]
     if others and weight < max(others):
         return None
-    label = (outcome.get("asset_title") or "").strip()
+    scenario = outcome.get("scenario") or {}
+    place = (scenario.get("place") or "").strip()
+    date = (
+        (bible_identifier or {}).get("date")
+        or scenario.get("era")
+        or scenario.get("date")
+        or ""
+    ).strip()
+    asset_label = (outcome.get("asset_title") or "").strip()
+    label = place or date or asset_label
     if not label:
         return None
-    scenario = outcome.get("scenario") or {}
-    sublabel = scenario.get("place") or scenario.get("era") or None
+    if place and label == place:
+        sublabel = date or None
+        label_source = "bible_identifier"
+    elif date and label == date:
+        sublabel = place or None
+        label_source = "bible_identifier"
+    else:
+        sublabel = scenario.get("place") or scenario.get("era") or None
+        if sublabel and sublabel.strip() == label:
+            sublabel = None
+        label_source = "asset_title"
     return {
         "pattern": "lower_third_card",
         "label": label,
         "sublabel": sublabel,
         "affinity": weight,
         "reason": "scene_entry_label",
+        "label_source": label_source,
     }
 
 
@@ -630,7 +661,7 @@ def _footage_window_decision(row, outcome, pack, scene_window_used):
 
 def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                           evidence=None, production_context=None,
-                          compositions=True):
+                          compositions=True, bible=None):
     """Pass-2 reconciliation. Pure: takes plain dicts, returns
     (plan_v2, graphics_manifest) as plain dicts.
 
@@ -656,6 +687,21 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
     pack = genre_pack if isinstance(genre_pack, dict) else None
     theme = _themes.theme_for_pack(pack)
     theme_name = theme.get("name") if theme else None
+
+    # UV-03: the bible's per-sentence date identifiers — timeline
+    # entries the fact table merged in carry their sentence
+    # number; planner entries without one simply never match, and
+    # callers that pass no bible get the historical behaviour.
+    bible_identifiers = {}
+    for _entry in (bible or {}).get("timeline") or []:
+        if (
+            isinstance(_entry, dict)
+            and _entry.get("sentence_number") is not None
+            and _entry.get("when")
+        ):
+            bible_identifiers[_entry["sentence_number"]] = {
+                "date": _entry["when"],
+            }
 
     rows = []
     manifest_entries = []
@@ -705,6 +751,7 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                     composition = _composition_decision(
                         row, outcome, pack,
                         scene_labelled=scene_number in labelled_scenes,
+                        bible_identifier=bible_identifiers.get(number),
                     )
                     if composition is not None:
                         labelled_scenes.add(scene_number)

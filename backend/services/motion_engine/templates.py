@@ -563,16 +563,27 @@ def evidence_board(data, style, out_path, duration=5.0, sentence_index=None, sce
         # caption that is a raw file title ("File:...", anything
         # carrying an image-file extension) is provenance, not a
         # caption — it is dropped whoever supplied it.
+        # MG-06-residual: source-label strings ("SOURCE •
+        # WIKIMEDIA") carry neither marker — they are dropped by
+        # the same rule.
         if caption.lower().startswith("file:") or re.search(
             r"\.(jpe?g|png|tiff?|webp|gif|svg)\b", caption.lower()
-        ):
+        ) or caption.lower().startswith("source") \
+                or "wikimedia" in caption.lower():
             caption = ""
         cards.append((img, caption))
     if not cards:
         return None, {"reason": "no_valid_photos"}
     # No placeholder banner: the torn-paper title is drawn only
     # when the caller supplies a real (short, designed) title.
+    # MG-06-residual: a metadata-shaped or paragraph-length
+    # "title" is caller provenance/prose, not a designed title —
+    # the banner stays undrawn.
     title = _clean(data.get("title"))
+    if title.lower().startswith("file:") or re.search(
+        r"\.(jpe?g|png|tiff?|webp|gif|svg)\b", title.lower()
+    ) or "wikimedia" in title.lower() or len(title) > 80:
+        title = ""
     labels = [_clean(x) for x in (data.get("labels") or []) if _clean(x)]
     paper = _aged_paper((WIDTH, HEIGHT), tokens)
     fonts = {
@@ -684,6 +695,18 @@ def red_string_board(data, style, out_path, duration=5.0, sentence_index=None, s
         data["strings"] = [
             [i, i + 1] for i in range(min(len(photos), 4) - 1)
         ]
+    # MG-04 (Motion Graphics audit): a string asserts a
+    # relationship between the photos it connects. Every
+    # connected node must carry a real label — an unlabelled
+    # board fabricates relationships between unrelated photos,
+    # so the template refuses rather than drawing the strings.
+    _labels = [_clean(x) for x in (data.get("labels") or []) if _clean(x)]
+    _nodes = set()
+    for _pair in data.get("strings") or []:
+        if isinstance(_pair, (list, tuple)):
+            _nodes.update(_pair)
+    if not _nodes or len(_labels) < len(_nodes):
+        return None, {"reason": "unlabelled_board_nodes"}
     data["_template"] = "red_string_board"
     return evidence_board(
         data, style, out_path, duration=duration,

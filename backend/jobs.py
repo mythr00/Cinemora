@@ -1222,6 +1222,237 @@ def _attach_motion_graphics(motion_graphics, processed_scenes):
     return attached, skipped
 
 
+def _coverage_incomplete_error(uncovered, total_sentences):
+    """The video_editor coverage gate's typed error (Gate 2: one
+    construction shared by the gate itself and the pre-render
+    coverage repair pass, so a sentence that survives repair fails
+    with exactly the error the gate would have raised — same
+    prefix, same refusal, no second dialect)."""
+    detail = ", ".join(
+        f"sentence {u.get('sentence_number')} "
+        f"(scene {u.get('scene_number')}"
+        + (
+            f", {u.get('start')}s-{u.get('end')}s)"
+            if u.get("start") is not None and u.get("end") is not None
+            else ")"
+        )
+        for u in uncovered
+    )
+    return RuntimeError(
+        "TIMELINE COVERAGE INCOMPLETE: "
+        f"{len(uncovered)} of {total_sentences} "
+        f"narration sentences have no visual coverage: {detail}. "
+        "Refusing to render an incomplete documentary."
+    )
+
+
+def _sentences_still_missing(processed_scenes):
+    """Gate 2 (Blocker 3): the missing_visuals entries that are
+    STILL uncovered after the Motion Designer stage — an entry is
+    resolved when the graphics stage generated a graphic for the
+    sentence (its stamped graphics_outcome) or a delivered motion
+    graphic for the sentence is attached to the scene. Returns a
+    list of {"scene_number", "sentence_number", "entry"}.
+
+    Fix-up (Gate 2 verification): an entry is a repair candidate
+    only when the graphics stage actually adjudicated it — a
+    graphics_outcome stamp is recorded (generated / skipped /
+    not_attempted). An entry with NO stamp was never put to the
+    graphics chain (e.g. the stage was stubbed, adopted or its
+    manifest was unreadable), so it is not evidence of a beat
+    still uncovered AFTER graphics: treating it as one made the
+    repair pass re-run the asset worker for beats the pipeline
+    had already settled and pre-empted the timeline coverage
+    gate below, breaking the Phase 3a stage-resume contract
+    (a searched-but-unresolved beat must reach the gate, and a
+    starved beat's re-search belongs to the asset stage's own
+    retry, not a second asset pass inside video_editor). The
+    timeline gate itself is unchanged and still decides every
+    sentence the repair pass does not touch."""
+    still = []
+    for processed_scene in processed_scenes or []:
+        if not isinstance(processed_scene, dict):
+            continue
+        scene = processed_scene.get("scene") or {}
+        scene_number = scene.get("scene_number")
+        sentences = scene.get("sentences") or []
+        index_by_number = {
+            sentence.get("sentence_number"): index
+            for index, sentence in enumerate(sentences)
+            if isinstance(sentence, dict)
+        }
+        attached = {
+            visual.get("sentence_number")
+            for visual in processed_scene.get("videos") or []
+            if isinstance(visual, dict) and visual.get("motion_graphic")
+        }
+        attached_indexes = {
+            visual.get("sentence_index")
+            for visual in processed_scene.get("videos") or []
+            if isinstance(visual, dict) and visual.get("motion_graphic")
+        }
+        stats = processed_scene.get("asset_stats") or {}
+        for entry in stats.get("missing_visuals") or []:
+            if not isinstance(entry, dict):
+                continue
+            number = entry.get("sentence_number")
+            if number is None:
+                continue
+            outcome = entry.get("graphics_outcome") or {}
+            if not outcome.get("outcome"):
+                # Never adjudicated by the graphics stage — not a
+                # post-graphics repair candidate (see docstring).
+                continue
+            if outcome.get("outcome") == "generated":
+                continue
+            if number in attached:
+                continue
+            if index_by_number.get(number) in attached_indexes:
+                continue
+            still.append(
+                {
+                    "scene_number": scene_number,
+                    "sentence_number": number,
+                    "entry": entry,
+                }
+            )
+    return still
+
+
+def _run_coverage_repair(processed_scenes, project_dir, repair_fn=None):
+    """Gate 2 (Blocker 3): the bounded pre-render coverage repair
+    pass. Runs after motion_designer, before the video_editor
+    coverage gate: for each scene that still has a missing-visual
+    sentence after graphics, make ONE repair attempt through the
+    pipeline's existing asset machinery (process_scene_media —
+    the same entry point asset_manager uses; no discovery is
+    reimplemented here, and the attempt spends the existing
+    budgets, including the tier ladder's per-sentence reserve).
+
+    Merging is conservative: visuals are unioned by path (nothing
+    the earlier stages produced is dropped, attached graphics
+    included), and a missing_visuals entry is removed only when
+    the repair's own missing_visuals record no longer lists the
+    sentence. Entries the repair still lists are replaced by the
+    repair's fresher record, keeping the graphics outcome stamp.
+    A scene whose repair raises keeps its entries and records the
+    error. Returns the repair report (also the metrics record)."""
+    if repair_fn is None:
+        repair_fn = process_scene_media
+    still = _sentences_still_missing(processed_scenes)
+    report = {
+        "attempted": bool(still),
+        "missing_before": [
+            {
+                "scene_number": item["scene_number"],
+                "sentence_number": item["sentence_number"],
+            }
+            for item in still
+        ],
+        "scenes_attempted": [],
+        "repaired": [],
+        "still_missing": [
+            {
+                "scene_number": item["scene_number"],
+                "sentence_number": item["sentence_number"],
+            }
+            for item in still
+        ],
+        "errors": [],
+    }
+    if not still:
+        return report
+
+    missing_by_scene = {}
+    for item in still:
+        missing_by_scene.setdefault(item["scene_number"], set()).add(
+            item["sentence_number"]
+        )
+
+    for processed_scene in processed_scenes or []:
+        if not isinstance(processed_scene, dict):
+            continue
+        scene = processed_scene.get("scene") or {}
+        scene_number = scene.get("scene_number")
+        wanted = missing_by_scene.get(scene_number)
+        if not wanted:
+            continue
+        report["scenes_attempted"].append(scene_number)
+        try:
+            result = repair_fn(scene, str(project_dir))
+        except Exception as error:
+            report["errors"].append(
+                {
+                    "scene_number": scene_number,
+                    "error": f"{type(error).__name__}: {error}",
+                }
+            )
+            continue
+        if not isinstance(result, dict):
+            report["errors"].append(
+                {
+                    "scene_number": scene_number,
+                    "error": "repair returned no result",
+                }
+            )
+            continue
+
+        for kind in ("videos", "images"):
+            existing = processed_scene.setdefault(kind, [])
+            seen = {
+                visual.get("file_path") or visual.get("path")
+                for visual in existing
+                if isinstance(visual, dict)
+            }
+            for visual in result.get(kind) or []:
+                if not isinstance(visual, dict):
+                    continue
+                key = visual.get("file_path") or visual.get("path")
+                if key and key in seen:
+                    continue
+                existing.append(visual)
+                seen.add(key)
+
+        repair_stats = result.get("asset_stats") or {}
+        repair_missing = {
+            entry.get("sentence_number"): entry
+            for entry in repair_stats.get("missing_visuals") or []
+            if isinstance(entry, dict)
+        }
+        stats = processed_scene.setdefault("asset_stats", {})
+        kept = []
+        for entry in stats.get("missing_visuals") or []:
+            if not isinstance(entry, dict) or (
+                entry.get("sentence_number") not in wanted
+            ):
+                kept.append(entry)
+                continue
+            number = entry.get("sentence_number")
+            if number not in repair_missing:
+                report["repaired"].append(
+                    {
+                        "scene_number": scene_number,
+                        "sentence_number": number,
+                    }
+                )
+                continue
+            fresh = dict(repair_missing[number])
+            if entry.get("graphics_outcome") is not None:
+                fresh["graphics_outcome"] = entry["graphics_outcome"]
+            fresh["coverage_repair"] = "attempted_still_missing"
+            kept.append(fresh)
+        stats["missing_visuals"] = kept
+
+    report["still_missing"] = [
+        {
+            "scene_number": item["scene_number"],
+            "sentence_number": item["sentence_number"],
+        }
+        for item in _sentences_still_missing(processed_scenes)
+    ]
+    return report
+
+
 def _honour_final_audit(final_audit):
     """INT-102 / MA-14: the completion gate over the auditor's verdict.
 
@@ -2184,6 +2415,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                         genre_pack=_theme_pack,
                         evidence=_evidence_map,
                         compositions=_graphics_params["compositions"],
+                        # UV-03: the bible rides along so the
+                        # lower-third label can prefer the beat's
+                        # recorded place/date identifier over the
+                        # covering asset's raw search title.
+                        bible=analysis.get("bible") or {},
                         production_context={
                             "timeline_event_count": len(
                                 (analysis.get("bible") or {}).get(
@@ -2217,6 +2453,25 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 )
                 _graphics_manifest = None
 
+        # MG-11: sentence slot durations from the narration
+        # parts' measured lengths (parts are sequential; part
+        # index + 1 is the sentence number) so engine graphics
+        # render at slot length instead of a fixed 3.0s the
+        # renderer then tpad-freezes.
+        _slot_durations = {}
+        if isinstance(parts_manifest_data, dict):
+            for _part in parts_manifest_data.get("parts") or []:
+                if not isinstance(_part, dict):
+                    continue
+                _measured = _part.get("measured_duration_seconds")
+                _index = _part.get("index")
+                if _measured and _index is not None:
+                    try:
+                        _slot_durations[int(_index) + 1] = float(
+                            _measured)
+                    except (TypeError, ValueError):
+                        continue
+
         motion_graphics_dir = project_dir / "motion_graphics"
         motion_graphics = build_motion_graphics_assets(
             motion_data,
@@ -2230,6 +2485,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             ),
             genre_pack=_theme_pack,
             manifest=_graphics_manifest,
+            slot_durations=_slot_durations,
         )
 
         # Attach each standalone motion graphic to its target
@@ -2482,6 +2738,51 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         print("Video Editor")
 
         # ----------------------------------------------
+        # Gate 2 (Blocker 3): pre-render coverage repair pass.
+        # Between motion_designer and the coverage gate below:
+        # sentences still in missing_visuals after graphics get
+        # ONE bounded repair attempt through the existing asset
+        # machinery. A sentence that survives repair + graphics
+        # fails HERE with the gate's own typed coverage error —
+        # early and honestly, instead of walking into a
+        # guaranteed gate failure after a full timeline build.
+        # The gate itself is unchanged and still runs below.
+        # ----------------------------------------------
+
+        _repair_report = _run_coverage_repair(
+            processed_scenes, project_dir
+        )
+        state["coverage_repair"] = _repair_report
+        save_production_state(project_dir, state)
+        try:
+            write_json_atomic(
+                artefact_dir / "coverage_repair_metrics.json",
+                _repair_report,
+                ensure_ascii=True,
+            )
+        except Exception as _repair_metrics_error:
+            print(
+                "Coverage repair metrics write failed (continuing): "
+                f"{_repair_metrics_error}"
+            )
+        if _repair_report["attempted"]:
+            print(
+                "Coverage repair: "
+                f"{len(_repair_report['missing_before'])} sentence(s) "
+                f"still missing after graphics, "
+                f"{len(_repair_report['repaired'])} repaired, "
+                f"{len(_repair_report['still_missing'])} still missing."
+            )
+        if _repair_report["still_missing"]:
+            raise _coverage_incomplete_error(
+                _repair_report["still_missing"],
+                sum(
+                    len((scene.get("sentences") or []))
+                    for scene in scenes
+                ),
+            )
+
+        # ----------------------------------------------
         # Build visual timeline
         # ----------------------------------------------
 
@@ -2537,18 +2838,9 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             state["_partial"]["timeline_result"] = timeline_result
         coverage = timeline_result.get("coverage") or {}
         if coverage and not coverage.get("complete", True):
-            uncovered = coverage.get("uncovered_sentences") or []
-            detail = ", ".join(
-                f"sentence {u.get('sentence_number')} "
-                f"(scene {u.get('scene_number')}, "
-                f"{u.get('start')}s-{u.get('end')}s)"
-                for u in uncovered
-            )
-            raise RuntimeError(
-                "TIMELINE COVERAGE INCOMPLETE: "
-                f"{len(uncovered)} of {coverage.get('total_sentences')} "
-                f"narration sentences have no visual coverage: {detail}. "
-                "Refusing to render an incomplete documentary."
+            raise _coverage_incomplete_error(
+                coverage.get("uncovered_sentences") or [],
+                coverage.get("total_sentences"),
             )
 
         # ----------------------------------------------

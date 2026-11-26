@@ -453,6 +453,7 @@ GRAPHIC_SKIP_REASONS = frozenset({
     "invalid_graphic_output",    # missing/empty/undecodable/no video stream
     "document_presentation_disabled",  # Phase 6: founder rule — no genuine document source exists
     "stat_cap_reached",          # Phase 6: legacy-mode stat cap (max_stats) reached
+    "terminal_graphics_decline",  # Gate 2: the terminal sweep ran and NO registry family could render from the recorded facts
 })
 
 # Fact-basis classes for rendered factual claims (MG-09). The three
@@ -2148,14 +2149,19 @@ def _series_from_text(text):
     if len(values) < 3:
         return None
     points = []
-    for idx, entry in enumerate(values):
-        start = 0 if idx == 0 else values[idx - 1]["start"] + 1
-        segment = text[start:entry["start"]].strip(" ,;—-")
-        words = segment.split()
-        label = " ".join(words[-3:]) if words else entry["display"]
+    for entry in values:
+        # MG-08 (Motion Graphics audit): a point's label is the
+        # quantity's own recorded display ("30 moves") — never the
+        # prose tail before the number. The historical version
+        # labelled points with the last three narration words
+        # ("standing more than"), prose fragments that read as
+        # chart nonsense. The unit rides along so readouts can
+        # name the quantity ("moves") instead of repeating the
+        # value as its own label.
         points.append({
-            "label": label, "value": entry["value"],
+            "label": entry["display"], "value": entry["value"],
             "display": entry["display"],
+            "unit": entry.get("unit") or "",
         })
     return points
 
@@ -2186,6 +2192,7 @@ def build_motion_graphics_assets(
     max_stats=None,
     genre_pack=None,
     manifest=None,
+    slot_durations=None,
 ):
     """
     Generate real standalone MP4 motion-graphic assets.
@@ -2201,11 +2208,14 @@ def build_motion_graphics_assets(
     A targeted sentence whose content fits a graphic family is
     served by that family; a targeted sentence no content family
     can serve is served by the T5 coverage guarantee (stage 6 of
-    the chain: a designed closing card presenting the sentence's
-    own words — no invented content). Only a target the guarantee
-    itself cannot render (or one carrying no text at all) is
-    skipped, and the skip is recorded in the manifest with its
-    typed reason.
+    the chain: timeline recap / outcome path where the bible
+    supports them, then the Gate 2 terminal sweep — designed
+    graphics built from the beat's recorded facts: a statistic,
+    a date, a name, a place — never the sentence's own words).
+    Only a target no eligible family can render from its recorded
+    facts (or one carrying no text at all) is skipped, and the
+    skip is recorded in the manifest with its typed reason and,
+    for a sweep-exhausted target, an explicit terminal decline.
 
     Phase 6 (AM-001/D1 + AM-002 Pass-2): graphics are generated
     ONLY for targeted requirements. The untargeted statistics sweep
@@ -3253,16 +3263,177 @@ def build_motion_graphics_assets(
     # the engine's typed refusal.
     # -----------------------------------------------------
 
+    # -----------------------------------------------------
+    # UV-01 / UV-12 (Unified Visual Audit): the graphics chain's
+    # script-fact intake. ONE normalisation + honesty filter for
+    # every consumer below (line/bar/pie charts, dashboard, HUD,
+    # holographic panel).
+    #
+    # UV-01: in production the bible's script_facts is the
+    # build_fact_table DICT {facts, record}; the historical
+    # consumers iterated it as a bare list, which yields the
+    # dict's string keys — the isinstance guard then silently
+    # discarded every fact, so charts and HUD readouts never saw
+    # a recorded quantity and fell back to regex text-mining.
+    # The dict shape is unwrapped here; a bare list (legacy
+    # callers/tests) passes through unchanged.
+    #
+    # UV-12: the bible's research labels have a production
+    # consumer now. A quantity fact is excluded from every
+    # graphic when the bible's own records mark it conflicted:
+    # an explicit label on the fact (conflicted/conflict flags,
+    # or a negative support label), or a bible["conflicts"]
+    # entry whose recorded disagreeing values contain the
+    # fact's value AND whose fact_hint identifies the fact's
+    # own sentence (the hint is the conflicted fact's text —
+    # for fact-table timeline entries, "<when> <sentence>").
+    # A fact with no label is treated exactly as before.
+    # Exclusions are recorded in _fact_exclusions and surface
+    # in the graphics manifest — never silent.
+    # -----------------------------------------------------
+
+    _fact_exclusions = []
+    _quantity_facts_cache = {}
+
+    def _script_fact_list():
+        table = (case_bible or {}).get("script_facts")
+        if isinstance(table, dict):
+            facts = table.get("facts")
+        else:
+            facts = table
+        return [f for f in facts or [] if isinstance(f, dict)]
+
+    def _hint_key(text):
+        return re.sub(
+            r"\s+", " ",
+            re.sub(r"[^a-z0-9 ]", " ", str(text or "").lower()),
+        ).strip()
+
+    def _value_token(raw):
+        text = str(raw or "").replace(",", "").strip()
+        try:
+            number = float(text)
+        except (TypeError, ValueError):
+            return text.lower()
+        return str(int(number)) if number == int(number) else str(number)
+
+    _conflicts = [
+        c for c in ((case_bible or {}).get("conflicts") or [])
+        if isinstance(c, dict)
+    ]
+    _conflict_values = {
+        _value_token(v.get("value"))
+        for c in _conflicts
+        for v in (c.get("values") or [])
+        if isinstance(v, dict)
+    }
+    _conflict_hints = [
+        _hint_key(c.get("fact_hint")) for c in _conflicts
+    ]
+    _sentence_text_by_number = {}
+    for _scene in scenes:
+        for _sentence in _scene.get("sentences") or []:
+            if isinstance(_sentence, dict) and (
+                _sentence.get("sentence_number") is not None
+            ):
+                _sentence_text_by_number[
+                    _sentence["sentence_number"]
+                ] = _sentence.get("text") or ""
+
+    def _fact_is_conflicted(fact):
+        if fact.get("conflicted") or fact.get("conflict"):
+            return True
+        if str(fact.get("support") or "").strip().lower() in (
+            "conflicted", "unsupported", "disputed",
+        ):
+            return True
+        if not _conflict_values:
+            return False
+        tokens = set()
+        if fact.get("value") is not None:
+            tokens.add(_value_token(fact.get("value")))
+        for match in re.finditer(
+            r"\d[\d,]*(?:\.\d+)?",
+            clean_text(fact.get("display") or ""),
+        ):
+            tokens.add(_value_token(match.group(0)))
+        if not tokens or not (tokens & _conflict_values):
+            return False
+        texts = []
+        if fact.get("what"):
+            texts.append(
+                f"{fact.get('when') or ''} {fact.get('what')}"
+            )
+        sentence_text = _sentence_text_by_number.get(
+            fact.get("sentence_number")
+        )
+        if sentence_text:
+            texts.append(sentence_text)
+        for text in texts:
+            key = _hint_key(text)
+            if not key:
+                continue
+            for hint in _conflict_hints:
+                if hint and (
+                    key[:40] in hint or hint[:40] in key
+                ):
+                    return True
+        return False
+
+    def _quantity_value_unit(fact):
+        """A quantity fact's (value, unit): the recorded fields
+        when present; otherwise derived from the fact's own
+        display string ("80 metres" -> 80 / "metres") — the
+        production fact table (services.script_facts) records
+        display + sentence reference but no parsed value/unit,
+        so without this derivation the UV-01 shape fix alone
+        would still starve every production chart. A display
+        with no leading number ("twenty-foot") derives nothing
+        and the fact stays unusable, exactly as before."""
+        value = fact.get("value")
+        unit = clean_text(fact.get("unit") or "").lower()
+        if value is None or not unit:
+            match = re.match(
+                r"^\s*(\d[\d,]*(?:\.\d+)?)\s*(.*)$",
+                clean_text(fact.get("display") or ""),
+            )
+            if match:
+                if value is None:
+                    value = match.group(1)
+                if not unit:
+                    unit = match.group(2).strip().lower()
+        return value, unit
+
+    def _usable_quantity_facts():
+        """The bible's quantity facts minus the UV-12 exclusions,
+        computed once per build (assemblers call repeatedly)."""
+        if "facts" not in _quantity_facts_cache:
+            usable = []
+            for fact in _script_fact_list():
+                if fact.get("kind") != "quantity":
+                    continue
+                if _fact_is_conflicted(fact):
+                    _fact_exclusions.append({
+                        "fact_id": fact.get("fact_id"),
+                        "sentence_number": fact.get("sentence_number"),
+                        "display": clean_text(
+                            fact.get("display") or ""
+                        ),
+                        "reason": "research_conflict",
+                    })
+                    continue
+                usable.append(fact)
+            _quantity_facts_cache["facts"] = usable
+        return _quantity_facts_cache["facts"]
+
     def _fact_quantities():
         """Recorded quantity facts from the Phase 2.3 fact table,
         grouped by unit: {unit: [fact, ...]} in sentence order."""
         grouped = {}
-        for fact in (case_bible.get("script_facts") or []):
-            if not isinstance(fact, dict) or fact.get("kind") != "quantity":
-                continue
-            unit = clean_text(fact.get("unit") or "").lower()
+        for fact in _usable_quantity_facts():
+            raw_value, unit = _quantity_value_unit(fact)
             try:
-                value = float(fact.get("value"))
+                value = float(raw_value)
             except (TypeError, ValueError):
                 continue
             grouped.setdefault(unit, []).append({
@@ -3367,6 +3538,20 @@ def build_motion_graphics_assets(
         count = len(data.get("photos") or [])
         if count < 2:
             return None
+        # MG-04 (Motion Graphics audit; founder fabrication
+        # ruling): strings between photos assert relationships.
+        # The board assembler records NO labels for its photos
+        # (labels stay empty by the no-metadata-caption rule), so
+        # every string would connect unlabelled, unrelated photos
+        # — the audited defect. The family declines until a
+        # recorded label source covers EVERY connected node; the
+        # template enforces the same rule for direct callers.
+        labels = [
+            clean_text(label) for label in (data.get("labels") or [])
+        ]
+        labels = [label for label in labels if label]
+        if len(labels) < count:
+            return None
         data["strings"] = [[i, i + 1] for i in range(count - 1)]
         return data
 
@@ -3381,7 +3566,12 @@ def build_motion_graphics_assets(
             # Founder ruling 2026-11-23: no raw metadata text on
             # screen — an asset whose title is a file name is not
             # a headline, and no source label is ever attached.
-            if not title or is_metadata_title(title):
+            # MG-06-residual: a long descriptive archive title
+            # that slips the metadata patterns is still caller
+            # prose, not a headline — only a short payload (the
+            # designed-element shape) may be typeset as one.
+            if not title or is_metadata_title(title) \
+                    or not is_short_payload(title):
                 continue
             articles.append({
                 "headline": title,
@@ -3551,6 +3741,16 @@ def build_motion_graphics_assets(
         None and the template keeps its recorded refusal."""
         for asset in _verified_scene_assets(target):
             if asset.get("evidence_type") != "document":
+                continue
+            # MG-07 (Motion Graphics audit): the presented image
+            # is a photo fed into a graphic — the same
+            # person-conflict check every other photo assembler
+            # applies runs here too; a "document" whose title
+            # depicts an unrelated named person is refused and
+            # the next candidate is tried.
+            if photo_person_conflict(
+                asset, target.get("text") or "", case_bible
+            ):
                 continue
             path = _asset_file(asset)
             provenance = clean_text(
@@ -3769,7 +3969,10 @@ def build_motion_graphics_assets(
             # Founder ruling 2026-11-23: same as the montage —
             # file-name titles are not headlines, and no source
             # label is ever attached to an article card.
-            if not title or is_metadata_title(title):
+            # MG-06-residual: short-payload gate as in the
+            # montage — archive-title prose is not a headline.
+            if not title or is_metadata_title(title) \
+                    or not is_short_payload(title):
                 continue
             articles.append({
                 "headline": title,
@@ -3823,14 +4026,15 @@ def build_motion_graphics_assets(
             return None
         readouts = []
         number = target.get("sentence_number")
-        for fact in (case_bible.get("script_facts") or []):
-            if not isinstance(fact, dict) or fact.get("kind") != "quantity":
-                continue
+        # UV-01/UV-12: the shared intake — production dict shape
+        # unwrapped, conflicted facts excluded, unit derived from
+        # the display when the fact records none.
+        for fact in _usable_quantity_facts():
             if number is not None and fact.get(
                     "sentence_number") not in (None, number):
                 continue
             display = clean_text(fact.get("display") or "")
-            unit = clean_text(fact.get("unit") or "")
+            _value, unit = _quantity_value_unit(fact)
             # No placeholder labels: a readout without a real
             # unit label is not presented (the historical "VALUE"
             # fallback burned a placeholder word into the frame).
@@ -3841,7 +4045,15 @@ def build_motion_graphics_assets(
                 })
         if not readouts:
             for point in _series_from_text(target["text"]) or []:
+                # MG-08: a point's label IS its display (value) —
+                # a readout named by its own value is meaningless;
+                # name it by the quantity's unit instead, and skip
+                # points that carry neither.
                 label = clean_text(point.get("label") or "")
+                if label and label == clean_text(
+                    point.get("display") or ""
+                ):
+                    label = clean_text(point.get("unit") or "")
                 if label and point.get("display"):
                     readouts.append({
                         "label": label,
@@ -4007,8 +4219,29 @@ def build_motion_graphics_assets(
         "object_labels": _assemble_object_labels,
     }
 
+    def _engine_duration_for(target):
+        """MG-11 (Motion Graphics audit): an engine graphic
+        renders AT its sentence slot's length — the historical
+        fixed 3.0s render left longer slots to the renderer's
+        tpad freeze (a 3s closing card frozen across a 10.275s
+        slot). Templates are progress-based, so rendering at
+        slot length fills the slot with the designed animation
+        and holds the settled final state by design. The slot
+        comes from the narration part's measured duration
+        (stamped by the caller / jobs); clamped to the sane
+        graphic band, defaulting to the historical 3.0s when no
+        slot is recorded."""
+        slot = target.get("slot_duration_seconds")
+        try:
+            slot = float(slot)
+        except (TypeError, ValueError):
+            return 3.0
+        if slot <= 0:
+            return 3.0
+        return min(10.0, max(2.5, slot))
+
     def _make_engine_graphic(target, template_name, engine_data,
-                             style="editorial", duration=3.0):
+                             style="editorial", duration=None):
         """Stage 3E integration: render one Motion Engine template
         for a target and register it with the SAME asset shape and
         honesty stamps as the ffmpeg/PIL graphics.
@@ -4025,6 +4258,8 @@ def build_motion_graphics_assets(
         from the script. Before this, only an input SUMMARY
         (engine_metadata) survived and the raw data was discarded.
         """
+        if duration is None:
+            duration = _engine_duration_for(target)
         if template_name in (
             "document_presentation", "classified_file",
         ) and not (
@@ -4266,7 +4501,164 @@ def build_motion_graphics_assets(
             return assemble(target)
         return None
 
+    def _terminal_facts(target, text):
+        """Gate 2 (Blocker 2): the facts actually available for one
+        target sentence, gathered from every recorded source — the
+        sentence text itself, its analysis record (entities /
+        locations / dates), its scenario, and the case bible
+        (entities, timeline dates, title). The terminal graphics
+        sweep matches registry families against THESE facts by
+        their declared input requirements. Nothing is invented: a
+        fact enters the record only when a source recorded it, and
+        every fact must pass the short-payload bar (a designed
+        element — never sentence text). Sentence-local sources
+        outrank bible-global ones in every list."""
+        sentence = _sentences_by_key.get(
+            (target["scene_number"], target["sentence_index"])
+        ) or {}
+        scenario = target.get("scenario") or {}
+        facts = {"names": [], "places": [], "dates": [], "labels": []}
+
+        def _add(kind, value):
+            value = clean_text(value or "")
+            if (
+                value
+                and is_short_payload(value)
+                and not is_metadata_title(value)
+                and value not in facts[kind]
+            ):
+                facts[kind].append(value)
+
+        date = detect_date(text)
+        if date:
+            _add("dates", date)
+        for value in sentence.get("dates") or []:
+            _add("dates", value)
+        _add("dates", scenario.get("era"))
+        _add("dates", scenario.get("date"))
+
+        names, places = labels_from_text(text)
+        for value in names:
+            _add("names", value)
+        for value in places:
+            _add("places", value)
+        for entity in sentence.get("entities") or []:
+            if isinstance(entity, dict):
+                _add(
+                    "names",
+                    entity.get("name") or entity.get("canonical"),
+                )
+            else:
+                _add("names", entity)
+        for value in sentence.get("locations") or []:
+            _add("places", value)
+        _add("places", scenario.get("place"))
+        _add("labels", scenario.get("event"))
+
+        for entity in (case_bible or {}).get("entities") or []:
+            if not isinstance(entity, dict):
+                continue
+            kind = (
+                "places"
+                if str(entity.get("type") or "").lower()
+                in ("place", "location")
+                else "names"
+            )
+            _add(kind, entity.get("canonical") or entity.get("name"))
+        for event in timeline_events or []:
+            if isinstance(event, dict):
+                _add("dates", event.get("when"))
+
+        facts["title"] = short_title_for(target, text)
+        facts["payload"] = (
+            short_payload_for(text, sentence_record=sentence)
+            or (facts["names"] or [None])[0]
+            or (facts["dates"] or [None])[0]
+            or (facts["places"] or [None])[0]
+            or (facts["labels"] or [None])[0]
+            or ""
+        )
+        return facts
+
+    def _terminal_candidates(target, text, facts):
+        """Gate 2 (Blocker 2): the terminal fallback sweep — the
+        registry families whose DECLARED input requirements can be
+        met by the minimal recorded facts of one beat, in the
+        order they are attempted when every preferred family has
+        declined:
+
+        - closing_card    requires: one short payload (statistic /
+                          date / name / place). Always attempted
+                          first — with the payload the fact record
+                          produced, empty when it produced none:
+                          the template itself is the payload
+                          enforcer (it refuses an empty or
+                          sentence-length payload), exactly as the
+                          run-10 floor behaved.
+        - archival_title  requires: one headline fact (name /
+                          scenario label / place / designed title),
+                          with an optional date label and place
+                          subtitle from the same fact record;
+                          attempted only when the closing card
+                          failed hard — a soft closing-card refusal
+                          stands
+
+        These are the only always-producible families: every other
+        registry family declares an input a single beat's facts
+        cannot supply — a photo or document asset, a numeric
+        series/comparison (those data contracts are exhausted by
+        the stat and engine stages above with the sentence's full
+        text, so a terminal retry could only repeat their
+        refusal), or a production-global pool (timeline / process,
+        already attempted by the guarantee routes above). Every
+        payload here is a short designed element — never the
+        narration sentence, never a file name or source label,
+        never any branding (the templates enforce the same bars
+        at render). The Director's candidate lists do not gate
+        the sweep: like the run-10 floor before it, the sweep is
+        the coverage guarantee, and a Director preference order
+        is not a veto over it."""
+        candidates = []
+        payload = facts.get("payload") or ""
+        title = facts.get("title") or ""
+        kicker = clean_text((case_bible or {}).get("title") or "")
+        data = {"quote": payload}
+        if kicker:
+            data["kicker"] = kicker
+        candidates.append(("closing_card", data))
+        headline = (
+            (facts["names"] or [None])[0]
+            or (facts["labels"] or [None])[0]
+            or (facts["places"] or [None])[0]
+            or title
+            or ""
+        )
+        if headline:
+            data = {"title": headline}
+            if facts["dates"]:
+                data["date_label"] = facts["dates"][0]
+            place = next(
+                (p for p in facts["places"] if p != headline), ""
+            )
+            if place:
+                data["subtitle"] = place
+            if kicker and kicker.upper() != headline.upper():
+                data["kicker"] = kicker
+            candidates.append(("archival_title", data))
+        return candidates
+
     _legacy_stats_created = 0
+
+    # MG-11: stamp each target with its sentence slot's measured
+    # duration (narration parts, keyed by sentence_number) so
+    # engine graphics render at slot length. A target already
+    # carrying a slot keeps it.
+    if isinstance(slot_durations, dict):
+        for target in target_list:
+            if target.get("slot_duration_seconds") is None:
+                _slot = slot_durations.get(target.get("sentence_number"))
+                if _slot is not None:
+                    target["slot_duration_seconds"] = _slot
 
     # Targeted graphics FIRST — they answer a recorded coverage
     # failure, so the untargeted cap must never block them.
@@ -4350,6 +4742,7 @@ def build_motion_graphics_assets(
         _engine_detail = ""
         _guarantee_reason = None
         _guarantee_detail = ""
+        _terminal_decline = None
 
         # Variety pre-pass: if the previous target used the stat
         # family and an engine alternative fits this one, try the
@@ -4746,46 +5139,77 @@ def build_motion_graphics_assets(
                         "sentence_number": target["sentence_number"],
                     })
         if produced_family is None and not _served_by_process_anchor:
-            # Founder ruling 2026-11-23: the coverage floor's card
-            # carries a SHORT DESIGNED payload selected from the
-            # sentence (a statistic, a date, a name, a place) under
-            # the production's title — never the narration sentence
-            # itself. A sentence with no selectable payload gets
-            # no card; the skip machinery below records the beat
-            # honestly instead of printing its own narration.
-            _payload = short_payload_for(
-                text,
-                sentence_record=_sentences_by_key.get(
-                    (target["scene_number"], target["sentence_index"])
-                ),
-            )
-            _card_data = {"quote": _payload}
-            _kicker = clean_text(
-                (case_bible or {}).get("title") or ""
-            )
-            if _kicker:
-                _card_data["kicker"] = _kicker
-            _card_ok, _guarantee_reason, _guarantee_detail = (
-                _make_engine_graphic(
-                    target, "closing_card", _card_data,
-                    style=_style_for_target(
-                        target, _style_for("editorial")
-                    ),
+            # Gate 2 (Blocker 2): TERMINAL GRAPHICS SWEEP. The
+            # run-10 floor tried exactly ONE family (closing_card)
+            # with a payload drawn only from the sentence text —
+            # a beat whose facts live in its analysis record,
+            # scenario or the case bible (a name, a date, a place
+            # the sentence itself does not repeat) still declined
+            # and reached the timeline with no visual of any kind.
+            # The sweep instead iterates the registry families
+            # whose declared input requirements the beat's recorded
+            # facts satisfy (_terminal_candidates), first render
+            # wins. Founder rules hold for every candidate: the
+            # payload is a SHORT DESIGNED element (statistic, date,
+            # name, place) under the production's title — never the
+            # narration sentence itself, never a file name or
+            # source label, never any branding. Only when literally
+            # no family can render from the recorded facts does the
+            # beat decline, and that decline is recorded explicitly
+            # (terminal_graphics_decline, with the families attempted
+            # and the facts that were available) on the skip and
+            # outcome records below.
+            _facts = _terminal_facts(target, text)
+            _terminal_attempted = []
+            _soft_floor_refusal = False
+            for _tname, _tdata in _terminal_candidates(
+                target, text, _facts
+            ):
+                if _tname == "archival_title" and _soft_floor_refusal:
+                    # The closing card declined its payload softly
+                    # — the beat's facts are not renderable as
+                    # designed elements, and a title card built
+                    # from the same facts would not change that.
+                    # The title family is the sweep's answer to a
+                    # HARD closing-card failure, not a second
+                    # opinion on a soft refusal.
+                    continue
+                _terminal_attempted.append(_tname)
+                _card_ok, _guarantee_reason, _guarantee_detail = (
+                    _make_engine_graphic(
+                        target, _tname, _tdata,
+                        style=_style_for_target(
+                            target, _style_for("editorial")
+                        ),
+                    )
                 )
-            )
-            if _card_ok:
-                produced_family = "motion_engine"
-                produced_reason = "coverage_guarantee:closing_card"
-                for _record in reversed(assets):
-                    if (
-                        _record.get("template") == "closing_card"
-                        and _record.get("scene_number")
-                        == target["scene_number"]
-                        and _record.get("sentence_index")
-                        == target["sentence_index"]
-                    ):
-                        _record["coverage_guarantee"] = True
-                        break
+                if _guarantee_reason not in (
+                    "rendering_failure", "validation_failed",
+                    "invalid_graphic_output",
+                ):
+                    _soft_floor_refusal = True
+                if _card_ok:
+                    produced_family = "motion_engine"
+                    produced_reason = (
+                        "coverage_guarantee:closing_card"
+                        if _tname == "closing_card"
+                        else f"coverage_guarantee:terminal:{_tname}"
+                    )
+                    _guarantee_reason = None
+                    _guarantee_detail = ""
+                    for _record in reversed(assets):
+                        if (
+                            _record.get("template") == _tname
+                            and _record.get("scene_number")
+                            == target["scene_number"]
+                            and _record.get("sentence_index")
+                            == target["sentence_index"]
+                        ):
+                            _record["coverage_guarantee"] = True
+                            _record["terminal_guarantee"] = _tname
+                            break
+                    break
+            if produced_family is not None:
                 # The floor covers the beat; it does not erase
                 # why the beat needed it. A stage failure above
                 # (e.g. a stat render that exploded) was previously
@@ -4819,13 +5243,21 @@ def build_motion_graphics_assets(
                         "file_path": None,
                         "reason": _prior[1],
                         "detail": _prior[2],
-                        "superseded_by": (
-                            "coverage_guarantee:closing_card"
-                        ),
+                        "superseded_by": produced_reason,
                         "scene_number": target["scene_number"],
                         "sentence_index": target["sentence_index"],
                         "sentence_number": target["sentence_number"],
                     })
+            else:
+                _terminal_decline = {
+                    "reason": "terminal_graphics_decline",
+                    "attempted_families": _terminal_attempted,
+                    "facts_available": sorted(
+                        kind
+                        for kind, values in _facts.items()
+                        if values
+                    ),
+                }
 
         if produced_family is not None:
             covered.add(key)
@@ -4919,7 +5351,20 @@ def build_motion_graphics_assets(
                     "detail": _detail,
                 }
             )
+            if _terminal_decline is not None:
+                # Gate 2 (Blocker 2): the explicit terminal
+                # decline — the sweep ran, every eligible family
+                # was attempted against the recorded facts, and
+                # none could render. Recorded on BOTH the skip
+                # entry and the outcome so the beat's absence of
+                # any visual is a stated fact with its evidence,
+                # never a silent fall-through.
+                target_skips[-1]["terminal_decline"] = _terminal_decline
             _record_outcome(target, "skipped", None, _reason)
+            if _terminal_decline is not None:
+                target_outcomes[-1]["terminal_decline"] = (
+                    _terminal_decline
+                )
             # Founder defect audit 2026-11-23: the chain's primary
             # attempt failure is preserved in graphic_failures for
             # UNSERVED beats too — the same record the superseded
@@ -5139,6 +5584,10 @@ def build_motion_graphics_assets(
                 "outcomes": target_outcomes,
             },
             "undelivered": undelivered,
+            # UV-12: quantity facts the bible's own research
+            # labels excluded from every graphic in this build,
+            # with the reason — recorded, never silent.
+            "fact_exclusions": _fact_exclusions,
             # MG-05: graphics that were rendered but refused
             # registration (validation) or failed to render —
             # recorded with their original failure information,

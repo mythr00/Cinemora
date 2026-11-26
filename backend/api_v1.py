@@ -2659,13 +2659,23 @@ def list_assets(
 
 
 def _output_entry(project_id: str, project_dir: Path, index: dict, filename: str):
-    path = project_dir / filename
+    # Gate 2 / Blocker 4: canonical outputs are run-scoped for new
+    # runs (Stage 4, DATA-004) — the film and the reports live under
+    # runs/<run_id>/, not at the project root. Checking only the
+    # project-level path reported a completed film as non-existent
+    # while its 238 MB MP4 sat in the run directory. Resolve through
+    # the same "latest run" view the media index itself uses
+    # (build_media_index resolves canonical outputs via
+    # media_paths.resolve_artefact), so existence, size, path and
+    # media key all describe the file that is actually on disk.
+    path = media_paths.resolve_artefact(project_dir, filename)
     if not path.is_file():
         return {"exists": False, "filename": filename}
     key = plan_document.media_key_for(project_dir, path)
     entry = {
         "exists": True,
         "filename": filename,
+        "path": str(path),
         "size_bytes": path.stat().st_size,
         "media_key": key if key in index else None,
     }

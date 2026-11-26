@@ -24,6 +24,7 @@ Families:
 """
 
 import math
+import re
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -399,10 +400,10 @@ def profile_reveal(data, style, out_path, duration=5.0, sentence_index=None, sce
     photo = _load_image(data.get("photo"))
     if photo is None:
         return None, {"reason": "no_photo"}
-    title = _clean(data.get("title") or data.get("name"))
+    title = _designed_text(data.get("title") or data.get("name"))
     if not title:
         return None, {"reason": "no_title"}
-    subtitle = _clean(data.get("subtitle"))
+    subtitle = _designed_text(data.get("subtitle"))
     fields = []
     for entry in data.get("fields") or []:
         if not isinstance(entry, dict):
@@ -735,14 +736,37 @@ def text_highlight(data, style, out_path, duration=5.0, sentence_index=None, sce
 # the core camera (2.5D photo treatment)
 # ---------------------------------------------------------------------------
 
+def _designed_text(value, max_len=64):
+    """MG-06-residual (template-level guard): text a photo
+    template may typeset is a designed identifier (place / date /
+    name), never caller-supplied provenance. A value that looks
+    like file metadata ("File:..." archive titles, anything
+    carrying an image-file extension, provider/source strings)
+    or that runs past a headline's length is dropped — whoever
+    supplied it, including a replayed recipe."""
+    text = _clean(value)
+    if not text:
+        return ""
+    lowered = text.lower()
+    if lowered.startswith("file:") or lowered.startswith("source"):
+        return ""
+    if re.search(r"\.(jpe?g|png|tiff?|webp|gif|svg)\b", lowered):
+        return ""
+    if "wikimedia" in lowered or "•" in text:
+        return ""
+    if len(text) > max_len:
+        return ""
+    return text
+
+
 def photo_parallax(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
     style_name, tokens = resolve_style(style)
     data = data or {}
     photo = _load_image(data.get("photo"))
     if photo is None:
         return None, {"reason": "no_photo"}
-    title = _clean(data.get("title"))
-    caption = _clean(data.get("caption"))
+    title = _designed_text(data.get("title"))
+    caption = _designed_text(data.get("caption"))
     cover = fit_cover(photo, (WIDTH, HEIGHT))
     # Far layer: softened, darkened, slightly larger — reads as
     # depth behind the subject plane. Foreground: the photo's

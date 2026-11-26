@@ -410,9 +410,15 @@ def test_investigation_variants_through_pipeline(tmp_path):
     for asset in assets:
         by_template.setdefault(asset.get("template"), []).append(asset)
     for name in ("newspaper_montage", "profile_reveal",
-                 "photo_parallax", "red_string_board"):
+                 "photo_parallax"):
         assert len(by_template.get(name) or []) == 1, name
         assert by_template[name][0]["validation"]["passed"]
+    # PIN CHANGED (MG-04, Motion Graphics audit): red_string_board
+    # no longer renders for this beat. The board's photos carry no
+    # recorded labels, and strings between unlabelled photos
+    # fabricate relationships — the family now declines until a
+    # label source covers every connected node.
+    assert not by_template.get("red_string_board")
     # Full-bleed photo treatment: no theme background is visible
     # by design (the photo fills the frame; theme tokens ride the
     # title band), so the check is size + non-blank only.
