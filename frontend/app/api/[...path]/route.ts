@@ -86,6 +86,15 @@ async function proxy(
   const ifRange = request.headers.get("if-range");
   if (ifRange) headers.set("if-range", ifRange);
   // Deliberately NOT forwarded: x-api-key (see the header comment).
+  // Forwarded-host pinning: the backend's public ingress (GitHub
+  // Codespaces port forwarding) refuses requests whose
+  // X-Forwarded-Host names a different host — and platform egress
+  // stamps this fetch with the SITE's host, which the tunnel then
+  // rejects with an empty 404. Pin the forwarded headers to the
+  // backend's own origin so the tunnel accepts the request.
+  const backendOrigin = new URL(BACKEND_URL);
+  headers.set("x-forwarded-host", backendOrigin.host);
+  headers.set("x-forwarded-proto", backendOrigin.protocol.replace(":", ""));
 
   const method = request.method;
   const hasBody = method !== "GET" && method !== "HEAD";
