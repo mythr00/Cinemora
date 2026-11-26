@@ -10,19 +10,19 @@ first), and submit.
 
 A production run moves through six stages in order:
 
-1. voice_actor — narration is synthesised and captions timed.
-2. script_analysis — the script is understood: scenes, sentences,
-   entities, facts and a visual plan.
-3. asset_manager — footage and images are discovered, downloaded
+1. Narration — the voice track is generated and captions timed.
+2. Script analysis — the script is understood: scenes,
+   sentences, entities, facts and a visual plan.
+3. Visual research — footage and images are found, downloaded
    and verified against each sentence's visual need.
-4. motion_designer — motion graphics are designed and rendered.
-5. sound_designer — narration, music and sound are mixed.
-6. video_editor — the final film is assembled and encoded.
+4. Motion graphics — the designed elements are created and
+   rendered.
+5. Sound design — narration, music and sound are mixed.
+6. Final assembly — the finished film is assembled and encoded.
 
-If you enabled plan approval, the run pauses after analysis in
-the "awaiting_approval" state until you approve the plan on the
-Plan tab; approving releases the same run into the remaining
-stages. Submitting a run for a project whose script already has an
+If you enabled plan approval, the run pauses after analysis
+until you approve the plan; approving releases the same run into
+the remaining stages. Submitting a run for a project whose script already has an
 active run does not create a duplicate — the existing run is
 reported instead.
 

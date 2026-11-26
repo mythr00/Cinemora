@@ -27,7 +27,7 @@ def _require_serper():
             503,
             "search_unavailable",
             "Web search is unavailable on this deployment: the "
-            "search provider (Serper) is not configured.",
+            "Web search is not available on this deployment.",
         )
 
 

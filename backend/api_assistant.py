@@ -32,7 +32,7 @@ from models import (
 )
 from services import auth as auth_service
 from services.assistant import actions as actions_svc
-from services.assistant import orchestrator, registry
+from services.assistant import boundary, orchestrator, registry
 
 # Importing the tools package populates the registry.
 from services.assistant import tools as _tools  # noqa: F401
@@ -320,7 +320,14 @@ def post_message(
                 if outcome.pending_action is not None
                 else None
             ),
-            "tool_results": outcome.tool_results,
+            # Item 2 boundary: raw tool payloads returned to the
+            # client are terminology-sanitised for non-staff —
+            # provider names, internal routes and stage ids in
+            # tool data must not reach customer-facing surfaces
+            # even when the prose answer is clean.
+            "tool_results": boundary.sanitize_for(
+                principal, outcome.tool_results
+            ),
         }
     finally:
         db.close()

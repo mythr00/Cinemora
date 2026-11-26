@@ -3,13 +3,14 @@ title: Runs, statuses, retry and cancellation
 link: /projects
 keywords: run, status, queued, running, failed, cancelled, retry, resume, cancel, heartbeat, stuck
 
-Every production submission creates a run, recorded in the run
-ledger with its status, current stage, options and script hash.
+Every production submission creates a run, recorded in the
+production's history with its status, current stage, options
+and script.
 
 - queued: waiting for a worker to claim it.
-- running: a worker is producing it; the run heartbeats while it
-  works, and the assistant can report the heartbeat's age and
-  whether the run looks live.
+- running: the production is being made; it reports progress
+  while it works, and the assistant can tell you how recently it
+  updated and whether it looks live.
 - awaiting_approval: analysis finished; the run is parked until
   the plan is approved on the Plan tab.
 - completed: the film was produced and delivered.

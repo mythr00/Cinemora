@@ -135,7 +135,28 @@ def user(client):
         },
     )
     assert response.status_code == 201, response.text
-    return with_session_token(response)
+    body = with_session_token(response)
+    # Item 8 (zero-credit enforcement): run-submission actions now
+    # reserve real billing, so this ordinary account is funded
+    # with purchased credits — the action machinery under test is
+    # exercised under the enforced billing rule, not around it.
+    from services.billing import credits as credits_service
+
+    db = SessionLocal()
+    try:
+        credits_service.grant(
+            db,
+            body["user"]["id"],
+            "purchased",
+            5000,
+            entry_type="purchase",
+            idempotency_key=f"write-tools-grant-{body['user']['id']}",
+            source="test_fixture",
+        )
+        db.commit()
+    finally:
+        db.close()
+    return body
 
 
 def _create_project(client, user, title="Write Test Film"):

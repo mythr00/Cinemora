@@ -3,13 +3,14 @@ title: Production certificate and quality verdicts
 link: /projects/[id]/certificate
 keywords: certificate, provenance, quality, verdicts, trust, evidence, report
 
-The Certificate tab (/projects/[id]/certificate) is the
+The Certificate tab is the
 production's provenance record for its latest run. It states:
 
 - Which assets were used, with their sources, verification
-  verdicts and rights/licence evidence (the ledger certificate).
-- The planner block: which planner produced the plan (full or
-  degraded mode) and, in degraded mode, the recorded reason.
+  verdicts and rights/licence evidence (the provenance
+  certificate).
+- How the plan was produced, including any fallback planning
+  mode and the recorded reason for it.
 - The quality section: the production's recorded quality report —
   integrity, coverage and reliability verdicts (PASS,
   QUALITY_WARNING, FAIL or UNKNOWN) with the measurements behind

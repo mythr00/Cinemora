@@ -22,6 +22,7 @@ from database import SessionLocal
 from models import ProductionRun, Project, User, UserPreference
 from services import editor, media_paths, plan_document, plans as plans_service
 from services import project_intelligence, run_ledger
+from services.assistant import boundary
 from services.assistant.registry import READ, EmptyArgs, ToolSpec, register
 
 
@@ -131,7 +132,16 @@ def _account_profile(principal, args):
             ),
             "project_count": project_count,
             "run_count": run_count,
-            "providers": run_ledger.provider_snapshot(),
+            # Item 2 boundary: provider names/configuration are
+            # internal. Staff see the real snapshot; customers get
+            # generic capability entries with the same truth.
+            "providers": (
+                run_ledger.provider_snapshot()
+                if boundary.is_staff(principal)
+                else boundary.sanitize_value(
+                    run_ledger.provider_snapshot()
+                )
+            ),
         }
     finally:
         db.close()

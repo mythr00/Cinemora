@@ -298,7 +298,9 @@ def test_scenario_3_running_documentary_status(client, seeded, monkeypatch):
     result = response.json()["tool_results"]["get_job_status"]
     assert result["run_id"] == run_id
     assert result["status"] == "running"
-    assert result["stage"] == "asset_manager"
+    # Item 2 boundary: the customer-facing payload carries the
+    # customer stage label, never the internal stage id.
+    assert result["stage"] == "visual research"
     assert result["presence"]["worker_id"] == "worker-1"
     assert result["presence"]["live"] is True
 
@@ -475,7 +477,10 @@ def test_account_tools_describe_the_caller(client, seeded):
     profile = _call(principal, "get_account_profile")
     assert profile["project_count"] == 2
     assert profile["plan"]["name"] == "free"
-    assert profile["providers"]["serper"]["enabled"] is True
+    # Item 2 boundary: an ordinary account's profile carries
+    # generic capability entries, never provider names/keys.
+    assert "serper" not in profile["providers"]
+    assert profile["providers"]["web_search"]["enabled"] is True
     usage = _call(principal, "get_account_usage", days=30)
     assert usage["runs_total"] == 0
     prefs = _call(principal, "get_account_preferences")

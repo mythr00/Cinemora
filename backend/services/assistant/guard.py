@@ -55,6 +55,22 @@ _PATTERNS = (
         ),
     ),
     (
+        "extract_instructions",
+        re.compile(
+            r"(?i)(what|show|repeat|print|tell\s+me|give\s+me)\s+"
+            r"[^.?!]{0,40}(system\s+prompt|your\s+instructions|"
+            r"your\s+prompt|developer\s+message|initial\s+instructions)"
+        ),
+    ),
+    (
+        "extract_provider",
+        re.compile(
+            r"(?i)(which|what)\s+(provider|api|service|backend|vendor)\s+"
+            r"[^.?!]{0,40}(use|used|using|power|powers|behind|configured)|"
+            r"\b(serper|brewkeg)\b"
+        ),
+    ),
+    (
         "instruction_to_assistant",
         re.compile(
             r"(?i)\b(assistant|ai)\s*[:,]\s*(ignore|reveal|delete|cancel|"

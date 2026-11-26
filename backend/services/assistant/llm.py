@@ -53,7 +53,7 @@ def complete_json(system_prompt: str, user_payload: str) -> dict:
         raise AssistantUnavailable(
             "llm_not_configured",
             "The assistant's language model is not configured on "
-            "this deployment (no BrewKeg key), so the assistant "
+            "this deployment, so the assistant "
             "cannot answer right now.",
             provider_error_kind="not_configured",
         )
@@ -66,7 +66,7 @@ def complete_json(system_prompt: str, user_payload: str) -> dict:
             raise AssistantUnavailable(
                 "llm_not_configured",
                 "The assistant's language model is not configured on "
-                "this deployment (no BrewKeg key), so the assistant "
+                "this deployment, so the assistant "
                 "cannot answer right now.",
                 provider_error_kind=error.kind,
             ) from error
