@@ -32,6 +32,7 @@ from models import (
 from services import auth as auth_service
 from services import media_paths
 from services import run_ledger
+from services.billing import credits as billing_credits
 
 TOKEN = "phase8-" + "operator-token-for-tests"
 PASSWORD = "correct-horse-battery-42"
@@ -149,6 +150,27 @@ def _bearer(user):
     return {"Authorization": f"Bearer {user['session_token']}"}
 
 
+def _grant_purchased(user_id, amount=1000):
+    """Give a registered test user purchased credits (the item-8
+    pattern from tests/test_pi_item8_zero_credit.py): since
+    Product Improvements item 8, an ordinary tenant with zero
+    credits is refused at run submission (402), so a test whose
+    intent is PLAN behaviour (caps, quota, dedupe, usage) funds
+    the owner first and the billing gate passes underneath.
+    The short scripts here cost 1 credit each; 1000 is ample."""
+    db = SessionLocal()
+    try:
+        billing_credits.grant(
+            db, user_id, "purchased", amount,
+            entry_type="topup",
+            idempotency_key=f"test-funding:{user_id}",
+            source="test",
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
 def _project(client, user, script="A short script. Two sentences."):
     response = client.post(
         "/api/v1/projects", headers=_bearer(user), json={"script": script}
@@ -171,6 +193,7 @@ def _run_count(owner_id):
 
 def test_concurrency_cap_rejects_and_creates_nothing(client):
     user = _user(client)  # free plan: 1 concurrent
+    _grant_purchased(user["user"]["id"])
     project = _project(client, user)
     active = run_ledger.begin_run(project["id"], project["script"])
     assert active
@@ -190,6 +213,7 @@ def test_concurrency_cap_rejects_and_creates_nothing(client):
 
 def test_dedupe_submission_skips_admission(client):
     user = _user(client)
+    _grant_purchased(user["user"]["id"])
     project = _project(client, user)
     first = client.post(
         f"/api/v1/projects/{project['id']}/runs",
@@ -210,6 +234,7 @@ def test_dedupe_submission_skips_admission(client):
 
 def test_monthly_quota_and_period_rollover(client):
     user = _user(client)  # free plan: 3 runs/month
+    _grant_purchased(user["user"]["id"])
     project = _project(client, user)
     for i in range(3):
         run_id = run_ledger.begin_run(project["id"], project["script"])
@@ -287,6 +312,7 @@ def test_script_and_upload_and_storage_caps(client):
 
 def test_founder_plan_is_uncapped_control(client):
     user = _user(client, plan="founder")
+    _grant_purchased(user["user"]["id"])
     project = _project(client, user)
     for _ in range(3):
         run_id = run_ledger.begin_run(project["id"], project["script"])
@@ -329,6 +355,7 @@ def test_admin_assign_plan_endpoint(client):
 
 def test_usage_summary_matches_ledger(client):
     user = _user(client)
+    _grant_purchased(user["user"]["id"])
     project = _project(client, user)
     run_id = run_ledger.begin_run(project["id"], project["script"])
     run_ledger.finish_run(

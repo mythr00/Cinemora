@@ -64,7 +64,9 @@ def test_allowance_consumed_first(db):
     db.expire_all()
     period = periods.current_period(db, user.id)
     assert period.scripts_used == 1
-    assert _available(db, user.id) == 1300  # wallet untouched
+    # Restructure: the included script allowance is a SEPARATE
+    # counter — using it never touches the video-credit wallet.
+    assert _available(db, user.id) == 990  # wallet untouched
 
 
 def test_allowance_refunded_on_failure(db):
@@ -87,11 +89,12 @@ def test_credits_charged_beyond_allowance_and_refunded(db):
 
     receipt = operations.begin_operation(user.id, "scripts", "draft")
     assert receipt["via"] == "credits"
-    assert receipt["credits_charged"] == 12  # catalogue price
-    assert _available(db, user.id) == 1300 - 12
+    # Restructure overflow price: every script operation = 3.
+    assert receipt["credits_charged"] == 3  # catalogue price
+    assert _available(db, user.id) == 990 - 3
 
     operations.refund_operation(user.id, receipt)
-    assert _available(db, user.id) == 1300
+    assert _available(db, user.id) == 990
     db.expire_all()
     account = credits.get_or_create_account(db, user.id)
     assert account.lifetime_spent == 0  # refund un-spends
@@ -102,7 +105,7 @@ def test_insufficient_for_operation_rejects(db):
     period = periods.ensure_current_period(db, user.id)
     period.thumbnails_used = period.thumbnails_granted
     account = credits.get_or_create_account(db, user.id)
-    account.subscription_available = 1  # headlines cost 2
+    account.subscription_available = 1  # headlines cost 3
     db.commit()
     with pytest.raises(BillingRejected) as excinfo:
         operations.begin_operation(user.id, "thumbnails", "headlines")
@@ -175,17 +178,24 @@ def test_estimate_matches_generation_terms(db):
     assert estimate["metered"] is True
     assert estimate["estimated_seconds"] == pytest.approx(900.0)
     assert estimate["will_use_entitlement"] is True
-    assert estimate["credits_needed"] == 0
+    # Restructure: the count unit is not a discount — the estimate
+    # is the full duration at the Creator rate (15 min x 6 = 90),
+    # exactly what generation billing will reserve and settle.
+    assert estimate["credits_per_minute"] == 6
+    assert estimate["credits_needed"] == 90
     assert estimate["can_afford"] is True
 
-    # Exhaust entitlements: the estimate must switch to the full
-    # credit price of the same script.
+    # Exhaust the video count: the price is unchanged, but the
+    # estimate must now report the monthly limit as reached —
+    # generation will be refused regardless of balance.
     period = periods.ensure_current_period(db, user.id)
     period.generations_used = period.generations_granted
     db.commit()
     estimate = operations.estimate_for_project(user.id, project.id)
     assert estimate["will_use_entitlement"] is False
-    assert estimate["credits_needed"] == 84
+    assert estimate["video_limit_reached"] is True
+    assert estimate["credits_needed"] == 90
+    assert estimate["can_afford"] is False
 
 
 def test_spend_is_idempotent(db):
@@ -202,4 +212,4 @@ def test_spend_is_idempotent(db):
         reason="test",
     )
     assert split1 == split2 == {"subscription": 50}
-    assert _available(db, user.id) == 1300 - 50
+    assert _available(db, user.id) == 990 - 50

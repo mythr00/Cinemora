@@ -1,10 +1,12 @@
 """Phase 8 slice 2 — billing catalogue + credit maths.
 
-Pins the founder's price table (directive §§2, 3, 8, 20), the
-duration cost table (§5), and the core §1 guarantee: every
-advertised documentary allowance is deliverable — from the
-included entitlements by construction, and from the plan's
-credits alone at the platform rate.
+Pins the founder's price table and the core guarantee: every
+advertised documentary allowance is deliverable. UPDATED for
+the pricing restructure (founder directive 2026-11-26 ~10:25
+WAT): per-tier per-minute rates, and the exact identity
+monthly_credits == videos x rate x 15, so at the standard
+15 minutes the delivered-video count and the wallet are
+exhausted together.
 """
 
 import uuid
@@ -28,26 +30,42 @@ def db(tmp_path):
 
 
 def test_duration_cost_table_matches_design():
+    # Default (entry-tier) rate: 6 credits per finished minute.
     table = {row["minutes"]: row["credits"]
              for row in catalogue.duration_cost_table()}
     assert table == {
-        5: 28, 10: 56, 15: 84, 20: 112, 30: 168, 45: 252, 60: 336,
+        5: 30, 10: 60, 15: 90, 20: 120, 30: 180, 45: 270, 60: 360,
     }
+    # Per-tier tables at the Studio (5) and Agency (4) rates.
+    studio = {row["minutes"]: row["credits"]
+              for row in catalogue.duration_cost_table(5)}
+    assert studio[15] == 75 and studio[30] == 150
+    agency = {row["minutes"]: row["credits"]
+              for row in catalogue.duration_cost_table(4)}
+    assert agency[15] == 60 and agency[30] == 120
 
 
 def test_advertised_allowances_are_deliverable():
-    # §1/§18: for each plan, (a) the entitlement count equals the
-    # advertised documentary count, and (b) the plan's monthly
-    # credits ALONE can pay for the advertised count at the
-    # platform rate — the allowance never depends on hidden math.
-    rate = catalogue.standard_generation_credits()
-    advertised = {"creator": (1300, 11), "studio": (3600, 29),
-                  "agency": (7200, 59)}
+    # Restructure identity: for each plan, monthly credits equal
+    # EXACTLY the advertised video count x the 15-minute cost at
+    # the tier rate (11x90=990, 31x75=2325, 61x60=3660), and the
+    # script/thumbnail allowances equal the video count — the
+    # allowance never depends on hidden math.
+    advertised = {
+        "creator": (990, 11, 6),
+        "studio": (2325, 31, 5),
+        "agency": (3660, 61, 4),
+    }
     for spec in catalogue.METERED_PLANS:
-        credits, docs = advertised[spec["name"]]
+        credits, docs, rate = advertised[spec["name"]]
         assert spec["monthly_credits"] == credits
         assert spec["included_generations"] == docs
-        assert credits // rate >= docs, spec["name"]
+        assert spec["script_allowance"] == docs
+        assert spec["thumbnail_allowance"] == docs
+        assert (
+            spec["features"]["generation_credits_per_minute"] == rate
+        )
+        assert credits == docs * rate * 15, spec["name"]
 
 
 def test_founder_price_table(db):
@@ -56,12 +74,13 @@ def test_founder_price_table(db):
     plans = {
         p.name: p for p in db.query(models.Plan).all()
     }
-    assert plans["creator"].price_monthly_cents == 2900
-    assert plans["studio"].price_monthly_cents == 7900
-    assert plans["agency"].price_monthly_cents == 17900
-    # Annual = 20% discount on 12 monthly payments, exactly.
-    for name, monthly in (("creator", 2900), ("studio", 7900),
-                          ("agency", 17900)):
+    assert plans["creator"].price_monthly_cents == 2800
+    assert plans["studio"].price_monthly_cents == 6300
+    assert plans["agency"].price_monthly_cents == 11100
+    # Annual = 20% discount on 12 monthly payments, exactly (the
+    # pre-existing -20% structure; only the bases moved).
+    for name, monthly in (("creator", 2800), ("studio", 6300),
+                          ("agency", 11100)):
         assert plans[name].price_annual_cents == monthly * 12 * 4 // 5
         assert plans[name].billing_mode == "metered"
         assert plans[name].is_public is True
@@ -103,7 +122,7 @@ def test_catalogue_sync_is_idempotent_and_preserves_limits(db):
     assert updated == {"creator": ["price_monthly_cents"]}
     creator = db.query(models.Plan).filter_by(name="creator").one()
     assert creator.max_concurrent_runs == 7
-    assert creator.price_monthly_cents == 2900
+    assert creator.price_monthly_cents == 2800
 
     third = catalogue.ensure_billing_catalogue(db)
     assert third["plans_updated"] == []
@@ -113,4 +132,7 @@ def test_catalogue_sync_is_idempotent_and_preserves_limits(db):
 def test_estimate_seconds_uses_platform_pace():
     script = " ".join(["word"] * 1450)  # 10 minutes at 145 wpm
     assert catalogue.estimate_seconds(script) == pytest.approx(600.0)
-    assert catalogue.generation_credit_cost(600.0) == 56
+    # 10 minutes at the default 6 credits/minute.
+    assert catalogue.generation_credit_cost(600.0) == 60
+    # The same duration at the Agency rate (4/min).
+    assert catalogue.generation_credit_cost(600.0, 4) == 40

@@ -54,6 +54,19 @@ generated without any reservation at all. The rule now:
 Workers re-validate at claim time (claim_billing_check, called
 from run_ledger.claim_run): an ordinary tenant's run with no
 live reservation is refused and failed, never executed.
+
+Pricing restructure (founder directive 2026-11-26 ~10:25 WAT):
+the Phase 8 entitlement model is replaced. A metered run now
+reserves BOTH one delivered-video count unit (the plan's monthly
+11 / 31 / 61, held in the period's generations allowance) AND
+credits for the full estimated duration at the plan's tier rate
+(6 / 5 / 4 credits per finished minute). Settlement charges the
+full DELIVERED duration at the tier rate — the count unit is a
+count, never a discount — and failure / cancellation restores
+credits and the count unit together, exactly once. A submission
+with no count unit left is refused (video_limit_reached) even
+when the wallet could pay: the count is a hard monthly cap,
+enforced here at the choke point, so no API path bypasses it.
 """
 
 from __future__ import annotations
@@ -317,35 +330,50 @@ def reserve_for_new_run(run_id, project_id, script_text, options=None):
                 }
 
             period = periods_service.ensure_current_period(db, owner_id)
+            if period is None:
+                # A metered plan without a benefit period cannot
+                # track the delivered-video count — fail closed
+                # rather than run uncounted.
+                raise BillingRejected(
+                    "billing_unavailable",
+                    "Billing is temporarily unavailable; the "
+                    "generation was not started and nothing was "
+                    "charged.",
+                    status_code=503,
+                )
+            rate = catalogue.plan_credits_per_minute(plan)
 
-            entitlement = False
-            credits_needed: int
-            if period is not None and periods_service.consume_allowance(
+            # The delivered-video count unit: reserved now,
+            # kept only if the run completes (settlement restores
+            # it otherwise). Atomic consumption (periods module)
+            # makes concurrent submissions race-safe. The count
+            # is a hard cap, independent of the wallet.
+            if not periods_service.consume_allowance(
                 db, period, "generations"
             ):
-                entitlement = True
-                excess = estimated_seconds - catalogue.STANDARD_GENERATION_SECONDS
-                credits_needed = (
-                    catalogue.generation_credit_cost(excess)
-                    if excess > 0
-                    else 0
+                raise BillingRejected(
+                    "video_limit_reached",
+                    "Your plan includes "
+                    f"{plan.included_generations} documentaries "
+                    "this month and that limit has been reached. "
+                    "The limit resets with your next period, or "
+                    "you can upgrade your plan.",
                 )
-            else:
-                credits_needed = catalogue.generation_credit_cost(
-                    estimated_seconds
-                )
+            credits_needed = catalogue.generation_credit_cost(
+                estimated_seconds, rate
+            )
 
             reservation = _create_reservation(
                 db, run_id=run_id, root_run_id=root_run_id,
                 user_id=owner_id, project_id=project_id,
-                period=period, entitlement=entitlement,
+                period=period, entitlement=True,
                 credits_needed=credits_needed,
                 estimated_seconds=estimated_seconds, source="user",
             )
             db.commit()
             return {
                 "metered": True, "reservation_id": reservation.id,
-                "entitlement": entitlement,
+                "entitlement": True,
                 "credits_reserved": reservation.credits_reserved,
                 "source": "user",
             }
@@ -395,8 +423,13 @@ def reserve_for_revision(run_id, project_id, script_text):
             if metered:
                 periods_service.ensure_current_period(db, owner_id)
             estimated_seconds = catalogue.estimate_seconds(script_text)
+            # Revision renders are credits-only (never a count
+            # unit) at the owner's tier rate.
             credits_needed = catalogue.generation_credit_cost(
-                estimated_seconds
+                estimated_seconds,
+                catalogue.plan_credits_per_minute(plan)
+                if metered
+                else None,
             )
             reservation = _create_reservation(
                 db, run_id=run_id, root_run_id=run_id,
@@ -432,6 +465,25 @@ def reserve_for_revision(run_id, project_id, script_text):
             ) from exc
     finally:
         db.close()
+
+
+def _rate_for_reservation(db, reservation) -> int:
+    """The per-minute rate that prices a reservation: the plan
+    stamped on its billing period when there is one (immune to
+    later plan changes), else the owner's currently resolved
+    plan, else the platform default rate."""
+    plan = None
+    if reservation.billing_period_id:
+        period = db.get(
+            models.BillingPeriod, reservation.billing_period_id
+        )
+        if period is not None and period.plan_id:
+            plan = db.get(models.Plan, period.plan_id)
+    if plan is None:
+        plan = plans_service.resolve_effective_plan(
+            db, reservation.user_id
+        )
+    return catalogue.plan_credits_per_minute(plan)
 
 
 def _extract_actual_seconds(reservation, execution) -> float:
@@ -567,15 +619,21 @@ def settle_for_run(run_id, status, execution=None) -> None:
 
         if status == "completed":
             actual = _extract_actual_seconds(reservation, execution)
-            if reservation.entitlement_reserved:
-                excess = actual - catalogue.STANDARD_GENERATION_SECONDS
-                cost = (
-                    catalogue.generation_credit_cost(excess)
-                    if excess > 0
-                    else 0
-                )
+            if reservation.source == "admin":
+                # Admin-source reservations are recorded, never
+                # billed (module contract) — structurally zero,
+                # not merely zero-by-empty-wallet.
+                cost = 0
             else:
-                cost = catalogue.generation_credit_cost(actual)
+                # Restructure: the FULL delivered duration at the
+                # tier rate, whether or not a count unit was held
+                # — the unit is the monthly delivered-video count,
+                # never a discount. The rate is the rate of the
+                # plan stamped on the reservation's period, so a
+                # later plan change never reprices this run.
+                cost = catalogue.generation_credit_cost(
+                    actual, _rate_for_reservation(db, reservation)
+                )
             charged = 0
             if cost > 0:
                 result = credits.charge_reservation(

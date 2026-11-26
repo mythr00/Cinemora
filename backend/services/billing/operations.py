@@ -190,10 +190,12 @@ def refund_operation(user_id: str, receipt) -> None:
 def estimate_for_project(user_id: str, project_id: str) -> dict:
     """The pre-generation estimate (directive §5): measured from
     the project's actual script, showing exactly what a Generate
-    click will consume — an entitlement when one remains (plus
-    credit cost for estimated minutes beyond the standard 15),
-    or the full credit cost. Legacy users get metered=False and
-    no numbers are invented for them."""
+    click will consume under the restructure model — the full
+    estimated duration at the plan's per-minute rate, plus one
+    delivered-video count unit when one remains (with none left,
+    generation is refused at the monthly video limit regardless
+    of balance, and the estimate says so). Legacy users get
+    metered=False and no numbers are invented for them."""
     db = _session()
     try:
         project = db.get(models.Project, str(project_id))
@@ -201,17 +203,25 @@ def estimate_for_project(user_id: str, project_id: str) -> dict:
             raise LookupError(f"No project {project_id}.")
         plan = plans_service.resolve_effective_plan(db, user_id)
         seconds = catalogue.estimate_seconds(project.script or "")
+        metered = bool(
+            plan is not None and plan.billing_mode == "metered"
+        )
+        rate = (
+            catalogue.plan_credits_per_minute(plan) if metered else None
+        )
         result = {
             "project_id": str(project_id),
             "estimated_seconds": round(seconds, 1),
             "estimated_minutes": round(seconds / 60.0, 2),
-            "metered": bool(
-                plan is not None and plan.billing_mode == "metered"
-            ),
+            "metered": metered,
             "plan_name": plan.name if plan is not None else None,
-            "standard_generation_credits":
-                catalogue.standard_generation_credits(),
-            "duration_cost_table": catalogue.duration_cost_table(),
+            "credits_per_minute": rate,
+            "standard_generation_credits": (
+                catalogue.generation_credit_cost(
+                    catalogue.STANDARD_GENERATION_SECONDS, rate
+                )
+            ),
+            "duration_cost_table": catalogue.duration_cost_table(rate),
         }
         if not result["metered"]:
             return result
@@ -224,31 +234,19 @@ def estimate_for_project(user_id: str, project_id: str) -> dict:
             period, "generations"
         )
         account = credits.get_or_create_account(db, user_id)
-        excess = seconds - catalogue.STANDARD_GENERATION_SECONDS
-        if entitlements_left > 0:
-            result.update(
-                {
-                    "will_use_entitlement": True,
-                    "entitlements_remaining": entitlements_left,
-                    "credits_needed": (
-                        catalogue.generation_credit_cost(excess)
-                        if excess > 0
-                        else 0
-                    ),
-                }
-            )
-        else:
-            result.update(
-                {
-                    "will_use_entitlement": False,
-                    "entitlements_remaining": 0,
-                    "credits_needed":
-                        catalogue.generation_credit_cost(seconds),
-                }
-            )
+        credits_needed = catalogue.generation_credit_cost(seconds, rate)
+        result.update(
+            {
+                "will_use_entitlement": entitlements_left > 0,
+                "entitlements_remaining": entitlements_left,
+                "video_limit_reached": entitlements_left <= 0,
+                "credits_needed": credits_needed,
+            }
+        )
         result["credits_available"] = credits.total_available(account)
         result["can_afford"] = (
-            result["credits_available"] >= result["credits_needed"]
+            entitlements_left > 0
+            and result["credits_available"] >= credits_needed
         )
         db.commit()
         return result

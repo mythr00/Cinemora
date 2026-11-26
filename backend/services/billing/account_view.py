@@ -27,7 +27,7 @@ def _dt(value):
 def plan_view(plan) -> dict | None:
     if plan is None:
         return None
-    return {
+    view = {
         "id": plan.id,
         "name": plan.name,
         "billing_mode": plan.billing_mode,
@@ -42,7 +42,31 @@ def plan_view(plan) -> dict | None:
         "priority_tier": plan.priority_tier,
         "is_public": plan.is_public,
         "features": plan.features,
+        # Restructure pricing fields (2026-11-26): computed from
+        # the plan's own synced figures so every surface shows
+        # the same numbers the backend charges. None on legacy
+        # plans, which have no per-minute rate.
+        "generation_credits_per_minute": None,
+        "standard_generation_credits": None,
+        "standard_documentaries_per_month": None,
+        "effective_cost_per_standard_video_cents": None,
     }
+    if plan.billing_mode == "metered":
+        rate = catalogue.plan_credits_per_minute(plan)
+        view["generation_credits_per_minute"] = rate
+        view["standard_generation_credits"] = (
+            rate * catalogue.STANDARD_GENERATION_MINUTES
+        )
+        view["standard_documentaries_per_month"] = (
+            plan.included_generations
+        )
+        if plan.price_monthly_cents and plan.included_generations:
+            # Rounded to the nearest cent: 2800/11 -> 255 ($2.55),
+            # 6300/31 -> 203 ($2.03), 11100/61 -> 182 ($1.82).
+            view["effective_cost_per_standard_video_cents"] = round(
+                plan.price_monthly_cents / plan.included_generations
+            )
+    return view
 
 
 def subscription_view(subscription) -> dict | None:
@@ -131,9 +155,31 @@ def billing_summary(db, user_id: str) -> dict:
         ],
         "payment_provider": providers.get_provider().public_config(),
         "credit_pricing": {
+            # Default (entry-tier) rate figures, kept for the
+            # surfaces that show a single platform table...
             "standard_generation_credits":
                 catalogue.standard_generation_credits(),
             "duration_cost_table": catalogue.duration_cost_table(),
+            "default_credits_per_minute":
+                int(catalogue.default_credits_per_minute()),
+            # ...and the authoritative per-plan tables: each
+            # metered plan's own rate and duration costs.
+            "plans": {
+                p.name: {
+                    "credits_per_minute":
+                        catalogue.plan_credits_per_minute(p),
+                    "standard_generation_credits": (
+                        catalogue.plan_credits_per_minute(p)
+                        * catalogue.STANDARD_GENERATION_MINUTES
+                    ),
+                    "duration_cost_table":
+                        catalogue.duration_cost_table(
+                            catalogue.plan_credits_per_minute(p)
+                        ),
+                }
+                for p in public_plans
+                if p.billing_mode == "metered"
+            },
             "script_operations": catalogue.SCRIPT_OPERATION_CREDITS,
             "thumbnail_operations":
                 catalogue.THUMBNAIL_OPERATION_CREDITS,

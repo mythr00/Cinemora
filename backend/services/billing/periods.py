@@ -11,6 +11,11 @@ Entitlement/allowance counters count COMMITTED units: an
 entitlement is consumed when a generation reserves it and
 released back if that generation does not complete, so two
 concurrent submissions can never spend the same entitlement.
+Consumption and release are single conditional UPDATE statements
+(atomic at the database), never a Python read-modify-write — two
+concurrent sessions racing for the last unit cannot both win
+(restructure directive 2026-11-26: the monthly delivered-video
+count is enforced under concurrency, not just sequentially).
 """
 
 from __future__ import annotations
@@ -142,24 +147,57 @@ def current_period(db, user_id: str):
 
 def consume_allowance(db, period, kind: str, count: int = 1) -> bool:
     """Commit `count` units of an allowance. False (nothing
-    changed) when fewer than `count` units remain."""
+    changed) when fewer than `count` units remain.
+
+    One conditional UPDATE: the increment applies only while
+    used + count <= granted, checked by the database in the same
+    statement that writes — a concurrent consumer of the last
+    unit makes this statement match zero rows instead of racing
+    a stale Python-side read. The in-memory period is expired so
+    later reads in this session see the committed counter.
+    """
     granted_field, used_field = _ALLOWANCE_FIELDS[kind]
-    granted = int(getattr(period, granted_field) or 0)
-    used = int(getattr(period, used_field) or 0)
-    if used + count > granted:
-        return False
-    setattr(period, used_field, used + count)
+    granted_col = getattr(models.BillingPeriod, granted_field)
+    used_col = getattr(models.BillingPeriod, used_field)
+    updated = (
+        db.query(models.BillingPeriod)
+        .filter(
+            models.BillingPeriod.id == period.id,
+            used_col + count <= granted_col,
+        )
+        .update(
+            {used_field: used_col + count},
+            synchronize_session=False,
+        )
+    )
     db.flush()
-    return True
+    db.expire(period)
+    return updated == 1
 
 
 def release_allowance(db, period, kind: str, count: int = 1) -> None:
     """Return previously committed units (a generation that did
-    not complete; an operation that failed after consuming)."""
+    not complete; an operation that failed after consuming).
+    Atomic decrement floored at zero, like consume_allowance."""
+    from sqlalchemy import case
+
     _granted_field, used_field = _ALLOWANCE_FIELDS[kind]
-    used = int(getattr(period, used_field) or 0)
-    setattr(period, used_field, max(0, used - count))
+    used_col = getattr(models.BillingPeriod, used_field)
+    (
+        db.query(models.BillingPeriod)
+        .filter(models.BillingPeriod.id == period.id)
+        .update(
+            {
+                used_field: case(
+                    (used_col - count > 0, used_col - count),
+                    else_=0,
+                )
+            },
+            synchronize_session=False,
+        )
+    )
     db.flush()
+    db.expire(period)
 
 
 def allowance_remaining(period, kind: str) -> int:

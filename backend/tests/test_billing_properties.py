@@ -2,8 +2,9 @@
 (GitHub Skills Programme, Lane 5, 2026-11-25).
 
 Lane 5's top INSTALL: Phase 9 found a real concurrency money bug
-by adversarial testing; the credit maths (84 credits per standard
-generation, ceil-by-seconds, entitlement/expiry rules) is exactly
+by adversarial testing; the credit maths (per-minute tier rates —
+6 credits/minute at the default rate since the 2026-11-26
+restructure, ceil-by-seconds, entitlement/expiry rules) is exactly
 the invariant space example-based tests under-cover. These
 properties run the REAL credits module against generated inputs:
 
@@ -49,7 +50,8 @@ def _default_rate(monkeypatch):
 @given(seconds=st.floats(min_value=0.01, max_value=100_000, allow_nan=False))
 @SETTINGS
 def test_cost_matches_documented_formula(seconds):
-    expected = max(1, math.ceil(seconds * 84 / 900))
+    # Documented formula at the default rate: ceil(seconds x 6 / 60).
+    expected = max(1, math.ceil(seconds * 6 / 60))
     assert catalogue.generation_credit_cost(seconds) == expected
 
 
@@ -71,7 +73,7 @@ def test_cost_is_monotone_and_subadditive(a, b):
 @given(k=st.integers(min_value=1, max_value=200))
 @SETTINGS
 def test_cost_scales_exactly_at_standard_units(k):
-    assert catalogue.generation_credit_cost(900.0 * k) == 84 * k
+    assert catalogue.generation_credit_cost(900.0 * k) == 90 * k
 
 
 def test_cost_minimum_and_nonpositive_durations():

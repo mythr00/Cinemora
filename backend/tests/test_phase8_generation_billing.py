@@ -2,11 +2,17 @@
 
 End-to-end through the REAL choke points (run_ledger
 .submit_production / finish_run / request_cancel /
-submit_revision_render): reservation, entitlement consumption,
-settlement, full restoration on failure/cancel, fail-closed
-rejection, the admin zero-charge path, the legacy-plan exemption,
-and the §18 allowance proof — every plan delivers exactly its
-advertised number of 15-minute documentaries on entitlements.
+submit_revision_render): reservation, settlement, full
+restoration on failure/cancel, fail-closed rejection, the admin
+zero-charge path, the legacy-plan exemption, and the allowance
+proof — every plan delivers exactly its advertised number of
+15-minute documentaries.
+
+UPDATED for the pricing restructure (founder directive
+2026-11-26 ~10:25 WAT): a run reserves one delivered-video
+count unit AND credits for the full estimated duration at the
+tier rate; settlement charges the full delivered duration; the
+count is a hard cap (video_limit_reached), restored on failure.
 """
 
 import uuid
@@ -85,7 +91,7 @@ def _reservation_for(db, run_id):
     )
 
 
-def test_entitlement_generation_settles_free(db):
+def test_standard_generation_charges_rate_and_count(db):
     user = _make_user(db, "creator")
     project = _make_project(db, user.id)
     db.commit()
@@ -96,20 +102,24 @@ def test_entitlement_generation_settles_free(db):
     assert submission and not submission["deduplicated"]
     reservation = _reservation_for(db, submission["run_id"])
     assert reservation is not None
+    # One delivered-video count unit held, and the FULL estimated
+    # duration reserved in credits at the Creator rate (15 x 6).
     assert reservation.entitlement_reserved is True
-    assert reservation.credits_reserved == 0
+    assert reservation.credits_reserved == 90
 
     assert run_ledger.finish_run(submission["run_id"], "completed")
     db.expire_all()
     reservation = _reservation_for(db, submission["run_id"])
     assert reservation.status == "settled"
-    assert reservation.charged_credits == 0
+    assert reservation.charged_credits == 90
     wallet = _wallet(db, user.id)
-    assert wallet["subscription"]["available"] == 1300
-    assert wallet["lifetime_spent"] == 0
+    assert wallet["subscription"]["available"] == 990 - 90
+    assert wallet["lifetime_spent"] == 90
+    period = periods.current_period(db, user.id)
+    assert period.generations_used == 1  # the delivered video counts
 
 
-def test_long_generation_charges_excess_minutes_only(db):
+def test_long_generation_charges_full_duration(db):
     user = _make_user(db, "creator")
     project = _make_project(db, user.id, script=SCRIPT_30MIN)
     db.commit()
@@ -117,10 +127,10 @@ def test_long_generation_charges_excess_minutes_only(db):
         project.id, project.script, options={}
     )
     reservation = _reservation_for(db, submission["run_id"])
-    # Entitlement covers 15 min; the other 15 are reserved in
-    # credits at the platform rate (84).
+    # The whole 30 minutes at the Creator rate (30 x 6 = 180);
+    # the count unit is a count, never a 15-minute discount.
     assert reservation.entitlement_reserved is True
-    assert reservation.credits_reserved == 84
+    assert reservation.credits_reserved == 180
     assert run_ledger.finish_run(
         submission["run_id"], "completed",
         execution={"duration_seconds": 1800},
@@ -128,10 +138,10 @@ def test_long_generation_charges_excess_minutes_only(db):
     db.expire_all()
     reservation = _reservation_for(db, submission["run_id"])
     assert reservation.status == "settled"
-    assert reservation.charged_credits == 84
+    assert reservation.charged_credits == 180
     wallet = _wallet(db, user.id)
-    assert wallet["subscription"]["available"] == 1300 - 84
-    assert wallet["lifetime_spent"] == 84
+    assert wallet["subscription"]["available"] == 990 - 180
+    assert wallet["lifetime_spent"] == 180
 
 
 def test_failed_generation_restores_everything(db):
@@ -147,10 +157,10 @@ def test_failed_generation_restores_everything(db):
     reservation = _reservation_for(db, run_id)
     assert reservation.status == "released"
     wallet = _wallet(db, user.id)
-    assert wallet["subscription"]["available"] == 1300
+    assert wallet["subscription"]["available"] == 990
     assert wallet["subscription"]["reserved"] == 0
     period = periods.current_period(db, user.id)
-    assert period.generations_used == 0  # entitlement restored
+    assert period.generations_used == 0  # count unit restored
 
 
 def test_queued_cancel_restores_reservation(db):
@@ -164,16 +174,45 @@ def test_queued_cancel_restores_reservation(db):
     db.expire_all()
     reservation = _reservation_for(db, submission["run_id"])
     assert reservation.status == "released"
-    assert _wallet(db, user.id)["subscription"]["available"] == 1300
+    assert _wallet(db, user.id)["subscription"]["available"] == 990
 
 
-def test_insufficient_credits_rejects_and_charges_nothing(db):
+def test_video_limit_rejects_even_with_credits(db):
+    # The delivered-video count is a hard cap, independent of the
+    # wallet: with the count exhausted, a fully funded user is
+    # still refused, and nothing is charged or double-consumed.
     user = _make_user(db, "creator")
     project = _make_project(db, user.id)
     db.commit()
-    # Drain entitlements and wallet via the period + account.
     period = periods.ensure_current_period(db, user.id)
     period.generations_used = period.generations_granted
+    db.commit()
+
+    with pytest.raises(BillingRejected) as excinfo:
+        run_ledger.submit_production(project.id, project.script,
+                                     options={})
+    assert excinfo.value.error_code == "video_limit_reached"
+    assert excinfo.value.status_code == 402
+    run = run_ledger.latest_run_for(
+        project.id, run_ledger.script_sha256(project.script)
+    )
+    assert run["status"] == "failed"
+    assert "video_limit_reached" in (run["error"] or "")
+    db.expire_all()
+    assert _wallet(db, user.id)["subscription"]["available"] == 990
+    period = periods.current_period(db, user.id)
+    assert period.generations_used == period.generations_granted
+
+
+def test_insufficient_credits_rejects_and_releases_slot(db):
+    # Count units remain, but the wallet cannot cover the full
+    # estimated duration: refused as insufficient_credits, and
+    # the count unit taken during the attempt is rolled back —
+    # a refused submission never consumes the allowance.
+    user = _make_user(db, "creator")
+    project = _make_project(db, user.id)
+    db.commit()
+    periods.ensure_current_period(db, user.id)
     account = credits.get_or_create_account(db, user.id)
     account.subscription_available = 10
     db.commit()
@@ -190,6 +229,8 @@ def test_insufficient_credits_rejects_and_charges_nothing(db):
     assert "insufficient_credits" in (run["error"] or "")
     db.expire_all()
     assert _wallet(db, user.id)["subscription"]["available"] == 10
+    period = periods.current_period(db, user.id)
+    assert period.generations_used == 0
 
 
 def test_legacy_plan_user_is_not_metered(db):
@@ -261,7 +302,7 @@ def test_retry_after_failure_charges_once(db):
     )
     assert run_ledger.finish_run(first["run_id"], "failed")
     db.expire_all()
-    assert _wallet(db, user.id)["subscription"]["available"] == 1300
+    assert _wallet(db, user.id)["subscription"]["available"] == 990
 
     retry = run_ledger.submit_production(
         project.id, project.script,
@@ -276,9 +317,9 @@ def test_retry_after_failure_charges_once(db):
         execution={"duration_seconds": 1800},
     )
     db.expire_all()
-    # Exactly one charge across the whole chain: the 84-credit
-    # excess of the completed retry.
-    assert _wallet(db, user.id)["lifetime_spent"] == 84
+    # Exactly one charge across the whole chain: the completed
+    # retry's full 30 minutes at the Creator rate (30 x 6 = 180).
+    assert _wallet(db, user.id)["lifetime_spent"] == 180
 
 
 def test_revision_render_charges_credits(db):
@@ -293,23 +334,33 @@ def test_revision_render_charges_credits(db):
     reservation = _reservation_for(db, submitted["run_id"])
     assert reservation is not None
     assert reservation.entitlement_reserved is False
-    assert reservation.credits_reserved == 84
+    # Credits-only at the owner's tier rate (15 min x 6 = 90);
+    # a revision render never consumes a delivered-video unit.
+    assert reservation.credits_reserved == 90
     assert run_ledger.finish_run(submitted["run_id"], "completed")
     db.expire_all()
     reservation = _reservation_for(db, submitted["run_id"])
     assert reservation.status == "settled"
-    assert reservation.charged_credits == 84
+    assert reservation.charged_credits == 90
 
 
 @pytest.mark.parametrize(
-    "plan_name,docs",
-    [("creator", 11), ("studio", 29), ("agency", 59)],
+    "plan_name,docs,std_cost,monthly_credits",
+    [
+        ("creator", 11, 90, 990),
+        ("studio", 31, 75, 2325),
+        ("agency", 61, 60, 3660),
+    ],
 )
-def test_advertised_allowance_is_deliverable(db, plan_name, docs):
-    # §18 allowance proof: run exactly the advertised number of
-    # standard 15-minute generations; every one must settle on an
-    # entitlement at zero credits, and the (docs+1)-th must fall
-    # back to credits at the platform rate.
+def test_advertised_allowance_is_deliverable(
+    db, plan_name, docs, std_cost, monthly_credits
+):
+    # Restructure allowance proof: run exactly the advertised
+    # number of standard 15-minute generations. Every one
+    # consumes one count unit and settles at the tier rate, so
+    # after `docs` videos the count AND the wallet are exhausted
+    # together (docs x std_cost == monthly_credits), and the
+    # (docs+1)-th submission is refused at the video limit.
     user = _make_user(db, plan_name)
     db.commit()
     for index in range(docs):
@@ -322,25 +373,24 @@ def test_advertised_allowance_is_deliverable(db, plan_name, docs):
         assert reservation.entitlement_reserved is True, (
             plan_name, index,
         )
+        assert reservation.credits_reserved == std_cost, (
+            plan_name, index,
+        )
         assert run_ledger.finish_run(
             submission["run_id"], "completed",
             execution={"duration_seconds": 900},
         )
     db.expire_all()
     wallet = _wallet(db, user.id)
-    assert wallet["lifetime_spent"] == 0
+    assert wallet["lifetime_spent"] == monthly_credits
+    assert wallet["subscription"]["available"] == 0
+    period = periods.current_period(db, user.id)
+    assert period.generations_used == docs
 
     project = _make_project(db, user.id)
     db.commit()
-    submission = run_ledger.submit_production(
-        project.id, project.script, options={}
-    )
-    reservation = _reservation_for(db, submission["run_id"])
-    assert reservation.entitlement_reserved is False
-    assert reservation.credits_reserved == 84
-    assert run_ledger.finish_run(
-        submission["run_id"], "completed",
-        execution={"duration_seconds": 900},
-    )
-    db.expire_all()
-    assert _wallet(db, user.id)["lifetime_spent"] == 84
+    with pytest.raises(BillingRejected) as excinfo:
+        run_ledger.submit_production(
+            project.id, project.script, options={}
+        )
+    assert excinfo.value.error_code == "video_limit_reached"
