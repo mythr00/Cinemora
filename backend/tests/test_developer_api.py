@@ -45,6 +45,7 @@ from models import ApiKey, Base, Plan, ProductionRun, User
 from services import admin_audit
 from services import auth as auth_service
 from services import run_ledger, webhooks
+from services.billing import credits as billing_credits
 
 TOKEN = "test-operator-token"
 PASSWORD = "correct-horse-9"
@@ -131,11 +132,38 @@ def _bearer(user):
     return {"Authorization": f"Bearer {user['session_token']}"}
 
 
+def _fund(user_id, amount=100):
+    """Give a registered test user purchased credits.
+
+    Product Improvements item 8 (2026-11-26): an ordinary tenant
+    with zero credits is refused at run submission (402
+    insufficient_credits) — the developer-API surface under test
+    here rides the same submission choke point, so the fixture
+    funds its users the way the item-8 tests fund theirs
+    (a purchased top-up grant through the credits service).
+    Each SCRIPT_BODY run costs 1 credit; 100 covers every run
+    this module submits per user with ample headroom.
+    """
+    db = SessionLocal()
+    try:
+        billing_credits.grant(
+            db, user_id, "purchased", amount,
+            entry_type="topup",
+            idempotency_key=f"test-funding:{user_id}",
+            source="test",
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
 @pytest.fixture()
 def users(client):
     suffix = uuid.uuid4().hex[:8]
     a = _register(client, f"dev-a-{suffix}@example.com")
     b = _register(client, f"dev-b-{suffix}@example.com")
+    _fund(a["user"]["id"])
+    _fund(b["user"]["id"])
     return a, b
 
 

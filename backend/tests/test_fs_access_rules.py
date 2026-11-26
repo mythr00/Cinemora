@@ -49,6 +49,7 @@ from database import SessionLocal, engine
 from models import Base, Plan, ProductionRun, Project, User, UserSubscription
 from services import auth as auth_service
 from services import run_ledger
+from services.billing import credits as billing_credits
 
 TOKEN = "fs-a-" + "operator-token-for-tests"
 PASSWORD = "fs-a-" + "correct-horse-42"
@@ -131,6 +132,26 @@ def _register(client, label):
         "id": body["user"]["id"],
         "headers": _bearer(body["session_token"]),
     }
+
+
+def _grant_purchased(user_id, amount=100):
+    """Give a registered test user purchased credits (the item-8
+    pattern from tests/test_pi_item8_zero_credit.py): since
+    Product Improvements item 8, an ordinary tenant with zero
+    credits is refused at run submission (402), so a test that
+    submits a real run for an ordinary owner funds the owner
+    first. The short FS-C script costs 1 credit; 100 is ample."""
+    db = SessionLocal()
+    try:
+        billing_credits.grant(
+            db, user_id, "purchased", amount,
+            entry_type="topup",
+            idempotency_key=f"test-funding:{user_id}",
+            source="test",
+        )
+        db.commit()
+    finally:
+        db.close()
 
 
 def _make_user(role):
@@ -997,6 +1018,10 @@ def test_fsc_non_admin_plan_approval_gate_is_bypassed(client, monkeypatch):
     monkeypatch.setattr(jobs, "video_queue", queue)
     monkeypatch.setattr(jobs, "video_queue_priority", queue)
     owner = _register(client, "fsc-gate-owner")
+    # Item 8: the ordinary owner must hold credits for the
+    # submission to reach the plan-approval gate at all (an
+    # unfunded zero-credit submission is refused with 402 first).
+    _grant_purchased(owner["id"])
     project = _create_fsc_project(
         client, owner["headers"], options={"require_plan_approval": True}
     )
