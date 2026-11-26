@@ -181,7 +181,10 @@ def test_reconcile_records_heartbeat_loss_event(project_id, _events_file):
         db.close()
 
     assert run_ledger.reconcile_stale_runs(stale_after_seconds=180) >= 1
-    assert run_ledger.get_run(run_id)["status"] == "failed"
+    # Phase 1: a first heartbeat loss RESUMES the run (requeued in
+    # place) instead of failing it; the forensic event is recorded
+    # either way, now carrying the outcome.
+    assert run_ledger.get_run(run_id)["status"] == "queued"
 
     losses = [e for e in worker_events.read_events()
               if e["event"] == "heartbeat_loss"]
@@ -193,6 +196,7 @@ def test_reconcile_records_heartbeat_loss_event(project_id, _events_file):
     assert detail["worker_id"] == owner
     assert detail["last_heartbeat_at"] == last_beat.isoformat()
     assert detail["heartbeat_age_seconds"] > 3500
+    assert detail["outcome"] == "resumed"
     assert mine[0]["stale_after_seconds"] == 180.0
 
 

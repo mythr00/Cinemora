@@ -62,7 +62,39 @@ def _fresh_state():
         "failures": 0,
         "stage_started_at": {},
         "stage_durations": {},
+        "stage_usage_started": {},
+        "stage_resources": {},
     }
+
+
+def _sample_process_usage():
+    """(cpu_seconds, peak_rss_mb) for this process, or None.
+
+    CPU is RUSAGE_SELF + RUSAGE_CHILDREN user+system time: the
+    pipeline's heavy work runs in waited-for child processes
+    (ffmpeg, yt-dlp), whose usage lands in RUSAGE_CHILDREN when
+    they exit — so a stage's CPU delta covers its subprocesses,
+    not just interpreter time. Peak RSS is the process's own
+    ru_maxrss high-water mark (Linux: KiB) at sample time — a
+    "peak so far", not a per-stage peak; the snapshot labels it
+    as such. Attribution is per-PROCESS: an RQ worker executes
+    one pipeline at a time, so while a run executes, its process's
+    deltas are that run's. Never raises."""
+    try:
+        import resource
+
+        self_usage = resource.getrusage(resource.RUSAGE_SELF)
+        child_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+        cpu = (
+            self_usage.ru_utime
+            + self_usage.ru_stime
+            + child_usage.ru_utime
+            + child_usage.ru_stime
+        )
+        peak_rss_mb = self_usage.ru_maxrss / 1024.0
+        return (cpu, peak_rss_mb)
+    except Exception:
+        return None
 
 
 _STATES: dict[str, dict] = {}
@@ -236,17 +268,35 @@ def coverage_recovery_round():
 def stage_started(stage):
     try:
         with _LOCK:
-            _bound_state()["stage_started_at"][str(stage)] = time.monotonic()
+            state = _bound_state()
+            state["stage_started_at"][str(stage)] = time.monotonic()
+            # Phase 1 instrumentation (directive §11 precondition):
+            # per-stage CPU/RSS — Phase 0 found NO resource
+            # measurement anywhere in the pipeline.
+            state["stage_usage_started"][str(stage)] = (
+                _sample_process_usage()
+            )
     except Exception:
         pass
 
 
 def _close_stage(stage):
-    started = _bound_state()["stage_started_at"].pop(str(stage), None)
+    state = _bound_state()
+    started = state["stage_started_at"].pop(str(stage), None)
     if started is not None:
-        _bound_state()["stage_durations"][str(stage)] = round(
+        state["stage_durations"][str(stage)] = round(
             time.monotonic() - started, 3
         )
+    usage_started = state["stage_usage_started"].pop(str(stage), None)
+    if usage_started is not None:
+        usage_now = _sample_process_usage()
+        if usage_now is not None:
+            state["stage_resources"][str(stage)] = {
+                "cpu_seconds": round(
+                    max(0.0, usage_now[0] - usage_started[0]), 3
+                ),
+                "process_peak_rss_mb": round(usage_now[1], 1),
+            }
 
 
 def stage_finished(stage):
@@ -343,6 +393,7 @@ def snapshot(run_id=None):
             return {
                 "wall_time_seconds": wall,
                 "stage_durations_seconds": dict(state["stage_durations"]),
+                "stage_resources": dict(state.get("stage_resources") or {}),
                 "search_calls": {
                     "searxng": dict(
                         search_block.get("searxng")
@@ -373,6 +424,7 @@ def snapshot(run_id=None):
         return {
             "wall_time_seconds": None,
             "stage_durations_seconds": {},
+            "stage_resources": {},
             "search_calls": {
                 "searxng": {"total": 0, "web": 0, "images": 0, "video": 0},
                 "searxng_failures": 0,

@@ -107,7 +107,8 @@ def _start_periodic_reconciler():
                 if reconciled:
                     print(
                         f"Periodic reconciliation: {reconciled} "
-                        "orphaned run(s) marked interrupted."
+                        "orphaned run(s) reconciled (resumed in "
+                        "place or marked interrupted)."
                     )
             except Exception as error:
                 print(
@@ -172,7 +173,10 @@ if __name__ == "__main__":
             stale_after_seconds=run_ledger.STALE_AFTER_SECONDS
         )
         if reconciled:
-            print(f"Reconciled {reconciled} interrupted run(s).")
+            print(
+                f"Reconciled {reconciled} orphaned run(s) "
+                "(resumed in place or marked interrupted)."
+            )
     except Exception as error:
         print(f"WARNING: stale-run reconciliation skipped: {error}")
 

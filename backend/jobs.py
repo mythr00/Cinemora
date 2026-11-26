@@ -1810,6 +1810,32 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
     # and fail-soft; it never gates the pipeline.
     run_ledger.start_heartbeat(_run_id)
 
+    # Phase 1 durability: when this process is RE-ENTERING a run
+    # (a heartbeat-stale run the reconciler requeued and this
+    # worker claimed again — same run id), the run's own previous
+    # production_state.json still holds the dead execution's stage
+    # records. Capture it BEFORE the fresh state overwrites the
+    # file below; stage_resume.plan_self_resume validates those
+    # records (artefact hashes + coverage gate) into a self-resume
+    # plan. A first entry finds no file (or an unreadable one) and
+    # this stays None — behaviour is then exactly the cross-run
+    # adoption path.
+    _prior_state = None
+    if _run_id:
+        try:
+            _prior_state_path = (
+                media_paths.run_subdir(project_dir, _run_id)
+                / "production_state.json"
+            )
+            if _prior_state_path.is_file():
+                _prior_state = json.loads(
+                    _prior_state_path.read_text(encoding="utf-8")
+                )
+                if not isinstance(_prior_state, dict):
+                    _prior_state = None
+        except Exception:
+            _prior_state = None
+
     state = create_production_state()
     state["genre_pack"] = {
         "id": _genre_info["pack_id"],
@@ -1861,6 +1887,34 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         _manifest.get("script_hash"),
         _manifest.get("options"),
     )
+    # Phase 1 durability: a re-entered run's OWN validated stages
+    # take precedence over any cross-run donation — they are this
+    # production's own work, recorded by the execution that died,
+    # and its later stages depend on its own earlier artefacts.
+    # The self plan is used only when it validates at least one
+    # stage; otherwise the cross-run plan stands.
+    if _prior_state is not None and _run_id:
+        _self_plan = stage_resume.plan_self_resume(
+            project_dir, _run_id, _prior_state
+        )
+        if _self_plan.get("stages"):
+            _self_plan["record"] = {
+                "source_run_id": _self_plan.get("source_run_id"),
+                "adopted_stages": [],
+                "executed_stages": [],
+                "fallback": _self_plan.get("fallback"),
+                "self_resume": True,
+            }
+            _resume_plan = _self_plan
+            print(
+                "RESUME: this run's own prior execution can donate "
+                f"stages: {sorted(_resume_plan['stages'])}"
+                + (
+                    f" (chain stops: {_resume_plan['fallback']})"
+                    if _resume_plan.get("fallback")
+                    else ""
+                )
+            )
     state["resume"] = _resume_plan["record"]
     _manifest["resume"] = _resume_plan["record"]
     if _resume_plan.get("source_run_id"):
@@ -2172,10 +2226,44 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         print(f"Visual uniqueness registry reset for project {project_id}.")
         print()
 
+        # Phase 1 durability: scene-level checkpoint resume. When
+        # THIS run's asset stage previously committed scenes before
+        # its worker died, the checkpoint (this run's artefact dir,
+        # script-hash matched, selected-asset hashes re-verified by
+        # stage_resume.load_asset_progress) restores the registry
+        # to its committed state and seeds processed_scenes with
+        # the committed results; the loop below then skips exactly
+        # those scenes. A scene that was mid-flight at the death
+        # is not in the checkpoint, so it re-executes against the
+        # restored registry — no usage is double-registered and no
+        # committed scene's discovery is repeated.
+        _am_committed = set()
+        _progress = stage_resume.load_asset_progress(
+            artefact_dir, project_dir, script_hash=script_hash
+        )
+        if _progress is not None:
+            _get_registry(project_id).restore_state(
+                _progress.get("registry") or {}
+            )
+            processed_scenes.extend(_progress["processed_scenes"])
+            _am_committed = set(_progress["committed_scenes"])
+            print(
+                "ASSET RESUME: checkpoint restored — "
+                f"{len(_am_committed)} committed scene(s) "
+                f"{sorted(_am_committed)} will be skipped, registry "
+                "state restored from the checkpoint."
+            )
+
         for scene in scenes:
             scene_number = scene["scene_number"]
             scene["project_id"] = project_id
             scene["script_hash"] = script_hash
+            if scene_number in _am_committed:
+                print(
+                    f"Scene {scene_number}: skipped — committed "
+                    "before the interruption (checkpoint)."
+                )
+                continue
             print()
             print("=" * 60)
             print(f"PROCESSING SCENE {scene_number}/{len(scenes)}")
@@ -2195,6 +2283,20 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             result["script_hash"] = script_hash
             processed_scenes.append(result)
 
+            # Phase 1: commit this scene durably before starting
+            # the next — processed scenes + registry export, the
+            # same state the completed stage payload will carry.
+            # Fail-soft (record_asset_progress never raises): a
+            # checkpoint failure costs a re-run of this scene after
+            # a crash, never the production.
+            stage_resume.record_asset_progress(
+                artefact_dir,
+                project_dir,
+                script_hash=script_hash,
+                processed_scenes=processed_scenes,
+                registry_state=_get_registry(project_id).export_state(),
+            )
+
             print(
                 f"Scene {scene_number}: "
                 f"{len(result.get('images', []))} images, "
@@ -2210,6 +2312,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             "asset_manager_minutes": round(_am_total / 60, 1),
             "stats": _am_final,
             "scenes": _am_scenes,
+            "resumed_scenes": sorted(_am_committed),
             "registry": _get_registry(project_id).summary(),
         }
         write_json_atomic(
@@ -2231,6 +2334,10 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 "registry": _get_registry(project_id).export_state(),
             },
         )
+        # The completed stage payload supersedes the incremental
+        # checkpoint (Phase 1): drop it so a later re-entry never
+        # mistakes mid-stage progress for a finished stage.
+        stage_resume.clear_asset_progress(artefact_dir)
     except _StageAdopted:
         pass
     except Exception as error:
@@ -3028,15 +3135,13 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         # Final Output
         # ----------------------------------------------
 
-        if final_video.exists():
-            try:
-                final_video.unlink()
-            except OSError as error:
-                print(
-                    "WARNING: could not remove old "
-                    f"final video: {error}"
-                )
-
+        # Phase 1 durability: publish by os.replace ALONE. The
+        # previous delete-then-replace opened a window in which NO
+        # final file existed at all (a kill there destroyed a
+        # previously valid master and left the run's delivery
+        # pointing at nothing); os.replace overwrites atomically,
+        # so the old final survives until the validated new one
+        # lands in the same rename.
         os.replace(
             str(pre_final_video),
             str(final_video),

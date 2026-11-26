@@ -309,6 +309,29 @@ def _job_is_finished(job) -> bool:
         return False
 
 
+#: RQ job statuses in which the job will never execute its run:
+#: it is not queued for a worker, not started, and not terminal in
+#: the failed/finished senses the sweep already handles. A run
+#: whose dispatched job sits in one of these states is wedged
+#: exactly like the missing-job case (Phase 0 wedge audit): no
+#: enqueue path in the codebase produces them today, but the sweep
+#: previously treated ANY existing job as live and left such runs
+#: stamped forever.
+_INERT_JOB_STATUSES = frozenset(
+    {"deferred", "scheduled", "canceled", "cancelled", "stopped"}
+)
+
+
+def _job_status(job):
+    """The job's RQ status string, or None when it cannot be
+    determined (an undeterminable status is judged as live —
+    the sweep only acts on positive evidence)."""
+    try:
+        return str(job.get_status())
+    except Exception:
+        return None
+
+
 def _run_shows_execution_started(row) -> bool:
     """True when the ledger records that this run's execution
     actually began. The atomic claim (run_ledger._claim_row)
@@ -372,7 +395,12 @@ def _clear_stale_dispatches(db) -> None:
       fires ONLY when the run shows no execution ever started
       (_run_shows_execution_started); a finished job whose run
       WAS claimed/executing is left alone — that run's own
-      finish path owns its state."""
+      finish path owns its state.
+    - Job INERT (Phase 1 wedge catch-all): the job exists but is
+      deferred / scheduled / canceled / stopped — no worker will
+      ever take it. After the same 2-minute freshness grace as
+      the missing-job case, the stamp is cleared and the run is
+      re-promoted (again only when no execution ever started)."""
     from models import ProductionRun
     from services import run_ledger
 
@@ -413,6 +441,34 @@ def _clear_stale_dispatches(db) -> None:
                     "run_unwedged_finished_job",
                     run_id=row.id,
                     job_id=job_id,
+                )
+                continue
+            if _job_status(job) in _INERT_JOB_STATUSES:
+                # Phase 1 wedge catch-all: the job exists but is
+                # in a state where no worker will ever take it
+                # (deferred / scheduled / canceled / stopped).
+                # Judged with the same 2-minute freshness grace as
+                # a missing job — a just-dispatched job's status
+                # may still be settling — then treated exactly
+                # like the missing-job case: clear the stamp and
+                # let the pass re-promote the run. A run whose
+                # execution started is left alone regardless: its
+                # own lifecycle owns its state.
+                if _run_shows_execution_started(row):
+                    continue
+                dispatched_at = _parse_iso(options.get("dispatched_at"))
+                if dispatched_at and (
+                    datetime.now(timezone.utc) - dispatched_at
+                ) < timedelta(minutes=2):
+                    continue  # too fresh to judge an inert job
+                _clear_dispatch_stamp(db, row)
+                logging_setup.log_event(
+                    logger,
+                    logging.WARNING,
+                    "run_unwedged_inert_job",
+                    run_id=row.id,
+                    job_id=job_id,
+                    job_status=_job_status(job),
                 )
             continue  # job exists and is live, or owns the run's state
         dispatched_at = _parse_iso(options.get("dispatched_at"))

@@ -73,7 +73,16 @@ RESUME_DIR_NAME = "resume"
 #: caught live (2026-11-22; the first fix missed retry_not_before
 #: and the battery's recovery line caught that too).
 _VOLATILE_OPTION_KEYS = frozenset(
-    {"entrypoint", "retry_of", "retry_attempt", "retry_not_before"}
+    {
+        "entrypoint",
+        "retry_of",
+        "retry_attempt",
+        "retry_not_before",
+        # Phase 1 same-run resume bookkeeping: how often the source
+        # run was requeued says nothing about WHAT it produces.
+        "resume_count",
+        "last_resume_at",
+    }
 )
 
 #: Terminal manifest/state statuses a prior run may be adopted from.
@@ -412,6 +421,215 @@ def find_resume_source(project_dir, current_run_id, script_sha256,
         "stages": {},
         "fallback": "; ".join(fallbacks) if fallbacks else "no_matching_prior_run",
     }
+
+
+def plan_self_resume(project_dir, current_run_id, prior_state):
+    """Phase 1 durability: the resume plan a run builds from its
+    OWN previous execution's stage records.
+
+    When a heartbeat-stale run is requeued and claimed again (same
+    run row — see run_ledger._requeue_stale_run), run_full_pipeline
+    re-enters with the same run id. Its prior production_state —
+    captured by the caller BEFORE the fresh state overwrites it —
+    carries the stage records of the execution that died: each
+    completed stage's resume payload pointer + artefact hashes.
+    Those records are validated with exactly the cross-run rules
+    (_validate_stage + the C-01 asset coverage gate): identity
+    substitutes for the script/options equality and terminal-status
+    checks (the claimant IS this run's owner, so the "source may
+    be mid-write" concern does not apply), but artefact integrity
+    is NOT waived — a stage whose files changed or vanished since
+    the crash is re-executed, never trusted.
+
+    Returns a plan dict shaped like find_resume_source's, with
+    source_run_id == current_run_id and "self_resume": True, or a
+    plan with empty stages when nothing validates. Never raises.
+    """
+    plan = {
+        "source_run_id": None,
+        "stages": {},
+        "fallback": None,
+        "self_resume": True,
+    }
+    try:
+        if not isinstance(prior_state, dict) or not current_run_id:
+            plan["fallback"] = "no_prior_state"
+            return plan
+        project_dir = Path(project_dir)
+        prior_stages = prior_state.get("stages") or {}
+        stages = {}
+        stop_reason = ""
+        for stage in PRODUCTION_STAGES:
+            record = prior_stages.get(stage)
+            ok, reason = _validate_stage(record, project_dir)
+            if ok and stage == "asset_manager":
+                ok, reason = _validate_asset_coverage(record, project_dir)
+            if not ok:
+                stop_reason = f"{stage}:{reason}"
+                break
+            stages[stage] = {
+                "record": record,
+                "payload_path": project_dir / str(record["resume_payload"]),
+            }
+        if stages:
+            plan["source_run_id"] = str(current_run_id)
+            plan["stages"] = stages
+            plan["fallback"] = stop_reason or None
+        else:
+            plan["fallback"] = stop_reason or "no_validatable_stages"
+        return plan
+    except Exception as error:  # fail-soft: a planning error is a clean run
+        plan["stages"] = {}
+        plan["source_run_id"] = None
+        plan["fallback"] = f"planning_error:{type(error).__name__}:{error}"
+        return plan
+
+
+# ---------------------------------------------------------------------
+# Phase 1: asset-stage scene checkpoints
+# ---------------------------------------------------------------------
+# The stage payload above is written only when the asset stage
+# COMPLETES. A worker that dies mid-stage (the Hyatt pattern: scene
+# 9 of 10 after ~100 minutes) used to lose every scene it had
+# processed, because jobs persisted nothing until the stage's end.
+# The progress checkpoint below is the incremental counterpart: after
+# each scene commits, jobs records the scenes committed so far plus
+# the visual registry's export_state() — the same state the completed
+# stage payload carries — so a same-run resume re-enters the stage
+# with the registry restored and the committed scenes skipped.
+
+ASSET_PROGRESS_NAME = "asset_manager.progress.json"
+
+
+def asset_progress_path(artefact_dir):
+    return Path(artefact_dir) / RESUME_DIR_NAME / ASSET_PROGRESS_NAME
+
+
+def _selected_asset_paths(scene_entry):
+    """The local media files a committed scene result actually
+    selected (its top-level images/videos entries) — the files
+    downstream stages consume. Candidate records nested deeper in
+    the result also carry path-like keys (including candidates
+    that were rejected or never downloaded), so they are NOT
+    integrity evidence and are deliberately not collected."""
+    found = []
+    if not isinstance(scene_entry, dict):
+        return found
+    for kind in ("images", "videos"):
+        for item in scene_entry.get(kind) or []:
+            if not isinstance(item, dict):
+                continue
+            for key in ("path", "file_path", "local_path"):
+                value = item.get(key)
+                if isinstance(value, str) and value:
+                    found.append(value)
+                    break
+    return found
+
+
+def record_asset_progress(artefact_dir, project_dir, *, script_hash,
+                          processed_scenes, registry_state):
+    """Persist the asset stage's incremental checkpoint (atomic
+    write). Fail-soft by the module's contract: returns True when
+    written, False on any problem — checkpointing must never fail
+    a production.
+
+    Integrity follows the module's trust pattern: every selected
+    asset file that exists at record time is sha256-stamped into
+    the checkpoint, and load_asset_progress re-verifies the
+    stamps. Files absent at record time are not stamped (nothing
+    can vouch for them) and do not block the checkpoint."""
+    try:
+        project_dir = Path(project_dir)
+        scenes = []
+        committed = []
+        asset_hashes = {}
+        for entry in processed_scenes or []:
+            if not isinstance(entry, dict):
+                continue
+            scene = entry.get("scene") or {}
+            number = scene.get("scene_number")
+            if number is None:
+                number = entry.get("scene_number")
+            if number is None:
+                continue
+            committed.append(int(number))
+            scenes.append(entry)
+            for raw in _selected_asset_paths(entry):
+                candidate = Path(raw)
+                if not candidate.is_absolute():
+                    candidate = project_dir / candidate
+                try:
+                    if candidate.is_file():
+                        asset_hashes[str(candidate)] = sha256_file(candidate)
+                except OSError:
+                    continue
+        payload = {
+            "version": 1,
+            "script_hash": script_hash,
+            "committed_scenes": committed,
+            "processed_scenes": scenes,
+            "registry": registry_state or {},
+            "asset_hashes": asset_hashes,
+        }
+        # Strict serialisability is part of the contract: a scene
+        # result that cannot serialise is not checkpointed (the
+        # completed-stage recorder applies the same rule).
+        json.dumps(payload)
+        write_json_atomic(
+            asset_progress_path(artefact_dir), payload, ensure_ascii=False
+        )
+        return True
+    except Exception:
+        return False
+
+
+def load_asset_progress(artefact_dir, project_dir, *, script_hash):
+    """Load and validate this run's asset-stage checkpoint, or
+    None when there is nothing trustworthy to resume from.
+
+    Validation: the checkpoint belongs to this run's artefact
+    directory (the caller passes its own), the script hash matches
+    the run being executed, every committed scene result is
+    present, and every asset file stamped at record time still
+    exists and hashes to its recorded value — a scene whose
+    selected assets were deleted or replaced after the crash is
+    NOT skipped; the whole checkpoint is refused (fail-closed to
+    a full stage re-run rather than a partial skip over changed
+    files)."""
+    try:
+        payload = _load_json(asset_progress_path(artefact_dir))
+        if not isinstance(payload, dict):
+            return None
+        if script_hash and payload.get("script_hash") != script_hash:
+            return None
+        scenes = payload.get("processed_scenes")
+        committed = payload.get("committed_scenes")
+        if not isinstance(scenes, list) or not scenes:
+            return None
+        if not isinstance(committed, list) or len(committed) != len(scenes):
+            return None
+        for raw, expected in (payload.get("asset_hashes") or {}).items():
+            candidate = Path(raw)
+            if not candidate.is_file():
+                return None
+            try:
+                if sha256_file(candidate) != expected:
+                    return None
+            except OSError:
+                return None
+        return payload
+    except Exception:
+        return None
+
+
+def clear_asset_progress(artefact_dir):
+    """Drop the incremental checkpoint once the completed stage
+    payload supersedes it. Fail-soft."""
+    try:
+        asset_progress_path(artefact_dir).unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def plan_resume(project_dir, current_run_id, script_sha256, current_options):

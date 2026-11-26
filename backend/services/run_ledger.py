@@ -35,7 +35,7 @@ import tempfile
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -122,6 +122,44 @@ HEARTBEAT_INTERVAL_SECONDS = _env_float(
     "CINEMORA_RUN_HEARTBEAT_SECONDS", 30
 )
 STALE_AFTER_SECONDS = _env_float("CINEMORA_RUN_STALE_SECONDS", 180)
+
+
+def _env_int(name, default, minimum=0):
+    """Parse an int env var with the same fail-soft contract as
+    _env_float: a malformed value falls back to the default rather
+    than crashing the import of this module."""
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return int(default)
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return int(default)
+    return value if value >= minimum else int(default)
+
+
+# Phase 1 durability (Master Production Recovery & Architecture
+# Upgrade): a heartbeat-stale run is no longer failed on first
+# offence — it is REQUEUED in place (same run row, same billing
+# reservation) so the dispatcher re-promotes it and the pipeline
+# resumes it from its stage/scene checkpoints. Only when a run has
+# exhausted its resume budget is it failed as "interrupted",
+# exactly as before. MAX_RESUMES=0 restores the pre-Phase-1
+# fail-on-first-stale behaviour.
+MAX_RESUMES = _env_int("CINEMORA_RUN_MAX_RESUMES", 3)
+RESUME_REQUEUE_DELAY_SECONDS = _env_float(
+    "CINEMORA_RUN_RESUME_DELAY_SECONDS", 30
+)
+
+
+def resume_count_for(options) -> int:
+    """How many times this run has already been requeued for
+    same-run resume (options bookkeeping — options survive the
+    claim's presence overwrite, progress does not)."""
+    try:
+        return max(0, int((options or {}).get("resume_count") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def current_worker_id() -> str:
@@ -1080,10 +1118,69 @@ def _restore_interrupted_reservations(run_ids):
         pass
 
 
+def _requeue_stale_run(db, row, now):
+    """Phase 1 durability: return one heartbeat-stale run to
+    "queued" IN PLACE for same-run resume. Returns True when this
+    call won the transition.
+
+    The conditional UPDATE is guarded on the row still being
+    "running" (the same re-guard the fail path uses): a run that
+    finished between the staleness scan and this write is left
+    strictly alone. The write:
+
+    - clears the dead execution's presence (the next claim stamps
+      fresh ownership atomically, as always) while keeping a
+      forensic trace of the loss in progress;
+    - drops any dispatch stamp, so the dispatcher treats the run
+      as waiting again, and sets a short retry_not_before so a
+      worker that dies instantly on this run cannot hot-loop it;
+    - increments the run's resume budget consumption in options
+      (options survive claims; the presence payload in progress
+      does not);
+    - deliberately does NOT touch billing: the run is not
+      terminal, its reservation stays active, and settlement
+      remains exactly-once at the run's eventual finish.
+    """
+    from models import ProductionRun
+    from sqlalchemy import update
+
+    options = dict(row.options or {})
+    previous_owner = (row.progress or {}).get("worker_id")
+    options["resume_count"] = resume_count_for(options) + 1
+    options["last_resume_at"] = now.isoformat()
+    options["retry_not_before"] = (
+        now + timedelta(seconds=RESUME_REQUEUE_DELAY_SECONDS)
+    ).isoformat()
+    options.pop("dispatched_job_id", None)
+    options.pop("dispatched_at", None)
+    progress = {
+        "resume_pending": True,
+        "previous_worker_id": previous_owner,
+        "heartbeat_lost_at": now.isoformat(),
+    }
+    result = db.execute(
+        update(ProductionRun)
+        .where(
+            ProductionRun.id == row.id,
+            ProductionRun.status == "running",
+        )
+        .values(
+            status="queued",
+            error=None,
+            finished_at=None,
+            options=options,
+            progress=progress,
+        )
+    )
+    db.commit()
+    return int(result.rowcount or 0) == 1
+
+
 def reconcile_stale_runs(stale_after_seconds=None):
-    """Mark orphaned "running" runs failed with error "interrupted"
-    (AUD-08 recovery). Returns the count reconciled (0 when the
-    ledger is unavailable).
+    """Reconcile orphaned "running" runs whose worker has died
+    (AUD-08 recovery; Phase 1 durability semantics). Returns the
+    count reconciled — resumed + failed (0 when the ledger is
+    unavailable).
 
     Two modes, deliberately distinct (Stage 3, R2 — PIPE-005 /
     DATA-005):
@@ -1093,16 +1190,30 @@ def reconcile_stale_runs(stale_after_seconds=None):
       sound for a caller that has PROVEN no other worker is live —
       worker.py's startup, which runs it only after acquiring the
       worker singleton lock: holding that lock is the proof that
-      any running row is an orphan of a dead predecessor.
+      any running row is an orphan of a dead predecessor. This
+      mode's contract is unchanged by Phase 1: it is the hard
+      reset for a proven-empty fleet, and no live caller uses it
+      (worker.py reconciles heartbeat-aware at startup and
+      periodically).
 
     - stale_after_seconds=N — HEARTBEAT-AWARE reconciliation, the
       only mode a caller without that proof may use (the worker's
-      periodic reconciler): a running run is failed ONLY when its
-      liveness evidence — heartbeat_at, falling back to started_at
-      / created_at for rows predating presence — is older than N
-      seconds. A run with a live heartbeat is NEVER touched, so a
-      live worker's in-flight production cannot be failed out from
-      under it by another process's housekeeping.
+      periodic reconciler): a running run is judged orphaned ONLY
+      when its liveness evidence — heartbeat_at, falling back to
+      started_at / created_at for rows predating presence — is
+      older than N seconds. A run with a live heartbeat is NEVER
+      touched, so a live worker's in-flight production cannot be
+      disturbed by another process's housekeeping.
+
+      Phase 1 change: an orphaned run is first REQUEUED in place
+      (same run row, same billing reservation — see
+      _requeue_stale_run) so the dispatcher re-promotes it and the
+      pipeline resumes it from its checkpoints. Only a run that
+      has exhausted MAX_RESUMES requeues is failed as
+      "interrupted", with the pre-Phase-1 full billing
+      restoration. A run whose worker merely hung is bounded by
+      the same budget: each requeue that dies stale again consumes
+      another resume.
     """
     try:
         from models import ProductionRun
@@ -1139,8 +1250,9 @@ def reconcile_stale_runs(stale_after_seconds=None):
                 .filter(ProductionRun.status == "running")
                 .all()
             )
-            stale_ids = []
+            stale_rows = []
             stale_details = []
+            detail_by_id = {}
             for row in rows:
                 presence = run_presence(
                     {
@@ -1151,49 +1263,89 @@ def reconcile_stale_runs(stale_after_seconds=None):
                 )
                 age = presence["age_seconds"]
                 if age is None or age > float(stale_after_seconds):
-                    stale_ids.append(row.id)
+                    stale_rows.append(row)
                     # C-15: keep the death circumstances for the
                     # forensic record written after the update —
                     # which worker owned the run and when its heart
-                    # last beat.
-                    stale_details.append({
+                    # last beat. Phase 1 adds the outcome: whether
+                    # this loss ends in a same-run resume or in the
+                    # terminal interrupted failure.
+                    detail = {
                         "run_id": row.id,
                         "project_id": row.project_id,
                         "worker_id": presence["worker_id"],
                         "last_heartbeat_at": presence["heartbeat_at"],
                         "heartbeat_age_seconds": age,
                         "stage": row.stage,
-                    })
-            if not stale_ids:
+                        "outcome": None,
+                    }
+                    stale_details.append(detail)
+                    detail_by_id[row.id] = detail
+            if not stale_rows:
                 return 0
-            result = db.execute(
-                update(ProductionRun)
-                .where(
-                    ProductionRun.id.in_(stale_ids),
-                    # Re-guard on the status inside the UPDATE: a run
-                    # that finished between the scan and the write
-                    # must not be overwritten.
-                    ProductionRun.status == "running",
+            now = _now()
+            # Phase 1: partition the orphans. Runs with resume
+            # budget left are requeued in place, one conditional
+            # UPDATE each (their options/progress rewrites are
+            # per-run); the rest take the terminal path below.
+            resumed_ids = []
+            failed_ids = []
+            for row in stale_rows:
+                if resume_count_for(row.options) < MAX_RESUMES:
+                    try:
+                        if _requeue_stale_run(db, row, now):
+                            resumed_ids.append(row.id)
+                            detail_by_id[row.id]["outcome"] = "resumed"
+                    except Exception as error:
+                        # A requeue that itself fails must not
+                        # strand the run in "running" forever nor
+                        # abort the sweep: fall through to the
+                        # terminal path for this run.
+                        print(
+                            "WARNING: stale-run requeue failed for "
+                            f"{row.id}: {error}"
+                        )
+                        failed_ids.append(row.id)
+                        detail_by_id[row.id]["outcome"] = "failed"
+                else:
+                    failed_ids.append(row.id)
+                    detail_by_id[row.id]["outcome"] = "failed"
+            failed_count = 0
+            if failed_ids:
+                result = db.execute(
+                    update(ProductionRun)
+                    .where(
+                        ProductionRun.id.in_(failed_ids),
+                        # Re-guard on the status inside the UPDATE:
+                        # a run that finished between the scan and
+                        # the write must not be overwritten.
+                        ProductionRun.status == "running",
+                    )
+                    .values(
+                        status="failed",
+                        error="interrupted",
+                        finished_at=now,
+                    )
                 )
-                .values(
-                    status="failed",
-                    error="interrupted",
-                    finished_at=_now(),
-                )
-            )
-            db.commit()
-            reconciled_count = int(result.rowcount or 0)
+                db.commit()
+                failed_count = int(result.rowcount or 0)
+                if failed_count:
+                    # Phase 8 billing: interrupted runs restore
+                    # their reservations in full (settle guards on
+                    # the run actually being terminal, so the
+                    # re-guard race above cannot restore a live
+                    # run's reservation). Resumed runs are NOT
+                    # restored — they are not terminal; their
+                    # reservation rides the resume.
+                    _restore_interrupted_reservations(failed_ids)
+            reconciled_count = len(resumed_ids) + failed_count
             if reconciled_count:
-                # Phase 8 billing: interrupted runs restore their
-                # reservations in full (settle guards on the run
-                # actually being terminal, so the re-guard race
-                # above cannot restore a live run's reservation).
-                _restore_interrupted_reservations(stale_ids)
                 # C-15 forensics: the NEXT worker death must be
                 # diagnosable from records. This event is the
                 # durable evidence that these runs' heartbeats were
                 # lost — what died (run + owning worker), when its
-                # heart last beat, and how stale it was. Fail-soft
+                # heart last beat, how stale it was, and (Phase 1)
+                # whether it was resumed or failed. Fail-soft
                 # (record_event never raises).
                 from services import worker_events
 
@@ -1201,6 +1353,8 @@ def reconcile_stale_runs(stale_after_seconds=None):
                     "heartbeat_loss",
                     stale_after_seconds=float(stale_after_seconds),
                     reconciled_count=reconciled_count,
+                    resumed_count=len(resumed_ids),
+                    failed_count=failed_count,
                     runs=stale_details,
                 )
             return reconciled_count

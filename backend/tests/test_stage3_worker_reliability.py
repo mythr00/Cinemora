@@ -283,6 +283,12 @@ def test_reconcile_heartbeat_aware_spares_live_runs(project_id):
 
 
 def test_reconcile_heartbeat_aware_reclaims_stale_runs(project_id):
+    # Phase 1 durability semantics: a heartbeat-stale run is
+    # REQUEUED in place for same-run resume (same run row, no
+    # terminal write, reservation untouched), NOT failed. The
+    # terminal "interrupted" path now applies only once the
+    # resume budget is exhausted — pinned in
+    # test_phase1_durability.py.
     stale_id = run_ledger.begin_run(project_id, _unique_script("stale"))
     _set_heartbeat(
         stale_id, datetime.now(timezone.utc) - timedelta(seconds=3600)
@@ -292,9 +298,11 @@ def test_reconcile_heartbeat_aware_reclaims_stale_runs(project_id):
     )
     assert reconciled >= 1
     run = run_ledger.get_run(stale_id)
-    assert run["status"] == "failed"
-    assert run["error"] == "interrupted"
-    assert run["finished_at"] is not None
+    assert run["status"] == "queued"
+    assert run["error"] is None
+    assert run["finished_at"] is None
+    assert run["options"]["resume_count"] == 1
+    assert run["progress"]["resume_pending"] is True
 
 
 def test_reconcile_heartbeat_aware_legacy_rows_use_started_at(
@@ -315,7 +323,8 @@ def test_reconcile_heartbeat_aware_legacy_rows_use_started_at(
     finally:
         db.close()
     run_ledger.reconcile_stale_runs(stale_after_seconds=180)
-    assert run_ledger.get_run(old_id)["status"] == "failed"
+    # Phase 1: reclaimed means requeued for same-run resume.
+    assert run_ledger.get_run(old_id)["status"] == "queued"
 
     fresh_id = run_ledger.begin_run(
         project_id, _unique_script("legacy-fresh")
@@ -448,7 +457,11 @@ def test_startup_reconciliation_spares_a_live_foreign_run(project_id):
         stale_after_seconds=run_ledger.STALE_AFTER_SECONDS
     )
     assert reconciled == 1
-    assert run_ledger.get_run(run["run_id"])["status"] == "failed"
+    # Phase 1: the orphaned run is requeued for same-run resume,
+    # not failed — worker B's startup can still never disturb a
+    # LIVE run (asserted above), and a dead worker's run now
+    # continues instead of dying.
+    assert run_ledger.get_run(run["run_id"])["status"] == "queued"
 
 
 def test_real_redis_fifo_order_on_the_production_queue(redis15):
