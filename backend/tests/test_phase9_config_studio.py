@@ -649,7 +649,7 @@ def test_catalogue_is_generated_from_the_live_systems(client, users):
     voice_ids = [v["id"] for v in catalogue["narration"]["voices"]]
     assert "default" in voice_ids
     assert catalogue["music_library"]["configured"] is False
-    assert catalogue["narration"]["provider"] == "piper"
+    assert catalogue["narration"]["provider"] == "kokoro"
     assert "no speed setting" in catalogue["narration"]["note"]
 
 

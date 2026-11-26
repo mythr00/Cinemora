@@ -1,14 +1,17 @@
 """Transformation Phase 2.4 — the second narration voice and
-per-pack pace.
+per-pack pace. (Engine updated 2026-11-26: the voices are now
+Kokoro-82M's — the contrasting second voice is am_michael
+against the af_heart primary; before the switch they were the
+Piper pair lessac/ryan.)
 
 - The catalogue carries a real contrasting second voice
-  (en_US-ryan-medium), installed and resolvable.
+  (am_michael), installed and resolvable.
 - assign_sentence_voices gives the secondary voice to quoted /
   interview beats ONLY; everything else keeps the primary voice,
   and when nothing qualifies the assignment is None (the exact
   single-voice path).
-- A two-voice render at unit level (Piper stubbed at
-  narration._run_piper with real WAV writing): parts are
+- A two-voice render at unit level (synthesis stubbed at
+  narration._run_kokoro with real WAV writing): parts are
   synthesised with their assigned voices, the parts manifest
   records each part's voice, and the joined narration probes.
 - Loudness profile untouched: the delivery loudness target
@@ -30,14 +33,14 @@ from services import narration
 # ---------------------------------------------------------------------------
 
 def test_secondary_voice_is_real_and_contrasting():
-    assert narration.SECONDARY_VOICE_ID == "en_US-ryan-medium"
+    assert narration.SECONDARY_VOICE_ID == "am_michael"
     assert narration.SECONDARY_VOICE_ID in narration.VOICE_CATALOGUE
     model, config, resolved, fell_back = narration.resolve_voice(
         narration.SECONDARY_VOICE_ID
     )
     assert resolved == narration.SECONDARY_VOICE_ID
     assert fell_back is False
-    assert model.name == "en_US-ryan-medium.onnx"
+    assert model.name == "kokoro-v1.0.onnx"
     assert model != narration.PIPER_MODEL
     assert narration.secondary_voice_available() is True
 
@@ -45,7 +48,7 @@ def test_secondary_voice_is_real_and_contrasting():
 def test_primary_voice_unchanged():
     model, _config, resolved, _fb = narration.resolve_voice(None)
     assert resolved == narration.DEFAULT_VOICE_ID
-    assert model.name == "en_US-lessac-medium.onnx"
+    assert model.name == "kokoro-v1.0.onnx"
 
 
 # ---------------------------------------------------------------------------
@@ -81,10 +84,10 @@ def test_assignment_honours_role_markers_and_primary_choice():
         {"text": "I saw the cable snap.", "role": "interview"},
     ]
     voices = narration.assign_sentence_voices(
-        sentences, primary_voice_id="en_US-lessac-medium"
+        sentences, primary_voice_id="af_heart"
     )
     assert voices == [
-        "en_US-lessac-medium", narration.SECONDARY_VOICE_ID,
+        "af_heart", narration.SECONDARY_VOICE_ID,
     ]
 
 
@@ -104,19 +107,21 @@ def _write_tiny_wav(path):
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
-        wav.setframerate(22050)
-        wav.writeframes(b"\x00\x00" * 2205)  # 0.1s of silence
+        wav.setframerate(24000)
+        wav.writeframes(b"\x00\x00" * 2400)  # 0.1s of silence
 
 
 @pytest.fixture()
 def fake_piper(monkeypatch):
+    # The fixture keeps its historical name; since the 2026-11-26
+    # engine switch it stubs the Kokoro synthesis entry point.
     calls = []
 
-    def fake_run_piper(text, output_file, voice_id=None):
+    def fake_run_kokoro(text, output_file, voice_id=None):
         calls.append({"text": text, "voice_id": voice_id})
         _write_tiny_wav(output_file)
 
-    monkeypatch.setattr(narration, "_run_piper", fake_run_piper)
+    monkeypatch.setattr(narration, "_run_kokoro", fake_run_kokoro)
     return calls
 
 
@@ -172,6 +177,12 @@ def test_no_speed_parameter_exists_in_the_tts_path(tmp_path, fake_piper):
     ).parameters
     assert "speed" not in inspect.signature(
         narration._run_piper
+    ).parameters
+    assert "speed" not in inspect.signature(
+        narration._run_kokoro
+    ).parameters
+    assert "speed" not in inspect.signature(
+        narration._synthesize_sentence
     ).parameters
     with pytest.raises(TypeError):
         narration.generate_narration(

@@ -32,9 +32,13 @@ def test_wrong_person_protection_is_documented_metadata_only():
     assert "NO face or person" in doc
 
 
-def test_voice_catalogue_is_exactly_two_local_english_piper_voices():
+def test_voice_catalogue_is_exactly_the_genuine_kokoro_pack():
+    # Updated 2026-11-26 (Kokoro switch): the catalogue is the
+    # genuine 54-voice Kokoro pack, no more and no fewer — the
+    # licence-defective Piper voices are retired from it.
     ids = set(narration.VOICE_CATALOGUE) - {"default"}
-    assert ids == {"en_US-lessac-medium", "en_US-ryan-medium"}
+    assert ids == set(narration.KOKORO_VOICE_IDS)
+    assert len(ids) == 54
 
 
 def test_uploaded_voice_narration_still_refused_honestly():

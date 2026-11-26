@@ -229,11 +229,13 @@ def test_timing_consistency_check_fires_on_truncated_concat(tmp_path):
 # ---------------------------------------------------------------
 
 def _stub_piper_by_words(monkeypatch):
-    def fake_piper(text, output_file, voice_id=None, speed=None):
+    # Historical helper name; since the 2026-11-26 Kokoro switch
+    # it stubs the Kokoro synthesis entry point.
+    def fake_engine(text, output_file, voice_id=None):
         words = max(1, len(str(text).split()))
         _make_wav(Path(output_file), seconds=0.5 * words)
 
-    monkeypatch.setattr(narration, "_run_piper", fake_piper)
+    monkeypatch.setattr(narration, "_run_kokoro", fake_engine)
 
 
 def test_generate_narration_records_measured_durations_v2(
@@ -257,12 +259,12 @@ def test_generate_narration_records_measured_durations_v2(
         for entry in manifest["parts"]
     )
 
-    # Reuse path: Piper must not run again, and the reloaded
+    # Reuse path: the engine must not run again, and the reloaded
     # manifest still records a measured duration for every part.
-    def forbidden_piper(*args, **kwargs):
-        raise AssertionError("Piper must not run for reused parts")
+    def forbidden_engine(*args, **kwargs):
+        raise AssertionError("the engine must not run for reused parts")
 
-    monkeypatch.setattr(narration, "_run_piper", forbidden_piper)
+    monkeypatch.setattr(narration, "_run_kokoro", forbidden_engine)
     narration.generate_narration(
         "One. Two words here. Four word sentence here.", str(out)
     )
@@ -301,10 +303,10 @@ def test_v1_manifest_upgraded_by_measurement(tmp_path):
 
 
 def test_unprobeable_part_fails_loudly(tmp_path, monkeypatch):
-    def garbage_piper(text, output_file, voice_id=None, speed=None):
+    def garbage_engine(text, output_file, voice_id=None):
         Path(output_file).write_bytes(b"definitely not a wav" * 64)
 
-    monkeypatch.setattr(narration, "_run_piper", garbage_piper)
+    monkeypatch.setattr(narration, "_run_kokoro", garbage_engine)
     with pytest.raises(RuntimeError) as exc:
         narration.generate_narration(
             "One sentence.", str(tmp_path / "narration.wav")
@@ -563,14 +565,15 @@ def test_single_part_hash_shared_by_editor_rebuild():
             rejoined_sentence
         )
 
-    # The editor carries no private Piper/hash path of its own: its
-    # only narration synthesis is narration.generate_narration.
+    # The editor carries no private engine/hash path of its own:
+    # its only narration synthesis is narration.generate_narration.
     import inspect
 
     from services import editor
 
     source = inspect.getsource(editor)
     assert "_run_piper" not in source
+    assert "_run_kokoro" not in source
     assert "narration_service.generate_narration" in source
 
 

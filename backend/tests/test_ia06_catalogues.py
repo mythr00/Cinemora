@@ -9,8 +9,10 @@ other v1 route):
   documents (general / history / true_crime) with their real
   id/label/description and pack fields, nothing invented;
 - voices: services.narration.VOICE_CATALOGUE (Stage 3J) — exactly
-  the installed voice(s): "en_US-lessac-medium" plus its "default"
-  alias, both backed by the one installed Piper model.
+  the installed voices: since the 2026-11-26 Kokoro switch, the
+  genuine 54-voice Kokoro-82M pack plus its "default" alias (of
+  the primary voice af_heart), all backed by the one installed
+  Kokoro model + voices file.
 
 There is deliberately no music catalogue: the music library is
 founder-gated (P3) and these routes must not activate it — the
@@ -164,28 +166,29 @@ def test_voices_catalogue_matches_installed_voices(client):
     voices = body["voices"]
 
     # Exactly the real catalogue ids (Stage 3J: the installed
-    # voices plus the "default" alias; Phase 2.4 installed the
-    # second voice, en_US-ryan-medium) — nothing invented,
-    # nothing missing.
+    # voices plus the "default" alias; since the 2026-11-26
+    # Kokoro switch those are the 54 genuine pack voices) —
+    # nothing invented, nothing missing.
     assert {v["id"] for v in voices} == set(narration.VOICE_CATALOGUE)
-    assert {v["id"] for v in voices} == {
-        "en_US-lessac-medium", "en_US-ryan-medium", "default",
-    }
-    assert len(voices) == 3
+    assert {v["id"] for v in voices} == (
+        set(narration.KOKORO_VOICE_IDS) | {"default"}
+    )
+    assert len(voices) == 55
 
     by_id = {v["id"]: v for v in voices}
-    canonical = by_id["en_US-lessac-medium"]
+    canonical = by_id["af_heart"]
     assert canonical["is_default"] is False
     assert canonical["alias_of"] is None
-    assert canonical["model"] == "en_US-lessac-medium.onnx"
-    assert canonical["model_file"] == "en_US-lessac-medium.onnx"
+    assert canonical["model"] == "kokoro-v1.0.onnx"
+    assert canonical["model_file"] == "kokoro-v1.0.onnx"
     assert canonical["installed"] is True
 
     default = by_id["default"]
     assert default["is_default"] is True
-    # The alias is reported as an alias of the real voice, backed by
-    # the same installed model — never dressed up as a second voice.
-    assert default["alias_of"] == "en_US-lessac-medium"
+    # The alias is reported as an alias of the real primary voice,
+    # backed by the same installed model — never dressed up as a
+    # second voice.
+    assert default["alias_of"] == "af_heart"
     assert default["model"] == canonical["model"]
     assert default["installed"] is True
 

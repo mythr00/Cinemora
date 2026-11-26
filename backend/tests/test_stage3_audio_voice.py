@@ -6,9 +6,11 @@ audibly present under narration gaps. Also: asset_report emits the
 soundtrack record verbatim under a top-level "soundtrack" key.
 
 3J: the voice catalogue contains ONLY the voices actually
-installed (exactly one: en_US-lessac-medium). _run_piper receives
-the resolved model; unknown ids fall back honestly and share parts
-with the default voice.
+installed (Kokoro-82M's genuine 54-voice pack plus the "default"
+alias, since the 2026-11-26 engine switch; before it, two Piper
+voices). The synthesis seam receives the requested voice;
+unknown ids fall back honestly and share parts with the default
+voice.
 """
 
 import math
@@ -159,23 +161,29 @@ def test_measure_loudness_returns_none_on_missing_file(tmp_path):
 # ---------------------------------------------------------------
 
 def test_catalogue_contains_only_installed_voices():
-    # Exactly TWO real voice models are installed in backend/
-    # (Phase 2.4 added en_US-ryan-medium as the secondary voice).
-    assert set(narration.VOICE_CATALOGUE) == {
-        "default", "en_US-lessac-medium", "en_US-ryan-medium",
-    }
+    # Kokoro switch (2026-11-26): the catalogue is the genuine
+    # Kokoro v1.0 pack — 54 voices — plus the "default" alias.
+    # Every entry is backed by the shared installed assets (one
+    # model + one voices file). The retired Piper voices are NOT
+    # in the customer catalogue (dataset-licence defect).
+    assert set(narration.VOICE_CATALOGUE) == (
+        set(narration.KOKORO_VOICE_IDS) | {"default"}
+    )
+    assert len(narration.VOICE_CATALOGUE) == 55
+    assert "en_US-lessac-medium" not in narration.VOICE_CATALOGUE
+    assert "en_US-ryan-medium" not in narration.VOICE_CATALOGUE
     for voice_id, (model, config) in narration.VOICE_CATALOGUE.items():
         assert Path(model).exists()
         assert Path(config).exists()
-        if voice_id != "default":
-            assert Path(model).name == f"{voice_id}.onnx"
+        assert Path(model).name == "kokoro-v1.0.onnx"
+        assert Path(config).name == "voices-v1.0.bin"
 
 
 def test_resolve_voice_known_and_unknown():
     model, config, resolved, fell_back = narration.resolve_voice(
-        "en_US-lessac-medium"
+        "af_heart"
     )
-    assert resolved == "en_US-lessac-medium"
+    assert resolved == "af_heart"
     assert fell_back is False
 
     model2, config2, resolved2, fell_back2 = narration.resolve_voice(
@@ -183,71 +191,64 @@ def test_resolve_voice_known_and_unknown():
     )
     assert resolved2 == "default"
     assert fell_back2 is True
-    assert model2 == narration.PIPER_MODEL
+    assert model2 == narration.KOKORO_MODEL
 
     _, _, resolved3, fell_back3 = narration.resolve_voice(None)
     assert resolved3 == "default"
     assert fell_back3 is False
 
 
-class _CapturedPiper:
-    """Replaces subprocess.run inside narration._run_piper: records
-    the command, writes a real tiny WAV to the -f target.
-
-    Stage 5 (R4): generate_narration now also probes each part
-    through media_probe (ffprobe) to record its measured duration,
-    and the patch target is the shared subprocess module — so
-    non-Piper commands are delegated to the real subprocess.run
-    instead of being mistaken for Piper invocations."""
+class _CapturedKokoro:
+    """Replaces narration._run_kokoro: records each call (the
+    requested voice and the canonical voice it resolves to) and
+    writes a real tiny WAV to the output target, so
+    generate_narration's measured-duration probing (Stage 5, R4)
+    runs against a genuine file."""
 
     def __init__(self):
-        self.commands = []
-        self._real_run = subprocess.run
+        self.calls = []
 
-    def __call__(self, command, **kwargs):
-        if "piper" not in command:
-            return self._real_run(command, **kwargs)
-        self.commands.append(list(command))
-        out = Path(command[command.index("-f") + 1])
-        with wave.open(str(out), "wb") as wav:
+    def __call__(self, text, output_file, voice_id=None):
+        self.calls.append(
+            {
+                "text": text,
+                "voice_id": voice_id,
+                "canonical": narration.canonical_voice_id(voice_id),
+            }
+        )
+        with wave.open(str(output_file), "wb") as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
-            wav.setframerate(22050)
-            wav.writeframes(b"\x00\x00" * 500)
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    def models_used(self):
-        models = []
-        for command in self.commands:
-            piper_at = command.index("piper")
-            models.append(command[piper_at + 2])  # arg after "-m"
-        return models
+            wav.setframerate(24000)
+            wav.writeframes(b"\x00\x00" * 2400)
 
 
 @pytest.fixture
-def captured_piper(monkeypatch):
-    fake = _CapturedPiper()
-    monkeypatch.setattr(narration.subprocess, "run", fake)
+def captured_kokoro(monkeypatch):
+    fake = _CapturedKokoro()
+    monkeypatch.setattr(narration, "_run_kokoro", fake)
     return fake
 
 
-def test_catalogue_voice_reaches_piper_by_name(tmp_path, captured_piper):
+def test_catalogue_voice_reaches_engine_by_name(tmp_path, captured_kokoro):
     out = tmp_path / "narration.wav"
     meta = generate_narration(
         text="One sentence only.",
         output_path=str(out),
-        voice_id="en_US-lessac-medium",
+        voice_id="af_heart",
     )
-    assert captured_piper.commands, "piper was never invoked"
-    expected = str(narration.VOICE_CATALOGUE["en_US-lessac-medium"][0])
-    assert all(m == expected for m in captured_piper.models_used())
-    assert meta["voice_id_requested"] == "en_US-lessac-medium"
-    assert meta["voice_id_used"] == "en_US-lessac-medium"
+    assert captured_kokoro.calls, "the Kokoro engine was never invoked"
+    assert all(
+        c["canonical"] == "af_heart" for c in captured_kokoro.calls
+    )
+    assert meta["engine"] == "kokoro"
+    assert meta["voice_id_requested"] == "af_heart"
+    assert meta["voice_id_used"] == "af_heart"
     assert meta["voice_fallback"] is False
-    assert meta["model"] == "en_US-lessac-medium.onnx"
+    assert meta["model"] == "kokoro-v1.0.onnx"
 
 
-def test_bogus_voice_falls_back_to_default_model(tmp_path, captured_piper):
+def test_bogus_voice_falls_back_to_default_model(tmp_path, captured_kokoro):
     out = tmp_path / "narration.wav"
     meta = generate_narration(
         text="One sentence only.",
@@ -257,9 +258,12 @@ def test_bogus_voice_falls_back_to_default_model(tmp_path, captured_piper):
     assert meta["voice_id_requested"] == "no-such-voice"
     assert meta["voice_id_used"] == "default"
     assert meta["voice_fallback"] is True
-    assert meta["model"] == "en_US-lessac-medium.onnx"
-    expected = str(narration.VOICE_CATALOGUE["default"][0])
-    assert all(m == expected for m in captured_piper.models_used())
+    assert meta["model"] == "kokoro-v1.0.onnx"
+    # The engine synthesised with the default's canonical voice.
+    assert all(
+        c["canonical"] == narration.PRIMARY_VOICE_ID
+        for c in captured_kokoro.calls
+    )
 
 
 def test_part_hash_shared_after_resolution():

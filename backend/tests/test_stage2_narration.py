@@ -1,11 +1,12 @@
 """Stage 2D: chunked, resumable narration (services/narration.py).
 
-``narration._run_piper`` is monkeypatched with a fake that writes a
-REAL tiny WAV via the wave module (22050 Hz, 1 channel, 2-byte width,
-1000 + index*100 frames of silence) and records every call. The fake
-never needs the real Piper binary, but generate_narration's own
-PIPER_MODEL / PIPER_CONFIG existence checks run for real — the model
-files live in backend/, so those checks pass unpatched.
+``narration._run_kokoro`` is monkeypatched with a fake that writes a
+REAL tiny WAV via the wave module (24000 Hz, 1 channel, 2-byte width,
+1000 + index*100 frames of silence) and records every call. (Before
+the 2026-11-26 Kokoro switch the stubbed seam was
+``narration._run_piper``.) The fake never runs the real engine, but
+generate_narration's own model/voices existence checks run for
+real — the files live in backend/, so those checks pass unpatched.
 """
 
 import inspect
@@ -37,7 +38,8 @@ def _wav_frames(path):
 
 
 class FakePiper:
-    """Stand-in for narration._run_piper.
+    """Stand-in for narration._run_kokoro (the class keeps its
+    historical name).
 
     fail_plan maps a sentence index to either a number of failures to
     raise before succeeding, or "always" to fail on every call.
@@ -68,7 +70,7 @@ class FakePiper:
         with wave.open(str(output_file), "wb") as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
-            wav.setframerate(22050)
+            wav.setframerate(24000)
             wav.writeframes(b"\x00\x00" * _frames_for(index))
 
     def called_indices(self):
@@ -82,7 +84,7 @@ class FakePiper:
 def install_fake(monkeypatch):
     def _install(fail_plan=None):
         fake = FakePiper(fail_plan=fail_plan)
-        monkeypatch.setattr(narration, "_run_piper", fake)
+        monkeypatch.setattr(narration, "_run_kokoro", fake)
         return fake
 
     return _install

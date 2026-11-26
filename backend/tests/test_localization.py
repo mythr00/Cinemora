@@ -42,7 +42,7 @@ from database import SessionLocal, engine
 from models import Base, Plan, ProductionRun, User, UserSubscription
 from services import auth as auth_service
 from services import captions as captions_service
-from services import llm_provider, localization, media_paths
+from services import llm_provider, localization, media_paths, narration
 
 TOKEN = "loc-test-token-7f3a"
 PASSWORD = "loc-test-password-7f3a"
@@ -227,8 +227,12 @@ def test_studio_view_reports_sources_languages_and_no_dub(client):
     dubbing = view["dubbing"]
     assert dubbing["state"] == "unavailable"
     voice_ids = {voice["voice_id"] for voice in dubbing["voices"]}
-    assert voice_ids == {"en_US-lessac-medium", "en_US-ryan-medium"}
-    assert "falls back to the English default" in dubbing["reason"]
+    # Since the 2026-11-26 Kokoro switch the catalogue behind the
+    # dubbing state is the genuine 54-voice Kokoro pack; dubbing an
+    # existing production stays unavailable on the measured-window
+    # conservation reason alone.
+    assert voice_ids == set(narration.KOKORO_VOICE_IDS)
+    assert "measured window conservation" in dubbing["reason"]
     assert view["artefacts"] == []
 
 
