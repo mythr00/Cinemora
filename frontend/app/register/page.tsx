@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ArrowRight } from "lucide-react";
 import { AuthShell } from "@/components/auth-shell";
-import { ApiClientError, register } from "@/lib/api";
+import { ApiClientError, recordAffiliateClick, register } from "@/lib/api";
 
 /**
  * Create an account (Phase 8.5). Registration follows the
@@ -13,7 +13,8 @@ import { ApiClientError, register } from "@/lib/api";
  * API's own error is shown verbatim when it refuses). The account
  * starts on the default plan; the session cookie is issued by the
  * register call itself, so a successful registration lands
- * straight in the studio.
+ * straight in the studio. An affiliate referral code in the
+ * URL (?ref=) is recorded and attributed at registration.
  */
 export default function RegisterPage() {
   const router = useRouter();
@@ -22,13 +23,30 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Item 1: an affiliate link (?ref=CODE) is recorded as a link
+  // visit on arrival and carried into the registration itself,
+  // where the server creates the lifetime attribution.
+  const [referralCode, setReferralCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    const ref = new URLSearchParams(window.location.search).get("ref");
+    if (ref) {
+      setReferralCode(ref);
+      void recordAffiliateClick(ref).catch(() => undefined);
+    }
+  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await register(email.trim(), password, displayName.trim() || undefined);
+      await register(
+        email.trim(),
+        password,
+        displayName.trim() || undefined,
+        referralCode || undefined,
+      );
       router.replace("/studio");
       router.refresh();
     } catch (caught) {

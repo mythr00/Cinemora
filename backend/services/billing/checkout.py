@@ -87,6 +87,7 @@ def create_subscription_checkout(user_id: str, plan_id: str, interval: str) -> d
             "billing_interval": interval,
             "amount_cents": amount,
             "currency": plan.currency or "USD",
+            **_affiliate_custom_data(db, user_id),
         }
         return provider.create_checkout(
             user_email=_user_email(db, user_id),
@@ -96,6 +97,19 @@ def create_subscription_checkout(user_id: str, plan_id: str, interval: str) -> d
         )
     finally:
         db.close()
+
+
+def _affiliate_custom_data(db, user_id: str) -> dict:
+    """Item 1: when the buyer was referred, the attribution
+    rides in the server-set custom_data (the only part of the
+    checkout the webhooks trust), so the verified payment event
+    carries it end to end."""
+    from services.billing import affiliates
+
+    attribution = affiliates.attribution_for(db, user_id)
+    if attribution is None:
+        return {}
+    return {"affiliate_id": attribution.affiliate_id}
 
 
 def create_topup_checkout(user_id: str, package_id: str) -> dict:
@@ -117,6 +131,7 @@ def create_topup_checkout(user_id: str, package_id: str) -> dict:
             "package_id": package.id,
             "amount_cents": package.price_cents,
             "currency": package.currency or "USD",
+            **_affiliate_custom_data(db, user_id),
         }
         return provider.create_checkout(
             user_email=_user_email(db, user_id),

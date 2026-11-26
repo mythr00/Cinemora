@@ -203,6 +203,7 @@ export async function register(
   email: string,
   password: string,
   displayName?: string,
+  referralCode?: string,
 ): Promise<AccountUser> {
   const data = await apiRequest<{ user: AccountUser }>(
     "/api/v1/auth/register",
@@ -212,6 +213,7 @@ export async function register(
         email,
         password,
         display_name: displayName || undefined,
+        referral_code: referralCode || undefined,
       }),
     },
   );
@@ -1532,6 +1534,134 @@ export type ChannelStyleVideo = ChannelVideo & {
   };
   measurement_error?: string | null;
 };
+
+// ---------------------------------------------------------------------
+// Affiliate programme (item 1): 12% lifetime commission on
+// verified payments by referred customers. The dashboard reads
+// the real ledger; no payout provider is connected.
+// ---------------------------------------------------------------------
+
+export type AffiliateEntry = {
+  id: string;
+  kind: string;
+  gross_cents: number;
+  rate_percent: number;
+  commission_cents: number;
+  status: string;
+  referred_user_id: string;
+  payment_id?: string | null;
+  decision_reason?: string | null;
+  created_at?: string | null;
+};
+
+export type AffiliateDashboard = {
+  enrolled: boolean;
+  code?: string;
+  status?: string;
+  rate_percent: number;
+  lifetime: boolean;
+  payout_preference?: string | null;
+  payout_preferences?: string[];
+  payout_provider_connected?: boolean;
+  metrics?: {
+    link_clicks: number;
+    registrations: number;
+    referred_customers: number;
+    active_customers: number;
+    conversion_percent: number | null;
+    lifetime_earnings_cents: number;
+    pending_cents: number;
+    approved_cents: number;
+    paid_cents: number;
+    reversed_cents: number;
+  };
+  recent_activity?: AffiliateEntry[];
+  payout_history?: AffiliateEntry[];
+};
+
+export type AdminAffiliateRow = {
+  id: string;
+  user_id: string;
+  email?: string | null;
+  code: string;
+  status: string;
+  payout_preference?: string | null;
+  accrued_cents: number;
+  reversed_cents: number;
+  pending_cents: number;
+};
+
+export function getAdminAffiliates(signal?: AbortSignal) {
+  return apiRequest<{ affiliates: AdminAffiliateRow[]; rate_percent: number }>(
+    "/api/v1/admin/affiliates",
+    { signal },
+  );
+}
+
+export function getAdminAffiliateEntries(signal?: AbortSignal) {
+  return apiRequest<{ entries: AffiliateEntry[] }>(
+    "/api/v1/admin/affiliates/entries",
+    { signal },
+  );
+}
+
+export function decideAffiliateEntry(
+  entryId: string,
+  decision: "approve" | "reject" | "paid",
+  reason?: string,
+) {
+  return apiRequest<{ id: string; status: string }>(
+    `/api/v1/admin/affiliates/entries/${entryId}/decision`,
+    {
+      method: "POST",
+      body: JSON.stringify({ decision, reason: reason || undefined }),
+    },
+  );
+}
+
+export function setAdminAffiliateStatus(
+  affiliateId: string,
+  status: "active" | "suspended",
+) {
+  return apiRequest<{ id: string; status: string }>(
+    `/api/v1/admin/affiliates/${affiliateId}/status`,
+    { method: "POST", body: JSON.stringify({ status }) },
+  );
+}
+
+export function adminAffiliateExportPath() {
+  return "/api/v1/admin/affiliates/export";
+}
+
+export function getAffiliateDashboard(signal?: AbortSignal) {
+  return apiRequest<AffiliateDashboard>("/api/v1/account/affiliate", {
+    signal,
+  });
+}
+
+export function enrollAffiliate() {
+  return apiRequest<AffiliateDashboard>("/api/v1/account/affiliate/enroll", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function setAffiliatePayoutPreference(preference: string | null) {
+  return apiRequest<AffiliateDashboard>(
+    "/api/v1/account/affiliate/payout-preference",
+    {
+      method: "POST",
+      body: JSON.stringify({ payout_preference: preference }),
+    },
+  );
+}
+
+export function recordAffiliateClick(code: string) {
+  return apiRequest<{ recorded: boolean }>("/api/v1/affiliates/click", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+}
 
 export function analyseChannelThumbnails(channelUrl: string) {
   return apiRequest<{

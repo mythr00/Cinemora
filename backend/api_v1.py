@@ -695,6 +695,11 @@ class RegisterIn(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
     display_name: str | None = Field(default=None, max_length=200)
     invite_code: str | None = None
+    # Item 1: an affiliate referral code carried from the
+    # affiliate link (?ref=CODE). Attribution is created after
+    # the account exists; an unknown/self code is ignored and
+    # never blocks registration.
+    referral_code: str | None = Field(default=None, max_length=40)
 
 
 class LoginIn(BaseModel):
@@ -811,6 +816,12 @@ def register(body: RegisterIn, request: Request, response: Response):
         db.flush()
         _assign_default_plan(db, user)
         db.commit()
+        if body.referral_code:
+            from services.billing import affiliates
+
+            affiliates.attribute_registration(
+                db, user.id, body.referral_code
+            )
         db.refresh(user)
         token = auth_service.create_session(user.id)
         _set_session_cookie(response, token)
@@ -1050,6 +1061,86 @@ class SubscriptionChangeIn(BaseModel):
     interval: str | None = Field(
         default=None, pattern="^(month|year)$"
     )
+
+
+# ---------------------------------------------------------------------
+# Affiliate programme (item 1): dashboard, enrolment, payout
+# preference, and the public link-visit recorder the register
+# page calls when it arrives with ?ref=CODE.
+# ---------------------------------------------------------------------
+
+
+class AffiliateClickIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=1, max_length=40)
+
+
+class PayoutPreferenceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    payout_preference: str | None = Field(
+        default=None, max_length=30
+    )
+
+
+@router.post("/affiliates/click")
+def affiliate_click(body: AffiliateClickIn):
+    """Record a visit through an affiliate link. Public on
+    purpose (it fires before an account exists); unknown or
+    suspended codes record nothing."""
+    from services.billing import affiliates
+
+    db = SessionLocal()
+    try:
+        recorded = affiliates.record_click(db, body.code)
+        return {"recorded": recorded}
+    finally:
+        db.close()
+
+
+@router.get("/account/affiliate")
+def account_affiliate(principal=Depends(require_user)):
+    from services.billing import affiliates
+
+    db = SessionLocal()
+    try:
+        return affiliates.dashboard(db, principal.user_id)
+    finally:
+        db.close()
+
+
+@router.post("/account/affiliate/enroll")
+def account_affiliate_enroll(principal=Depends(post_guard)):
+    from services.billing import affiliates
+
+    db = SessionLocal()
+    try:
+        affiliates.enroll(db, principal.user_id)
+        return affiliates.dashboard(db, principal.user_id)
+    finally:
+        db.close()
+
+
+@router.post("/account/affiliate/payout-preference")
+def account_affiliate_preference(
+    body: PayoutPreferenceIn, principal=Depends(post_guard)
+):
+    from services.billing import affiliates
+
+    db = SessionLocal()
+    try:
+        try:
+            affiliates.set_payout_preference(
+                db, principal.user_id, body.payout_preference
+            )
+        except ValueError as error:
+            raise ApiError(
+                422, "payout_preference_unknown", str(error)
+            ) from error
+        return affiliates.dashboard(db, principal.user_id)
+    finally:
+        db.close()
 
 
 @router.post("/account/billing/checkout/subscription")

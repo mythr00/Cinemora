@@ -90,6 +90,17 @@ def process_event(provider_name: str, event: dict) -> dict:
 def _dispatch(db, event_type: str, data: dict) -> None:
     if event_type in ("transaction.completed", "transaction.paid"):
         _on_transaction_paid(db, data)
+        # Item 1: commission accrues ONLY here — after a payment
+        # has been recorded from a verified event. Idempotent
+        # per payment, so duplicate deliveries cannot
+        # double-accrue.
+        from services.billing import affiliates
+
+        payment = _find_payment(
+            db, providers.get_provider().name, data.get("id")
+        )
+        if payment is not None:
+            affiliates.accrue_for_payment(db, payment)
     elif event_type in (
         "subscription.created",
         "subscription.activated",
@@ -109,6 +120,17 @@ def _dispatch(db, event_type: str, data: dict) -> None:
         "adjustment.created",
     ):
         _on_refund(db, data, event_type)
+        # Item 1: refunds/chargebacks reverse commission
+        # proportionally (append-only reversal entries).
+        from services.billing import affiliates
+
+        payment = _find_payment(
+            db,
+            providers.get_provider().name,
+            data.get("transaction_id") or data.get("id"),
+        )
+        if payment is not None:
+            affiliates.reverse_for_refund(db, payment)
     # Anything else is recorded in the inbox and deliberately
     # ignored (the provider sends many informational events).
 

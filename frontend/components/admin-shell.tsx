@@ -51,6 +51,7 @@ const ADMIN_LINK_GROUPS: Array<{
       { href: "/admin/users", label: "Users" },
       { href: "/admin/subscriptions", label: "Subscriptions overview" },
       { href: "/admin/projects", label: "Projects" },
+      { href: "/admin/affiliates", label: "Affiliates" },
     ],
   },
   {

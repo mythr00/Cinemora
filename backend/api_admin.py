@@ -1609,6 +1609,128 @@ def billing_events(principal=Depends(admin_guard)):
         db.close()
 
 
+# ---------------------------------------------------------------------
+# Affiliate programme admin (item 1): review / approve /
+# reject-with-reason / mark-paid, suspension, CSV export (the
+# payout worksheet — no payout provider is integrated).
+# Mutations: super_admin + audit log, like the rest of billing.
+# ---------------------------------------------------------------------
+
+from services.billing import affiliates as _affiliates
+
+
+class AffiliateDecisionIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    decision: str = Field(pattern="^(approve|reject|paid)$")
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class AffiliateStatusIn(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    status: str = Field(pattern="^(active|suspended)$")
+
+
+@router.get("/affiliates")
+def affiliates_overview(principal=Depends(admin_guard)):
+    db = SessionLocal()
+    try:
+        return _affiliates.admin_overview(db)
+    finally:
+        db.close()
+
+
+@router.get("/affiliates/entries")
+def affiliates_entries(
+    status: str | None = None, principal=Depends(admin_guard)
+):
+    db = SessionLocal()
+    try:
+        return {"entries": _affiliates.list_entries(db, status=status)}
+    finally:
+        db.close()
+
+
+@router.post("/affiliates/entries/{entry_id}/decision")
+def affiliates_entry_decision(
+    entry_id: str, body: AffiliateDecisionIn,
+    principal=Depends(super_admin_guard),
+):
+    db = SessionLocal()
+    try:
+        try:
+            entry = _affiliates.decide_entry(
+                db, entry_id, decision=body.decision,
+                decided_by=principal.user_id, reason=body.reason,
+            )
+        except LookupError as error:
+            raise ApiError(
+                404, "entry_not_found", str(error)
+            ) from error
+        except ValueError as error:
+            raise ApiError(
+                422, "decision_invalid", str(error)
+            ) from error
+        admin_audit.record(
+            principal, "affiliate.entry_decision",
+            target_type="commission_entry", target_id=entry.id,
+            detail={"decision": body.decision,
+                    "reason": body.reason},
+        )
+        return {
+            "id": entry.id, "status": entry.status,
+            "kind": entry.kind,
+            "commission_cents": entry.commission_cents,
+        }
+    finally:
+        db.close()
+
+
+@router.post("/affiliates/{affiliate_id}/status")
+def affiliates_set_status(
+    affiliate_id: str, body: AffiliateStatusIn,
+    principal=Depends(super_admin_guard),
+):
+    db = SessionLocal()
+    try:
+        try:
+            profile = _affiliates.set_affiliate_status(
+                db, affiliate_id, status=body.status
+            )
+        except LookupError as error:
+            raise ApiError(
+                404, "affiliate_not_found", str(error)
+            ) from error
+        admin_audit.record(
+            principal, "affiliate.status",
+            target_type="affiliate", target_id=profile.id,
+            detail={"status": body.status},
+        )
+        return {"id": profile.id, "status": profile.status}
+    finally:
+        db.close()
+
+
+@router.get("/affiliates/export")
+def affiliates_export(principal=Depends(admin_guard)):
+    from fastapi.responses import PlainTextResponse
+
+    db = SessionLocal()
+    try:
+        csv_text = _affiliates.export_csv(db)
+    finally:
+        db.close()
+    return PlainTextResponse(
+        csv_text,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition":
+                "attachment; filename=affiliate-ledger.csv"
+        },
+    )
+
+
 @router.get("/billing/reports")
 def billing_reports(days: int = 30, principal=Depends(admin_guard)):
     db = SessionLocal()

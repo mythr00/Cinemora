@@ -1961,3 +1961,168 @@ class UserNotification(Base):
         DateTime(timezone=True), nullable=False, default=_utcnow,
         index=True,
     )
+
+
+# ---------------------------------------------------------------------
+# Affiliate programme (Product Improvements item 1, 2026-11-26)
+# ---------------------------------------------------------------------
+
+
+class AffiliateProfile(Base):
+    """One user's affiliate identity. The commission rate is NOT
+    stored here: it is platform configuration
+    (CINEMORA_AFFILIATE_RATE_PERCENT, default 12) that the
+    affiliate can never edit; each ledger entry snapshots the
+    rate in force when it accrued."""
+
+    __tablename__ = "affiliate_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False,
+        unique=True, index=True,
+    )
+
+    code: Mapped[str] = mapped_column(
+        String(40), nullable=False, unique=True, index=True
+    )
+
+    # active / suspended — suspension stops future accrual and
+    # new attributions; existing entries keep their state.
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", index=True
+    )
+
+    # A recorded PREFERENCE only (bank_transfer / paypal / wise).
+    # No payout provider is integrated; payouts are arranged
+    # manually from the admin export until a provider is chosen.
+    payout_preference: Mapped[str] = mapped_column(
+        String(30), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        index=True,
+    )
+
+
+class AffiliateClick(Base):
+    """A recorded visit through an affiliate link (the register
+    page reports ?ref=<code> on load). Labelled honestly as
+    recorded link visits — they are page loads, not verified
+    unique humans."""
+
+    __tablename__ = "affiliate_clicks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    affiliate_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("affiliate_profiles.id"),
+        nullable=False, index=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        index=True,
+    )
+
+
+class AffiliateAttribution(Base):
+    """A referred customer, attributed once, for life: the row
+    is created at registration (source "registration") and never
+    rewritten. Lifetime attribution means a resubscription after
+    cancellation accrues to the same affiliate again — the
+    documented policy (directive item 1)."""
+
+    __tablename__ = "affiliate_attributions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    referred_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False,
+        unique=True, index=True,
+    )
+
+    affiliate_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("affiliate_profiles.id"),
+        nullable=False, index=True,
+    )
+
+    code: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="registration"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        index=True,
+    )
+
+
+class CommissionLedgerEntry(Base):
+    """One immutable commission fact. Accruals are created ONLY
+    from verified payment events (the Paddle webhook path), one
+    per payment (UNIQUE idempotency key). Refunds/chargebacks
+    create proportional REVERSAL entries pointing at the
+    accrual; the accrual row itself is never edited except for
+    its review/payout status, which admin decisions record with
+    decider + reason. Amounts are integer cents."""
+
+    __tablename__ = "commission_ledger"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    affiliate_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("affiliate_profiles.id"),
+        nullable=False, index=True,
+    )
+
+    referred_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    payment_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("payments.id"), nullable=True,
+        index=True,
+    )
+
+    # accrual / reversal
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    gross_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    rate_percent: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    commission_cents: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
+
+    # pending / approved / paid / rejected / reversed
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", index=True
+    )
+
+    idempotency_key: Mapped[str] = mapped_column(
+        String(200), nullable=False, unique=True
+    )
+
+    reversal_of_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("commission_ledger.id"), nullable=True
+    )
+
+    decided_by: Mapped[str] = mapped_column(String(36), nullable=True)
+
+    decided_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    decision_reason: Mapped[str] = mapped_column(
+        String(500), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow,
+        index=True,
+    )
