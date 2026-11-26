@@ -32,6 +32,7 @@ from database import SessionLocal, engine
 from models import Base, Plan, Project, User, UserSubscription
 from services import auth as auth_service
 from services import media_paths, run_ledger
+from services.billing import credits as billing_credits
 
 TOKEN = "qa-report-token"
 PASSWORD = "qa-report-password-1"
@@ -649,6 +650,24 @@ def test_qa_report_cross_tenant_404(client):
     suffix = uuid.uuid4().hex[:8]
     a = _register(client, f"qa-a-{suffix}@example.com")
     b = _register(client, f"qa-b-{suffix}@example.com")
+    # Item 8 (2026-11-26): run submission reserves through the
+    # billing choke point and a zero-credit tenant is refused.
+    # This test's intent is QA-report tenant isolation, so fund
+    # A the item-8 way (purchased top-up grant, source="test").
+    db = SessionLocal()
+    try:
+        owner = db.query(User).filter_by(
+            email=f"qa-a-{suffix}@example.com"
+        ).one()
+        billing_credits.grant(
+            db, owner.id, "purchased", 100,
+            entry_type="topup",
+            idempotency_key=f"test-funding:{owner.id}",
+            source="test",
+        )
+        db.commit()
+    finally:
+        db.close()
     project = _create_project(client, headers=_bearer(a))
     run_id = _completed_run(project)
     _write_full_artefacts(project["id"], run_id)
