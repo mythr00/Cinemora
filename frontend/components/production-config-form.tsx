@@ -631,17 +631,32 @@ export function ProductionConfigForm({
               }
             >
               <option value="">Deployment default</option>
-              {catalogue.narration.voices.map((voice) => (
-                <option
-                  key={voice.id}
-                  value={voice.id}
-                  disabled={!voice.installed}
-                >
-                  {voice.id}
-                  {voice.is_default ? " (default)" : ""}
-                  {voice.installed ? "" : " — not installed"}
-                </option>
-              ))}
+              {catalogue.narration.voices
+                .filter(
+                  (voice) =>
+                    // Offer the voices that genuinely speak the
+                    // configuration's narration language (the
+                    // catalogue now carries each voice's language).
+                    // Voices without language data, and the voice
+                    // already selected, stay visible so an existing
+                    // configuration is never silently blanked.
+                    !value.narration.language ||
+                    !voice.language ||
+                    voice.language === value.narration.language ||
+                    voice.id === value.narration.voice_id,
+                )
+                .map((voice) => (
+                  <option
+                    key={voice.id}
+                    value={voice.id}
+                    disabled={!voice.installed}
+                  >
+                    {voice.id}
+                    {voice.region ? ` — ${voice.region}` : ""}
+                    {voice.is_default ? " (default)" : ""}
+                    {voice.installed ? "" : " — not installed"}
+                  </option>
+                ))}
             </select>
             <ChevronDown size={18} strokeWidth={1.7} aria-hidden />
           </span>

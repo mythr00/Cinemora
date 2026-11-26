@@ -1388,10 +1388,22 @@ def catalogue() -> dict:
     for voice_id, (model, _cfg) in sorted(
         narration_service.VOICE_CATALOGUE.items()
     ):
+        # Per-voice language/region/gender, read from the same
+        # KOKORO_VOICE_META the narration layer validates against
+        # (the "default" alias dereferences to the primary voice
+        # it names). The configuration UI filters its voice picker
+        # by the production's narration language from these fields
+        # — without them it could only offer every voice for every
+        # language and let submission refuse the mismatch.
+        canonical = narration_service.VOICE_ALIASES.get(voice_id, voice_id)
+        meta = narration_service.KOKORO_VOICE_META[canonical]
         voices.append({
             "id": voice_id,
             "is_default": voice_id == narration_service.DEFAULT_VOICE_ID,
             "installed": Path(model).exists(),
+            "language": meta["language"],
+            "region": meta["region"],
+            "gender": meta["gender"],
         })
     return {
         "themes": themes,

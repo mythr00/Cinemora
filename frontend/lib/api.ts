@@ -994,6 +994,12 @@ export type VoiceCatalogueEntry = {
   model_file?: string | null;
   config_file?: string | null;
   installed: boolean;
+  /** The language this voice genuinely speaks (backend pack
+   * metadata), with its region and gender — the create page
+   * filters and labels the voice list from these. */
+  language?: string;
+  region?: string;
+  gender?: string;
 };
 
 export function getGenreCatalogue(signal?: AbortSignal) {
@@ -5284,7 +5290,16 @@ export type ConfigCatalogue = {
   narration: {
     adapter: string;
     provider: string;
-    voices: Array<{ id: string; is_default: boolean; installed: boolean }>;
+    voices: Array<{
+      id: string;
+      is_default: boolean;
+      installed: boolean;
+      /** The language this voice genuinely speaks (backend pack
+       * metadata) — the configuration picker filters by it. */
+      language?: string;
+      region?: string;
+      gender?: string;
+    }>;
     note: string;
   };
 };

@@ -95,6 +95,13 @@ def build_router(require_user) -> APIRouter:
         # "default" aliases the primary voice af_heart; every real
         # voice aliases nothing.
         is_default = voice_id == narration.DEFAULT_VOICE_ID
+        # The voice's true language/region/gender from the pack
+        # metadata (the alias dereferences to the primary voice it
+        # names), so consumers can filter and label by language
+        # instead of guessing from the id.
+        meta = narration.KOKORO_VOICE_META[
+            narration.VOICE_ALIASES.get(voice_id, voice_id)
+        ]
         return {
             "id": voice_id,
             "is_default": is_default,
@@ -103,6 +110,9 @@ def build_router(require_user) -> APIRouter:
             "model_file": model.name,
             "config_file": config.name,
             "installed": bool(model.exists() and config.exists()),
+            "language": meta["language"],
+            "region": meta["region"],
+            "gender": meta["gender"],
         }
 
 

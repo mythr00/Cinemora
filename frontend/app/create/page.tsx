@@ -58,6 +58,9 @@ const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
     model_file: "kokoro-v1.0.onnx",
     config_file: "voices-v1.0.bin",
     installed: true,
+    language: "en",
+    region: "English (US)",
+    gender: "female",
   },
   {
     id: "default",
@@ -67,6 +70,9 @@ const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
     model_file: "kokoro-v1.0.onnx",
     config_file: "voices-v1.0.bin",
     installed: true,
+    language: "en",
+    region: "English (US)",
+    gender: "female",
   },
 ];
 
@@ -315,6 +321,105 @@ export default function Home() {
   const canonicalVoice = voices.find((voice) => !voice.alias_of) || voices[0];
   const narrationVoiceId = canonicalVoice?.id || NARRATION_VOICE_ID;
 
+  // The voices that genuinely speak the selected language, with
+  // the labels the backend composed for them (region, name,
+  // gender) from the language catalogue; installed/alias facts
+  // are joined from the voice catalogue by id. When the language
+  // catalogue carries no voice rows (the labelled fallback
+  // state), the rows are derived from the voice catalogue's own
+  // per-voice language instead — never from a hardcoded list.
+  const voiceById = new Map(voices.map((voice) => [voice.id, voice]));
+  const languageVoiceRows = (selectedLanguage?.voices ?? []).map(
+    (languageVoice) => {
+      const entry = voiceById.get(languageVoice.id);
+      return {
+        id: languageVoice.id,
+        label: languageVoice.label,
+        aliasOf: entry?.alias_of ?? null,
+        isDefault: entry?.is_default ?? languageVoice.id === "default",
+        installed: entry?.installed ?? true,
+        model: entry?.model ?? null,
+      };
+    },
+  );
+  if (languageVoiceRows.length === 0 && !narrationBlocked) {
+    for (const voice of voices) {
+      if (voice.language !== language) continue;
+      languageVoiceRows.push({
+        id: voice.id,
+        label: [voice.region, voice.gender ? `(${voice.gender})` : ""]
+          .filter(Boolean)
+          .join(" "),
+        aliasOf: voice.alias_of ?? null,
+        isDefault: voice.is_default,
+        installed: voice.installed,
+        model: voice.model ?? null,
+      });
+    }
+  }
+  // The selected language's primary voice: the first real
+  // (non-alias) row, in the catalogue order the backend's own
+  // per-language default uses.
+  const primaryVoiceId =
+    languageVoiceRows.find((row) => !row.aliasOf && !row.isDefault)?.id ??
+    languageVoiceRows[0]?.id ??
+    null;
+  // The voice this form will actually submit: the
+  // configuration's chosen voice when there is one, otherwise
+  // the selected language's primary.
+  const submittedVoiceId =
+    productionConfig.narration.voice_id || primaryVoiceId || narrationVoiceId;
+  // The engine label for a voice row, from the configuration
+  // catalogue's provider or the voice's own model file — the
+  // retired engine's name is never printed.
+  const engineLabel = (model: string | null) =>
+    configCatalogue?.narration.provider === "kokoro" ||
+    (model ?? "").includes("kokoro")
+      ? "Kokoro-82M"
+      : "Built-in";
+  // The languages with installed voices, from the catalogue
+  // data — the blocked-language notice below is composed from
+  // this, never from a hardcoded coverage claim.
+  const supportedLanguageNames = languages
+    .filter((entry) => entry.narration_supported)
+    .map((entry) => entry.name)
+    .join(", ");
+
+  // Keep the configuration's voice valid for the selected
+  // language: the catalogue seed names the English primary once,
+  // so when the Step-2 language changes, move the selection to
+  // that language's primary voice (and record the language in
+  // the configuration — the Step-4 picker filters by it). A
+  // voice the user picked that genuinely speaks the selected
+  // language is left untouched. Without this, every non-English
+  // production submitted through the default path paired the
+  // language with the seeded English voice and was refused with
+  // voice_language_mismatch.
+  useEffect(() => {
+    if (!configSeeded) return;
+    setProductionConfig((previous) => {
+      const current = previous.narration.voice_id;
+      const stillValid =
+        current !== null &&
+        languageVoiceRows.some((row) => row.id === current);
+      if (stillValid && previous.narration.language === language) {
+        return previous;
+      }
+      return {
+        ...previous,
+        narration: {
+          ...previous.narration,
+          language,
+          voice_id: stillValid ? current : primaryVoiceId,
+        },
+      };
+    });
+    // languageVoiceRows / primaryVoiceId are derived from
+    // `voices` + `language` above; the effect re-runs when
+    // either input changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language, voices, configSeeded]);
+
 
 
   // Brief Stage 5 (C-06): the connection badge is the authenticated
@@ -408,9 +513,13 @@ export default function Home() {
         options: {
           // Item 6: the language chosen in step 2 — the backend
           // stores it in the configuration document as the
-          // project's authoritative language.
+          // project's authoritative language. The flat voice is
+          // the voice valid for that language (the
+          // configuration's selection, kept in step with the
+          // language by the re-seed effect above) — never the
+          // English primary paired with another language.
           language,
-          voice_id: narrationVoiceId,
+          voice_id: submittedVoiceId,
           captions: configCatalogue
             ? productionConfig.captions.mode
             : "burn",
@@ -519,10 +628,10 @@ export default function Home() {
             </div>
             {narrationBlocked ? (
               <p className="voice-note" role="status">
-                Narration is not available in {selectedLanguage?.name} yet: the installed voices are English (US) only, and a {selectedLanguage?.name} production would otherwise be English audio under a false label — so generation cannot start in this language. You can generate with English narration and add translated {selectedLanguage?.name} captions and script afterwards in Localization, or choose English here.
+                Narration is not available in {selectedLanguage?.name} yet: no installed voice speaks {selectedLanguage?.name}. Cinemora&apos;s installed voices cover {supportedLanguageNames}, and a {selectedLanguage?.name} production would otherwise be another language&apos;s audio under a false label — so generation cannot start in this language. You can generate in one of the supported languages and add translated {selectedLanguage?.name} captions and script afterwards in Localization, or choose a supported language here.
               </p>
             ) : (
-              <div className="voice-catalog-list">{voices.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.id}</strong><small>{voice.alias_of ? `Default alias of ${voice.alias_of} · Same installed Piper model` : "English (US) · Built-in Piper voice"} · {voice.installed ? "Model installed" : "Model not installed"}</small></div>{!voice.alias_of && <span>In use</span>}{voice.is_default && <span>Default</span>}</div>)}</div>
+              <div className="voice-catalog-list">{languageVoiceRows.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.id}</strong><small>{voice.aliasOf ? `Default alias of ${voice.aliasOf} · Same installed ${engineLabel(voice.model)} model` : `${voice.label} · ${engineLabel(voice.model)} voice`} · {voice.installed ? "Model installed" : "Model not installed"}</small></div>{voice.id === submittedVoiceId && <span>In use</span>}{voice.isDefault && <span>Default</span>}</div>)}</div>
             )}
             {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The voice catalogue could not be reached, so this form is showing the fallback facts — the one installed voice listed above — labelled as a fallback. Nothing else has been added.</p>}
             {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the voice catalogue from the studio API…</p>}
@@ -568,14 +677,14 @@ export default function Home() {
               <div><h2 id="review-title">Review &amp; start</h2><p>Exactly what will be submitted — nothing else is sent.</p></div>
             </div>
             <div className="summary-card">
-              <div className="summary-rows"><div><span>Language</span><strong>{selectedLanguage?.name || "English"}</strong></div><div><span>Narration voice</span><strong>{(configCatalogue ? productionConfig.narration.voice_id : null) || narrationVoiceId} · {selectedLanguage?.name || "English"}</strong></div><div><span>Captions</span><strong>{configCatalogue ? (productionConfig.captions.mode === "burn" ? "Burned in" : productionConfig.captions.mode === "sidecar" ? "Sidecar files" : "Off") : "Burned in"}</strong></div>{configCatalogue && <><div><span>Preset</span><strong>{productionConfig.preset === "custom" ? "Custom" : productionConfig.preset[0].toUpperCase() + productionConfig.preset.slice(1)}</strong></div><div><span>Motion graphics</span><strong>{productionConfig.motion_graphics.enabled ? "On" : "Off"}</strong></div><div><span>Visual theme</span><strong>{productionConfig.theme.id ? (productionConfig.theme.id === "custom" ? "Custom" : productionConfig.theme.id[0].toUpperCase() + productionConfig.theme.id.slice(1)) : "Genre pack default"}</strong></div><div><span>Music</span><strong>{!productionConfig.music.enabled ? "Off" : productionConfig.music.source === "upload" ? "Your upload (add it in the project's Configuration tab)" : productionConfig.music.source === "library" ? "Studio library" : "On — no track selected yet"}</strong></div></>}{isAdmin && <div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div>}<div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div>{billing?.plan?.billing_mode === "metered" && duration > 0 && (() => { const perMinute = billing.plan.generation_credits_per_minute ?? billing.credit_pricing.plans[billing.plan.name]?.credits_per_minute ?? billing.credit_pricing.default_credits_per_minute; const estCredits = Math.ceil(duration * perMinute); const slots = billing.period?.generations.remaining ?? null; const label = slots === 0 ? "Monthly video limit reached" : `${estCredits} credits${slots !== null ? ` · 1 of your ${billing.period?.generations.granted ?? ""} monthly videos` : ""}`; return <div><span>Generation cost (estimate)</span><strong>{label}</strong></div>; })()}<div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
+              <div className="summary-rows"><div><span>Language</span><strong>{selectedLanguage?.name || "English"}</strong></div><div><span>Narration voice</span><strong>{submittedVoiceId} · {selectedLanguage?.name || "English"}</strong></div><div><span>Captions</span><strong>{configCatalogue ? (productionConfig.captions.mode === "burn" ? "Burned in" : productionConfig.captions.mode === "sidecar" ? "Sidecar files" : "Off") : "Burned in"}</strong></div>{configCatalogue && <><div><span>Preset</span><strong>{productionConfig.preset === "custom" ? "Custom" : productionConfig.preset[0].toUpperCase() + productionConfig.preset.slice(1)}</strong></div><div><span>Motion graphics</span><strong>{productionConfig.motion_graphics.enabled ? "On" : "Off"}</strong></div><div><span>Visual theme</span><strong>{productionConfig.theme.id ? (productionConfig.theme.id === "custom" ? "Custom" : productionConfig.theme.id[0].toUpperCase() + productionConfig.theme.id.slice(1)) : "Genre pack default"}</strong></div><div><span>Music</span><strong>{!productionConfig.music.enabled ? "Off" : productionConfig.music.source === "upload" ? "Your upload (add it in the project's Configuration tab)" : productionConfig.music.source === "library" ? "Studio library" : "On — no track selected yet"}</strong></div></>}{isAdmin && <div><span>Plan review</span><strong>{requirePlanApproval ? "Required before rendering" : "Not required"}</strong></div>}<div><span>Script length</span><strong>{words ? `${words.toLocaleString()} words · ${script.length.toLocaleString()} characters` : "Not added"}</strong></div><div><span>Estimated runtime</span><strong>{duration ? `About ${duration} min` : "—"}</strong></div>{billing?.plan?.billing_mode === "metered" && duration > 0 && (() => { const perMinute = billing.plan.generation_credits_per_minute ?? billing.credit_pricing.plans[billing.plan.name]?.credits_per_minute ?? billing.credit_pricing.default_credits_per_minute; const estCredits = Math.ceil(duration * perMinute); const slots = billing.period?.generations.remaining ?? null; const label = slots === 0 ? "Monthly video limit reached" : `${estCredits} credits${slots !== null ? ` · 1 of your ${billing.period?.generations.granted ?? ""} monthly videos` : ""}`; return <div><span>Generation cost (estimate)</span><strong>{label}</strong></div>; })()}<div><span>Visual sourcing</span><strong>Research-led</strong></div></div>
               <div className="summary-footnote"><Info size={18} strokeWidth={1.7} aria-hidden /><span>Runtime is an estimate. Final length depends on narration and edit.</span></div>
               <p className="status-message"><ApiConnectionBadge onStatus={setConnection} /></p>
               <button className="generate-button" type="submit" disabled={loading || !script.trim() || apiBlocked || narrationBlocked}>
                 {loading ? <><span className="button-spinner" /> Starting…</> : <>Create and start <ArrowRight size={18} strokeWidth={1.7} aria-hidden /></>}
               </button>
               {narrationBlocked ? (
-                <p className="button-caption">Generation is unavailable in {selectedLanguage?.name} because no installed voice speaks it yet — choose English to start, or generate in English and translate the captions and script afterwards.</p>
+                <p className="button-caption">Generation is unavailable in {selectedLanguage?.name} because no installed voice speaks it yet — choose one of the supported languages ({supportedLanguageNames}) to start, or generate in a supported language and translate the captions and script afterwards.</p>
               ) : (
                 <p className="button-caption">You can follow each stage as your film comes together.</p>
               )}
