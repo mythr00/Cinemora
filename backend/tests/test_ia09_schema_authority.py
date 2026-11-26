@@ -58,7 +58,10 @@ from database import (
 )
 
 BACKEND = Path(__file__).resolve().parent.parent
-HEAD = "0014_subscription_pending_plan"
+# Migration head: 0015_affiliates (Product Improvements item 1)
+# succeeded 0014_subscription_pending_plan; the constant tracks
+# the chain head, the test names keep their original IA-09 ids.
+HEAD = "0015_affiliates"
 
 
 def _alembic_cfg():
