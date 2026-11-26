@@ -29,6 +29,31 @@ os.environ.setdefault("SOURCE_INTEL_DB", os.path.join(_TMP, "source_intel.sqlite
 import pytest  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _reset_search_circuit_breaker():
+    """The search provider's circuit breaker is module-global
+    (per-process in production, by design). A test that makes a
+    REAL failing search call (e.g. the assistant security suite,
+    whose dummy instance URL cannot answer) trips it for 60 s of
+    wall time, which would otherwise leak into unrelated later
+    tests in the same process that stub the transport. Reset it
+    around every test; the breaker's own behaviour is pinned by
+    tests/test_searxng_provider.py."""
+    try:
+        from services import search_provider
+
+        search_provider._breaker_reset()
+    except Exception:
+        pass
+    yield
+    try:
+        from services import search_provider
+
+        search_provider._breaker_reset()
+    except Exception:
+        pass
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _kb_default_transport_offline():
     """Keep the suite's no-real-network rule true after D-2.
