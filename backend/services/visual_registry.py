@@ -219,8 +219,16 @@ class VisualRegistry:
         exactly as the exporting one did. ``created_at`` is a
         monotonic clock reading and is NOT exported — a restored
         registry starts its own clock (the tier ladder's wall-clock
-        guard measures the CURRENT run's asset stage)."""
-        return {
+        guard measures the CURRENT run's asset stage).
+
+        Phase 2 (discovery efficiency): when this registry already
+        carries a tier-ladder EscalationLedger, its snapshot rides
+        along under ``escalation_ledger`` so a same-run resume
+        restores the D-B2 escalation accounts instead of restarting
+        them from zero. The key is present ONLY when a ledger
+        already exists — exporting must never create one as a side
+        effect (ledger_for stays the single lazy creator)."""
+        state = {
             "project_id": self.project_id,
             "used_files": sorted(self.used_files),
             "used_sources": sorted(self.used_sources),
@@ -238,6 +246,10 @@ class VisualRegistry:
             "long_source_cap": self.long_source_cap,
             "long_source_min_duration": self.long_source_min_duration,
         }
+        ledger = getattr(self, "_tier_escalation_ledger", None)
+        if ledger is not None:
+            state["escalation_ledger"] = ledger.export_state()
+        return state
 
     def restore_state(self, data):
         """Replace this registry's usage state with an exported one
@@ -273,6 +285,29 @@ class VisualRegistry:
         self.long_source_cap = data.get("long_source_cap")
         if data.get("long_source_min_duration"):
             self.long_source_min_duration = data["long_source_min_duration"]
+        # Phase 2: restore the tier-ladder escalation ledger when
+        # the payload carries one, so the resumed production keeps
+        # its D-B2 accounts (searches / downloads already spent)
+        # instead of double-spending them. The restored ledger is
+        # re-anchored to THIS registry's creation time — a restored
+        # registry starts its own clock (see export_state) — and
+        # attached where tier_ladder.ledger_for looks for it, so
+        # the pipeline resumes on the restored ledger rather than
+        # a fresh one. An absent (or non-dict) key leaves any
+        # existing ledger untouched. tier_ladder is imported
+        # lazily here, the established direction (media_pipeline
+        # and tier_ladder import this module's consumers, never
+        # the reverse at module scope).
+        ledger_data = data.get("escalation_ledger")
+        if isinstance(ledger_data, dict):
+            try:
+                from services import tier_ladder
+            except ImportError:  # flat-layout fallback
+                import tier_ladder
+            ledger = tier_ladder.EscalationLedger()
+            ledger.restore_state(ledger_data)
+            ledger.asset_stage_started_at = self.created_at
+            self._tier_escalation_ledger = ledger
         return self
 
 

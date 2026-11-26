@@ -28,6 +28,7 @@ threshold, a reuse cap or the coverage gate.
 from __future__ import annotations
 
 import copy
+import json
 import time
 
 from services import genre_packs
@@ -353,6 +354,107 @@ def attempt_key(need_key, tier, queries):
         str(tier or "").strip().lower(),
         normalised,
     )
+
+
+# ---------------------------------------------------------------------------
+# Ledger persistence (Master Directive Phase 2 — same-run resume)
+#
+# Phase 1 persists VisualRegistry.export_state() into scene
+# checkpoints and stage payloads, and restores it on resume /
+# adoption — but the escalation ledger hung off the registry was
+# not part of that state, so a resumed run restarted escalation
+# from zero and could double-spend the D-B2 production budgets.
+# EscalationLedger.export_state / restore_state below close that
+# gap: the registry carries the ledger's snapshot under its
+# "escalation_ledger" key (see services.visual_registry).
+#
+# Ledger keys are not JSON-safe: need keys are tuples like
+# (beat_id, shot_index, first_sentence), speculative beat keys are
+# (scene_dir, sentence_number), and attempt keys are
+# (scope, tier, frozenset(queries)). The helpers below encode any
+# such key into a JSON-safe shape and back, reversibly:
+# primitives pass through, tuples / lists are tagged, and
+# frozensets / sets are tagged with their members sorted (their
+# members are normalised query strings, so sorting is total).
+# Keyed maps (per-need accounts, attempt records) are exported as
+# LISTS of [encoded_key, value] pairs, because an encoded key may
+# itself be an object and JSON object keys must be strings.
+# ---------------------------------------------------------------------------
+
+
+def _encode_ledger_key(value):
+    """Reversibly encode one ledger key (or key component) into a
+    JSON-safe value. See the section comment above."""
+    if isinstance(value, tuple):
+        return {"__tuple__": [_encode_ledger_key(v) for v in value]}
+    if isinstance(value, list):
+        return {"__list__": [_encode_ledger_key(v) for v in value]}
+    if isinstance(value, (frozenset, set)):
+        encoded = [_encode_ledger_key(v) for v in value]
+        return {"__frozenset__": sorted(encoded, key=repr)}
+    return value
+
+
+def _decode_ledger_key(value):
+    """Reverse _encode_ledger_key exactly. Untagged values (plain
+    primitives, foreign dicts) pass through unchanged."""
+    if isinstance(value, dict):
+        if "__tuple__" in value:
+            return tuple(
+                _decode_ledger_key(v) for v in value.get("__tuple__") or []
+            )
+        if "__list__" in value:
+            return [
+                _decode_ledger_key(v) for v in value.get("__list__") or []
+            ]
+        if "__frozenset__" in value:
+            return frozenset(
+                _decode_ledger_key(v)
+                for v in value.get("__frozenset__") or []
+            )
+    return value
+
+
+def _encode_ledger_map(mapping):
+    """A {ledger_key: int} map as a JSON-safe list of
+    [encoded_key, value] pairs."""
+    return [
+        [_encode_ledger_key(key), value]
+        for key, value in (mapping or {}).items()
+    ]
+
+
+def _decode_ledger_map(data):
+    """Reverse _encode_ledger_map. Also accepts a plain dict
+    (string keys pass through the decoder unchanged). Malformed
+    pairs and non-int values are skipped, never invented."""
+    restored = {}
+    if isinstance(data, dict):
+        pairs = list(data.items())
+    elif isinstance(data, list):
+        pairs = data
+    else:
+        return restored
+    for pair in pairs:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            continue
+        try:
+            value = int(pair[1])
+        except (TypeError, ValueError):
+            continue
+        try:
+            restored[_decode_ledger_key(pair[0])] = value
+        except TypeError:
+            continue
+    return restored
+
+
+def _is_json_safe(value):
+    try:
+        json.dumps(value)
+        return True
+    except (TypeError, ValueError):
+        return False
 
 
 class EscalationLedger:
@@ -796,6 +898,135 @@ class EscalationLedger:
             "attempts_recorded": self.attempts_recorded(),
             "attempt_repeats": self.attempt_repeats,
         }
+
+    # -- persistence (Phase 2: same-run resume) ----------------------
+    def export_state(self):
+        """A JSON-safe snapshot of everything that decides future
+        spends: the scalar accounts, the per-need fairness state,
+        the per-beat speculative counts and the attempt-idempotency
+        records. Carried inside VisualRegistry.export_state() (see
+        services.visual_registry) so Phase 1 scene checkpoints and
+        stage payloads preserve the D-B2 accounts across a same-run
+        resume — without it a resumed run restarted escalation
+        from zero and could double-spend the production budgets.
+
+        ``escalation_seconds`` exports the accumulated total
+        INCLUDING any currently open begin_escalation interval
+        (via _escalation_time); the live ledger's open interval is
+        not closed or otherwise mutated by exporting."""
+        attempts = []
+        for key, record in self._attempts.items():
+            safe = copy.deepcopy(record)
+            safe["need_key"] = _encode_ledger_key(record.get("need_key"))
+            safe["need_scope"] = _encode_ledger_key(
+                record.get("need_scope")
+            )
+            if not _is_json_safe(safe):
+                # A candidate dict in the verified pool may carry
+                # a non-serialisable value; drop just those pool
+                # items — the record itself (and its idempotency
+                # guarantee) always survives the export.
+                items = safe.get("pool_items")
+                if isinstance(items, list):
+                    safe["pool_items"] = [
+                        item for item in items if _is_json_safe(item)
+                    ]
+                if not _is_json_safe(safe):
+                    safe["pool_items"] = []
+            attempts.append([_encode_ledger_key(key), safe])
+        return {
+            "version": 1,
+            "searches": int(self.searches),
+            "downloads": int(self.downloads),
+            "speculative_downloads": int(self.speculative_downloads),
+            "deepening_downloads": int(self.deepening_downloads),
+            "deepening_searches": int(self.deepening_searches),
+            "breadth_searches": int(self.breadth_searches),
+            "attempt_repeats": int(self.attempt_repeats),
+            "escalation_seconds": float(self._escalation_time()),
+            "need_searches": _encode_ledger_map(self._need_searches),
+            "need_downloads": _encode_ledger_map(self._need_downloads),
+            "speculative_beat_downloads": _encode_ledger_map(
+                self._speculative_beat_downloads
+            ),
+            "attempts": attempts,
+        }
+
+    def restore_state(self, data):
+        """Replace this ledger's accounts, per-need state and
+        attempt records with an exported snapshot (see
+        export_state), so a resumed production keeps its D-B2
+        spends instead of restarting escalation from zero.
+
+        Contract mirrors VisualRegistry.restore_state: never
+        raises on malformed input, and malformed or missing pieces
+        fall back to fresh/empty — a partial restore must never
+        invent spends that block a need. The one asymmetry is the
+        scalar account TOTALS: a total that is present and
+        int-able is restored exactly, because the double-spend
+        protection across a resume depends on totals surviving. A
+        non-dict ``data`` is ignored entirely (the ledger is left
+        unchanged), exactly as VisualRegistry.restore_state treats
+        one. The clock and ``asset_stage_started_at`` are NOT
+        restored — the owning registry re-anchors the restored
+        ledger to its own creation time (see
+        VisualRegistry.restore_state) — and no escalation interval
+        is left open."""
+        if not isinstance(data, dict):
+            return self
+
+        def _account(name):
+            if name not in data:
+                return 0
+            try:
+                return int(data[name])
+            except (TypeError, ValueError):
+                return 0
+
+        self.searches = _account("searches")
+        self.downloads = _account("downloads")
+        self.speculative_downloads = _account("speculative_downloads")
+        self.deepening_downloads = _account("deepening_downloads")
+        self.deepening_searches = _account("deepening_searches")
+        self.breadth_searches = _account("breadth_searches")
+        self.attempt_repeats = _account("attempt_repeats")
+        try:
+            self.escalation_seconds = float(
+                data.get("escalation_seconds") or 0.0
+            )
+        except (TypeError, ValueError):
+            self.escalation_seconds = 0.0
+        self._active_started = None
+        self._need_searches = _decode_ledger_map(data.get("need_searches"))
+        self._need_downloads = _decode_ledger_map(
+            data.get("need_downloads")
+        )
+        self._speculative_beat_downloads = _decode_ledger_map(
+            data.get("speculative_beat_downloads")
+        )
+        attempts = {}
+        raw_attempts = data.get("attempts")
+        if isinstance(raw_attempts, list):
+            for pair in raw_attempts:
+                if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                    continue
+                if not isinstance(pair[1], dict):
+                    continue
+                record = copy.deepcopy(pair[1])
+                record["need_key"] = _decode_ledger_key(
+                    record.get("need_key")
+                )
+                record["need_scope"] = _decode_ledger_key(
+                    record.get("need_scope")
+                )
+                if not isinstance(record.get("pool_items"), list):
+                    record["pool_items"] = []
+                try:
+                    attempts[_decode_ledger_key(pair[0])] = record
+                except TypeError:
+                    continue
+        self._attempts = attempts
+        return self
 
 
 def ledger_for(registry):
