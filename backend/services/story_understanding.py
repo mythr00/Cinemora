@@ -2355,11 +2355,15 @@ def category_profile(category):
 # (group / event coverage) is not a contradiction.
 # ---------------------------------------------------------------------------
 
-# The two permanently banned providers (founder directive, IA-05). The
-# names are assembled at runtime so this module carries no provider
-# integration artefact for the static ban scan in test_provider_ban.py
-# to trip over — the ban here is a runtime rejection, not an integration.
-_BANNED_PROVIDERS = frozenset({"pex" + "els", "pixa" + "bay"})
+# Provider ban set. IA-05 (2026-11-19) permanently banned Pexels and
+# Pixabay here; the founder LIFTED that ban on 2026-11-26 (Annex B of
+# the Unified Visual Production Audit) — both are restored as stock
+# discovery providers (services/stock_providers.py), so the set is
+# now EMPTY. The is_banned_provider mechanism and the
+# BANNED_PROVIDER_REASON outcome stay in place (they are the chain's
+# generic provider-veto seam), and the SEPARATE social-platform /
+# meme vetoes below are untouched and remain fully in force.
+_BANNED_PROVIDERS = frozenset()
 
 BANNED_PROVIDER_REASON = "banned_provider"
 FOREIGN_PROVENANCE_REASON = "foreign_provenance"
@@ -2384,12 +2388,13 @@ def candidate_provider(candidate):
 
 
 def is_banned_provider(candidate):
-    """True when the candidate's provider is a permanently banned one.
+    """True when the candidate's provider is in _BANNED_PROVIDERS.
 
-    Defence in depth behind the IA-05 static ban: no live search seam
-    produces these providers, but a candidate injected at any seam
-    (a future provider, a cache, a hand-built pool) must still be
-    rejected by the verification chain itself.
+    The set is currently empty (the IA-05 Pexels/Pixabay ban was
+    lifted by the founder on 2026-11-26, Annex B), so this returns
+    False for every candidate today; the check remains as the
+    verification chain's provider-veto seam should a provider be
+    banned again.
     """
     provider = candidate_provider(candidate)
     if provider:

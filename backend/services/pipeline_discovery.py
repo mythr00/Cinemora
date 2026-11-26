@@ -478,6 +478,62 @@ def search_archive_org_videos(query, limit=5):
     return search_archive_videos(query, limit=limit)
 
 
+def search_pexels_videos(query, limit=5):
+    """Pexels stock VIDEO candidates (Gate 2 WS4, founder decision
+    2026-11-26, Annex B: the IA-05 ban is lifted). Keyless no-op:
+    returns [] until PEXELS_API_KEY is configured. Illustrative
+    stock only — candidates are stamped as such by the provider
+    module and get no verification bypass."""
+    from services.stock_providers import search_pexels_videos as _search
+
+    query = str(query or "").strip()
+    if not query or "pexels" in _disabled_providers():
+        return []
+    return _search(query, limit=limit)
+
+
+def search_pexels_images(query, limit=5):
+    """Pexels stock PHOTOGRAPH candidates (see search_pexels_videos)."""
+    from services.stock_providers import search_pexels_images as _search
+
+    query = str(query or "").strip()
+    if not query or "pexels" in _disabled_providers():
+        return []
+    return _search(query, limit=limit)
+
+
+def search_pixabay_videos(query, limit=5):
+    """Pixabay stock VIDEO candidates (Gate 2 WS4, founder decision
+    2026-11-26, Annex B). Keyless no-op until PIXABAY_API_KEY is
+    configured; illustrative stock only (see search_pexels_videos)."""
+    from services.stock_providers import search_pixabay_videos as _search
+
+    query = str(query or "").strip()
+    if not query or "pixabay" in _disabled_providers():
+        return []
+    return _search(query, limit=limit)
+
+
+def search_pixabay_images(query, limit=5):
+    """Pixabay stock PHOTOGRAPH candidates (see search_pixabay_videos)."""
+    from services.stock_providers import search_pixabay_images as _search
+
+    query = str(query or "").strip()
+    if not query or "pixabay" in _disabled_providers():
+        return []
+    return _search(query, limit=limit)
+
+
+def _resolve_stock_provider(name, fallback):
+    """Resolve a stock entry point through media_pipeline's namespace
+    when it is re-exported there (the established call-site
+    convention), falling back to this module's own wrapper. The
+    fallback keeps stock discovery live without a media_pipeline
+    edit; a test double patched onto media_pipeline still wins."""
+    fn = getattr(_media_pipeline(), name, None)
+    return fn if callable(fn) else fallback
+
+
 def search_youtube_videos(query, limit=5):
     """Legacy name kept for existing callers. Since the multi-source
     correction (MS-1) this returns results from ALL video providers via
@@ -886,6 +942,68 @@ def _uve_scenario_search(
                     f"Wikimedia video search failed "
                     f"for '{supplementary_query}': {error}"
                 )
+
+            # Gate 2 WS4 (Annex B): stock providers — Pexels and
+            # Pixabay, videos AND images — queried per unique query
+            # with the same failure isolation, counting and pool
+            # treatment as the other supplementary channels. They
+            # are keyless no-ops until their API keys are configured
+            # and honour CINEMORA_DISABLED_PROVIDERS via the
+            # wrappers above. Stock hits carry the illustrative-
+            # stock stamp and pass through the same verification
+            # gates as every other candidate.
+            for _stock_name, _stock_provider in (
+                ("search_pexels_videos", "pexels"),
+                ("search_pixabay_videos", "pixabay"),
+            ):
+                try:
+                    _stock_hits = _resolve_stock_provider(
+                        _stock_name, globals()[_stock_name]
+                    )(supplementary_query, limit=5)
+                    _log_query(
+                        supplementary_query,
+                        _query_sources.get(supplementary_query, "scenario"),
+                        len(_stock_hits or []),
+                    )
+                    _merge_videos(_stock_hits)
+                except Exception as error:
+                    _media_pipeline()._record_discovery_failure(
+                        _stock_provider, supplementary_query, error
+                    )
+                    print(
+                        f"Stock video search failed "
+                        f"for '{supplementary_query}': {error}"
+                    )
+
+            for _stock_name, _stock_provider in (
+                ("search_pexels_images", "pexels"),
+                ("search_pixabay_images", "pixabay"),
+            ):
+                try:
+                    _stock_hits = _resolve_stock_provider(
+                        _stock_name, globals()[_stock_name]
+                    )(supplementary_query, limit=5)
+                    _log_query(
+                        supplementary_query,
+                        _query_sources.get(supplementary_query, "scenario"),
+                        len(_stock_hits or []),
+                    )
+                    for image in _stock_hits or []:
+                        image_url = str(
+                            image.get("image_url") or ""
+                        ).strip()
+                        if not image_url or image_url in seen_image_urls:
+                            continue
+                        seen_image_urls.add(image_url)
+                        images.append(image)
+                except Exception as error:
+                    _media_pipeline()._record_discovery_failure(
+                        _stock_provider, supplementary_query, error
+                    )
+                    print(
+                        f"Stock image search failed "
+                        f"for '{supplementary_query}': {error}"
+                    )
 
         # Targeted institutional search: only when general discovery
         # found no moving footage at all for this scenario.
