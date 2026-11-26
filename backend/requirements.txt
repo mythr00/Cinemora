@@ -27,23 +27,35 @@
 # hypothesis is TEST-ONLY (Lane 5): property tests for the billing
 # invariants, tests/test_billing_properties.py. It ships in this file
 # because CI installs exactly this file before running the suite.
+# Narration engine (Kokoro switch, 2026-11-26): kokoro-onnx +
+# phonemizer + espeakng-loader (bundled espeak-ng library) power
+# services/narration.py's Kokoro-82M adapter; attrs / cloudpickle /
+# dlinfo / joblib are the phonemizer tree. onnxruntime + numpy were
+# already pinned above and match the investigated versions.
+# piper-tts stays pinned: the Piper path is retained behind the
+# narration engine seam as the fallback route. Guards:
+# tests/test_kokoro_narration.py, tests/test_pi_item6_language.py.
 alembic==1.20.1
 annotated-doc==0.0.7
 argon2-cffi==25.1.0
 argon2-cffi-bindings==26.2.0
 annotated-types==0.8.0
 anyio==4.16.0
+attrs==26.1.0
 av==19.0.2
 beautifulsoup4==4.15.0
 certifi==2026.10.23
 charset-normalizer==3.5.3
 click==8.5.1
 cloup==4.0.0
+cloudpickle==3.1.3
 contourpy==1.4.0
 croniter==7.0.0
 cycler==0.12.1
 ctranslate2==4.9.0
 decorator==5.3.2
+dlinfo==2.0.0
+espeakng-loader==0.2.4
 fakeredis==2.40.0
 fastapi==0.165.0
 faster-whisper==1.2.1
@@ -62,7 +74,9 @@ huggingface_hub==2.4.0
 idna==3.20
 iniconfig==2.3.1
 isosurfaces==0.1.2
+joblib==1.6.0
 kiwisolver==1.5.1
+kokoro-onnx==0.6.1
 Mako==1.4.3
 matplotlib==3.10.9
 manim==0.22.1
@@ -80,6 +94,7 @@ opencv-python==5.1.0.95
 opentelemetry-api==1.45.2
 packaging==26.3
 pathvalidate==3.3.1
+phonemizer==3.6.0
 pillow==13.0.0
 piper-tts==1.8.0
 platformdirs==4.14.8

@@ -87,23 +87,18 @@ def build_router(require_user) -> APIRouter:
 
 
     def _voice_view(voice_id: str, model, config) -> dict:
-        # The canonical id for an alias is the non-default catalogue id
-        # backed by the same installed model files (today: "default"
-        # aliases "en_US-lessac-medium"; both map to the one installed
-        # Piper model). Derived from the catalogue itself, never named
-        # literally here.
-        canonical = None
-        for other_id, (other_model, other_config) in narration.VOICE_CATALOGUE.items():
-            if other_id == narration.DEFAULT_VOICE_ID:
-                continue
-            if other_model == model and other_config == config:
-                canonical = other_id
-                break
+        # The alias structure is declared by the narration module
+        # itself (VOICE_ALIASES). It used to be derived from shared
+        # model files, but with Kokoro every voice in the pack
+        # shares ONE model + voices file, so file-pair inference
+        # would call every voice an alias of the first. Today:
+        # "default" aliases the primary voice af_heart; every real
+        # voice aliases nothing.
         is_default = voice_id == narration.DEFAULT_VOICE_ID
         return {
             "id": voice_id,
             "is_default": is_default,
-            "alias_of": None if voice_id == canonical else canonical,
+            "alias_of": narration.VOICE_ALIASES.get(voice_id),
             "model": model.name,
             "model_file": model.name,
             "config_file": config.name,

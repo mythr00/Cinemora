@@ -768,6 +768,20 @@ def flat_options(config) -> dict:
     narration = config["narration"]
     if narration.get("voice_id"):
         flat["voice_id"] = narration["voice_id"]
+    elif (narration.get("language") or "en") != "en":
+        # Kokoro switch (2026-11-26): a production in a supported
+        # non-English language with no explicit voice must still
+        # narrate in ITS language — project the language's
+        # primary installed voice rather than let the narration
+        # default (English) read foreign text under that
+        # language's label.
+        from services import narration as _narration_service
+
+        _default_voice = _narration_service.default_voice_for_language(
+            narration.get("language") or "en"
+        )
+        if _default_voice:
+            flat["voice_id"] = _default_voice
     flat["language"] = narration.get("language") or "en"
     flat["captions"] = config["captions"]["mode"]
     flat["caption_sync"] = config["captions"]["sync"]
@@ -947,6 +961,31 @@ def validate_config(config) -> dict:
                     "on this deployment."
                 ),
             })
+        else:
+            # Kokoro switch (2026-11-26): voices now genuinely
+            # belong to languages, so an installed voice that
+            # speaks a DIFFERENT language than the production's
+            # would produce foreign audio under the production
+            # language's label — refuse it here, before charging,
+            # with the plain reason.
+            _voice_language = narration_service.voice_language(
+                _resolved
+            )
+            _production_language = languages_service.normalize(
+                narration.get("language")
+            )
+            if _voice_language != _production_language:
+                errors.append({
+                    "code": "voice_language_mismatch",
+                    "message": (
+                        f"Voice {narration['voice_id']!r} speaks "
+                        f"{languages_service.name_of(_voice_language)}, "
+                        "but the production language is "
+                        f"{languages_service.name_of(_production_language)}. "
+                        "Choose a voice that speaks the production "
+                        "language."
+                    ),
+                })
 
     music = config["music"]
     if music["enabled"]:
@@ -1374,14 +1413,14 @@ def catalogue() -> dict:
         "music_library": library_state(),
         "narration": {
             "adapter": "services.narration",
-            "provider": "piper",
+            "provider": "kokoro",
             "voices": voices,
             "note": (
                 "The pipeline talks to the narration adapter's "
                 "stable interface (text + voice id); the provider "
-                "behind it is Piper. Narration runs at the "
-                "provider's native rate — there is no speed "
-                "setting."
+                "behind it is Kokoro-82M, self-hosted. Narration "
+                "runs at the provider's native rate — there is "
+                "no speed setting."
             ),
         },
     }

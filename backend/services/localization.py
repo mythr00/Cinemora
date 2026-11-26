@@ -27,6 +27,16 @@ own phasing is what this module builds:
   the audit schedules as sub-phase 2. The studio view states this
   verbatim; no dub control exists anywhere in the UI.
 
+  AMENDMENT (2026-11-26, Kokoro switch): reason (1) no longer
+  holds — the narration catalogue is now Kokoro-82M's 54 voices
+  across English (US/UK), Spanish, French, Italian, Portuguese,
+  Hindi, Japanese and Mandarin Chinese, so a production created
+  in those languages is genuinely narrated in-language from the
+  start (Product Improvements item 6 as amended). Reason (2) —
+  measured-window conservation in the editor — remains the sole
+  blocker for dubbing an EXISTING production, and dubbing_state()
+  below states the current truth verbatim.
+
 How the built half works:
 
 - CAPTION SOURCE is the project's recorded captions, resolved the
@@ -126,6 +136,7 @@ LANGUAGES = {
     "id": "Indonesian",
     "ja": "Japanese",
     "ko": "Korean",
+    "zh": "Mandarin Chinese",
 }
 
 # Bounded translation batches (one llm_json call each).
@@ -772,11 +783,13 @@ def translate_script(project_id, user_id, language, *,
 
 
 def dubbing_state() -> dict:
-    """Why there is no dub: the narration adapter's installed
-    voice catalogue, read live from services/narration, contains
-    only English (US) voices — and translated narration would
-    break the editor's measured-window conservation besides.
-    Stated verbatim so the UI never implies a dub exists."""
+    """Why there is no dub of THIS production: the narration
+    adapter's installed voice catalogue, read live from
+    services/narration, now spans nine languages (Kokoro-82M) —
+    so a NEW production can be narrated in any of them from the
+    start — but re-narrating an existing production would break
+    the editor's measured-window conservation. Stated verbatim
+    so the UI never implies a dub exists."""
     voices = []
     for voice_id, (model, _config) in narration.VOICE_CATALOGUE.items():
         if voice_id == "default":
@@ -789,18 +802,20 @@ def dubbing_state() -> dict:
         "narration_language": SOURCE_LANGUAGE,
         "voices": voices,
         "reason": (
-            "Narration is synthesised locally by the Piper adapter, "
-            "whose installed voice catalogue contains only English "
-            "(US) voices; any other voice id falls back to the "
-            "English default, so a dubbed track produced today "
-            "would be English audio under another language's label. "
-            "Translated narration would also change every "
-            "sentence's measured duration, and the editor's "
-            "timeline is built on measured window conservation — "
-            "re-timing per language is the roadmap's localisation "
-            "sub-phase 2. Until then, localisation means translated "
-            "captions and script with the English narration "
-            "retained, labelled as such."
+            "Narration is synthesised locally by the Kokoro "
+            "adapter, whose installed voice catalogue covers "
+            "English (US and UK), Spanish, French, Italian, "
+            "Portuguese, Hindi, Japanese and Mandarin Chinese — "
+            "a new production can be narrated in any of those "
+            "languages from the start. Dubbing THIS production "
+            "is still unavailable: translated narration would "
+            "change every sentence's measured duration, and the "
+            "editor's timeline is built on measured window "
+            "conservation — re-timing per language is the "
+            "roadmap's localisation sub-phase 2. Until then, "
+            "localisation here means translated captions and "
+            "script with the original narration retained, "
+            "labelled as such."
         ),
     }
 

@@ -6,14 +6,15 @@ the project. This module is the single source of truth for what
 Cinemora can genuinely do in each language — built from the
 actual installed capabilities, never aspirational:
 
-- NARRATION: the narration adapter (services.narration) has
-  exactly two installed voices, both English (US) Piper models.
-  English is therefore the ONLY language with narration support
-  today. Any other language selected for a production is
-  reported as unsupported BEFORE charging — narration is never
-  silently substituted with English audio under another
-  language's label (the dishonesty services.localization was
-  built to avoid).
+- NARRATION: the narration adapter (services.narration) runs
+  Kokoro-82M with its genuine v1.0 voice pack installed: 54
+  voices across English (US and UK), Spanish, French, Italian,
+  Portuguese, Hindi, Japanese and Mandarin Chinese. Those
+  languages have genuine narration support; any other language
+  selected for a production is reported as unsupported BEFORE
+  charging — narration is never silently substituted with
+  another language's audio under a false label (the dishonesty
+  services.localization was built to avoid).
 - SCRIPT GENERATION: the script writer can produce narration
   text in every language listed here (the same set the
   localization engine translates into, plus English).
@@ -47,6 +48,7 @@ LANGUAGE_NAMES = {
     "id": "Indonesian",
     "ja": "Japanese",
     "ko": "Korean",
+    "zh": "Mandarin Chinese",
 }
 
 DEFAULT_LANGUAGE = "en"
@@ -68,25 +70,28 @@ def name_of(code) -> str:
 
 
 def narration_voices(code) -> list[dict]:
-    """The voices that genuinely speak this language, from the
-    installed narration catalogue. Empty for every language but
-    English today — by fact, not by policy."""
-    if normalize(code) != "en":
-        return []
+    """The voices that genuinely speak this language, read live
+    from the installed narration catalogue (Kokoro-82M voice
+    pack metadata). Empty for languages the pack has no voice
+    for — by fact, not by policy."""
+    code = normalize(code)
     from services import narration
 
     voices = []
-    for voice_id, _paths in narration.VOICE_CATALOGUE.items():
+    for voice_id in narration.VOICE_CATALOGUE:
+        canonical = narration.VOICE_ALIASES.get(voice_id, voice_id)
+        meta = narration.KOKORO_VOICE_META[canonical]
+        if meta["language"] != code:
+            continue
+        if voice_id == narration.DEFAULT_VOICE_ID:
+            label = f"{meta['region']} — default voice"
+        else:
+            label = (
+                f"{meta['region']} — {meta['name']} "
+                f"({meta['gender']})"
+            )
         voices.append(
-            {
-                "id": voice_id,
-                "language": "en",
-                "label": (
-                    "English (US) — default voice"
-                    if voice_id == "default"
-                    else f"English (US) — {voice_id}"
-                ),
-            }
+            {"id": voice_id, "language": code, "label": label}
         )
     return voices
 
@@ -124,12 +129,14 @@ def production_block_reason(code) -> str | None:
     name = LANGUAGE_NAMES[code]
     return (
         f"Narration is not available in {name} yet: Cinemora's "
-        "installed voices are English (US) only, and a "
-        f"{name} production would otherwise be English audio "
-        "under a false label. You can generate with English "
-        f"narration and add translated {name} captions and "
-        "script afterwards in Localization, or choose English "
-        "as the production language."
+        "installed voices cover English, Spanish, French, "
+        "Italian, Portuguese, Hindi, Japanese and Mandarin "
+        f"Chinese, and a {name} production would otherwise be "
+        "another language's audio under a false label. You can "
+        "generate in a supported language and add translated "
+        f"{name} captions and script afterwards in "
+        "Localization, or choose a supported production "
+        "language."
     )
 
 

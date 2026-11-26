@@ -24,22 +24,126 @@ PIPER_CONFIG = BASE_DIR / "en_US-lessac-medium.onnx.json"
 # proper stays on the primary voice.
 SECONDARY_MODEL = BASE_DIR / "en_US-ryan-medium.onnx"
 SECONDARY_CONFIG = BASE_DIR / "en_US-ryan-medium.onnx.json"
-SECONDARY_VOICE_ID = "en_US-ryan-medium"
 
-# Stage 3J (AUD-29): the voice catalogue. HONEST CONTENTS: two
-# real Piper voice models are installed in backend/
-# (en_US-lessac-medium and en_US-ryan-medium, each with its .json
-# config). The piper package ships other .onnx files, but they are
-# Hebrew diacritics models, not voices, and are NOT catalogued.
-# Any other requested id falls back to the default voice and the
-# fallback is reported, never hidden.
+# ------------------------------------------------------------------
+# Kokoro-82M — the production narration engine (founder decision
+# 2026-11-26, on the TTS investigation's recommendation).
+#
+# Assets, installed beside the code like the Piper voices were:
+# kokoro-v1.0.onnx (the model, 311 MB — too large for git, so it
+# is provisioned by fetch_kokoro_model.sh / the Dockerfile's
+# checksum-verified download, NOT tracked) and voices-v1.0.bin
+# (the voice pack, git-tracked like the Piper models). Both are
+# Apache 2.0 at every layer — code, weights and voices — verified
+# from primary sources in the investigation report (§6).
+#
+# The two Piper voices above are RETIRED from the customer
+# catalogue: their training datasets fail the commercial gate on
+# the cautious reading (lessac: Blizzard 2013 research-only;
+# ryan: CC BY-NC-SA NonCommercial). The Piper code path
+# (_run_piper + PIPER_VOICE_CATALOGUE) is retained behind the
+# engine seam so a commercially clean Piper voice set can be
+# restored as a fallback later; it is not reachable from the
+# customer catalogue.
+# ------------------------------------------------------------------
+
+KOKORO_MODEL = BASE_DIR / "kokoro-v1.0.onnx"
+KOKORO_VOICES_FILE = BASE_DIR / "voices-v1.0.bin"
+
+# The genuine Kokoro v1.0 voice pack: exactly 54 voices. Every
+# one of them is catalogued below — the count is the pack's real
+# contents, never padded (founder asked for "up to 100 if
+# possible"; 54 is what genuinely exists). The first letter of
+# each id is its language group; the second is f/m. A test
+# (tests/test_kokoro_narration.py) asserts this list equals the
+# installed voices file's contents, so the catalogue can never
+# drift from the pack in either direction.
+_KOKORO_GROUPS = {
+    # prefix -> (language code, espeak-ng lang, region label)
+    "a": ("en", "en-us", "English (US)"),
+    "b": ("en", "en-gb", "English (UK)"),
+    "e": ("es", "es", "Spanish"),
+    "f": ("fr", "fr-fr", "French"),
+    "h": ("hi", "hi", "Hindi"),
+    "i": ("it", "it", "Italian"),
+    "j": ("ja", "ja", "Japanese"),
+    "p": ("pt", "pt-br", "Portuguese (Brazil)"),
+    "z": ("zh", "cmn", "Mandarin Chinese"),
+}
+
+KOKORO_VOICE_IDS = [
+    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica",
+    "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah",
+    "af_sky", "am_adam", "am_echo", "am_eric", "am_fenrir",
+    "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa",
+    "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel",
+    "bm_fable", "bm_george", "bm_lewis",
+    "ef_dora", "em_alex", "em_santa",
+    "ff_siwis",
+    "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
+    "if_sara", "im_nicola",
+    "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro",
+    "jm_kumo",
+    "pf_dora", "pm_alex", "pm_santa",
+    "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi",
+    "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
+]
+
+
+def _kokoro_meta(voice_id):
+    language, espeak_lang, region = _KOKORO_GROUPS[voice_id[0]]
+    return {
+        "language": language,
+        "espeak_lang": espeak_lang,
+        "region": region,
+        "gender": "female" if voice_id[1] == "f" else "male",
+        "name": voice_id[3:].replace("_", " ").title(),
+    }
+
+
+KOKORO_VOICE_META = {vid: _kokoro_meta(vid) for vid in KOKORO_VOICE_IDS}
+
+# The primary documentary voice: af_heart — the pack's
+# creator-graded A voice and the investigation's strongest
+# all-round measured performer (natural documentary pace,
+# deterministic output). The default alias resolves to it.
+PRIMARY_VOICE_ID = "af_heart"
+
+# The quoted/interview-beat contrast voice for English
+# productions (male, against the primary's female). Other
+# languages pick their own contrast in secondary_voice_for().
+SECONDARY_VOICE_ID = "am_michael"
+
+DEFAULT_VOICE_ID = "default"
+
+# Stage 3J (AUD-29): the voice catalogue — the voices users can
+# actually choose. Every entry maps to the shared Kokoro assets
+# (one model + one voices file for the whole pack). Any other
+# requested id falls back to the default voice and the fallback
+# is reported, never hidden.
+_ordered_voice_ids = [PRIMARY_VOICE_ID] + [
+    vid for vid in KOKORO_VOICE_IDS if vid != PRIMARY_VOICE_ID
+]
 VOICE_CATALOGUE = {
+    vid: (KOKORO_MODEL, KOKORO_VOICES_FILE) for vid in _ordered_voice_ids
+}
+VOICE_CATALOGUE[DEFAULT_VOICE_ID] = (KOKORO_MODEL, KOKORO_VOICES_FILE)
+
+# Alias structure, declared here rather than derived from shared
+# files: with one model file backing every voice, file-pair
+# inference cannot tell an alias from a voice. "default" is the
+# only alias; it names the primary voice.
+VOICE_ALIASES = {DEFAULT_VOICE_ID: PRIMARY_VOICE_ID}
+
+# The RETIRED Piper registry — kept only so the retained _run_piper
+# fallback path stays callable. NOT the customer catalogue: its
+# two voices carry the dataset-licence defect described above and
+# must not be re-exposed without per-voice licence verification.
+PIPER_VOICE_CATALOGUE = {
     "en_US-lessac-medium": (PIPER_MODEL, PIPER_CONFIG),
     "en_US-ryan-medium": (SECONDARY_MODEL, SECONDARY_CONFIG),
     "default": (PIPER_MODEL, PIPER_CONFIG),
 }
-
-DEFAULT_VOICE_ID = "default"
 
 
 def resolve_voice(voice_id):
@@ -58,11 +162,76 @@ def resolve_voice(voice_id):
     return model, config, DEFAULT_VOICE_ID, True
 
 
+def canonical_voice_id(voice_id):
+    """The real voice an id resolves to: the requested id resolved
+    through the catalogue, with the "default" alias dereferenced
+    to the primary voice it names."""
+    _model, _config, resolved_id, _fell_back = resolve_voice(voice_id)
+    return VOICE_ALIASES.get(resolved_id, resolved_id)
+
+
+def voice_language(voice_id):
+    """The language code (services.languages vocabulary) a voice
+    genuinely speaks, e.g. "es" for ef_dora."""
+    return KOKORO_VOICE_META[canonical_voice_id(voice_id)]["language"]
+
+
+def default_voice_for_language(language_code):
+    """The primary installed voice for a language — the first
+    voice of that language in catalogue order (for English, the
+    primary documentary voice) — or None when the language has
+    no installed voice."""
+    for voice_id in _ordered_voice_ids:
+        if KOKORO_VOICE_META[voice_id]["language"] == language_code:
+            return voice_id
+    return None
+
+
+# Preferred quoted-beat contrast per language, where the pack
+# offers a natural pairing (a male voice against the language's
+# female primary, or the reverse). Languages with a single voice
+# (French) have no entry and no contrast — assign_sentence_voices
+# then keeps the exact single-voice path.
+_SECONDARY_PREFERENCE = {
+    "en": "am_michael",
+    "es": "em_alex",
+    "hi": "hm_omega",
+    "it": "im_nicola",
+    "ja": "jm_kumo",
+    "pt": "pm_alex",
+    "zh": "zm_yunyang",
+}
+
+
+def secondary_voice_for(primary_voice_id):
+    """The contrasting voice for quoted / interview beats, in the
+    PRIMARY voice's own language — a Spanish production's quotes
+    are never read by an English voice. Returns None when the
+    language's pack offers no second voice."""
+    canonical = canonical_voice_id(primary_voice_id)
+    meta = KOKORO_VOICE_META[canonical]
+    candidates = [
+        vid
+        for vid in _ordered_voice_ids
+        if vid != canonical
+        and KOKORO_VOICE_META[vid]["language"] == meta["language"]
+    ]
+    if not candidates:
+        return None
+    preferred = _SECONDARY_PREFERENCE.get(meta["language"])
+    if preferred in candidates:
+        return preferred
+    for candidate in candidates:
+        if KOKORO_VOICE_META[candidate]["gender"] != meta["gender"]:
+            return candidate
+    return candidates[0]
+
+
 def secondary_voice_available():
-    """True when the secondary voice's model + config are actually
-    installed (a catalogue entry pointing at missing files must
-    never be assigned)."""
-    return SECONDARY_MODEL.exists() and SECONDARY_CONFIG.exists()
+    """True when the narration assets are actually installed (a
+    catalogue entry pointing at missing files must never be
+    assigned)."""
+    return KOKORO_MODEL.exists() and KOKORO_VOICES_FILE.exists()
 
 
 _QUOTED_SPAN_RE = re.compile(r"[“\"][^”\"]{10,}[”\"]|[‘'][^’']{10,}[’']")
@@ -110,11 +279,17 @@ def assign_sentence_voices(sentences, primary_voice_id=None,
     if not secondary_available:
         return None
     primary = primary_voice_id or DEFAULT_VOICE_ID
+    # The contrast voice belongs to the primary voice's language
+    # (secondary_voice_for); a language with a single installed
+    # voice has no contrast and keeps the single-voice path.
+    secondary = secondary_voice_for(primary)
+    if secondary is None:
+        return None
     voices = [
-        SECONDARY_VOICE_ID if _is_quoted_or_interview(item) else primary
+        secondary if _is_quoted_or_interview(item) else primary
         for item in items
     ]
-    if SECONDARY_VOICE_ID not in voices:
+    if secondary not in voices:
         return None
     return voices
 
@@ -219,19 +394,38 @@ def _write_captions(text, audio_file):
     return caption_file
 
 
+def _resolve_piper_voice(voice_id):
+    """Resolve an id through the RETAINED Piper registry (see
+    PIPER_VOICE_CATALOGUE). Same fallback semantics as
+    resolve_voice, over the Piper entries only."""
+    if voice_id is None or str(voice_id).strip() == "":
+        model, config = PIPER_VOICE_CATALOGUE[DEFAULT_VOICE_ID]
+        return model, config, DEFAULT_VOICE_ID, False
+    requested = str(voice_id).strip()
+    if requested in PIPER_VOICE_CATALOGUE:
+        model, config = PIPER_VOICE_CATALOGUE[requested]
+        return model, config, requested, False
+    model, config = PIPER_VOICE_CATALOGUE[DEFAULT_VOICE_ID]
+    return model, config, DEFAULT_VOICE_ID, True
+
+
 def _run_piper(text, output_file, voice_id=None):
     """Run Piper for a single piece of text.
 
-    This is the ONLY place in this module that runs a subprocess.
-    ``voice_id`` is resolved through the voice catalogue (Stage 3J):
-    the resolved model's path is what reaches the Piper command.
-    Narration is always synthesised at the provider's native rate:
-    there is deliberately NO speed / length-scale parameter
-    anywhere in this call path (founder ruling, 2026-11-22 — the
-    voice model is third-party and speed control is unsupported).
+    RETAINED FALLBACK PATH (not the production engine since the
+    2026-11-26 Kokoro switch): kept callable behind the engine
+    seam so a commercially clean Piper voice set can be restored
+    later. This is the only place in this module that runs a
+    subprocess. ``voice_id`` is resolved through the retained
+    Piper registry: the resolved model's path is what reaches
+    the Piper command. Narration is always synthesised at the
+    provider's native rate: there is deliberately NO speed /
+    length-scale parameter anywhere in this call path (founder
+    ruling, 2026-11-22 — the voice model is third-party and
+    speed control is unsupported).
     """
     output_file = Path(output_file)
-    model, config, _resolved_id, _fell_back = resolve_voice(voice_id)
+    model, config, _resolved_id, _fell_back = _resolve_piper_voice(voice_id)
 
     command = [
         sys.executable,
@@ -276,6 +470,105 @@ def _run_piper(text, output_file, voice_id=None):
         raise RuntimeError(
             "Piper created an empty audio file."
         )
+
+
+_kokoro_engine = None
+
+
+def _kokoro():
+    """The per-process Kokoro engine instance (lazy singleton).
+
+    Loading the model takes ~2–4 s (TTS investigation §1); a
+    worker process loads it once and reuses it for every sentence
+    of every job it runs. The engine holds no per-job state, and
+    kokoro-onnx serialises its espeak phonemisation internally.
+    """
+    global _kokoro_engine
+    if _kokoro_engine is None:
+        from kokoro_onnx import Kokoro
+
+        _kokoro_engine = Kokoro(
+            str(KOKORO_MODEL), str(KOKORO_VOICES_FILE)
+        )
+    return _kokoro_engine
+
+
+_SAINT_RE = re.compile(r"\bSt\.(?=\s+[A-Z])")
+
+
+def _normalize_for_synthesis(text):
+    """Caller-side text normalisation for the synthesiser ONLY
+    (TTS investigation §3): espeak reads the abbreviation "St."
+    literally, so "St. Louis" is never pronounced "Saint Louis"
+    by either engine. Expanding it when a capitalised name
+    follows fixes the demonstrated failure. The script text
+    itself — and therefore captions and timing — is never
+    altered; only the string handed to the synthesiser changes.
+    """
+    return _SAINT_RE.sub("Saint", text)
+
+
+def _run_kokoro(text, output_file, voice_id=None):
+    """Synthesise a single piece of text with Kokoro-82M.
+
+    Speed is pinned to the provider's native rate: the literal
+    1.0 below is the ONLY speed value in this call path and it is
+    never read from configuration, options or the environment
+    (founder ruling, 2026-11-22 — no narration speed adjustment
+    anywhere). Misaki bracket pronunciation overrides are NOT
+    used: kokoro-onnx reads them aloud as gibberish (TTS
+    investigation §3); caller-side respelling in the script is
+    the supported correction surface.
+    """
+    import numpy as np
+
+    output_file = Path(output_file)
+    canonical = canonical_voice_id(voice_id)
+    meta = KOKORO_VOICE_META[canonical]
+
+    if not KOKORO_MODEL.exists():
+        raise FileNotFoundError(
+            f"Kokoro model not found: {KOKORO_MODEL}"
+        )
+
+    if not KOKORO_VOICES_FILE.exists():
+        raise FileNotFoundError(
+            f"Kokoro voices file not found: {KOKORO_VOICES_FILE}"
+        )
+
+    samples, sample_rate = _kokoro().create(
+        _normalize_for_synthesis(text),
+        voice=canonical,
+        speed=1.0,
+        lang=meta["espeak_lang"],
+    )
+
+    if samples is None or len(samples) == 0:
+        raise RuntimeError(
+            "Kokoro finished but produced no audio."
+        )
+
+    pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
+
+    with wave.open(str(output_file), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(int(sample_rate))
+        wav_file.writeframes(pcm.tobytes())
+
+    if output_file.stat().st_size == 0:
+        raise RuntimeError(
+            "Kokoro created an empty audio file."
+        )
+
+
+def _synthesize_sentence(text, output_file, voice_id=None):
+    """The engine seam (TTS investigation §9): every narration
+    part is synthesised through here and nowhere else. Kokoro-82M
+    is the production engine; _run_piper remains behind this seam
+    as the retained fallback path for a future commercially
+    clean Piper voice set."""
+    _run_kokoro(text, output_file, voice_id=voice_id)
 
 
 def _part_hash(sentence, voice_id=None):
@@ -328,7 +621,7 @@ def _write_parts_manifest(manifest_file, parts, model_name=None):
         # ignore the new fields, and v1 manifests are upgraded by
         # measurement on load (load_parts_manifest_data).
         "version": 2,
-        "model": model_name or PIPER_MODEL.name,
+        "model": model_name or KOKORO_MODEL.name,
         "parts": parts,
     }
 
@@ -378,7 +671,7 @@ def load_parts_manifest_data(manifest_file):
 
     return {
         "version": 2,
-        "model": data.get("model") or PIPER_MODEL.name,
+        "model": data.get("model") or KOKORO_MODEL.name,
         "parts": parts,
     }
 
@@ -427,12 +720,12 @@ def generate_narration(
 
     if not model.exists():
         raise FileNotFoundError(
-            f"Piper model not found: {model}"
+            f"Narration model not found: {model}"
         )
 
     if not config.exists():
         raise FileNotFoundError(
-            f"Piper config not found: {config}"
+            f"Narration voice data not found: {config}"
         )
 
     # Phase 2.4: per-sentence voices (quoted/interview beats on
@@ -444,7 +737,7 @@ def generate_narration(
             _pmodel, _pconfig, _presolved, _ = resolve_voice(_part_voice)
             if not _pmodel.exists() or not _pconfig.exists():
                 raise FileNotFoundError(
-                    f"Piper model not found for sentence voice "
+                    f"Narration model not found for sentence voice "
                     f"{_part_voice}: {_pmodel}"
                 )
 
@@ -529,7 +822,7 @@ def generate_narration(
 
             for attempt in range(1, 4):
                 try:
-                    _run_piper(
+                    _synthesize_sentence(
                         sentence,
                         part_file,
                         voice_id=part_voice_id,
@@ -576,14 +869,14 @@ def generate_narration(
 
     if not output_file.exists():
         raise RuntimeError(
-            "Piper finished but no audio file was created."
+            "Narration finished but no audio file was created."
         )
 
     file_size = output_file.stat().st_size
 
     if file_size == 0:
         raise RuntimeError(
-            "Piper created an empty audio file."
+            "Narration created an empty audio file."
         )
 
     print()
@@ -605,6 +898,7 @@ def generate_narration(
     # str(output_file); callers that need the path can use
     # output_path — jobs records this dict in state["voice"].
     return {
+        "engine": "kokoro",
         "voice_id_requested": voice_id,
         "voice_id_used": resolved_voice_id,
         "voice_fallback": voice_fell_back,

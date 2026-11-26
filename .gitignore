@@ -1,6 +1,12 @@
 # Generated documentary media
 backend/media/
 
+# Kokoro-82M narration model (311 MB — exceeds GitHub's 100 MB
+# per-file limit, so it is provisioned, not tracked:
+# backend/fetch_kokoro_model.sh / the Dockerfile's verified
+# download). The voices file (voices-v1.0.bin) IS tracked.
+backend/kokoro-v1.0.onnx
+
 # Python
 backend/.venv/
 backend/__pycache__/

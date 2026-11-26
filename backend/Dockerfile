@@ -61,6 +61,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # the backend directory, so they must sit beside the code in the image.
 COPY . ./
 
+# Kokoro-82M narration assets (production engine since 2026-11-26):
+# voices-v1.0.bin (28 MB) is git-tracked and arrives with COPY above,
+# but kokoro-v1.0.onnx (311 MB) exceeds GitHub's 100 MB per-file limit
+# and is NOT in the repo — fetch it from the pinned kokoro-onnx
+# release with SHA-256 verification (same values as
+# backend/fetch_kokoro_model.sh, which provisions local checkouts).
+RUN curl -fsSL -o kokoro-v1.0.onnx \
+      https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx \
+    && echo "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5  kokoro-v1.0.onnx" | sha256sum -c -
+
 # Persistent-data locations. Altare replaces everything outside the app's
 # data folder on redeploy, so every writable path is steered under /data:
 # production media, the source-intel SQLite cache, the faster-whisper
