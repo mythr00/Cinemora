@@ -987,12 +987,130 @@ def _flatten_whisper_words(caption_segments):
     return words
 
 
-def _sentence_events(sentence_words, window):
+def _script_timed_words(sentence_text, whisper_words):
+    """Map a script sentence's OWN words onto Whisper timings.
+
+    Gate 4 / B7: caption TEXT must be the script's words — the exact
+    narration text sent to TTS. Whisper's transcript is a timing
+    source only: its wording is ASR-corrupted in practice ("705 pm"
+    for "7:05 p.m.", "1 ,600" from its token split of "1,600",
+    "t -dance", "collapsed changed"), so it must never reach a
+    caption. Each whitespace token of the script sentence is kept
+    byte-intact (numbers, times, punctuation and hyphenated words
+    ride inside their token) and is given a timing: the matched
+    Whisper word's span when the global token alignment matched it,
+    otherwise a span interpolated between its matched neighbours
+    (a timing problem degrades timing, never wording). Words are
+    returned in the {"text", "start", "end", "segment_index"} shape
+    _flatten_whisper_words produces, so grouping/clamping downstream
+    is unchanged."""
+    import difflib
+    import re
+
+    def normalize_token(value):
+        return re.sub(r"[^a-z0-9']+", "", str(value or "").lower())
+
+    tokens = str(sentence_text or "").split()
+    if not tokens or not whisper_words:
+        return []
+
+    script_norm = [normalize_token(token) for token in tokens]
+    whisper_norm = [
+        normalize_token(word.get("text")) for word in whisper_words
+    ]
+    matcher = difflib.SequenceMatcher(
+        None, script_norm, whisper_norm, autojunk=False
+    )
+    mapping = {}
+    for block in matcher.get_matching_blocks():
+        for offset in range(block.size):
+            mapping[block.a + offset] = whisper_words[block.b + offset]
+    matched = sorted(mapping)
+
+    span_start = float(whisper_words[0]["start"])
+    span_end = float(whisper_words[-1]["end"])
+
+    timed = []
+    previous_start = span_start
+    for index, token in enumerate(tokens):
+        if index in mapping:
+            word = mapping[index]
+            start = float(word["start"])
+            end = float(word["end"])
+            segment_index = word.get("segment_index", 0)
+        else:
+            prev_index = max(
+                (m for m in matched if m < index), default=None
+            )
+            next_index = min(
+                (m for m in matched if m > index), default=None
+            )
+            if prev_index is not None and next_index is not None:
+                prev_word = mapping[prev_index]
+                next_word = mapping[next_index]
+                fraction = (index - prev_index) / (next_index - prev_index)
+                start = float(prev_word["end"]) + fraction * (
+                    float(next_word["start"]) - float(prev_word["end"])
+                )
+                end = start
+                segment_index = prev_word.get(
+                    "segment_index", next_word.get("segment_index", 0)
+                )
+            elif prev_index is not None:
+                prev_word = mapping[prev_index]
+                start = end = float(prev_word["end"])
+                segment_index = prev_word.get("segment_index", 0)
+            elif next_index is not None:
+                next_word = mapping[next_index]
+                start = end = float(next_word["start"])
+                segment_index = next_word.get("segment_index", 0)
+            else:
+                # No token matched at all: distribute the script
+                # words proportionally over the Whisper span.
+                fraction = index / len(tokens)
+                start = span_start + fraction * (span_end - span_start)
+                end = start
+                whisper_index = min(
+                    len(whisper_words) - 1,
+                    int(fraction * len(whisper_words)),
+                )
+                segment_index = whisper_words[whisper_index].get(
+                    "segment_index", 0
+                )
+        if start < previous_start:
+            start = previous_start
+        if end < start:
+            end = start
+        timed.append(
+            {
+                "text": token,
+                "start": start,
+                "end": end,
+                "segment_index": segment_index,
+            }
+        )
+        previous_start = start
+    return timed
+
+
+def _sentence_events(sentence_words, window, script_text=None):
     """Build a sentence's caption events from its aligned words:
     one event per contributing Whisper segment (segment boundaries
     may subdivide the window), every time clamped INTO the
     sentence's measured window — a boundary may never move
-    (annex D2.2.5). Returns [] when no usable event survives."""
+    (annex D2.2.5). Returns [] when no usable event survives.
+
+    When script_text is given (the measured/production path), the
+    event WORDS are the script sentence's own tokens carrying the
+    Whisper-derived timings (_script_timed_words) — the Whisper
+    transcript's wording never becomes caption text (Gate 4 / B7).
+    Event text is those tokens joined with single spaces, which
+    reproduces the script sentence exactly: no token is split and
+    no punctuation is detached."""
+    if script_text is not None:
+        sentence_words = _script_timed_words(script_text, sentence_words)
+        if not sentence_words:
+            return []
     groups = []
     for word in sentence_words:
         if groups and groups[-1][0] == word["segment_index"]:
@@ -1094,6 +1212,7 @@ def _build_captions_measured(
             sentence_events = _sentence_events(
                 flat_words[record["word_start"]:record["word_end"]],
                 window,
+                script_text=sentence,
             )
         if not sentence_events:
             # Single-event fallback ON the measured window (never a
@@ -1152,6 +1271,66 @@ def _build_captions_measured(
     return data
 
 
+def _standalone_script_segments(script_text, whisper_segments):
+    """Standalone (no parts manifest) counterpart of the measured
+    path's text rule (Gate 4 / B7): rebuild caption segments from
+    the SCRIPT sentences, with Whisper used only to place them in
+    time via the same sentence alignment. Returns None when the
+    script yields no sentences (the caller then keeps its existing
+    behaviour). A sentence the alignment cannot place still renders
+    as a plain script-text event — never as ASR text."""
+    from services.narration import _split_sentences
+
+    sentences = _split_sentences(script_text or "")
+    if not sentences:
+        return None
+    duration = max(
+        (float(segment.get("end", 0)) for segment in whisper_segments),
+        default=0.0,
+    )
+    aligned = _align_sentences_to_segments(
+        sentences, whisper_segments, duration
+    )
+    flat_words = _flatten_whisper_words(whisper_segments)
+
+    events = []
+    for index, sentence in enumerate(sentences):
+        record = aligned[index] if index < len(aligned) else None
+        sentence_events = []
+        if record is not None and record.get("word_start") is not None:
+            window = {
+                "start": float(record.get("start") or 0.0),
+                "end": float(record.get("end") or 0.0),
+            }
+            if window["end"] > window["start"]:
+                sentence_events = _sentence_events(
+                    flat_words[record["word_start"]:record["word_end"]],
+                    window,
+                    script_text=sentence,
+                )
+        if not sentence_events:
+            start = (
+                float(record.get("start") or 0.0)
+                if record is not None
+                else (events[-1]["end"] if events else 0.0)
+            )
+            end = (
+                float(record.get("end") or 0.0)
+                if record is not None
+                else start
+            )
+            sentence_events = [
+                {
+                    "start": start,
+                    "end": max(end, start),
+                    "text": sentence,
+                    "words": [],
+                }
+            ]
+        events.extend(sentence_events)
+    return events or None
+
+
 def build_captions(narration_file, script_text, captions_json_path,
                    parts_manifest=None):
     """Build captions.json (+ .srt/.vtt sidecars) for a narration.
@@ -1208,7 +1387,13 @@ def build_captions(narration_file, script_text, captions_json_path,
         )
     elif segments:
         data = dict(whisper_result)
-        data["segments"] = segments
+        # Gate 4 / B7: even without a parts manifest, caption text
+        # is the script's — Whisper segments contribute timings
+        # only, never wording.
+        script_segments = _standalone_script_segments(
+            script_text, segments
+        )
+        data["segments"] = script_segments if script_segments else segments
         # B-01: preserve which input form produced the timings
         # before the artefact-level source label is stamped.
         if whisper_result.get("timing_source"):
