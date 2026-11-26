@@ -73,14 +73,14 @@ def fake_redis():
     provider_health.reset()
 
 
-def _user(email):
+def _user(email, role="user"):
     db = SessionLocal()
     try:
         user = User(
             id=str(uuid.uuid4()),
             email=email,
             password_hash="x",
-            role="user",
+            role=role,
             status="active",
         )
         db.add(user)
@@ -337,7 +337,11 @@ def test_failure_classification_is_conservative():
 
 
 def test_retry_sweep_retries_transient_only(fake_redis):
-    owner = _user("retry@example.com")
+    # Item 8 (2026-11-26): ledger-mechanics fixtures run as a
+    # staff owner — an ordinary zero-credit tenant is now
+    # billing-rejected at submission by design (see
+    # tests/test_pi_item8_zero_credit.py).
+    owner = _user("retry@example.com", role="super_admin")
     project_id = _project(owner, script="Alpha. Beta.")
     db = SessionLocal()
     try:
@@ -402,7 +406,11 @@ def test_claim_run_rides_out_lock_bursts(monkeypatch):
     a burst and still win."""
     from sqlalchemy.exc import OperationalError
 
-    owner = _user("claimburst@example.com")
+    # Item 8 (2026-11-26): ledger-mechanics fixtures run as a
+    # staff owner — an ordinary zero-credit tenant is now
+    # billing-rejected at submission by design (see
+    # tests/test_pi_item8_zero_credit.py).
+    owner = _user("claimburst@example.com", role="super_admin")
     project_id = _project(owner)
     run = run_ledger.submit_production(project_id, "One. Two.")
 
@@ -425,7 +433,11 @@ def test_claim_run_rides_out_lock_bursts(monkeypatch):
 def test_pipeline_cancellation_check(monkeypatch):
     from services import media_pipeline, run_context
 
-    owner = _user("cancel@example.com")
+    # Item 8 (2026-11-26): ledger-mechanics fixtures run as a
+    # staff owner — an ordinary zero-credit tenant is now
+    # billing-rejected at submission by design (see
+    # tests/test_pi_item8_zero_credit.py).
+    owner = _user("cancel@example.com", role="super_admin")
     project_id = _project(owner)
     run = run_ledger.submit_production(project_id, "One. Two.")
     run_ledger.claim_run(run["run_id"])

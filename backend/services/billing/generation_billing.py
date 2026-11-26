@@ -31,6 +31,29 @@ Fail posture: plan resolution is fail-soft (an unseeded or
 legacy deployment behaves exactly as before). Once a user is
 PROVEN metered, every billing failure is fail-closed: the
 submission is rejected rather than run unbilled.
+
+Product Improvements directive, item 8 (founder, 2026-11-26 —
+"zero credits must mean zero videos"): the legacy fail-soft
+posture was a live bypass for real tenants. Registration assigns
+every new account an active subscription to the seeded legacy
+"free" plan (billing_mode='legacy', limits-only), so an ordinary
+user with zero credits resolved to a non-metered plan and
+generated without any reservation at all. The rule now:
+
+- A REAL TENANT (a User row whose role is not staff) must pay for
+  every generation: an active metered plan's entitlement/credits,
+  or — when their plan is legacy or missing — a credits-only
+  reservation covering the full estimated cost from whatever
+  credits they actually hold (e.g. purchased top-ups). With
+  neither, the submission is rejected (402 insufficient_credits).
+- Staff accounts (admin / super_admin, incl. the founder plan)
+  and the synthetic operator principal (no User row) keep the
+  operator exemption: their submissions are not metered.
+- Ownerless (pre-accounts) projects keep legacy behaviour.
+
+Workers re-validate at claim time (claim_billing_check, called
+from run_ledger.claim_run): an ordinary tenant's run with no
+live reservation is refused and failed, never executed.
 """
 
 from __future__ import annotations
@@ -68,6 +91,91 @@ def _resolve_owner_plan(db, project_id):
         return None, None
     plan = plans_service.resolve_effective_plan(db, project.owner_id)
     return project, plan
+
+
+STAFF_ROLES = ("admin", "super_admin")
+
+
+def _owner_user(db, owner_id):
+    """The owner's User row, or None when there is none (the
+    synthetic operator principal on an unmigrated database).
+    Fail-soft like the rest of this module: a database without
+    the accounts tables has no tenants to meter."""
+    if not owner_id:
+        return None
+    try:
+        return db.get(models.User, str(owner_id))
+    except Exception:
+        db.rollback()
+        return None
+
+
+def _is_staff_user(user) -> bool:
+    return user is not None and user.role in STAFF_ROLES
+
+
+def _billing_exempt(db, owner_id, source: str) -> bool:
+    """True when this owner keeps the operator exemption from
+    metering: admin-source submissions, staff accounts, and
+    owners with no User row (operator principal / pre-accounts
+    projects). Ordinary tenants are NEVER exempt (item 8)."""
+    if source == "admin":
+        return True
+    owner = _owner_user(db, owner_id)
+    return owner is None or _is_staff_user(owner)
+
+
+def _insufficient(needed: int, available: int) -> BillingRejected:
+    return BillingRejected(
+        "insufficient_credits",
+        f"This generation needs {needed} credits but only "
+        f"{available} are available. Subscribe to a plan or buy "
+        "a top-up credit pack to generate.",
+    )
+
+
+def _reserve_credits_only(db, *, run_id, project_id, owner_id,
+                          script_text, options):
+    """Item 8 fallback for an ordinary tenant whose effective
+    plan is legacy or missing: the generation is still possible
+    — at full price, from credits the user actually holds
+    (purchased top-ups spend first-class here). No credits, no
+    generation: InsufficientCreditsError becomes a 402."""
+    estimated_seconds = catalogue.estimate_seconds(script_text)
+    credits_needed = catalogue.generation_credit_cost(
+        estimated_seconds
+    )
+    try:
+        reservation = _create_reservation(
+            db, run_id=run_id,
+            root_run_id=str((options or {}).get("retry_of") or run_id),
+            user_id=owner_id, project_id=project_id,
+            period=None, entitlement=False,
+            credits_needed=credits_needed,
+            estimated_seconds=estimated_seconds, source="user",
+        )
+        db.commit()
+        return {
+            "metered": True, "reservation_id": reservation.id,
+            "entitlement": False,
+            "credits_reserved": reservation.credits_reserved,
+            "source": "user", "credits_only": True,
+        }
+    except credits.InsufficientCreditsError as exc:
+        db.rollback()
+        raise _insufficient(exc.needed, exc.available) from exc
+    except BillingRejected:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise BillingRejected(
+            "billing_unavailable",
+            "Billing is temporarily unavailable; the "
+            "generation was not started and nothing was "
+            "charged.",
+            status_code=503,
+        ) from exc
 
 
 def _check_subscription_health(db, user_id: str) -> None:
@@ -178,7 +286,18 @@ def reserve_for_new_run(run_id, project_id, script_text, options=None):
             # not fall through plan resolution to a default plan.
             _check_subscription_health(db, owner_id)
         if plan is None or plan.billing_mode != "metered":
-            return None
+            # Item 8 (2026-11-26): a legacy/missing plan is no
+            # longer free admission for a real tenant. Staff and
+            # the operator principal keep the exemption; an
+            # ordinary tenant pays full price from held credits
+            # or is rejected — zero credits means zero videos.
+            if _billing_exempt(db, owner_id, source):
+                return None
+            return _reserve_credits_only(
+                db, run_id=run_id, project_id=project_id,
+                owner_id=owner_id, script_text=script_text,
+                options=options,
+            )
         try:
             root_run_id = str(options.get("retry_of") or run_id)
             estimated_seconds = catalogue.estimate_seconds(script_text)
@@ -265,13 +384,16 @@ def reserve_for_revision(run_id, project_id, script_text):
             return None
         owner_id = project.owner_id
         _check_subscription_health(db, owner_id)
-        if plan is None or plan.billing_mode != "metered":
+        metered = plan is not None and plan.billing_mode == "metered"
+        if not metered and _billing_exempt(db, owner_id, "user"):
             return None
         try:
             # Ensure the period so the subscription's monthly
             # credits are allocated before the render draws on
-            # the wallet.
-            periods_service.ensure_current_period(db, owner_id)
+            # the wallet. (Metered plans only: an unmetered tenant
+            # pays credits-only, item 8, and has no period.)
+            if metered:
+                periods_service.ensure_current_period(db, owner_id)
             estimated_seconds = catalogue.estimate_seconds(script_text)
             credits_needed = catalogue.generation_credit_cost(
                 estimated_seconds
@@ -325,6 +447,79 @@ def _extract_actual_seconds(reservation, execution) -> float:
     if reservation.estimated_seconds:
         return float(reservation.estimated_seconds)
     return float(catalogue.STANDARD_GENERATION_SECONDS)
+
+
+def claim_billing_check(run_id) -> tuple[bool, str | None]:
+    """Worker-side re-validation (item 8): may this run execute?
+
+    Called from run_ledger.claim_run after the atomic claim. An
+    ordinary tenant's run must carry a live reservation (active,
+    or settled by an earlier finisher) — created at submission,
+    or at begin_run for the fail-soft caller-less path. A run
+    with NO reservation was never billed (legacy bypass, direct
+    ledger insert, or a reservation lost before this fix) and is
+    refused: (False, "insufficient_credits").
+
+    Exempt, mirroring reserve-time rules: staff owners, owners
+    with no User row (operator principal), ownerless projects,
+    and admin-source reservations (which exist as zero-charge
+    rows, so they pass on their own). Infrastructure errors are
+    fail-soft (True): a transient read failure must not kill a
+    legitimately billed run — only a PROVEN missing reservation
+    refuses.
+    """
+    if not run_id:
+        return True, None
+    db = _session()
+    try:
+        run_row = db.get(models.ProductionRun, str(run_id))
+        if run_row is None:
+            return True, None
+        owner_id = run_row.owner_id
+        if not owner_id and run_row.project_id:
+            project = db.get(models.Project, str(run_row.project_id))
+            owner_id = project.owner_id if project else None
+        if not owner_id:
+            return True, None
+        owner = _owner_user(db, owner_id)
+        if owner is None or _is_staff_user(owner):
+            return True, None
+        reservation = (
+            db.query(models.GenerationReservation)
+            .filter_by(run_id=str(run_id))
+            .one_or_none()
+        )
+        hops = 0
+        while reservation is None and run_row is not None and hops < 10:
+            options = run_row.options or {}
+            parent = options.get("retry_of")
+            if not parent:
+                break
+            reservation = (
+                db.query(models.GenerationReservation)
+                .filter_by(run_id=str(parent))
+                .one_or_none()
+            )
+            run_row = db.get(models.ProductionRun, str(parent))
+            hops += 1
+        if reservation is not None and reservation.status in (
+            "active",
+            "settled",
+        ):
+            return True, None
+        return False, "insufficient_credits"
+    except Exception as error:  # fail-soft: see docstring
+        print(
+            f"WARNING: claim billing check failed for run "
+            f"{run_id}: {error}"
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return True, None
+    finally:
+        db.close()
 
 
 def settle_for_run(run_id, status, execution=None) -> None:

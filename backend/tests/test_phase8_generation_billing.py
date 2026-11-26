@@ -193,16 +193,31 @@ def test_insufficient_credits_rejects_and_charges_nothing(db):
 
 
 def test_legacy_plan_user_is_not_metered(db):
-    # A user on a legacy plan (the seeded 'pro') gets no
-    # reservation and no wallet activity at all.
+    # UPDATED by Product Improvements item 8 (founder directive
+    # 2026-11-26, "zero credits must mean zero videos"): the
+    # legacy-plan exemption now survives ONLY for staff accounts.
+    # An ordinary user on a legacy plan (the seeded 'pro') with
+    # zero credits is rejected; a staff user on the same plan
+    # keeps the historical unmetered behaviour. The full item-8
+    # matrix lives in tests/test_pi_item8_zero_credit.py.
     from scripts.seed_founder import ensure_plans
 
     ensure_plans(db)
     user = _make_user(db, "pro")
     project = _make_project(db, user.id)
     db.commit()
+    with pytest.raises(BillingRejected) as excinfo:
+        run_ledger.submit_production(
+            project.id, project.script, options={}
+        )
+    assert excinfo.value.error_code == "insufficient_credits"
+
+    staff = _make_user(db, "pro")
+    staff.role = "super_admin"
+    staff_project = _make_project(db, staff.id)
+    db.commit()
     submission = run_ledger.submit_production(
-        project.id, project.script, options={}
+        staff_project.id, staff_project.script, options={}
     )
     assert submission is not None
     assert _reservation_for(db, submission["run_id"]) is None

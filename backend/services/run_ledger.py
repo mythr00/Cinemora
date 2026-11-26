@@ -282,8 +282,33 @@ def _insert_run(project_id, script_text, options, status):
 
 def begin_run(project_id, script_text, options=None):
     """Create a run row in status "running" and return its run_id
-    (None when the ledger is unavailable — the run proceeds anyway)."""
+    (None when the ledger is unavailable — the run proceeds anyway).
+
+    Product Improvements item 8 (2026-11-26): this caller-less
+    path historically skipped billing entirely (no submission, no
+    reservation). It now reserves through the same choke point as
+    submit_production; a BillingRejected fails the fresh row and
+    PROPAGATES, so the calling job dies before any stage executes
+    — an ordinary tenant cannot reach the pipeline unbilled by
+    this path either. Ledger/DB failures keep the historical
+    fail-soft behaviour (reserve_for_new_run returns None for
+    exempt and ownerless projects, and only BillingRejected —
+    a proven refusal — raises)."""
     created = _insert_run(project_id, script_text, options, "running")
+    if created is not None:
+        from services.billing import generation_billing
+
+        try:
+            generation_billing.reserve_for_new_run(
+                created["run_id"], project_id, script_text, options
+            )
+        except generation_billing.BillingRejected as rejected:
+            finish_run(
+                created["run_id"],
+                "failed",
+                error=f"billing rejected: {rejected.error_code}",
+            )
+            raise
     return created["run_id"] if created else None
 
 
@@ -834,6 +859,30 @@ def claim_run(run_id, from_statuses=("queued",), worker_id=None):
                 from_statuses=from_statuses,
                 worker_id=worker_id,
             ):
+                # Product Improvements item 8 (2026-11-26):
+                # worker-side billing re-validation. A claimed
+                # run owned by an ordinary tenant with no live
+                # billing reservation was never paid for — fail
+                # it here rather than execute a free video. The
+                # check is fail-soft on infrastructure errors and
+                # exempts staff/operator/ownerless runs.
+                try:
+                    from services.billing import generation_billing
+
+                    allowed, code = (
+                        generation_billing.claim_billing_check(
+                            str(run_id)
+                        )
+                    )
+                except Exception:
+                    allowed, code = True, None
+                if not allowed:
+                    finish_run(
+                        str(run_id),
+                        "failed",
+                        error=f"billing rejected: {code}",
+                    )
+                    return None
                 return get_run(run_id)
             return None
         except Exception as error:
