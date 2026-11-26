@@ -9,8 +9,9 @@ diagnosis (ASSET_MANAGER_DIAGNOSIS_2026-11-20):
    in every category; thresholds untouched.
 2. Compound places: a comma-separated place is a set of alternative
    components, not one indivisible token string.
-3. Banned-provider URL gap: an innocuous label cannot launder a
-   banned host.
+3. Provider-veto URL gap: an innocuous label cannot launder a
+   vetoed host (the Pexels/Pixabay ban was lifted 2026-11-26; the
+   surviving hard veto is the social-platform source check).
 4. compose_queries: named-person anchor, era phrases and place
    survive into queries (diagnosis D1/D2/D4).
 5. Rejection diagnostics (R5): additive primary funnel,
@@ -35,8 +36,10 @@ from services.timeline import timeline_eligible
 from services.visual_registry import VisualRegistry
 
 
-_BANNED_A = "pex" + "els"
-_BANNED_B = "pixa" + "bay"
+_STOCK_A = "pex" + "els"
+_STOCK_B = "pixa" + "bay"
+_SOCIAL_A = "tik" + "tok"
+_SOCIAL_B = "insta" + "gram"
 
 
 # ---------------------------------------------------------------------------
@@ -216,15 +219,18 @@ def test_gate_compound_place_still_rejects_when_no_component_present():
 
 
 # ---------------------------------------------------------------------------
-# 3. Banned-provider URL gap
+# 3. Provider-veto URL gap (stock ban lifted 2026-11-26; social veto)
 # ---------------------------------------------------------------------------
 
 def test_banned_provider_detected_from_url_host():
-    assert story.is_banned_provider(
-        {"provider": "web", "url": f"https://www.{_BANNED_A}.com/photo/123"}
+    # Founder 2026-11-26 (Annex B): the Pexels/Pixabay ban is LIFTED —
+    # neither stock host is a banned provider any more, from the label
+    # or from the URL host.
+    assert not story.is_banned_provider(
+        {"provider": "web", "url": f"https://www.{_STOCK_A}.com/photo/123"}
     )
-    assert story.is_banned_provider(
-        {"source": "Aggregator", "image_url": f"https://cdn.{_BANNED_B}.com/x.jpg"}
+    assert not story.is_banned_provider(
+        {"source": "Aggregator", "image_url": f"https://cdn.{_STOCK_B}.com/x.jpg"}
     )
     assert not story.is_banned_provider(
         {"provider": "web", "url": "https://commons.wikimedia.org/wiki/File:X.jpg"}
@@ -232,19 +238,50 @@ def test_banned_provider_detected_from_url_host():
     assert not story.is_banned_provider(
         {"provider": "youtube", "url": "https://www.youtube.com/watch?v=abc"}
     )
+    # The URL-host veto detection this test was built for still fires
+    # through the surviving hard veto: an innocuous label cannot
+    # launder a social-platform host (TikTok / Instagram).
+    assert story.is_social_platform_source(
+        {"provider": "web", "url": f"https://www.{_SOCIAL_A}.com/@someone/video/1"}
+    )
+    assert story.is_social_platform_source(
+        {"source": "Aggregator", "image_url": f"https://cdn.{_SOCIAL_B}.com/x.jpg"}
+    )
+    assert not story.is_social_platform_source(
+        {"provider": "web", "url": "https://commons.wikimedia.org/wiki/File:X.jpg"}
+    )
+    assert not story.is_social_platform_source(
+        {"provider": "youtube", "url": "https://www.youtube.com/watch?v=abc"}
+    )
 
 
 def test_verify_candidate_rejects_banned_url_host():
+    scenario = {"specificity": "representative", "search_terms": ["berlin wall"]}
+    # The surviving hard veto fires from the URL host alone: the
+    # label is innocuous ("web") but the host is a social platform.
     candidate = {
         "title": "Berlin Wall crowds 1989",
         "snippet": "Crowds at the Berlin Wall",
         "provider": "web",
-        "url": f"https://www.{_BANNED_A}.com/video/1",
+        "url": f"https://www.{_SOCIAL_A}.com/@someone/video/1",
     }
-    scenario = {"specificity": "representative", "search_terms": ["berlin wall"]}
     verdict = story.verify_candidate(candidate, scenario, {"by_id": {}, "entities": []})
     assert verdict["accepted"] is False
-    assert verdict["rejection_reason"] == story.BANNED_PROVIDER_REASON
+    assert verdict["rejection_reason"] == story.SOCIAL_PLATFORM_REASON
+    # New truth (Annex B): the SAME candidate on a restored stock
+    # host is no longer banned-provider-rejected — it flows to normal
+    # evaluation and is accepted on its topical evidence.
+    stock_candidate = {
+        "title": "Berlin Wall crowds 1989",
+        "snippet": "Crowds at the Berlin Wall",
+        "provider": "web",
+        "url": f"https://www.{_STOCK_A}.com/video/1",
+    }
+    verdict = story.verify_candidate(
+        stock_candidate, scenario, {"by_id": {}, "entities": []}
+    )
+    assert verdict["rejection_reason"] != story.BANNED_PROVIDER_REASON
+    assert verdict["accepted"] is True
 
 
 # ---------------------------------------------------------------------------

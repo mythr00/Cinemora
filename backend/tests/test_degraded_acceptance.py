@@ -167,24 +167,28 @@ def test_contradictory_event_rejected():
 # ------------------------------------------------------------------- M11
 
 def test_m11_banned_provider_rejected_by_verification_chain():
-    """Workstream J / spec adversary M11: a candidate whose provider
-    is permanently banned is rejected with the canonical
-    banned_provider outcome — by verify_candidate, by the gate, and
-    through the full _uve_verify_all chain (never picked)."""
+    """Workstream J / spec adversary M11: a candidate from a
+    hard-vetoed provider is rejected by the verification chain —
+    by verify_candidate and through the full _uve_verify_all chain
+    (never picked).
+
+    Veto target updated 2026-11-26: M11 was a Pexels candidate under
+    the IA-05 provider ban, which the founder LIFTED (Annex B); the
+    fixture now carries the surviving hard veto, a social-platform
+    (TikTok) source, whose canonical outcome is
+    social_platform_source. That veto is enforced by
+    verify_candidate (the scorer leg the chain runs after the gate),
+    not by gate_shot_need itself."""
     cand = fx.MISLEADING["M11"]()
 
     verdict = story.verify_candidate(cand, fx.scenario(), fx.bible())
     assert verdict["accepted"] is False
-    assert verdict["rejection_reason"] == "banned_provider"
-
-    ok, reason = mp.gate_shot_need(cand, fx.shot_need())
-    assert not ok
-    assert reason == "banned_provider"
+    assert verdict["rejection_reason"] == "social_platform_source"
 
     scored = mp._uve_verify_all(
         [cand], fx.scenario(), fx.bible(), shot_need=fx.shot_need()
     )
-    assert scored and scored[0]["reject_reason"] == "banned_provider"
+    assert scored and scored[0]["reject_reason"] == "social_platform_source"
     picked = mp._uve_pick(
         scored, fx.scenario(), VisualRegistry("m11"), set(),
         shot_need=fx.shot_need(),
@@ -193,11 +197,26 @@ def test_m11_banned_provider_rejected_by_verification_chain():
 
 
 def test_m11_banned_provider_variants_rejected():
-    """Decorated banned labels are still banned (defence in depth)."""
+    """Decorated vetoed labels are still vetoed (defence in depth):
+    decorated social-platform labels, and a social host hiding
+    behind an innocuous label."""
+    for provider in ("Tik" + "Tok Videos", "insta" + "gram.com"):
+        cand = fx.candidate(provider=provider, source=provider)
+        verdict = story.verify_candidate(cand, fx.scenario(), fx.bible())
+        assert verdict["rejection_reason"] == "social_platform_source", provider
+    cand = fx.candidate(
+        url="https://www." + "tik" + "tok" + ".com/@someone/video/1",
+        video_url="https://www." + "tik" + "tok" + ".com/@someone/video/1",
+    )
+    verdict = story.verify_candidate(cand, fx.scenario(), fx.bible())
+    assert verdict["rejection_reason"] == "social_platform_source"
+    # New truth (Annex B): the formerly banned stock labels are no
+    # longer vetoed — decorated or not, they flow to normal
+    # evaluation with no banned_provider rejection.
     for provider in ("Pex" + "els Videos", "pixa" + "bay.com"):
         cand = fx.candidate(provider=provider, source=provider)
         verdict = story.verify_candidate(cand, fx.scenario(), fx.bible())
-        assert verdict["rejection_reason"] == "banned_provider", provider
+        assert verdict["rejection_reason"] != "banned_provider", provider
 
 # ---------------------------------------------------------------- test 1
 

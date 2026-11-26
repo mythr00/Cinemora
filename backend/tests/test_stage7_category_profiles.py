@@ -31,7 +31,8 @@ from services import visual_quality
 from services.motion_engine.templates import TEMPLATES
 
 
-_BANNED_HOST = "https://" + "pex" + "els" + ".com/photo/1"
+_SOCIAL_HOST = "https://" + "www." + "tik" + "tok" + ".com/@someone/video/1"
+_STOCK_HOST = "https://" + "pex" + "els" + ".com/photo/1"
 
 
 # ---------------------------------------------------------------------------
@@ -179,12 +180,24 @@ def test_gate_vetoes_still_fire_in_contextual():
         need2,
     )
     assert story.CONTRADICTORY_PERSON in failures
-    # Banned provider (universal).
-    ok, reason = mp.gate_shot_need(
-        {"title": "bedroom night", "url": _BANNED_HOST},
-        _KOHBERGER_CONTEXTUAL_NEED,
+    # Hard source veto (universal). Founder 2026-11-26 (Annex B):
+    # the Pexels/Pixabay provider ban is lifted, so the surviving
+    # universal veto target is a social-platform source. That veto
+    # lives in verify_candidate (the scorer leg of the chain), so it
+    # is asserted there, in the same contextual category.
+    verdict = story.verify_candidate(
+        {"title": "bedroom night", "url": _SOCIAL_HOST},
+        {"specificity": "representative"},
+        {"by_id": {}, "entities": []},
     )
-    assert (ok, reason) == (False, story.BANNED_PROVIDER_REASON)
+    assert verdict["accepted"] is False
+    assert verdict["rejection_reason"] == story.SOCIAL_PLATFORM_REASON
+    assert verdict["category"] == "contextual"
+    # New truth: the restored stock host is NOT vetoed — the same
+    # candidate on a Pexels URL carries no banned-provider rejection.
+    assert not story.is_banned_provider(
+        {"title": "bedroom night", "url": _STOCK_HOST}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -267,8 +280,10 @@ def test_scorer_environmental_era_waiver_is_recorded():
 
 
 def test_scorer_veto_verdict_dimensions_all_unevaluated():
+    # Veto target: a social-platform host — the hard veto that
+    # survives the lifted Pexels/Pixabay ban (founder 2026-11-26).
     verdict = story.verify_candidate(
-        {"title": "bedroom", "url": _BANNED_HOST},
+        {"title": "bedroom", "url": _SOCIAL_HOST},
         {"specificity": "representative"},
         {"by_id": {}, "entities": []},
     )

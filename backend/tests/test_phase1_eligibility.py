@@ -18,9 +18,11 @@ the score clears the generic bar; zero topical overlap passes the
 gate (atmosphere imposes no subject/place/type requirement) and
 rejects at the scorer; a topical generic candidate is accepted at
 the 0.22 generic bar — including a score inside [0.22, 0.34) that
-only the generic bar admits; a banned provider rejects at the
-gate whatever its metadata says. Tests only: the fixtures exposed
-no defect.
+only the generic bar admits; a hard-vetoed (social-platform)
+provider is rejected by the chain whatever its metadata says
+(the Pexels/Pixabay provider ban pinned here originally was
+lifted by the founder on 2026-11-26, Annex B). Tests only: the
+fixtures exposed no defect.
 
 CIN-19 / CIN-20 (verification only, per the Phase 0 register):
 assignment eligibility for footage is already pinned by
@@ -266,13 +268,31 @@ def test_atmosphere_contradictory_date_rejected_at_gate():
 
 
 def test_atmosphere_banned_provider_rejected_at_gate():
+    # Veto target updated 2026-11-26: this test pinned a Pexels host
+    # rejected at the gate under the IA-05 provider ban, which the
+    # founder LIFTED (Annex B). The surviving hard veto is a
+    # social-platform source; it is enforced by verify_candidate,
+    # the scorer leg of the same _uve_verify_all chain, so the
+    # rejection is recorded at the scoring stage with the canonical
+    # social_platform_source reason — still a hard rejection of an
+    # otherwise topical atmosphere candidate, whatever its metadata.
     # Assembled so the standing ban source-scan stays clean.
-    banned_host = "pex" + "els"
+    veto_host = "tik" + "tok"
     item = _verify_one(_candidate(
         "Ocean waves crashing on a rocky shoreline",
         "ocean waves rocky shoreline",
-        url=f"https://{banned_host}.com/video/1",
+        url=f"https://www.{veto_host}.com/@someone/video/1",
     ))
     assert item["verification"]["accepted"] is False
-    assert item["rejection_stage"] == "metadata_gate"
-    assert item["gate_failures"] == ["banned_provider"]
+    assert item["rejection_stage"] == "scoring"
+    assert item["reject_reason"] == "social_platform_source"
+    assert item["verification"]["rejection_reason"] == "social_platform_source"
+    # New truth: the SAME candidate on the restored stock host is
+    # not vetoed at all — it is accepted on its topical evidence.
+    stock_host = "pex" + "els"
+    item = _verify_one(_candidate(
+        "Ocean waves crashing on a rocky shoreline",
+        "ocean waves rocky shoreline",
+        url=f"https://{stock_host}.com/video/1",
+    ))
+    assert item["verification"]["accepted"] is True

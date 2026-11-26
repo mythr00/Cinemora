@@ -239,12 +239,18 @@ def _m10_same_video_other_spelling():
 
 
 def _m11_banned_provider():
-    """M11: plausible metadata, banned provider."""
+    """M11: plausible metadata, hard-vetoed provider.
+
+    Originally a Pexels candidate (the IA-05 provider ban); the
+    founder lifted that ban on 2026-11-26 (Annex B), so M11 now
+    carries the surviving hard veto — a social-platform source
+    (TikTok label AND host), rejected by the verification chain
+    however plausible its metadata looks."""
     return candidate(
-        provider="pex" + "els",
-        source="pex" + "els",
-        url="https://videos.example.org/banned1",
-        video_url="https://videos.example.org/banned1",
+        provider="tik" + "tok",
+        source="tik" + "tok",
+        url="https://www." + "tik" + "tok" + ".com/@someone/video/1",
+        video_url="https://www." + "tik" + "tok" + ".com/@someone/video/1",
     )
 
 

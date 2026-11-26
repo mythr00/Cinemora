@@ -371,14 +371,18 @@ def test_15_failed_candidate_never_redownloaded_under_respelling():
 def test_16_recovered_candidates_pass_the_same_verification_chain():
     """Required test 16 (workstream D): recovery is discovery-only —
     candidates found late face the identical chain, including Phase 1
-    contradiction and banned-provider rejection. A banned or
+    contradiction and hard-veto rejection. A vetoed or
     contradictory 'recovery' candidate is rejected exactly like an
-    initial one, and a genuinely valid one is accepted."""
+    initial one, and a genuinely valid one is accepted.
+
+    (M11's veto was the Pexels provider ban until the founder lifted
+    it on 2026-11-26, Annex B; the fixture now carries the surviving
+    social-platform veto, canonical reason social_platform_source.)"""
     for bad in (fx.MISLEADING["M01"](), fx.MISLEADING["M11"]()):
         scored = mp._uve_verify_all(
             [bad], fx.scenario(), fx.bible(), shot_need=fx.shot_need())
         assert scored[0].get("reject_reason") in (
-            "contradictory_person", "banned_provider")
+            "contradictory_person", "social_platform_source")
         assert not (scored[0].get("verification") or {}).get("accepted")
 
     scored = mp._uve_verify_all(
