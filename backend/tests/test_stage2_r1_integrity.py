@@ -47,15 +47,24 @@ BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def test_gate_allows_evaluated_pass():
     audit = {"verdict": {"evaluated": True, "passed": True, "failures": []}}
-    assert jobs._honour_final_audit(audit) is None
+    # Phase 4: the gate returns the failure split (both classes
+    # empty for a clean pass); existing callers ignore it.
+    assert jobs._honour_final_audit(audit) == {"technical": [], "release": []}
 
 
 def test_gate_blocks_evaluated_failure_with_reasons():
+    # Phase 4: a TECHNICAL-class failure still blocks completion
+    # with its reasons. (coverage_incomplete — this test's original
+    # failure — is RELEASE class now and no longer blocks; that is
+    # pinned by tests/test_phase4_gates_auditor.py.)
     audit = {
         "verdict": {
             "evaluated": True,
             "passed": False,
-            "failures": ["coverage_incomplete: sentence 4"],
+            "failures": [
+                "missing_mandatory_evidence: 1 accepted footage "
+                "asset(s) have no source URL"
+            ],
         }
     }
     with pytest.raises(RuntimeError, match="Final video audit FAILED"):

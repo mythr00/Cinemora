@@ -1,22 +1,26 @@
-"""Phase 3b / C-06 — a quality verdict of FAIL must fail the run.
+"""Phase 3b / C-06, superseded by Phase 4 — a quality verdict of
+FAIL is a release finding, not a run failure.
 
-Before this gate, jobs.run_full_pipeline attached the composite
-quality verdict (services.quality_verdict) to the production report
-and completed anyway: the Hyatt-shaped film (direct_share 0.16)
-was a "completed" deliverable whose own QA verdict said FAIL. Only
-the final auditor's integrity verdict gated completion.
+C-06 originally made a quality FAIL fail the run. Phase 4's
+technical/release status separation superseded that gate: the
+film is technically deliverable, and the FAIL is recorded on the
+completed run through release_status.derive_run_statuses
+(release_status "not_release_grade", the verdict carried in the
+release findings). The verdict itself is unchanged — it is still
+computed exactly as before, still preserved and visible.
 
-These tests pin jobs._honour_quality_verdict — the gate the
+These tests pin jobs._honour_quality_verdict — the seam the
 video_editor stage calls after _honour_final_audit:
 
-- FAIL (verdicts-dict shape, as stored on asset_report) raises,
-  carries the fail reasons, and stamps the verdict onto the run
-  state so the failed run keeps it visible;
-- FAIL (bare quality-verdict shape) raises too;
+- FAIL (verdicts-dict shape, as stored on asset_report) does NOT
+  raise: it returns the quality verdict and stamps it onto the
+  run state so the completed run keeps it visible;
+- FAIL (bare quality-verdict shape) does not raise either;
 - a REAL composite verdict computed from a Hyatt-shaped measurement
-  is FAIL and raises; a healthy measurement is PASS and does not;
+  is FAIL and passes through the seam without raising; a healthy
+  measurement is PASS;
 - PASS / QUALITY_WARNING / absent / malformed verdicts behave
-  exactly as before the gate existed (no raise).
+  exactly as before (no raise).
 """
 
 import pytest
@@ -42,21 +46,22 @@ _FAIL_QUALITY = {
 }
 
 
-def test_fail_verdict_raises_and_is_stamped_on_state():
+def test_fail_verdict_does_not_raise_and_is_stamped_on_state():
     state = {}
-    with pytest.raises(RuntimeError) as excinfo:
-        jobs._honour_quality_verdict(_verdicts(_FAIL_QUALITY), state=state)
-    assert "Quality verdict FAILED" in str(excinfo.value)
-    assert "direct_share=0.16" in str(excinfo.value)
+    result = jobs._honour_quality_verdict(_verdicts(_FAIL_QUALITY), state=state)
+    # Phase 4: the FAIL is a release finding on a deliverable film —
+    # the seam returns the verdict instead of raising.
+    assert result is _FAIL_QUALITY
+    assert result["fail_reasons"] == _FAIL_QUALITY["fail_reasons"]
     # The verdict is preserved on the run state (production_state.json
-    # is saved by fail_pipeline from this state).
+    # is saved from this state when the run completes).
     assert state["quality_verdict"]["verdict"] == "FAIL"
     assert state["quality_verdict"]["fail_reasons"] == _FAIL_QUALITY["fail_reasons"]
 
 
-def test_fail_verdict_bare_shape_raises():
-    with pytest.raises(RuntimeError):
-        jobs._honour_quality_verdict(dict(_FAIL_QUALITY))
+def test_fail_verdict_bare_shape_does_not_raise():
+    quality = dict(_FAIL_QUALITY)
+    assert jobs._honour_quality_verdict(quality) is quality
 
 
 def test_pass_verdict_does_not_raise():
@@ -102,11 +107,12 @@ def _measurement(direct_share):
     }
 
 
-def test_real_hyatt_shaped_composite_fails_the_gate():
+def test_real_hyatt_shaped_composite_is_a_release_finding_not_a_failure():
     quality = composite_quality_verdict(_measurement(0.16), {})
     assert quality["verdict"] == "FAIL"
-    with pytest.raises(RuntimeError):
-        jobs._honour_quality_verdict(_verdicts(quality))
+    state = {}
+    assert jobs._honour_quality_verdict(_verdicts(quality), state=state) is quality
+    assert state["quality_verdict"]["verdict"] == "FAIL"
 
 
 def test_real_healthy_composite_passes_the_gate():
