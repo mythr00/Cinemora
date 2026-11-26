@@ -52,6 +52,9 @@ class RunContext:
         missing_visual_count=0,
         rights_policy=None,
         verdict_cache=None,
+        download_url_failures=None,
+        downloaded_assets_by_url=None,
+        committed_content_owners=None,
     ):
         self.run_id = run_id if run_id is not None else uuid.uuid4().hex
         self.project_id = project_id
@@ -108,6 +111,34 @@ class RunContext:
         # exact re-evaluations. Per-run by construction, like every
         # container here: the cache dies with the run context.
         self.verdict_cache = verdict_cache if verdict_cache is not None else {}
+        # Gate 4 media seams (2026-11-26; diagnosis 08 §6–§7):
+        # per-run download memory for media_pipeline's dispatcher
+        # (_uve_download_any_candidate), keyed by the canonical
+        # identity of the ACTUAL download URL (an image candidate's
+        # image_url, not its page url — the fetch loop's older
+        # _FAILED_DOWNLOAD_URLS guard keys on the page/source, so
+        # the same file offered by two pages was re-attempted, and
+        # a video re-presented at a new segment dodged the segment
+        # guard). download_url_failures records each attempted
+        # URL's taxonomy outcome (retryable flag included);
+        # downloaded_assets_by_url holds a succeeded image's asset
+        # template so a re-presentation resolves to the downloaded
+        # file; committed_content_owners maps a still's content
+        # hash to the sentence that first committed those bytes,
+        # so identical bytes are never committed to a second beat.
+        self.download_url_failures = (
+            download_url_failures if download_url_failures is not None else {}
+        )
+        self.downloaded_assets_by_url = (
+            downloaded_assets_by_url
+            if downloaded_assets_by_url is not None
+            else {}
+        )
+        self.committed_content_owners = (
+            committed_content_owners
+            if committed_content_owners is not None
+            else {}
+        )
         self.missing_visual_count = int(missing_visual_count or 0)
         # Informational snapshot taken at construction; the pipeline's
         # actual rights behaviour is unchanged by this value.

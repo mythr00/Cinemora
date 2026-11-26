@@ -613,6 +613,28 @@ _FAILED_DOWNLOAD_URLS: set = set()
 # the same set, prefixed "seg:" (see _uve_download_video_candidate /
 # _uve_fetch_first).
 
+# Gate 4 media seams (2026-11-26; diagnosis 08 §6–§7): per-run
+# download memory at the dispatcher seam (_uve_download_any_candidate),
+# keyed by the canonical identity of the ACTUAL download URL. The
+# _FAILED_DOWNLOAD_URLS guard above keys on the candidate's page /
+# source identity, which misses two evidenced holes: the same image
+# FILE offered under different source pages (its download URL is the
+# candidate's image_url, not its url), and a video re-presented at a
+# different segment after a terminal failure. These containers close
+# both, and add the cross-beat content block: a still's downloaded
+# bytes, once committed to one beat, are never committed to another.
+#   _DOWNLOAD_URL_FAILURES: canonical download-URL key ->
+#       {"retryable": bool, "failure_class": ..., "reason": ...}
+#       (the download taxonomy's own classification of the attempt)
+#   _DOWNLOADED_ASSETS_BY_URL: canonical download-URL key -> the
+#       asset template of a succeeded IMAGE download (videos resolve
+#       re-presentations through _SEGMENT_FILE_CACHE instead)
+#   _COMMITTED_CONTENT_OWNERS: still content hash -> the sentence
+#       number that first committed those bytes this run
+_DOWNLOAD_URL_FAILURES: dict = {}
+_DOWNLOADED_ASSETS_BY_URL: dict = {}
+_COMMITTED_CONTENT_OWNERS: dict = {}
+
 # Discovery failures recorded by _uve_scenario_search (provider, query,
 # error) so the asset report can distinguish DISCOVERY failures from
 # download and verification failures instead of losing them in prints.
@@ -2683,6 +2705,9 @@ def reset_media_caches():
     url_hygiene.clear_resolution_cache()
     provider_health.reset()
     _FAILED_DOWNLOAD_URLS.clear()
+    _DOWNLOAD_URL_FAILURES.clear()
+    _DOWNLOADED_ASSETS_BY_URL.clear()
+    _COMMITTED_CONTENT_OWNERS.clear()
     _DISCOVERY_FAILURES.clear()
     _SEGMENT_BASIS.clear()
     _SEGMENT_ATTEMPTS.clear()
@@ -2726,6 +2751,9 @@ _RUN_CONTEXT_BINDINGS = {
     "_yt_transcript_failed": "yt_transcript_failed",
     "_SEGMENT_FILE_CACHE": "segment_file_cache",
     "_search_failure_state": "search_failure_state",
+    "_DOWNLOAD_URL_FAILURES": "download_url_failures",
+    "_DOWNLOADED_ASSETS_BY_URL": "downloaded_assets_by_url",
+    "_COMMITTED_CONTENT_OWNERS": "committed_content_owners",
 }
 
 
@@ -2751,6 +2779,9 @@ _DEFAULT_RUN_CONTEXT = run_context.RunContext(
     yt_transcript_failed=_yt_transcript_failed,
     segment_file_cache=_SEGMENT_FILE_CACHE,
     search_failure_state=_search_failure_state,
+    download_url_failures=_DOWNLOAD_URL_FAILURES,
+    downloaded_assets_by_url=_DOWNLOADED_ASSETS_BY_URL,
+    committed_content_owners=_COMMITTED_CONTENT_OWNERS,
 )
 run_context.set_default(_DEFAULT_RUN_CONTEXT)
 run_context.register_binder(_bind_run_context)
@@ -5113,16 +5144,210 @@ def _uve_download_image_candidate(
     return asset
 
 
+def _download_url_key_for(candidate, is_image):
+    """Canonical identity of the URL a download actually requests.
+
+    For an image candidate that is the candidate's ``image_url``
+    (the file), NOT the page ``url`` it was discovered on — the
+    distinction the Gate 4 diagnosis (§6–§7) proved load-bearing:
+    the same photograph is offered by many pages, and page-keyed
+    memory can neither block its duplicate bytes nor remember its
+    failed file URL. For a video candidate it is the source URL the
+    video downloader itself resolves, in its own field precedence.
+    """
+    if not isinstance(candidate, dict):
+        return ""
+    if is_image:
+        raw = (
+            candidate.get("image_url")
+            or candidate.get("url")
+            or ""
+        )
+    else:
+        raw = (
+            candidate.get("url")
+            or candidate.get("video_url")
+            or candidate.get("link")
+            or ""
+        )
+    raw = str(raw).strip()
+    if not raw:
+        return ""
+    return canonical_source_key(raw) or raw.lower()
+
+
+def _stamp_duplicate_content(candidate, digest, owner_sentence):
+    """Record a cross-beat duplicate-content block on the candidate
+    (Gate 4, diagnosis §6): the bytes are already committed to
+    another beat this run. The taxonomy stamp is taken, then its
+    class is set to ``duplicate`` — the class whose contract is
+    exactly "already seen this run, never re-requested" — so the
+    fetch loop's failure record tells the truth about why this
+    pick produced no asset."""
+    candidate["_download_error"] = "duplicate_content_this_run"
+    _stamp_download_failure(candidate, "duplicate_content_this_run")
+    if isinstance(candidate.get("_download_failure"), dict):
+        candidate["_download_failure"]["failure_class"] = "duplicate"
+    candidate["rejection_stage"] = "selection"
+    candidate["duplicate_content"] = {
+        "content_hash": digest,
+        "first_sentence_number": owner_sentence,
+    }
+
+
 def _uve_download_any_candidate(candidate, scene_dir, sentence_number, asset_index):
     """F-2 dispatcher: route a unified-pool pick to its format's
-    downloader. The pool kind was stamped when the pool was built."""
-    if candidate.get("_pool_kind") == "image":
-        return _uve_download_image_candidate(
+    downloader. The pool kind was stamped when the pool was built.
+
+    Gate 4 media seams (2026-11-26; diagnosis 08 §6–§7) — this
+    dispatcher is the one seam every run download passes through
+    (both _uve_fetch_first call sites pass it as the downloader),
+    and the only one that sees the candidate, the beat's sentence
+    number and the downloaded result together, so the per-run
+    download memory lives here:
+
+    1. Attempted-URL memory (§7): a download URL whose attempt
+       failed TERMINALLY (the taxonomy's retryable flag is False —
+       404 / source_unavailable / verification failures; transient
+       classes such as timeouts, network errors and 429/5xx keep
+       the retry policy they already had) is never re-attempted
+       by a later pass, however the candidate is re-presented —
+       a different source page for the same image file, or a
+       different segment of the same dead video. A URL that
+       succeeded resolves a same-beat re-presentation to the
+       already-downloaded file (images; videos already resolve
+       through the segment extraction cache).
+    2. Cross-beat content block (§6): a still's content hash is
+       known only once its bytes land, so the check sits here, at
+       the commit point — bytes already committed to one beat are
+       refused for a different beat (the fresh file is removed,
+       the candidate is stamped duplicate_content_this_run) and
+       the fetch loop moves on to the beat's next-best distinct
+       candidate. Videos are exempt by design: their identity is
+       the source window, never the container bytes (the
+       visual_identity rule), and segment reuse across beats is
+       legitimate. Within-beat re-presentation is untouched.
+    """
+    is_image = (
+        isinstance(candidate, dict)
+        and candidate.get("_pool_kind") == "image"
+    )
+    dl_key = _download_url_key_for(candidate, is_image)
+    try:
+        sentence_key = int(sentence_number)
+    except (TypeError, ValueError):
+        sentence_key = sentence_number
+
+    if dl_key:
+        prior_failure = _DOWNLOAD_URL_FAILURES.get(dl_key)
+        if prior_failure is not None and not prior_failure.get("retryable"):
+            candidate["_download_error"] = "previously_failed_this_run"
+            _stamp_download_failure(
+                candidate, "previously_failed_this_run"
+            )
+            candidate["rejection_stage"] = "download"
+            candidate["_download_url_previously_failed"] = True
+            return None
+        if is_image:
+            cached = _DOWNLOADED_ASSETS_BY_URL.get(dl_key)
+            if cached is not None and Path(
+                cached.get("file_path") or ""
+            ).exists():
+                if cached.get("sentence_number") == sentence_key:
+                    # Same beat re-presenting a URL that already
+                    # downloaded: resolve to the downloaded file
+                    # instead of downloading again — the Stage 7
+                    # segment-reuse shape, with this presentation's
+                    # beat-relative fields re-stamped from THIS
+                    # candidate (verdicts are never inherited).
+                    reused = dict(cached)
+                    for _field in (
+                        "verification", "candidate_id", "shot_need",
+                        "matched_query", "query", "universal_score",
+                        "relevance_score",
+                    ):
+                        if _field in candidate:
+                            reused[_field] = candidate[_field]
+                    reused["sentence_number"] = sentence_number
+                    reused["segment_reused"] = True
+                    reused["download_reused"] = True
+                    candidate["segment_id"] = reused.get("segment_id")
+                    return reused
+                # A different beat asking for the very URL whose
+                # bytes are committed elsewhere: identical content
+                # by construction — blocked without any download.
+                _stamp_duplicate_content(
+                    candidate,
+                    cached.get("content_hash"),
+                    cached.get("sentence_number"),
+                )
+                return None
+
+    if is_image:
+        asset = _uve_download_image_candidate(
             candidate, scene_dir, sentence_number, asset_index
         )
-    return _uve_download_video_candidate(
-        candidate, scene_dir, sentence_number, asset_index
-    )
+    else:
+        asset = _uve_download_video_candidate(
+            candidate, scene_dir, sentence_number, asset_index
+        )
+
+    if asset is None:
+        # Record the attempt's outcome under the DOWNLOAD URL's
+        # identity. Images: every failure here follows a real
+        # attempt of that URL. Videos: only a stamped segment
+        # attempt proves the URL itself was requested — a
+        # no-segment-evidence refusal never touched the download
+        # and keeps its existing (segment/source) accounting.
+        if dl_key and isinstance(candidate, dict):
+            stamp = candidate.get("_download_failure")
+            attempted = is_image or bool(
+                candidate.get("_attempted_segment_id")
+            )
+            if (
+                attempted
+                and isinstance(stamp, dict)
+                and stamp.get("failure_class")
+            ):
+                _DOWNLOAD_URL_FAILURES[dl_key] = {
+                    "retryable": bool(stamp.get("retryable")),
+                    "failure_class": stamp.get("failure_class"),
+                    "reason": stamp.get("reason"),
+                }
+        return None
+
+    if dl_key:
+        # A success supersedes any earlier (transient) failure
+        # recorded for the URL in this run.
+        _DOWNLOAD_URL_FAILURES.pop(dl_key, None)
+
+    if is_image:
+        digest = asset.get("content_hash") or _uve_content_hash(
+            asset.get("file_path") or asset.get("path")
+        )
+        if digest:
+            if not asset.get("content_hash"):
+                asset["content_hash"] = digest
+            owner = _COMMITTED_CONTENT_OWNERS.get(digest)
+            if owner is not None and owner != sentence_key:
+                # Cross-beat duplicate content: these exact bytes
+                # are already committed to another beat. Remove the
+                # fresh file (it is this download's own, never a
+                # shared one), stamp the block, and let the fetch
+                # loop take the beat's next-best distinct pick.
+                try:
+                    dup_path = asset.get("file_path")
+                    if dup_path and os.path.exists(dup_path):
+                        os.remove(dup_path)
+                except OSError:
+                    pass
+                _stamp_duplicate_content(candidate, digest, owner)
+                return None
+            _COMMITTED_CONTENT_OWNERS.setdefault(digest, sentence_key)
+        if dl_key:
+            _DOWNLOADED_ASSETS_BY_URL[dl_key] = dict(asset)
+
+    return asset
 
 
 def _uve_search_and_pick(
