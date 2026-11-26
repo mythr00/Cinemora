@@ -1993,11 +1993,62 @@ def _image_technical_failures(probe, minimums=None):
 # that surface only when the response body is consumed or that a
 # fresh connection fixes (premature EOF, connection reset) — and
 # it is deliberately small: a persistently dead URL must fail
-# fast, and a 429 is NEVER retried here (the rate limit is
+# fast, and a 429 is not retried here (the rate limit is
 # respected, recorded into provider health, and left for the
-# scope backoff to govern).
+# scope backoff to govern) — with ONE exception: Wikimedia Commons
+# scopes get the Gate 2 bounded delayed retries below, mirroring
+# services.licensed_media, because Commons throttling was the
+# Container run's dominant download loss.
 IMAGE_DOWNLOAD_MAX_ATTEMPTS = 2
 _IMAGE_RETRY_BASE_DELAY_SECONDS = 0.5
+
+
+def _retry_after_seconds(error):
+    """The Retry-After value (seconds) an error's response carries,
+    or None. Only plain numeric values are read; HTTP-date forms
+    are ignored rather than parsed into a guess."""
+    headers = getattr(getattr(error, "response", None), "headers", None)
+    if headers is None:
+        return None
+    try:
+        raw = headers.get("Retry-After")
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _wikimedia_delayed_retry(scope, attempt, error=None):
+    """Gate 2 retry-before-backoff for Wikimedia Commons scopes
+    (footage-discovery directive, 2026-11-26), mirroring
+    services.licensed_media._commons_request for the production
+    download paths in this module.
+
+    ``attempt`` is the 1-based number of the delayed retry about to
+    happen. Returns the bounded delay (seconds) the caller should
+    sleep before retrying, recording the retry via
+    provider_health.record_delayed_retry; returns None when the
+    scope is not a Wikimedia scope or the bounded retries
+    (provider_health.WIKIMEDIA_RETRY_ATTEMPTS) are spent — the
+    caller then records the rate limit exactly as it did before
+    Gate 2. Non-Wikimedia scopes ALWAYS get None: their 429
+    behaviour is unchanged (recorded immediately, never retried
+    here). The delay honours Retry-After, capped at
+    WIKIMEDIA_MAX_RETRY_DELAY_SECONDS, so the retries stay inside
+    the caller's existing timeout budget."""
+    if not provider_health.is_wikimedia_scope(scope):
+        return None
+    if attempt > provider_health.WIKIMEDIA_RETRY_ATTEMPTS:
+        return None
+    delay = provider_health.wikimedia_retry_delay(
+        attempt, _retry_after_seconds(error)
+    )
+    provider_health.record_delayed_retry(scope, delay)
+    return delay
 
 
 def _download_image_detailed(image_url, output_path):
@@ -2011,7 +2062,10 @@ def _download_image_detailed(image_url, output_path):
     if not image_url:
         return False, "no_url"
     error = None
-    for attempt in range(1, IMAGE_DOWNLOAD_MAX_ATTEMPTS + 1):
+    attempt = 0
+    wikimedia_retries = 0
+    while True:
+        attempt += 1
         try:
             if output_path.exists():
                 output_path.unlink()
@@ -2024,12 +2078,26 @@ def _download_image_detailed(image_url, output_path):
                 getattr(error, "response", None), "status_code", None
             )
             if status == 429 or "429" in str(error):
-                # Run-11 fix 2: the 429 is provider-health
-                # evidence (repeated 429s back the scope off for
-                # the rest of the production); it is not retried.
-                provider_health.record_rate_limit(
-                    provider_health.scope_for_url(image_url)
+                # Gate 2: a Wikimedia scope first gets its bounded
+                # delayed retries (recorded in provider health,
+                # mirroring licensed_media); only a request still
+                # 429 after them is recorded as a rate limit. The
+                # delayed retry does not consume the outer
+                # transport-attempt budget below. Every other
+                # scope keeps the Run-11 fix 2 behaviour exactly:
+                # the 429 is provider-health evidence (repeated
+                # 429s back the scope off for the rest of the
+                # production); it is not retried.
+                scope = provider_health.scope_for_url(image_url)
+                delay = _wikimedia_delayed_retry(
+                    scope, wikimedia_retries + 1, error
                 )
+                if delay is not None:
+                    wikimedia_retries += 1
+                    attempt -= 1
+                    _time.sleep(delay)
+                    continue
+                provider_health.record_rate_limit(scope)
                 break
             if (
                 attempt < IMAGE_DOWNLOAD_MAX_ATTEMPTS
@@ -2122,9 +2190,17 @@ def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, star
         # EOF / connection reset mid-body — the failure class that
         # killed image downloads in run 11). A completed-but-tiny
         # body is a definitive answer and is not retried; a 429 is
-        # recorded into provider health and not retried either.
+        # recorded into provider health and not retried either —
+        # except a Wikimedia scope, which first gets the Gate 2
+        # bounded delayed retries (its own counter, mirroring
+        # licensed_media) before the 429 is recorded. Wikimedia
+        # video derivatives are direct files on
+        # upload.wikimedia.org, so THIS is the production path the
+        # Container run's Commons losses travelled.
         _stream_error = None
-        for _stream_attempt in range(1 + download_taxonomy.MAX_TRANSIENT_RETRIES):
+        _transient_retries = 0
+        _wikimedia_retries = 0
+        while True:
             try:
                 response = _http().get(url, timeout=DIRECT_HTTP_TIMEOUT, stream=True)
                 response.raise_for_status()
@@ -2140,12 +2216,24 @@ def download_direct_video(url, output_path, duration=DEFAULT_CLIP_DURATION, star
                     "status_code", None,
                 )
                 if _stream_status == 429 or "429" in str(stream_error):
-                    provider_health.record_rate_limit(
-                        provider_health.scope_for_url(url)
+                    _scope = provider_health.scope_for_url(url)
+                    _delay = _wikimedia_delayed_retry(
+                        _scope, _wikimedia_retries + 1, stream_error
                     )
+                    if _delay is not None:
+                        _wikimedia_retries += 1
+                        _time.sleep(_delay)
+                        continue
+                    provider_health.record_rate_limit(_scope)
                     raise
                 if not classify_error(stream_error).get("transient"):
                     raise
+                if (
+                    _transient_retries
+                    >= download_taxonomy.MAX_TRANSIENT_RETRIES
+                ):
+                    raise
+                _transient_retries += 1
                 try:
                     if raw_path.exists():
                         raw_path.unlink()
@@ -2311,6 +2399,40 @@ def download_video_clip(
         YT_DLP_TIMEOUT,
         "yt-dlp",
     )
+
+    # Gate 2 retry-before-backoff, Wikimedia scopes only: a
+    # Commons page URL that reaches yt-dlp extraction and fails
+    # with a 429 gets the same bounded delayed retries as the
+    # HTTP paths (each attempt keeps its own YT_DLP_TIMEOUT; the
+    # delay is capped at WIKIMEDIA_MAX_RETRY_DELAY_SECONDS and
+    # recorded in provider health). Only an extraction still
+    # failing with 429 after those retries is recorded as a rate
+    # limit below. Every other scope's failed extraction is
+    # handled exactly as before — no retry, immediate recording.
+    _clip_scope = provider_health.scope_for_url(video_url)
+    _wikimedia_retries = 0
+    while (
+        returncode != 0
+        and "429" in str(stderr or "")
+        and provider_health.is_wikimedia_scope(_clip_scope)
+        and _wikimedia_retries < provider_health.WIKIMEDIA_RETRY_ATTEMPTS
+    ):
+        _wikimedia_retries += 1
+        _delay = provider_health.wikimedia_retry_delay(_wikimedia_retries)
+        provider_health.record_delayed_retry(_clip_scope, _delay)
+        print(
+            f"yt-dlp 429 from Wikimedia scope {_clip_scope}: "
+            f"delayed retry {_wikimedia_retries}/"
+            f"{provider_health.WIKIMEDIA_RETRY_ATTEMPTS} "
+            f"after {_delay:.1f}s"
+        )
+        _time.sleep(_delay)
+        cleanup_temp_files(output_path.parent)
+        returncode, stdout, stderr = run_command_safe(
+            command,
+            YT_DLP_TIMEOUT,
+            "yt-dlp",
+        )
 
     if returncode != 0:
         print("yt-dlp clip extraction failed:")
@@ -4160,8 +4282,9 @@ def _provider_duration_seconds(candidate):
     HH:MM:SS / MM:SS strings; anything else is ignored, never guessed.
     This is a FALLBACK for establishing a source's duration when the
     primary channels (remote probe / yt-dlp info) cannot — it is used
-    only for the whole-asset determination, never to invent a segment
-    inside a long video.
+    for the whole-asset determination and to bound the labelled
+    positional window a long direct file may take (Gate 2); it is
+    never used to fabricate timed (transcript/chapter) evidence.
     """
     raw = candidate.get("duration_seconds")
     if raw is None:
@@ -4284,6 +4407,50 @@ def _ensure_segment_index(url, slim):
             })
 
 
+def _positional_direct_window(url, source_duration, clip):
+    """Deterministic positional window for a long direct-media file
+    (Gate 2 segment-evidence unlock).
+
+    A direct file (archive.org / Wikimedia / institutional MP4) has
+    no timed-evidence channel — no transcript, chapters or
+    description moments to match a contract against — so the only
+    honest segment is a POSITIONAL one: a clip-length window whose
+    position is a fact about the file, not a claim about its
+    content. Windows step deterministically from the start of the
+    file by ``clip`` seconds, skipping windows already handed out
+    for this source in this run (the same per-source registry
+    _youtube_start uses), so repeated picks of one long source walk
+    its length instead of re-taking the opening window. Returns the
+    window start in seconds, or None when every window of the file
+    has been used. The caller stamps the segment
+    "positional_no_contract" — the window is NEVER presented as
+    transcript/chapter-verified evidence.
+    """
+    key = str(url or "").split("&", 1)[0].strip()
+    if not key:
+        return None
+    try:
+        total = float(source_duration)
+        step = int(clip)
+    except (TypeError, ValueError):
+        return None
+    if total <= 0 or step <= 0:
+        return None
+    max_start = max(0, int(total) - step)
+    used = _yt_segment_uses.setdefault(key, [])
+    candidate = 0
+    while candidate <= max_start:
+        end = candidate + step
+        if not any(
+            candidate < used_end and end > used_start
+            for used_start, used_end in used
+        ):
+            used.append((candidate, end))
+            return candidate
+        candidate += step
+    return None
+
+
 def _segment_start_detailed(url, subject="", place="", event="", era="",
                             duration=DEFAULT_CLIP_DURATION,
                             provider_duration=None,
@@ -4300,13 +4467,21 @@ def _segment_start_detailed(url, subject="", place="", event="", era="",
     - "verified_segment": the transcript/chapter/description evidence
       machinery (_youtube_start, yt-dlp based and NOT YouTube-only)
       selected a segment matched to the visual contract.
-    - "positional_no_contract": the contract was empty and
-      _youtube_start chose an evenly spaced position. That is an
-      estimate, NOT verified evidence, and is labelled accordingly
-      (VA-06).
+    - "positional_no_contract": an evenly spaced / deterministic
+      positional window. For page URLs, _youtube_start chose it
+      because the contract was empty; for a LONG DIRECT-MEDIA file
+      (Gate 2), _positional_direct_window chose it because a direct
+      file has no timed-evidence channel at all — the window is
+      bounded by the probed or provider-supplied duration and
+      fetched by download_direct_video's range-seek/trim. That is
+      an estimate, NOT verified evidence, and is labelled
+      accordingly (VA-06) in the segment basis, the attempts record
+      and the accepted asset.
     - "none": no evidence — the caller must reject the segment rather
       than invent a timestamp. Timestamp zero is never assumed for a
-      long source.
+      long source: a positional window is a labelled determination,
+      and a long source whose duration is unknown, or whose windows
+      are all used, still rejects.
 
     Every source tried is recorded in _SEGMENT_ATTEMPTS[url], and a
     failed lookup records its cause in _SEGMENT_FAILURE_CAUSE[url]
@@ -4321,8 +4496,10 @@ def _segment_start_detailed(url, subject="", place="", event="", era="",
     _SEGMENT_ATTEMPTS[url] = attempts
 
     if is_direct_media_url(url):
+        duration_source = ""
         source_duration = _remote_duration_seconds(url)
         if source_duration:
+            duration_source = "remote_probe"
             _SOURCE_DURATION_CACHE[url] = float(source_duration)
             attempts.append({
                 "source": "remote_probe", "outcome": "duration_known",
@@ -4331,6 +4508,7 @@ def _segment_start_detailed(url, subject="", place="", event="", era="",
         else:
             attempts.append({"source": "remote_probe", "outcome": "unavailable"})
             if provider_duration:
+                duration_source = "provider_metadata"
                 _SOURCE_DURATION_CACHE[url] = float(provider_duration)
                 attempts.append({
                     "source": "provider_metadata", "outcome": "duration_known",
@@ -4341,15 +4519,45 @@ def _segment_start_detailed(url, subject="", place="", event="", era="",
         if source_duration and float(source_duration) <= clip * 2:
             return 0, "whole_asset"
         if source_duration:
-            # A long direct file has no timed-evidence channel; the
-            # honest outcome is rejection, never an invented window.
+            # Gate 2: a long direct file has no timed-evidence
+            # channel, and hard-rejecting it made most archive /
+            # Wikimedia / institutional long-form footage unusable
+            # (the #1 download-failure class of the Petito run).
+            # It takes the labelled positional path instead: a
+            # deterministic window bounded by the known duration,
+            # stamped positional_no_contract everywhere the basis
+            # is recorded — never upgraded to verified evidence.
+            start = _positional_direct_window(
+                url, float(source_duration), clip
+            )
+            if start is None:
+                attempts.append({
+                    "source": "positional_window",
+                    "outcome": "windows_exhausted",
+                    "duration_seconds": float(source_duration),
+                    "duration_source": duration_source,
+                })
+                _SEGMENT_FAILURE_CAUSE[url] = "positional_windows_exhausted"
+                return None, "none"
             attempts.append({
-                "source": "timed_evidence",
-                "outcome": "no_path_for_direct_media",
+                "source": "positional_window",
+                "outcome": "positional_no_contract",
+                "duration_seconds": float(source_duration),
+                "duration_source": duration_source,
+                "window_start_seconds": int(start),
+                "window_seconds": clip,
             })
-            _SEGMENT_FAILURE_CAUSE[url] = "no_evidence_path_for_long_direct_media"
-        else:
-            _SEGMENT_FAILURE_CAUSE[url] = "duration_unknown"
+            _SEGMENT_BASIS[
+                str(url).split("&", 1)[0].strip()
+            ] = "positional_no_contract"
+            print(
+                f"DIRECT SEGMENT (positional, no contract): {url} "
+                f"start={int(start)}s end={int(start) + clip}s "
+                f"source_duration={float(source_duration)}s "
+                f"duration_source={duration_source}"
+            )
+            return int(start), "positional_no_contract"
+        _SEGMENT_FAILURE_CAUSE[url] = "duration_unknown"
         return None, "none"
 
     # Page URLs on any yt-dlp-supported site: a short source qualifies
@@ -4483,9 +4691,12 @@ def _uve_download_video_candidate(
 
     # MS-3: segment evidence is provider-neutral. ANY source — YouTube,
     # Vimeo, a news page, an archive file — must present evidence for
-    # its segment: a whole-asset case (short source) or a verified
-    # timed segment. No evidence -> reject; timestamp zero is never
-    # silently assumed for a long video.
+    # its segment: a whole-asset case (short source), a verified
+    # timed segment, or — for a long direct-media file, which has no
+    # timed-evidence channel — a labelled positional window (Gate 2,
+    # stamped positional_no_contract on the asset). No evidence ->
+    # reject; timestamp zero is never silently assumed for a long
+    # video.
     provider_duration, provider_duration_source = (
         _provider_duration_seconds(candidate)
     )
@@ -4694,8 +4905,10 @@ def _uve_download_video_candidate(
             },
             "sentence_number": sentence_number,
             "clip_start": start,
-            # MS-3: how the start time was evidenced — whole_asset or
-            # verified_segment; recorded on every accepted video.
+            # MS-3: how the start time was evidenced — whole_asset,
+            # verified_segment or positional_no_contract (Gate 2:
+            # the labelled positional window of a long direct file);
+            # recorded on every accepted video.
             "segment_evidence": segment_evidence,
             "segment_evidence_basis": (
                 _SEGMENT_BASIS.get(str(url).split("&", 1)[0].strip())
@@ -5287,6 +5500,35 @@ def _uve_search_and_pick(
                 _attempt["outcome"] = "budget_exhausted"
                 _attempt["stop_reason"] = tier_ladder.STOP_WALL_CLOCK
                 continue
+            if _tier == "atmospheric":
+                # UV-05 graphic-preferred routing: the walk only
+                # reaches the atmospheric tier with zero verified
+                # candidates from every earlier tier (the loop
+                # breaks on a non-empty pool). When the need's own
+                # plan data marks the beat as inherently
+                # explanatory, generic atmospheric footage is the
+                # weakest support — weaker than the designed
+                # graphic the graphics path produces — so the
+                # atmospheric spend is SKIPPED (no queries, no
+                # downloads, no ledger charge) and the beat routes
+                # to graphics: the attempt records the signal, the
+                # pool stays empty, and the scene driver stamps
+                # the beat's missing_visuals entries
+                # "graphic_preferred" (jobs builds graphic targets
+                # from missing_visuals regardless of reason).
+                _gp_signal = tier_ladder.graphic_preferred_signal(
+                    _need, scenario,
+                )
+                if _gp_signal is not None:
+                    _attempt["outcome"] = tier_ladder.GRAPHICS_PREFERRED
+                    _attempt["graphic_preferred"] = _gp_signal
+                    print(
+                        "  GRAPHIC-PREFERRED: atmospheric tier "
+                        f"skipped (signal={_gp_signal['signal']}, "
+                        f"kind={_gp_signal.get('kind')}) — beat "
+                        "routes to the graphics path"
+                    )
+                    break
             _raw_scenarios = tier_ladder.derived_scenarios_for_tier(
                 _need, bible, _tier, vocabulary=_vocabulary,
             )
@@ -7030,6 +7272,19 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     _beat_attempts.extend(
                         _pass.get("tier_attempts") or []
                     )
+            # UV-05: a beat the ladder routed to graphics at the
+            # atmospheric tier (graphic-preferred) is not a plain
+            # coverage failure — its missing record says so, with
+            # the plan signal that routed it, so the graphics
+            # stage and the report can tell a deliberate routing
+            # from an exhausted search.
+            _graphic_preferred = None
+            for _attempt in _beat_attempts:
+                if _attempt.get("outcome") == tier_ladder.GRAPHICS_PREFERRED:
+                    _graphic_preferred = _attempt.get(
+                        "graphic_preferred"
+                    ) or {}
+                    break
             for offset in range(len(beat.get("sentences") or [])):
                 _missing_entry = {
                     "sentence_number": (
@@ -7040,6 +7295,11 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     "recovery_rounds": recovery_rounds_done,
                     "coverage_pool_exhausted": bool(_pool_exhausted),
                 }
+                if _graphic_preferred is not None:
+                    _missing_entry["reason"] = "graphic_preferred"
+                    _missing_entry["graphic_preferred"] = dict(
+                        _graphic_preferred
+                    )
                 if _beat_attempts:
                     _missing_entry["tier_attempts"] = list(_beat_attempts)
                 scene_stats.setdefault("missing_visuals", []).append(

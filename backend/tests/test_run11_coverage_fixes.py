@@ -551,9 +551,18 @@ def test_image_download_retries_transient_failure(monkeypatch, tmp_path):
 def test_image_download_429_is_not_retried_and_is_recorded(
     monkeypatch, tmp_path
 ):
-    """A 429 is a rate limit, not a transient error: no retry,
-    the typed rate_limited reason, and the observation lands in
-    provider health for the scope."""
+    """A 429 is a rate limit, not a transient error: the typed
+    rate_limited reason, and the observation lands in provider
+    health for the scope.
+
+    Gate 2 supersedes the run-11 no-retry rule for WIKIMEDIA
+    scopes only (this URL is upload.wikimedia.org): the download
+    first makes the bounded delayed retries
+    (provider_health.WIKIMEDIA_RETRY_ATTEMPTS, recorded as
+    delayed retries), and only the still-429 request is recorded
+    as a rate limit — exactly once. Non-Wikimedia 429s keep the
+    run-11 behaviour (no retry, recorded immediately); that side
+    is pinned in tests/test_gate2_wikimedia_retry.py."""
     calls = []
 
     def limited_download(url, output_path, **kwargs):
@@ -565,13 +574,17 @@ def test_image_download_429_is_not_retried_and_is_recorded(
         )
 
     monkeypatch.setattr(mp, "download_image", limited_download)
+    monkeypatch.setattr(mp._time, "sleep", lambda seconds: None)
     ok, reason = mp._download_image_detailed(
         "https://upload.wikimedia.org/moab.jpg", tmp_path / "img.jpg"
     )
     assert (ok, reason) == (False, "rate_limited")
-    assert len(calls) == 1
+    assert len(calls) == 1 + provider_health.WIKIMEDIA_RETRY_ATTEMPTS
     snap = provider_health.snapshot()
     assert snap["upload.wikimedia.org"]["rate_limited"] == 1
+    assert snap["upload.wikimedia.org"]["delayed_retries"] >= (
+        provider_health.WIKIMEDIA_RETRY_ATTEMPTS
+    )
 
 
 # ---------------------------------------------------------------------------

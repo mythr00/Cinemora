@@ -106,6 +106,37 @@ SPECULATIVE_PER_BEAT_DOWNLOAD_CAP = TIER_DOWNLOAD_ATTEMPTS
 FAIRNESS_LOOKAHEAD_SEARCHES = 8
 FAIRNESS_LOOKAHEAD_DOWNLOADS = 4
 
+#: Floor / beyond-floor split (Gate 2 starvation fix, 2026-11-26).
+#: The reserve-plus-lookahead gate above was not enough: the
+#: lookahead is a fixed guess (8 searches / 4 downloads), while a
+#: production's later scenes can hold far more unserved needs than
+#: that, and registration is per scene — so an early scene's
+#: deepening could still lawfully spend past the floors of needs
+#: in scenes the stage had not reached (Petito: 21/96 tier
+#: attempts budget_exhausted, sentence 23 executed zero queries;
+#: Container: 52/88). The accounts are therefore SPLIT, inside the
+#: same D-B2 caps: half of each account is a FLOOR reserve that
+#: only first attempts may draw on, and beyond-floor consumers —
+#: search deepening, download deepening, and speculative
+#: (metadata-absence bypass) downloads, which share ONE
+#: beyond-floor download sub-account — may spend only from the
+#: other half. First attempts (a need's first executed query
+#: round, its first escalation download) may always use the whole
+#: remaining account. The provable invariant: a later need's first
+#: attempt can be refused only when the account is genuinely
+#: exhausted, and at that point at least half of everything spent
+#: went to first attempts — never to earlier scenes' deepening or
+#: to speculative downloads. The caps themselves (40 / 20) are
+#: unchanged.
+FLOOR_SEARCH_RESERVE = PRODUCTION_MAX_EXTRA_SEARCHES // 2
+DEEPENING_SEARCH_BUDGET = (
+    PRODUCTION_MAX_EXTRA_SEARCHES - FLOOR_SEARCH_RESERVE
+)
+FLOOR_DOWNLOAD_RESERVE = PRODUCTION_MAX_EXTRA_DOWNLOADS // 2
+BEYOND_FLOOR_DOWNLOAD_BUDGET = (
+    PRODUCTION_MAX_EXTRA_DOWNLOADS - FLOOR_DOWNLOAD_RESERVE
+)
+
 #: Soft wall-clock guard: once escalation has consumed more than
 #: this fraction of the asset stage's elapsed time, remaining needs
 #: stop escalating (recorded, never silent).
@@ -125,6 +156,105 @@ STOP_PRODUCTION_SEARCH_BUDGET = "production_search_budget"
 STOP_PRODUCTION_DOWNLOAD_BUDGET = "production_download_budget"
 STOP_TIER_DOWNLOAD_BUDGET = "tier_download_budget"
 STOP_WALL_CLOCK = "wall_clock"
+
+# ---------------------------------------------------------------------------
+# Graphic-preferred beats (UV-05, Unified Visual Audit, 2026-11-26)
+#
+# T4 atmospheric is the ladder's last SEARCH tier; T5 graphics are
+# reached only through missing_visuals. For a beat whose content is
+# inherently explanatory — a statistic, a process, a comparison —
+# generic atmospheric footage is the WEAKEST support, weaker than
+# the designed graphic the graphics path would produce (founder
+# Scenario D; Annex A: strongest relevant support per beat, never
+# fill with irrelevant material). When such a beat reaches the
+# atmospheric tier — which the walk only does with zero verified
+# candidates from every earlier tier — the atmospheric spend is
+# skipped and the beat routes to graphics instead: the attempt is
+# recorded with outcome GRAPHICS_PREFERRED (no queries, no
+# downloads consumed) and the beat's missing_visuals entry carries
+# reason "graphic_preferred" with this signal record.
+#
+# The signal is read ONLY from data the plan already carries —
+# nothing is invented here:
+# - the need's visual_intents primary is "graphic_explanation"; or
+# - the plan's graphic_fallback explicitly allows a "statistic" or
+#   "diagram" graphic (kinds the deterministic derivation never
+#   produces — it yields only map/timeline — so their presence
+#   means the plan itself authored an explanatory graphic); or
+# - the scenario's format intent is "chart" or "graphic" at
+#   confidence >= GRAPHIC_FORMAT_MIN_CONFIDENCE (the deterministic
+#   format inference stamps chart at 0.9 for number-bearing text
+#   and graphic at 0.4 for process text).
+# Map/timeline fallbacks and geographic format intent are
+# deliberately NOT signals: placed/timed beats are common and are
+# well served by establishing footage — they are not inherently
+# explanatory.
+# ---------------------------------------------------------------------------
+
+#: Attempt outcome recorded when the atmospheric tier is skipped
+#: in favour of the graphics path.
+GRAPHICS_PREFERRED = "graphics_preferred"
+
+#: Scenario format intents that mark inherently explanatory
+#: content, and the confidence floor for trusting the stamp.
+GRAPHIC_FORMAT_INTENTS = ("chart", "graphic")
+GRAPHIC_FORMAT_MIN_CONFIDENCE = 0.4
+
+#: graphic_fallback kinds that are inherently explanatory (see
+#: the section comment: the deterministic derivation never emits
+#: these, so they are always plan-authored).
+GRAPHIC_FALLBACK_EXPLANATORY_KINDS = ("statistic", "diagram")
+
+#: Graphic kind reported to the graphics path per format intent.
+_FORMAT_INTENT_GRAPHIC_KIND = {"chart": "statistic", "graphic": "diagram"}
+
+
+def graphic_preferred_signal(need, scenario=None):
+    """The graphics-eligible explanatory signal a need carries, or
+    None. Returns {"signal": <which marker fired>, "kind": <the
+    graphic kind the plan points at, or None>} — the record the
+    caller stamps on the tier attempt and the missing_visuals
+    entry. Pure: reads only the need's visual_intents and the
+    scenario's format intent, both plan-carried data."""
+    intents = (need or {}).get("visual_intents")
+    if not isinstance(intents, dict):
+        intents = {}
+    fallback = intents.get("graphic_fallback")
+    if not isinstance(fallback, dict):
+        fallback = {}
+    fallback_kind = (
+        str(fallback.get("kind") or "").strip().lower() or None
+    )
+    if (
+        str(intents.get("primary_visual_intent") or "").strip().lower()
+        == "graphic_explanation"
+    ):
+        return {
+            "signal": "primary_visual_intent",
+            "kind": fallback_kind if fallback.get("allowed") else None,
+        }
+    if (
+        fallback.get("allowed")
+        and fallback_kind in GRAPHIC_FALLBACK_EXPLANATORY_KINDS
+    ):
+        return {"signal": "graphic_fallback", "kind": fallback_kind}
+    scenario = scenario if isinstance(scenario, dict) else {}
+    format_intent = str(
+        scenario.get("format_intent") or ""
+    ).strip().lower()
+    try:
+        confidence = float(scenario.get("format_intent_confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if (
+        format_intent in GRAPHIC_FORMAT_INTENTS
+        and confidence >= GRAPHIC_FORMAT_MIN_CONFIDENCE
+    ):
+        return {
+            "signal": "format_intent",
+            "kind": _FORMAT_INTENT_GRAPHIC_KIND[format_intent],
+        }
+    return None
 
 # ---------------------------------------------------------------------------
 # Attempt idempotency (run-10 coverage fix, 2026-11-22)
@@ -272,6 +402,13 @@ class EscalationLedger:
         # (SPECULATIVE_PER_BEAT_DOWNLOAD_CAP).
         self.speculative_downloads = 0
         self._speculative_beat_downloads = {}
+        # Gate 2 floor split: attributed escalation downloads
+        # beyond a need's first (its deepening downloads). Together
+        # with speculative_downloads this is the beyond-floor
+        # download spend, capped at BEYOND_FLOOR_DOWNLOAD_BUDGET so
+        # neither route can drain the floor half of the account
+        # that later needs' first downloads draw on.
+        self.deepening_downloads = 0
         # Breadth-first allocation state: per-need executed
         # escalation searches / downloads, keyed by the need key
         # the pipeline registers (see register_need). A need's
@@ -375,7 +512,10 @@ class EscalationLedger:
           account, so a late scene's first attempt is never refused
           while any budget remains.
         - Every further search is deepening: it may execute only
-          while the fairness reserve survives the spend.
+          while the fairness reserve survives the spend AND the
+          beyond-floor sub-account (DEEPENING_SEARCH_BUDGET) has
+          room — deepening can never touch the floor half of the
+          account, however large the registered reserve looks.
         - Without a need key the historical semantics hold (the
           whole remaining account, nothing reserved)."""
         count = int(count)
@@ -388,23 +528,27 @@ class EscalationLedger:
         if need_key is None:
             return allowed
         self.register_need(need_key)
-        if self._need_searches.get(need_key, 0) <= 0:
-            # Breadth: one protected search, the rest deepening.
-            deepening_room = max(
-                PRODUCTION_MAX_EXTRA_SEARCHES
-                - self.fairness_reserve()
-                - self.searches
-                - 1,
-                0,
-            )
-            return 1 + min(allowed - 1, deepening_room)
-        deepening_room = max(
+        # Room left for deepening under the fairness reserve (the
+        # pre-Gate-2 gate), and under the floor split. Both bind.
+        reserve_room = max(
             PRODUCTION_MAX_EXTRA_SEARCHES
             - self.fairness_reserve()
             - self.searches,
             0,
         )
-        return min(allowed, deepening_room)
+        split_room = max(
+            DEEPENING_SEARCH_BUDGET - self.deepening_searches, 0
+        )
+        if self._need_searches.get(need_key, 0) <= 0:
+            # Breadth: one protected search (it spends from the
+            # whole account, so the reserve room for the deepening
+            # remainder is priced after it), the rest deepening.
+            return 1 + min(
+                allowed - 1,
+                max(reserve_room - 1, 0),
+                split_room,
+            )
+        return min(allowed, reserve_room, split_room)
 
     def can_spend_searches(self, count=1, need_key=None):
         return self.allocate_searches(count, need_key=need_key) >= int(count)
@@ -451,8 +595,18 @@ class EscalationLedger:
             return True
         self.register_need(need_key)
         if self._need_downloads.get(need_key, 0) <= 0:
-            # A need's first escalation download is breadth too.
+            # A need's first escalation download is breadth too:
+            # a floor spend, drawable from the whole account.
             return True
+        # Deepening: a beyond-floor spend. It shares the
+        # beyond-floor download sub-account with speculative
+        # downloads (Gate 2 floor split) and must leave the
+        # fairness reserve standing, exactly as before.
+        if (
+            self.speculative_downloads + self.deepening_downloads + 1
+            > BEYOND_FLOOR_DOWNLOAD_BUDGET
+        ):
+            return False
         return (
             self.downloads + self.speculative_downloads + 1
             + self.fairness_reserve_downloads()
@@ -468,10 +622,33 @@ class EscalationLedger:
         does NOT bind here — it gates new escalation work, and a
         speculative candidate was verified (scored) before the
         guard could trip, the can_draw_verified_download
-        precedent."""
+        precedent.
+
+        Gate 2 floor split: a speculative download is a
+        beyond-floor consumer, so two further gates bind. It may
+        not spend once the beyond-floor download sub-account
+        (shared with escalation deepening downloads) is spent, and
+        it must leave one slot standing for every registered need
+        still waiting for its first escalation download — a
+        speculative route can therefore never drain the reserve
+        that later sentences' first tier attempts draw on, however
+        early in the production it fires."""
         if (
             self.downloads + self.speculative_downloads
             >= PRODUCTION_MAX_EXTRA_DOWNLOADS
+        ):
+            return False
+        if (
+            self.speculative_downloads + self.deepening_downloads
+            >= BEYOND_FLOOR_DOWNLOAD_BUDGET
+        ):
+            return False
+        unserved = sum(
+            1 for spent in self._need_downloads.values() if spent <= 0
+        )
+        if (
+            self.downloads + self.speculative_downloads + 1 + unserved
+            > PRODUCTION_MAX_EXTRA_DOWNLOADS
         ):
             return False
         if beat_key is not None and (
@@ -517,9 +694,12 @@ class EscalationLedger:
         if need_key is None:
             return
         self.register_need(need_key)
-        self._need_downloads[need_key] = (
-            self._need_downloads.get(need_key, 0) + 1
-        )
+        prior = self._need_downloads.get(need_key, 0)
+        if prior > 0:
+            # Beyond this need's first download: a deepening spend
+            # against the shared beyond-floor sub-account.
+            self.deepening_downloads += 1
+        self._need_downloads[need_key] = prior + 1
 
     # -- attempt idempotency (run-10 fix) ---------------------------
     def completed_attempt(self, tier, queries, need_key=None):
@@ -597,6 +777,18 @@ class EscalationLedger:
             "needs_with_first_attempt": self.needs_with_first_attempt(),
             "fairness_reserve_searches": self.fairness_reserve(),
             "fairness_reserve_downloads": self.fairness_reserve_downloads(),
+            # Floor / beyond-floor split accounting (additive,
+            # Gate 2): the floor reserves deepening may never
+            # touch, and the beyond-floor download spend (escalation
+            # deepening + speculative) against its sub-account.
+            "floor_search_reserve": FLOOR_SEARCH_RESERVE,
+            "deepening_search_budget": DEEPENING_SEARCH_BUDGET,
+            "floor_download_reserve": FLOOR_DOWNLOAD_RESERVE,
+            "beyond_floor_download_budget": BEYOND_FLOOR_DOWNLOAD_BUDGET,
+            "deepening_downloads": self.deepening_downloads,
+            "beyond_floor_download_spends": (
+                self.speculative_downloads + self.deepening_downloads
+            ),
             # Attempt idempotency accounting (additive, run-10 fix):
             # distinct completed batches on record, and how many
             # later identical batches were recognised as repeats
