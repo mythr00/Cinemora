@@ -194,6 +194,7 @@ REJECTION_REASON_REGISTRY = {
     "meme_format_frame": ("frame_verification",),
     "channel_card_frame": ("frame_verification",),
     "insufficient_frame_fill": ("frame_verification",),
+    "frozen_segment": ("frame_verification",),
     # contradiction classes stamped by verify_candidate at scoring
     # time (story_understanding.detect_contradiction); the frame
     # stage can also stamp contradictory_geography when OCR'd

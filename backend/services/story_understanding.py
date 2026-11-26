@@ -2683,12 +2683,203 @@ _NAME_BIGRAM_STOPLIST = frozenset({
     "white house", "social media", "press conference",
     "breaking news", "body cam", "dash cam", "security camera",
     "surveillance video", "press release", "news conference",
+    "death toll",
 })
 
 _PERSON_NAME_RE = re.compile(r"\b([A-Z][a-z]{1,}) ([A-Z][a-z]{1,})\b")
 
+# Gate 4 diagnosis fix (2026-11-26, Hyatt run cdfcc130): the bigram
+# extractor above cannot distinguish a person name from ANY
+# title-case word pair, and in that run it hard-rejected 2,155
+# candidates — the most frequent "persons" extracted were "The
+# Hyatt", "How One", "What Is", "The Story", "One Rod", "Beneath
+# Two", "Death Toll": sentence-initial capitalisation artefacts and
+# topical phrases, not people. Only 1 of 12 sampled rejections named
+# a genuine person. Two precision rules, both narrow:
+#
+# 1. A bigram whose FIRST word is a pure function word (article,
+#    interrogative, pronoun, preposition, conjunction) or a number
+#    word is a capitalisation artefact of title/sentence casing,
+#    never a person's given name — given names that double as common
+#    words (Will, Grace, Hope, May) are deliberately NOT in the set.
+#    A bigram whose SECOND word is a number word ("Beneath Two") is
+#    likewise never a surname.
+# 2. A bigram either of whose stemmed words is part of the story's
+#    own topical vocabulary (bible entity names/aliases of any type,
+#    plus the scenario's search/visual terms) is topical language
+#    about THIS story ("Suspended Walkways", "Structural
+#    Engineering"), not a person from another one.
+#
+# The genuine protection is unchanged: a capitalised bigram that is
+# neither (e.g. "Tristyn Bailey", "Michael Bloomberg") still fires.
+_NAME_LEADING_FUNCTION_WORDS = frozenset({
+    "the", "a", "an", "this", "that", "these", "those",
+    "how", "what", "when", "where", "why", "who", "whom", "whose",
+    "which", "it", "its", "his", "her", "their", "our", "your",
+    "they", "we", "he", "she", "you",
+    "of", "on", "in", "at", "to", "by", "de",
+    "beneath", "under", "over", "above", "below", "between",
+    "among", "against", "through", "during", "before", "after",
+    "inside", "outside", "behind", "beyond", "within", "without",
+    "about", "around", "across", "along", "upon", "onto", "into",
+    "from", "with", "and", "but", "nor", "for", "per", "via",
+})
 
-def _unrelated_named_person(candidate, bible, text, subject_hit, subject=None):
+_NAME_NUMBER_WORDS = frozenset({
+    "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
+    "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+    "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+    "eighty", "ninety", "hundred", "thousand", "million",
+    "billion", "first", "second", "third", "fourth", "fifth",
+})
+
+# Completion of the same Gate 4 fix (same run, second artefact
+# class): when the first artefact bigram of a title is skipped, the
+# extractor falls through to the NEXT title-case pair, and in the
+# run's titles that pair was very often a verb phrase — "People
+# Died", "Nut Brought", "Rod Became" — or an adverb pair — "Never
+# Really". A common past-tense verb form is never a surname (nor a
+# given name), and neither is a pure adverb. Both sets are closed
+# classes of unambiguous function/verb words; plausible name words
+# that double as common words (Will, Grace, Hope, May, Reed) are
+# deliberately NOT in either set, so genuine names still fire.
+_NAME_PAST_TENSE_VERBS = frozenset({
+    "became", "began", "bore", "broke", "brought", "built", "caught",
+    "chose", "came", "dealt", "died", "drove", "fell", "fought",
+    "found", "froze", "gave", "went", "grew", "held", "hid", "kept",
+    "knew", "lay", "led", "left", "lent", "lit", "lost", "made",
+    "meant", "met", "paid", "ran", "rode", "rose", "said", "sang",
+    "sank", "sat", "saw", "sent", "shot", "shut", "slept", "sold",
+    "sought", "spent", "spoke", "stood", "struck", "swept", "swore",
+    "taught", "thought", "told", "took", "tore", "understood",
+    "wept", "withdrew", "woke", "won", "wore", "wrote",
+})
+
+_NAME_ADVERBS = frozenset({
+    "again", "also", "always", "away", "back", "down", "even",
+    "here", "just", "never", "now", "once", "only", "out", "really",
+    "then", "there", "today", "tonight", "very", "yesterday",
+})
+
+
+def _topical_vocabulary_tokens(bible, scenario=None):
+    """Stemmed content tokens of the story's own vocabulary: every
+    bible entity's canonical name and aliases (any type), plus the
+    scenario's search terms and visual description when supplied.
+    Used to tell topical phrases apart from person names."""
+    tokens = set()
+    for entity in (bible or {}).get("entities", []) or []:
+        tokens |= _content_tokens(entity.get("canonical") or "")
+        for alias in entity.get("aliases") or []:
+            tokens |= _content_tokens(alias)
+    if scenario:
+        for term in scenario.get("search_terms") or []:
+            tokens |= _content_tokens(term)
+        tokens |= _content_tokens(scenario.get("visual"))
+        tokens |= _content_tokens(scenario.get("event"))
+    return tokens
+
+
+# ---------------------------------------------------------------------------
+# Gate 4 diagnosis fix (2026-11-26, Hyatt run cdfcc130): co-located
+# bible places. The Hyatt bible carries THREE place entities for one
+# site — "Hyatt Regency atrium", "Hyatt Regency Kansas City" and
+# "Kansas City, Missouri" — and the place-contradiction checks
+# treated them as mutually exclusive: a candidate naming the city or
+# the hotel but not the word "atrium" was hard-rejected as
+# contradictory_place (862 rejections; at the scoring stage the
+# recorded "other place" was one of these two siblings 236/236
+# times, and 587 of 626 gate-stage rejections carried on-topic Hyatt
+# titles). Places at different granularity of the SAME location are
+# weaker evidence, not contradictory evidence.
+#
+# Two place names are co-located when any name variant of one is a
+# substring of a variant of the other ("Kansas City" inside "Hyatt
+# Regency Kansas City"), or their significant tokens share at least
+# one distinctive token and at least two significant tokens in total
+# ("Hyatt Regency ..." / "... Kansas City" chains). Generic place
+# words (city, national, park, new, ...) never count as distinctive,
+# so genuinely different places that merely share a generic word
+# ("Grand Teton National Park" vs "Yellowstone National Park") stay
+# contradictory. Co-location is transitive (connected components):
+# atrium ~ hotel ~ city form one component.
+# ---------------------------------------------------------------------------
+
+_PLACE_GENERIC_TOKENS = frozenset({
+    "city", "town", "village", "county", "state", "hotel",
+    "national", "park", "river", "lake", "mount", "mountain",
+    "fort", "port", "saint", "new", "of", "the", "de",
+})
+
+
+def _place_name_variants(name, aliases=()):
+    variants = {_norm(name or "")}
+    variants |= {_norm(a) for a in (aliases or [])}
+    return {v for v in variants if v}
+
+
+def _place_tokens(variants):
+    tokens = set()
+    for variant in variants:
+        tokens |= {t for t in variant.split() if len(t) >= 3}
+    return tokens
+
+
+def place_names_co_located(name_a, aliases_a, name_b, aliases_b):
+    """True when two place names describe the same location at
+    possibly different granularity (see the block comment above)."""
+    variants_a = _place_name_variants(name_a, aliases_a)
+    variants_b = _place_name_variants(name_b, aliases_b)
+    if not variants_a or not variants_b:
+        return False
+    for va in variants_a:
+        for vb in variants_b:
+            if len(va) >= 4 and len(vb) >= 4 and (va in vb or vb in va):
+                return True
+    tokens_a = _place_tokens(variants_a)
+    tokens_b = _place_tokens(variants_b)
+    shared = tokens_a & tokens_b
+    significant = {t for t in shared if t not in _PLACE_GENERIC_TOKENS}
+    distinctive = {t for t in significant if len(t) >= 4}
+    return len(significant) >= 2 or (len(significant) >= 1 and len(distinctive) >= 1 and len(shared) >= 2)
+
+
+def _place_components(entities):
+    """Connected components of the bible's place entities under
+    place_names_co_located, as {entity_id: frozenset(entity_ids)}."""
+    places = [
+        e for e in (entities or [])
+        if e.get("type") in ("place", "location")
+    ]
+    parent = {e["id"]: e["id"] for e in places}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i, a in enumerate(places):
+        for b in places[i + 1:]:
+            if place_names_co_located(
+                a.get("canonical"), a.get("aliases"),
+                b.get("canonical"), b.get("aliases"),
+            ):
+                ra, rb = find(a["id"]), find(b["id"])
+                if ra != rb:
+                    parent[ra] = rb
+    components = {}
+    for e in places:
+        root = find(e["id"])
+        components.setdefault(root, set()).add(e["id"])
+    return {
+        e["id"]: frozenset(components[find(e["id"])]) for e in places
+    }
+
+
+def _unrelated_named_person(candidate, bible, text, subject_hit, subject=None,
+                            topical_tokens=None):
     """A person NAME the candidate's title positively carries that
     belongs to no bible entity, or "" (run-9 fix 2/3 overlap).
 
@@ -2726,10 +2917,46 @@ def _unrelated_named_person(candidate, bible, text, subject_hit, subject=None):
             parts = str(entity.get("canonical") or "").split()
             if len(parts) >= 2:
                 entity_names.add(_norm(parts[-1]))
+    if topical_tokens is None:
+        topical_tokens = _topical_vocabulary_tokens(bible)
     for match in _PERSON_NAME_RE.finditer(title):
         name = match.group(0)
         normalised = _norm(name)
         if normalised in _NAME_BIGRAM_STOPLIST:
+            continue
+        # Gate 4 precision rules (see _NAME_LEADING_FUNCTION_WORDS):
+        # a leading function/number word is a casing artefact, a
+        # trailing number word is never a surname, and a bigram
+        # built from the story's own topical vocabulary is topical
+        # language, not a person.
+        if match.group(1).lower() in _NAME_LEADING_FUNCTION_WORDS:
+            continue
+        # A surname is never a function word either ("Memorial
+        # For ...", "... Victims Of The ...").
+        if match.group(2).lower() in _NAME_LEADING_FUNCTION_WORDS:
+            continue
+        if match.group(1).lower() in _NAME_NUMBER_WORDS:
+            continue
+        if match.group(2).lower() in _NAME_NUMBER_WORDS:
+            continue
+        # A past-tense verb or a pure adverb is never a name part
+        # ("People Died", "Nut Brought", "Never Really").
+        if match.group(1).lower() in _NAME_PAST_TENSE_VERBS:
+            continue
+        if match.group(2).lower() in _NAME_PAST_TENSE_VERBS:
+            continue
+        if match.group(1).lower() in _NAME_ADVERBS:
+            continue
+        if match.group(2).lower() in _NAME_ADVERBS:
+            continue
+        # A bigram immediately after a digit-hyphen is a
+        # measurement phrase ("The 4-Inch Offset"), not a name.
+        if re.search(r"\d-\s*$", title[: match.start()]):
+            continue
+        if (
+            _stem(match.group(1)) in topical_tokens
+            or _stem(match.group(2)) in topical_tokens
+        ):
             continue
         # A bigram that STARTS with a role word is the official's
         # title + first name ("Sheriff Kurt ..."), not a bare name.
@@ -2889,22 +3116,31 @@ def detect_contradiction(candidate, scenario, bible, text, subject, subject_hit)
     # Place: either the subject IS a place the candidate replaces with
     # a different bible place, or the scenario names a required place
     # and the candidate names a different bible place instead.
+    # Gate 4 fix: a bible place CO-LOCATED with the required/subject
+    # place (same site, different granularity — the hotel vs its
+    # atrium vs its city) is not a different place; naming it is
+    # weaker evidence, never a contradiction. Genuinely distinct
+    # bible places (no shared distinctive tokens, no containment)
+    # still fire exactly as before.
     place_types = {"place", "location"}
-    if subject and subject.get("type") in place_types and not subject_hit:
-        others = [
+    _components = _place_components(entities)
+
+    def _other_places(anchor):
+        anchor_component = _components.get(anchor["id"], frozenset({anchor["id"]}))
+        return [
             e for e in entities
-            if e["id"] != subject["id"] and e["type"] in place_types
+            if e["id"] != anchor["id"] and e["type"] in place_types
+            and e["id"] not in anchor_component
             and _entity_mentioned(e, text)
         ]
+
+    if subject and subject.get("type") in place_types and not subject_hit:
+        others = _other_places(subject)
         if others:
             return CONTRADICTORY_PLACE, others[0]["canonical"]
     required_place = _find_entity(bible, types=place_types, name=scenario.get("place"))
     if required_place is not None and not _entity_mentioned(required_place, text):
-        others = [
-            e for e in entities
-            if e["id"] != required_place["id"] and e["type"] in place_types
-            and _entity_mentioned(e, text)
-        ]
+        others = _other_places(required_place)
         if others:
             return CONTRADICTORY_PLACE, others[0]["canonical"]
 
@@ -2954,7 +3190,8 @@ def detect_contradiction(candidate, scenario, bible, text, subject, subject_hit)
     # title names a person who belongs to a different story entirely
     # (no bible entity, no bible person mentioned at all).
     unrelated = _unrelated_named_person(
-        candidate, bible, text, subject_hit, subject=subject
+        candidate, bible, text, subject_hit, subject=subject,
+        topical_tokens=_topical_vocabulary_tokens(bible, scenario),
     )
     if unrelated:
         return UNRELATED_NAMED_PERSON, unrelated
@@ -3176,12 +3413,45 @@ def verify_candidate(candidate, scenario, bible):
     for term in scenario.get("search_terms") or []:
         wanted |= _content_tokens(term)
     wanted |= _content_tokens(scenario.get("visual"))
+    # Gate 4 fix (2026-11-26, Hyatt run cdfcc130, inspection defect
+    # B2): topical evidence must include at least one CONTENT token.
+    # Place-name and year tokens are already credited on their own
+    # axes — a place mention can earn the subject contribution and a
+    # year the era contribution — so when they are the ONLY wanted
+    # tokens a candidate matches, WHERE/WHEN evidence is masquerading
+    # as WHAT evidence. In that run a Wikimedia photograph of Conrail
+    # freight trains titled "...at Kansas City in 1980" scored a
+    # perfect 1.0 (subject 0.45 + topical 0.45 + era 0.10) for the
+    # sentence "The hotel had opened just one year earlier, on
+    # July 1, 1980", under a tier-escalation scenario whose topical
+    # terms were the city and the year alone. A candidate matching
+    # only place/date tokens now falls to the VA-04
+    # no_topical_evidence rule, exactly like the subject-only match
+    # VA-04 already forbids; the overlap fraction and every
+    # threshold are unchanged whenever at least one content token
+    # (hotel, atrium, walkway, skyline, ...) matches.
+    _place_tokens = set()
+    for _entity in bible.get("entities", []) or []:
+        if _entity.get("type") in ("place", "location"):
+            _place_tokens |= _content_tokens(_entity.get("canonical") or "")
+            for _alias in _entity.get("aliases") or []:
+                _place_tokens |= _content_tokens(_alias)
+
+    def _is_place_or_date_token(token):
+        return token in _place_tokens or (len(token) == 4 and token.isdigit())
     overlap = None
+    place_date_only = False
     if wanted:
-        overlap = _sim.topical_overlap(
-            wanted, {_stem(t) for t in text.split()}
-        )
+        _candidate_tokens = {_stem(t) for t in text.split()}
+        overlap = _sim.topical_overlap(wanted, _candidate_tokens)
         reasons.append(f"visual overlap {overlap:.2f}")
+        _content_match = {
+            token for token in wanted & _candidate_tokens
+            if not _is_place_or_date_token(token)
+        }
+        place_date_only = not _content_match
+        if place_date_only and overlap:
+            reasons.append("topical evidence is place/date only")
 
     era = _year_or_decade(scenario.get("era"))
     era_hit = bool(era and era[:4] in text)
@@ -3230,10 +3500,12 @@ def verify_candidate(candidate, scenario, bible):
     elif specificity == "exact" and subject and not subject_hit:
         accepted = False
         rejection_reason = "missing_required_subject"
-    elif wanted and overlap == 0:
+    elif wanted and (overlap == 0 or place_date_only):
         # VA-04: no topical evidence at all — a subject mention and/or
         # an era year by themselves do not establish relevance to the
-        # visual topic the sentence actually needs.
+        # visual topic the sentence actually needs. Gate 4: the same
+        # holds when the only matched topical terms are place/date
+        # tokens (place_date_only, see the B2 note above).
         accepted = False
         rejection_reason = "no_topical_evidence"
     elif not wanted and subject_hit:
@@ -3261,7 +3533,7 @@ def verify_candidate(candidate, scenario, bible):
         failed_checks.append(contradiction_reason)
     if specificity == "exact" and subject and not subject_hit:
         failed_checks.append("missing_required_subject")
-    if (wanted and overlap == 0) or (not wanted and subject_hit):
+    if (wanted and (overlap == 0 or place_date_only)) or (not wanted and subject_hit):
         failed_checks.append("no_topical_evidence")
     if score < ACCEPT_THRESHOLD.get(specificity, 0.34):
         failed_checks.append("below_threshold")

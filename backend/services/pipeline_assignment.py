@@ -434,7 +434,40 @@ def gate_all_failures(candidate, shot_need):
                 break
     _need_place = str(need.get("place") or "").strip().lower()
     if _need_place and not _named(_need_place):
-        for other in need.get("other_places") or []:
+        _others = [
+            str(o) for o in (need.get("other_places") or []) if str(o or "").strip()
+        ]
+        # Gate 4 fix (2026-11-26, Hyatt run cdfcc130): skip "other"
+        # places CO-LOCATED with the need's place — the same site at
+        # a different granularity (the hotel vs its atrium vs its
+        # city; see story_understanding.place_names_co_located).
+        # In that run this gate check hard-rejected 626 candidates,
+        # 587 with on-topic Hyatt titles, because their metadata
+        # named Kansas City / the hotel but not the word "atrium".
+        # Co-location is transitive, so components are built over
+        # the need place plus every other place. Genuinely distinct
+        # places still fail exactly as before.
+        _place_names = [_need_place, *_others]
+        _parent = list(range(len(_place_names)))
+
+        def _find(x):
+            while _parent[x] != x:
+                _parent[x] = _parent[_parent[x]]
+                x = _parent[x]
+            return x
+
+        for _i in range(len(_place_names)):
+            for _j in range(_i + 1, len(_place_names)):
+                if story.place_names_co_located(
+                    _place_names[_i], (), _place_names[_j], ()
+                ):
+                    _ri, _rj = _find(_i), _find(_j)
+                    if _ri != _rj:
+                        _parent[_ri] = _rj
+        _need_component = _find(0)
+        for _idx, other in enumerate(_others, start=1):
+            if _find(_idx) == _need_component:
+                continue
             if _named(other):
                 _fail(story.CONTRADICTORY_PLACE)
                 break

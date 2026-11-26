@@ -51,6 +51,7 @@ class RunContext:
         search_failure_state=None,
         missing_visual_count=0,
         rights_policy=None,
+        verdict_cache=None,
     ):
         self.run_id = run_id if run_id is not None else uuid.uuid4().hex
         self.project_id = project_id
@@ -98,6 +99,15 @@ class RunContext:
             if search_failure_state is not None
             else {"consecutive_failures": 0, "last_error": None}
         )
+        # Gate 4 diagnosis (2026-11-26): per-run verdict cache for
+        # pipeline_verification._uve_verify_all — (candidate key +
+        # metadata/need/scenario fingerprint) -> the fully built
+        # scored item. The Hyatt run re-verified the same
+        # (URL, beat) pair across its 59 coverage passes / 26
+        # recovery rounds: 3,443 of 5,916 candidate records were
+        # exact re-evaluations. Per-run by construction, like every
+        # container here: the cache dies with the run context.
+        self.verdict_cache = verdict_cache if verdict_cache is not None else {}
         self.missing_visual_count = int(missing_visual_count or 0)
         # Informational snapshot taken at construction; the pipeline's
         # actual rights behaviour is unchanged by this value.

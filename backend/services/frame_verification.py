@@ -117,6 +117,7 @@ SOCIAL_STORY_CARD_REASON = "social_story_card"
 MEME_FORMAT_FRAME_REASON = "meme_format_frame"
 CHANNEL_CARD_REASON = "channel_card_frame"
 INSUFFICIENT_FILL_REASON = "insufficient_frame_fill"
+FROZEN_SEGMENT_REASON = "frozen_segment"
 # Geography reuses the metadata contradiction class verbatim:
 # story_understanding.CONTRADICTORY_GEOGRAPHY.
 
@@ -228,6 +229,21 @@ DELIVERY_HEIGHT = 1080
 BLACK_COLUMN_MEAN_MAX = 16.0
 BLURRED_HF_RATIO = 0.30
 
+# Motion (Gate 4 fix, 2026-11-26, inspection defect B5): a VIDEO
+# segment whose sampled frames (0.12 / 0.50 / 0.88 of the segment,
+# services.media_probe.SAMPLE_FRAME_FRACTIONS) show essentially no
+# change between ANY consecutive pair is a still passed off as
+# footage — in the Hyatt run the sentence-4 "video" window was
+# frozen for its entire 4.05 s (measured frame diffs 0.00–0.37 on a
+# 0–255 scale, against 2.8–3.8 for genuinely moving footage in the
+# same film). The ceiling sits between those two measured classes.
+# Mean absolute grayscale difference is computed on the analysis
+# raster (ANALYSIS_WIDTH), the same raster every other detector
+# reads. Images are exempt by construction (kind != "video"), and a
+# segment with fewer than two sampled frames is not judged
+# (absence of evidence stays not_evaluated via frames_sampled).
+MOTION_FROZEN_MAX_DIFF = 1.0
+
 # Watermark (record only): large, soft (low-contrast) text lines.
 # The width cap keeps document text rows (which span the page)
 # from masquerading as a watermark word.
@@ -262,6 +278,7 @@ def thresholds_snapshot():
         "meme_bar_tolerance": MEME_BAR_TOLERANCE,
         "meme_line_min_density": MEME_LINE_MIN_DENSITY,
         "fill_min": FILL_MIN,
+        "motion_frozen_max_diff": MOTION_FROZEN_MAX_DIFF,
         "black_column_mean_max": BLACK_COLUMN_MEAN_MAX,
         "blurred_hf_ratio": BLURRED_HF_RATIO,
         "watermark_contrast_range": [
@@ -863,6 +880,38 @@ def _geography_record(ocr_text, scenario, bible, ocr_engine=None):
     return record
 
 
+def _motion_evidence(images, kind):
+    """Consecutive-frame motion evidence for a video segment
+    (Gate 4 fix, defect B5 — see MOTION_FROZEN_MAX_DIFF).
+
+    Returns {"diffs": [...], "max_diff": float|None, "fired": bool}.
+    Fires only for kind == "video" with at least two sampled frames
+    whose grayscale rasters share a shape, when EVERY consecutive
+    pair differs by less than the frozen ceiling — i.e. no sampled
+    moment of the segment moves. A single moving pair is enough to
+    pass: the check condemns only wholly static segments (a still
+    photograph or a frozen broadcast frame served as footage),
+    never slow or subtle motion."""
+    evidence = {"diffs": [], "max_diff": None, "fired": False}
+    if kind != "video" or len(images) < 2:
+        return evidence
+    rasters = []
+    for image in images:
+        gray, _blur = _gray_and_blur(image)
+        rasters.append(gray)
+    shape = rasters[0].shape
+    if any(r.shape != shape for r in rasters):
+        return evidence
+    diffs = [
+        float(np.mean(np.abs(rasters[i + 1] - rasters[i])))
+        for i in range(len(rasters) - 1)
+    ]
+    evidence["diffs"] = [round(d, 3) for d in diffs]
+    evidence["max_diff"] = round(max(diffs), 3) if diffs else None
+    evidence["fired"] = bool(diffs) and max(diffs) < MOTION_FROZEN_MAX_DIFF
+    return evidence
+
+
 def verify_frames(images, *, kind="video", scenario=None, bible=None,
                   ocr_text=None, ocr_engine=None, native_size=None):
     """Judge sampled frames (PIL images) — the pure core.
@@ -963,6 +1012,23 @@ def verify_frames(images, *, kind="video", scenario=None, bible=None,
     geography = _geography_record(ocr_text, scenario, bible, ocr_engine)
     record["detectors"]["geography"] = geography
 
+    # 7. Motion (Gate 4 fix, defect B5): a wholly static video
+    # segment is a still passed off as footage. Two static shapes
+    # are explained by design and stay recorded-not-rejected, per
+    # the phase-1 contracts: a static channel card (the asset's own
+    # title still, channel_card.static_card) and blurred-fill
+    # treatment (the download normalisation's own frame). The B5
+    # defect — a full-frame news segment with neither explanation,
+    # frozen for its whole window — still fires.
+    motion = _motion_evidence(images, kind)
+    if motion["fired"] and (
+        record["detectors"]["channel_card"].get("static_card")
+        or fill.get("treatment") == "blurred_fill"
+    ):
+        motion["fired"] = False
+        motion["explained_static"] = True
+    record["detectors"]["motion"] = motion
+
     # First rejection wins, in the documented order.
     if story:
         record["outcome"] = "reject"
@@ -982,6 +1048,9 @@ def verify_frames(images, *, kind="video", scenario=None, bible=None,
     elif geography["outcome"] == "fail":
         record["outcome"] = "reject"
         record["reason"] = geography["reason"]
+    elif motion["fired"]:
+        record["outcome"] = "reject"
+        record["reason"] = FROZEN_SEGMENT_REASON
     else:
         record["outcome"] = "pass"
     return record

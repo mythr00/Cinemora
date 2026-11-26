@@ -362,8 +362,57 @@ def _speculative_verdict(verdict, absence_failures):
     return stamped
 
 
+def _verdict_cache():
+    """The ACTIVE run's verdict cache, or None.
+
+    Gate 4 diagnosis (2026-11-26): coverage passes and recovery
+    rounds re-run _uve_verify_all over largely the same candidates
+    for the same needs; in the Hyatt run 3,443 of 5,916 candidate
+    records were exact (URL, sentences, beat) re-evaluations, each
+    paying a gate execution and a scorer call. The gate and the
+    scorer are pure functions of (candidate metadata, gate need,
+    scenario, bible), and the bible is fixed within a run, so a
+    per-run cache keyed on exactly those inputs is sound.
+
+    Scoped to a genuinely activated run context (jobs activates one
+    per production): the DEFAULT context — unit tests, ad-hoc
+    calls — gets no cache, so patched-gate counting tests (VA-11)
+    and cross-test isolation are untouched."""
+    try:
+        from services import run_context
+    except ImportError:  # flat-layout fallback
+        import run_context
+    try:
+        ctx = run_context.current_context()
+        if ctx is None or ctx is run_context.default_context():
+            return None
+        cache = getattr(ctx, "verdict_cache", None)
+        return cache if isinstance(cache, dict) else None
+    except Exception:
+        return None
+
+
+def _verdict_cache_key(candidate, key, gate_need, verify_scenario):
+    """Fingerprint of everything the gate + scorer read: the
+    candidate's identity key and metadata text, the enriched gate
+    need, and the verify scenario. Two evaluations with the same
+    key are the same evaluation."""
+    import hashlib
+    import json
+
+    meta = "|".join(
+        str(candidate.get(k) or "")
+        for k in ("title", "snippet", "description", "provider", "source")
+    )
+    payload = json.dumps(
+        [meta, gate_need, verify_scenario], sort_keys=True, default=str
+    )
+    return (key, hashlib.sha256(payload.encode("utf-8")).hexdigest())
+
+
 def _uve_verify_all(candidates, scenario, bible, shot_need=None):
     scored, seen = [], set()
+    _cache = _verdict_cache()
 
     # Phase 1: enrich the gate's shot need (a COPY — the caller's dict
     # is never mutated) with the bible's other people/places so the
@@ -473,6 +522,30 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
 
         seen.add(key)
 
+        # Gate 4: an identical (candidate, need, scenario)
+        # evaluation already completed in this run is replayed from
+        # the verdict cache — no second gate execution, no second
+        # scorer call (see _verdict_cache). The replayed item is a
+        # deep copy: downstream stages stamp their own fields on
+        # the items they receive.
+        _cache_key = None
+        if _cache is not None:
+            _cache_key = _verdict_cache_key(
+                candidate, key, gate_need, verify_scenario
+            )
+            _hit = _cache.get(_cache_key)
+            if _hit is not None:
+                import copy
+
+                scored.append(copy.deepcopy(_hit))
+                continue
+
+        def _remember(item):
+            if _cache is not None and _cache_key is not None:
+                import copy
+
+                _cache[_cache_key] = copy.deepcopy(item)
+
         # Cheap metadata gate BEFORE expensive LLM verification.
         ok, reason = _media_pipeline().gate_shot_need(
             candidate,
@@ -515,6 +588,7 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
                 }
                 item["universal_score"] = 0
                 item["relevance_score"] = 0
+                _remember(item)
                 scored.append(item)
 
                 print(
@@ -571,6 +645,7 @@ def _uve_verify_all(candidates, scenario, bible, shot_need=None):
                 verdict.get("rejection_reason") or "below_threshold"
             )
             item["rejection_stage"] = "scoring"
+        _remember(item)
         scored.append(item)
 
     scored.sort(
