@@ -621,6 +621,23 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
                 item.get("classification")
             )
         ),
+        # Phase 4: the per-item audit list the final auditor's
+        # classification audit consumes. The classification is
+        # carried RAW — exactly as the timeline item stamps it,
+        # missing or invalid values included — because the audit
+        # exists to judge that evidence, and normalising it here
+        # would hide precisely what it must find.
+        "timeline_visuals": [
+            {
+                "index": item.get("index"),
+                "scene_number": item.get("scene_number"),
+                "classification": item.get("classification"),
+                "assignment": item.get("assignment"),
+                "verification_category": item.get("verification_category"),
+            }
+            for item in items
+            if isinstance(item, dict)
+        ],
     }
 
     # ---- evidence ledger (Phase 3) -----------------------------------

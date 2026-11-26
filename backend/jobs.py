@@ -44,6 +44,7 @@ from services import music as music_service
 from services import run_context
 from services import run_ledger
 from services import run_metrics
+from services import release_status
 from services.production_state import (
     create_production_state,
     start_stage,
@@ -458,6 +459,22 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
             execution=run_metrics.snapshot(),
             manifest_path=manifest_path,
             stage=stage,
+            # Phase 4: whatever statuses the run had stamped when
+            # it failed (e.g. technical_status "failed" from the
+            # final-audit gate) ride the finish; unstamped stays
+            # None — NULL in the ledger means "not evaluated".
+            technical_status=(
+                state.get("technical_status")
+                if isinstance(state, dict) else None
+            ),
+            release_status=(
+                state.get("release_status")
+                if isinstance(state, dict) else None
+            ),
+            release_findings=(
+                state.get("release_findings")
+                if isinstance(state, dict) else None
+            ),
         )
     if isinstance(state, dict) and "_run_context_previous" in state:
         run_context.deactivate(state.pop("_run_context_previous"))
@@ -1516,21 +1533,36 @@ def _run_coverage_repair(processed_scenes, project_dir, repair_fn=None):
     return report
 
 
-def _honour_final_audit(final_audit):
-    """INT-102 / MA-14: the completion gate over the auditor's verdict.
+def _honour_final_audit(final_audit, state=None):
+    """INT-102 / MA-14 + Phase 4: the completion gate over the
+    auditor's verdict.
 
     The gate is TOTAL over verdict shapes. A production may be
     recorded as completed only when the auditor actually evaluated
-    the film AND passed it:
+    the film:
 
-    - evaluated + passed  -> return (the caller proceeds);
-    - evaluated + failed  -> RuntimeError carrying the auditor's
-      reasons (the path that was already closed before INT-102);
     - unevaluated / missing / malformed verdict -> RuntimeError.
       An audit that never ran is not a successful audit: the
       previous gate consulted the verdict only when "evaluated"
       was truthy, so the auditor's unevaluated shape (no asset
       report) silently bypassed the gate and the run completed.
+    - Phase 4 status separation: the evaluated verdict's failures
+      are split by services.release_status. TECHNICAL-class
+      failures (including any unrecognised code — fail-closed)
+      still fail the run: RuntimeError carrying the technical
+      reasons only. RELEASE-class failures, and the verdict's own
+      "release_failures" (the classification audit's findings),
+      do NOT raise: the film is technically deliverable, and the
+      findings ride the completed run as release findings (the
+      caller derives them via release_status.derive_run_statuses;
+      when state is supplied here they are also stamped onto it
+      as state["audit_release_failures"]).
+    - An evaluated verdict that is not passed but carries no
+      failures and no release findings at all still fails closed
+      ("unspecified") — a condemned film with no stated reason is
+      never waved through.
+
+    Returns the split dict {"technical": [...], "release": [...]}.
     """
     verdict = (final_audit or {}).get("verdict") or {}
     if not verdict.get("evaluated"):
@@ -1539,42 +1571,61 @@ def _honour_final_audit(final_audit):
             "no evaluated verdict, so this production cannot be "
             "recorded as completed."
         )
-    if not verdict.get("passed", False):
+    split = release_status.split_audit_failures(verdict.get("failures") or [])
+    verdict_release_failures = list(verdict.get("release_failures") or [])
+    if isinstance(state, dict):
+        state["audit_release_failures"] = (
+            split["release"] + verdict_release_failures
+        )
+    if split["technical"]:
         raise RuntimeError(
             "Final video audit FAILED: "
-            + "; ".join(verdict.get("failures") or ["unspecified"])
+            + "; ".join(split["technical"])
         )
+    if (
+        not verdict.get("passed", False)
+        and not (verdict.get("failures") or [])
+        and not verdict_release_failures
+    ):
+        raise RuntimeError(
+            "Final video audit FAILED: unspecified"
+        )
+    return split
 
 
 def _honour_quality_verdict(quality_verdicts, state=None):
-    """C-06 (Master Project Directive Phase 3b): the completion gate
-    over the composite QUALITY verdict (services.quality_verdict).
+    """Phase 4: the quality-verdict seam after the final audit.
 
-    Before this gate, a quality FAIL was only attached to the
-    production report — a film whose measured quality verdict was
-    FAIL (e.g. the Hyatt shape: direct_share 0.16, graphics-dominated
-    timeline) was still recorded "completed"; only the final
-    auditor's integrity verdict could fail a run. Now:
+    C-06 (Master Project Directive Phase 3b) made a composite
+    QUALITY verdict of FAIL (services.quality_verdict) fail the
+    run outright. Phase 4's technical/release status separation
+    supersedes that gate: a quality FAIL is a RELEASE finding,
+    not a technical failure — the film is technically deliverable,
+    and the FAIL is recorded on the completed run through
+    release_status.derive_run_statuses (release_status
+    "not_release_grade", with the verdict carried in the release
+    findings). The billing consequence of a delivered-but-not-
+    release-grade film is founder-gated and preserved separately;
+    this seam decides nothing about money.
 
-    - quality verdict FAIL -> RuntimeError carrying the verdict's
-      fail reasons, routed through the stage's normal fail path
-      (fail_pipeline): the run's final status is FAILED. The full
-      quality verdict is first stamped onto the run state
-      (state["quality_verdict"]) so it survives in
-      production_state.json, and it already rides the asset report /
-      production report written before this gate runs — the verdict
-      stays preserved and visible on the failed run.
-    - PASS / QUALITY_WARNING -> return; the run proceeds exactly as
-      before (warnings have never failed a run).
-    - verdict absent / None / unmeasured (measurement failed and was
-      recorded as visual_quality_error, or a legacy report shape)
-      -> return; absence behaves exactly as it did before this gate.
+    Behaviour:
+
+    - quality verdict FAIL -> NO raise. The full quality verdict
+      is stamped onto the run state (state["quality_verdict"]) so
+      it survives in production_state.json, and it already rides
+      the asset report / production report written before this
+      seam runs — the verdict stays preserved and visible on the
+      completed run. The quality verdict dict is returned.
+    - PASS / QUALITY_WARNING -> return; the run proceeds exactly
+      as before (warnings have never failed a run).
+    - verdict absent / None / unmeasured (measurement failed and
+      was recorded as visual_quality_error, or a legacy report
+      shape) -> return None; absence behaves exactly as it did
+      before C-06.
 
     No verdict types are added and no band or threshold changes:
     this consumes quality_verdict.FAIL exactly as
-    composite_quality_verdict computes it. There is no override —
-    no code path (admin or otherwise) existed that allowed a
-    quality FAIL to be waived, and none is added here.
+    composite_quality_verdict computes it.
 
     Accepts either the production report's verdicts dict
     ({"quality": {...}, "integrity": ..., "reliability": ...}) or a
@@ -1590,16 +1641,9 @@ def _honour_quality_verdict(quality_verdicts, state=None):
             quality = quality_verdicts
     if quality is None:
         return None
-    if quality.get("verdict") != "FAIL":
-        return quality
-    if isinstance(state, dict):
+    if quality.get("verdict") == "FAIL" and isinstance(state, dict):
         state["quality_verdict"] = quality
-    reasons = quality.get("fail_reasons") or ["unspecified"]
-    raise RuntimeError(
-        "Quality verdict FAILED (C-06): this production cannot be "
-        "recorded as completed while its measured quality verdict "
-        "is FAIL: " + "; ".join(str(r) for r in reasons)
-    )
+    return quality
 
 
 def _research_stage_record(source):
@@ -3408,10 +3452,11 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         # in the report (visual_quality_error), never silent. The
         # single write_asset_report for this run happens after the
         # embedding so asset_report.json carries the new keys. The
-        # verdicts are REPORTED here; the completion gate that
-        # honours a quality FAIL is _honour_quality_verdict, called
-        # after the final audit below (C-06, Phase 3b — previously a
-        # quality FAIL was reported but a run could still complete).
+        # verdicts are REPORTED here; after the final audit below,
+        # _honour_quality_verdict preserves a quality FAIL on the
+        # run state (Phase 4: a release finding on a deliverable
+        # film, not a completion gate — C-06's fail-the-run gate
+        # was superseded by the technical/release status split).
         # ----------------------------------------------
         try:
             _mg_record = None
@@ -3473,30 +3518,54 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         # Final audit
         # ----------------------------------------------
 
-        final_audit = validate_final_video(
-            str(final_video),
-            expected_duration=(
-                expected_duration
-                if expected_duration > 0
-                else None
-            ),
-            asset_report=asset_report,
-        )
+        # Phase 4: a probe/duration RuntimeError from the auditor
+        # is a TECHNICAL failure — stamp it before the re-raise so
+        # fail_pipeline records the run's technical_status.
+        try:
+            final_audit = validate_final_video(
+                str(final_video),
+                expected_duration=(
+                    expected_duration
+                    if expected_duration > 0
+                    else None
+                ),
+                asset_report=asset_report,
+            )
+        except RuntimeError:
+            state["technical_status"] = "failed"
+            raise
 
-        # MA-14 + INT-102: honour the auditor's verdict. A failed
-        # verdict fails the production through the normal fail
-        # path — the rendered file may exist, but the recorded
-        # outcome (project status + failure asset report) is a
-        # failure carrying the auditor's reasons. An UNEVALUATED
+        # Phase 4: derive the run's two statuses from the audit
+        # verdict and the composite quality verdict, and stamp
+        # them (plus the release findings) onto the run state —
+        # they ride the stage payload, the pipeline result and
+        # the ledger finish below.
+        statuses = release_status.derive_run_statuses(
+            final_audit.get("verdict"),
+            (asset_report.get("quality_verdicts") or {}).get("quality"),
+        )
+        state["technical_status"] = statuses["technical_status"]
+        state["release_status"] = statuses["release_status"]
+        state["release_findings"] = statuses["release_findings"]
+
+        # MA-14 + INT-102, as split by Phase 4: honour the
+        # auditor's verdict. TECHNICAL-class failures still fail
+        # the production through the normal fail path — the
+        # rendered file may exist, but the recorded outcome
+        # (project status + failure asset report) is a failure
+        # carrying the auditor's technical reasons. An UNEVALUATED
         # verdict also fails the gate (see _honour_final_audit):
-        # it is never interpreted as a successful audit. Warnings
+        # it is never interpreted as a successful audit.
+        # RELEASE-class failures do NOT fail the run: they ride
+        # the completed run in its release findings. Warnings
         # alone never fail a run.
         _honour_final_audit(final_audit)
 
-        # C-06 (Phase 3b): honour the composite QUALITY verdict the
-        # same way — a quality FAIL fails the production through the
-        # normal fail path, with the verdict preserved on the run
-        # state and in the reports written above. PASS /
+        # C-06, superseded by Phase 4: the composite QUALITY
+        # verdict is no longer a completion gate — a quality FAIL
+        # is a release finding on a deliverable film (already
+        # reflected in the statuses derived above), preserved on
+        # the run state and in the reports written above. PASS /
         # QUALITY_WARNING / absent verdicts proceed unchanged.
         _honour_quality_verdict(
             asset_report.get("quality_verdicts"), state=state
@@ -3517,6 +3586,9 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 "timeline_result": timeline_result,
                 "captions_mode": captions_mode,
                 "delivery": state.get("delivery"),
+                "technical_status": state.get("technical_status"),
+                "release_status": state.get("release_status"),
+                "release_findings": state.get("release_findings"),
             },
         )
 
@@ -3558,6 +3630,9 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         "visual_count": visual_count,
         "expected_duration_seconds": expected_duration,
         "script_hash": script_hash,
+        "technical_status": state.get("technical_status"),
+        "release_status": state.get("release_status"),
+        "release_findings": state.get("release_findings"),
     }
 
     result_file = artefact_dir / "pipeline_result.json"
@@ -3626,6 +3701,9 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             "completed",
             execution=run_metrics.snapshot(),
             manifest_path=manifest_path,
+            technical_status=state.get("technical_status"),
+            release_status=state.get("release_status"),
+            release_findings=state.get("release_findings"),
         )
         # Phase 8 (§21): register the generated videos for the
         # 50-hour retention deadline, anchored at the run's

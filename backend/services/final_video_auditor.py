@@ -140,6 +140,21 @@ def _audit_verdict(asset_report):
       film contains music. Loudness values themselves NEVER fail —
       they are measured and reported (M9), not judged here.
 
+    RELEASE-class findings (Phase 4) —
+    The per-visual CLASSIFICATION AUDIT (below) never touches
+    "passed" / "failures" / "warnings": its findings are
+    RELEASE-class and are reported on the separate
+    "release_failures" list, which is ALWAYS present on the
+    verdict. Unclassified timeline visuals and illustrative stock
+    presented as sentence-verified evidence for direct-evidence
+    sentences do not make the film technically invalid — the file
+    is still a deliverable film — but they hold it below release
+    grade, and services.release_status derives the run's
+    release_status from these findings. When the report carries
+    no authenticity.timeline_visuals (legacy reports), the
+    section records null totals and adds NO release failures:
+    not recorded is not failed — unknown stays unknown.
+
     WARN (never fail) when —
     - the rotation share of timeline assignments exceeds
       CINEMORA_MAX_ROTATION_SHARE (default 0.5);
@@ -177,6 +192,7 @@ def _audit_verdict(asset_report):
                 "audit_not_evaluated: no asset report was supplied, "
                 "so the film's authenticity was not evaluated"
             ],
+            "release_failures": [],
             "warnings": warnings,
             "checks": checks,
         }
@@ -407,10 +423,85 @@ def _audit_verdict(asset_report):
             "verified visual (reported, never substituted)"
         )
 
+    # ---- classification audit (Phase 4, RELEASE class) -------------
+    # Phase 3 built the authenticity taxonomy and the report's
+    # per-item census; this section — deferred to Phase 4 there —
+    # audits the timeline items themselves, from the report's
+    # authenticity.timeline_visuals (the RAW per-item stamps).
+    # Findings go to release_failures ONLY: "passed" and "failures"
+    # keep their integrity semantics byte-identical, so a film with
+    # unclassified or mis-presented visuals is still technically
+    # deliverable — it is simply not release grade.
+    release_failures = []
+    timeline_visuals = (
+        authenticity.get("timeline_visuals")
+        if isinstance(authenticity, dict)
+        else None
+    )
+    if isinstance(timeline_visuals, list):
+        try:
+            from services import authenticity as _authenticity_taxonomy
+        except ImportError:  # direct-module import context
+            import authenticity as _authenticity_taxonomy  # type: ignore
+
+        class_counts = {}
+        unclassified = 0
+        illustrative_as_evidence = 0
+        for item in timeline_visuals:
+            raw = item.get("classification") if isinstance(item, dict) else None
+            # Normalisation is for COUNTING only: the counts state
+            # what each visual effectively is, while the RAW stamp
+            # decides classified vs unclassified below.
+            normalised = _authenticity_taxonomy.normalise_classification(raw)
+            class_counts[normalised] = class_counts.get(normalised, 0) + 1
+            if not _authenticity_taxonomy.is_valid_classification(raw):
+                unclassified += 1
+            if (
+                isinstance(item, dict)
+                and normalised
+                == _authenticity_taxonomy.ILLUSTRATIVE_STOCK
+                and item.get("assignment") == "sentence"
+                and item.get("verification_category") == "evidence"
+            ):
+                illustrative_as_evidence += 1
+        checks["classification"] = {
+            "total": len(timeline_visuals),
+            "counts": {
+                name: class_counts[name]
+                for name in _authenticity_taxonomy.CLASSIFICATIONS
+                if class_counts.get(name)
+            },
+            "unclassified": unclassified,
+            "illustrative_presented_as_evidence": illustrative_as_evidence,
+        }
+        if unclassified > 0:
+            release_failures.append(
+                "unclassified_visuals: "
+                f"{unclassified} timeline visual(s) carry no valid "
+                "authenticity classification"
+            )
+        if illustrative_as_evidence > 0:
+            release_failures.append(
+                "illustrative_presented_as_evidence: "
+                f"{illustrative_as_evidence} illustrative-stock "
+                "visual(s) presented as sentence-verified evidence "
+                "for direct-evidence sentences"
+            )
+    else:
+        # Legacy reports carry no per-item list: the audit was not
+        # recorded, which is NOT a failure — unknown stays unknown.
+        checks["classification"] = {
+            "total": None,
+            "counts": {},
+            "unclassified": None,
+            "illustrative_presented_as_evidence": None,
+        }
+
     verdict = {
         "passed": not failures,
         "evaluated": True,
         "failures": failures,
+        "release_failures": release_failures,
         "warnings": warnings,
         "checks": checks,
     }
