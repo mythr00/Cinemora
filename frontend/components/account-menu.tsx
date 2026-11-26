@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, LogOut, ShieldCheck, UserRound } from "lucide-react";
+import { ChevronDown, LogOut, UserRound } from "lucide-react";
 import {
   getAccountUsage,
   getNotifications,
@@ -14,16 +14,18 @@ import {
 
 /**
  * The account menu (Phase 8.5): the signed-in user's identity in
- * the studio top bar — email, plan, role — with sign-out. All data
+ * the studio top bar — email and plan — with sign-out. All data
  * is real: the user comes from /auth/me (resolved by
  * AppNavigation's session gate) and the plan line from
  * /account/usage (derived from the run ledger server-side). When
  * usage cannot be loaded the plan line is simply omitted — never
  * estimated.
  *
- * The role is shown because Phase 7's admin surface gates on it:
- * admins carry the shield marker here; the admin UI itself is
- * Phase 7 scope, so this menu intentionally has no admin links.
+ * Item 7 (Product Improvements, 2026-11-26): account roles are
+ * an internal authorisation detail. They are never rendered as
+ * labels anywhere in the customer-facing UI (no "Role: user",
+ * no administrator marker); backend enforcement is unchanged
+ * and the admin console keeps its own role displays.
  */
 export function AccountMenu({ user }: { user: AccountUser }) {
   const router = useRouter();
@@ -69,7 +71,9 @@ export function AccountMenu({ user }: { user: AccountUser }) {
     };
   }, [open ]);
 
-  const isAdmin = user.role === "admin" || user.role === "super_admin";
+  // Item 7 (Product Improvements): role values drive backend
+  // authorisation and route gating only — they are never
+  // rendered as labels in the customer-facing UI.
 
   const signOut = async () => {
     setSigningOut(true);
@@ -95,14 +99,6 @@ export function AccountMenu({ user }: { user: AccountUser }) {
       >
         <UserRound size={15} strokeWidth={2} aria-hidden />
         <span className="account-menu-email">{user.email}</span>
-        {isAdmin && (
-          <ShieldCheck
-            size={14}
-            strokeWidth={2}
-            aria-label="Administrator"
-            className="account-menu-admin-icon"
-          />
-        )}
         <ChevronDown size={14} strokeWidth={2} aria-hidden />
       </button>
       {open && (
@@ -112,10 +108,11 @@ export function AccountMenu({ user }: { user: AccountUser }) {
               {user.display_name || user.email}
             </p>
             <p className="account-menu-sub">{user.email}</p>
-            <p className="account-menu-sub">
-              Role: {user.role}
-              {usage?.plan ? ` · Plan: ${usage.plan.name}` : ""}
-            </p>
+            {usage?.plan && (
+              <p className="account-menu-sub">
+                Plan: {usage.plan.name}
+              </p>
+            )}
             {usage?.plan && (
               <p className="account-menu-sub">
                 {usage.runs_in_period} production
