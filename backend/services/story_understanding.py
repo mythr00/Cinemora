@@ -3274,6 +3274,72 @@ def _dimension_results_for_verdict(
     }
 
 
+# Gate 4 fix (diagnosis 12, F7): a static gazetteer of country
+# names for the B2 place/date-only guard in verify_candidate. The
+# guard's place-token set was built ONLY from bible place/location
+# entities, so when a beat's place was a country the bible never
+# modelled as an entity ("United States" in the Hyatt bible), a
+# candidate whose title offered nothing beyond that country and a
+# year — an eBay listing "UNITED STATES 1981. 1 DOLLAR..." — had
+# its place tokens counted as CONTENT matches, place_date_only
+# stayed false, and the listing was accepted as "related" on
+# topical 0.45 + era 0.10 alone. Country names are place evidence
+# wherever they appear, bible or not; their content tokens join
+# the guard's place set. This is the narrow gazetteer route the
+# diagnosis recommends: it changes only which tokens count as
+# place/date for the guard, never the overlap, the score, or any
+# threshold, and a candidate matching any genuine subject/content
+# token still passes exactly as before.
+_COUNTRY_NAMES = (
+    "Afghanistan", "Albania", "Algeria", "Andorra", "Angola",
+    "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan",
+    "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus",
+    "Belgium", "Belize", "Benin", "Bhutan", "Bolivia",
+    "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei",
+    "Bulgaria", "Burkina Faso", "Burundi", "Cambodia", "Cameroon",
+    "Canada", "Cape Verde", "Central African Republic", "Chad",
+    "Chile", "China", "Colombia", "Comoros", "Congo", "Costa Rica",
+    "Croatia", "Cuba", "Cyprus", "Czech Republic", "Czechia",
+    "Denmark", "Djibouti", "Dominica", "Dominican Republic",
+    "Ecuador", "Egypt", "El Salvador", "Equatorial Guinea",
+    "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji",
+    "Finland", "France", "Gabon", "Gambia", "Georgia", "Germany",
+    "Ghana", "Greece", "Grenada", "Guatemala", "Guinea",
+    "Guinea-Bissau", "Guyana", "Haiti", "Honduras", "Hungary",
+    "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland",
+    "Israel", "Italy", "Ivory Coast", "Jamaica", "Japan", "Jordan",
+    "Kazakhstan", "Kenya", "Kiribati", "Kuwait", "Kyrgyzstan",
+    "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya",
+    "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar",
+    "Malawi", "Malaysia", "Maldives", "Mali", "Malta",
+    "Marshall Islands", "Mauritania", "Mauritius", "Mexico",
+    "Micronesia", "Moldova", "Monaco", "Mongolia", "Montenegro",
+    "Morocco", "Mozambique", "Myanmar", "Namibia", "Nauru",
+    "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger",
+    "Nigeria", "North Korea", "North Macedonia", "Norway", "Oman",
+    "Pakistan", "Palau", "Palestine", "Panama", "Papua New Guinea",
+    "Paraguay", "Peru", "Philippines", "Poland", "Portugal",
+    "Qatar", "Romania", "Russia", "Rwanda", "Samoa",
+    "San Marino", "Sao Tome and Principe", "Saudi Arabia",
+    "Senegal", "Serbia", "Seychelles", "Sierra Leone", "Singapore",
+    "Slovakia", "Slovenia", "Solomon Islands", "Somalia",
+    "South Africa", "South Korea", "South Sudan", "Spain",
+    "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland",
+    "Syria", "Taiwan", "Tajikistan", "Tanzania", "Thailand",
+    "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago",
+    "Tunisia", "Turkey", "Turkmenistan", "Tuvalu", "Uganda",
+    "Ukraine", "United Arab Emirates", "United Kingdom",
+    "United States", "Uruguay", "Uzbekistan", "Vanuatu",
+    "Vatican City", "Venezuela", "Vietnam", "Yemen", "Zambia",
+    "Zimbabwe",
+)
+
+_COUNTRY_TOKENS = set()
+for _country in _COUNTRY_NAMES:
+    _COUNTRY_TOKENS |= _content_tokens(_country)
+del _country
+
+
 def verify_candidate(candidate, scenario, bible):
     """
     candidate: dict with any of title, snippet, description, url, source.
@@ -3454,6 +3520,16 @@ def verify_candidate(candidate, scenario, bible):
             _place_tokens |= _content_tokens(_entity.get("canonical") or "")
             for _alias in _entity.get("aliases") or []:
                 _place_tokens |= _content_tokens(_alias)
+    # Gate 4 fix (diagnosis 12, F7): the bible is not the only
+    # source of place evidence. The scenario's own place (the
+    # beat's stated location — "United States" for the Hyatt S5
+    # beat, absent from that bible as an entity) and the static
+    # country gazetteer above both name places; tokens from either
+    # are place tokens for this guard, so a candidate offering
+    # nothing beyond place + date is recognised as place/date-only
+    # even when the bible lacks the entity.
+    _place_tokens |= _content_tokens(scenario.get("place") or "")
+    _place_tokens |= _COUNTRY_TOKENS
 
     def _is_place_or_date_token(token):
         return token in _place_tokens or (len(token) == 4 and token.isdigit())

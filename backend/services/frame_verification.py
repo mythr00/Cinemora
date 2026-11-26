@@ -207,6 +207,16 @@ STORY_CARD_MAX_PITCH_RATIO = 2.6
 # Caption overlay: centred lines on a uniform backing.
 CAPTION_MIN_LINES_VIDEO = 2
 CAPTION_MIN_LINES_IMAGE = 3
+
+# Channel card (Gate 4 fix, diagnosis 12 F6): the transient-card
+# detector fires on display text in SOME but not all frames, but a
+# SINGLE OCR line in a single sampled frame is not a card — run 4's
+# best video (0.888) was rejected on line_counts [0, 1, 0]. The
+# card evidence across the sampled frames must total at least this
+# many display lines (a genuine card carries a channel name plus
+# call-to-action lines, or recurs across sampled frames) before
+# the detector fires. The static-card recording is unchanged.
+CHANNEL_CARD_MIN_TOTAL_LINES = 2
 CAPTION_CENTER_MIN = 0.30
 CAPTION_CENTER_MAX = 0.70
 
@@ -272,6 +282,7 @@ def thresholds_snapshot():
         "story_card_block_mean_max": STORY_CARD_BLOCK_MEAN_MAX,
         "caption_min_lines_video": CAPTION_MIN_LINES_VIDEO,
         "caption_min_lines_image": CAPTION_MIN_LINES_IMAGE,
+        "channel_card_min_total_lines": CHANNEL_CARD_MIN_TOTAL_LINES,
         "gap_density_max": GAP_DENSITY_MAX,
         "meme_bar_height_frac": MEME_BAR_HEIGHT_FRAC,
         "meme_bar_pixel_fraction": MEME_BAR_PIXEL_FRACTION,
@@ -985,16 +996,22 @@ def verify_frames(images, *, kind="video", scenario=None, bible=None,
             break
     record["detectors"]["meme_format"] = meme or {"bar_lines": 0}
 
-    # 4. Channel card: display text in SOME but not all frames.
+    # 4. Channel card: display text in SOME but not all frames —
+    # with more than a single stray OCR line of evidence in total
+    # (Gate 4 fix, diagnosis 12 F6: run 4's line_counts [0, 1, 0]
+    # rejected the run's best video; a lone line in one frame is
+    # incidental on-screen text, not a channel card).
     card_counts = [len(_card_lines(a)) for a in analyses]
     card_fired = (
         kind == "video"
         and len(analyses) >= 2
         and any(c > 0 for c in card_counts)
         and not all(c > 0 for c in card_counts)
+        and sum(card_counts) >= CHANNEL_CARD_MIN_TOTAL_LINES
     )
     record["detectors"]["channel_card"] = {
         "line_counts": card_counts,
+        "total_lines": sum(card_counts),
         "static_card": bool(card_counts and all(c > 0 for c in card_counts)),
         "fired": card_fired,
     }

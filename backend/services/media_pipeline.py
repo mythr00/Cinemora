@@ -705,7 +705,9 @@ MAX_CONSECUTIVE_SEARCH_FAILURES = 8
 # (240s). The bounds below are per-candidate AGGREGATE budgets:
 # every subprocess/HTTP step in a candidate's download is capped so
 # the paths sum to well under the old figure —
-#   YouTube path:  YT_DLP_TIMEOUT 60 + DOWNLOAD_FFMPEG_TIMEOUT 45 = 105s
+#   YouTube path:  YT_DLP_TIMEOUT 60 + NORMALIZE_FFMPEG_TIMEOUT 120
+#                  = 180s (Gate 4: normalisation split out — see the
+#                  NORMALIZE_FFMPEG_TIMEOUT note below)
 #   direct path:   seek 45 + HTTP read 20 + trim 45               = 110s
 #   image path:    2 outer attempts x (2 requests x 10s + 1s
 #                  backoff) + 0.5s outer delay                    ~ 43s
@@ -719,6 +721,26 @@ YTDLP_FRAGMENT_RETRIES = 2
 YTDLP_SOCKET_TIMEOUT = 10
 FFMPEG_TIMEOUT = 90
 DOWNLOAD_FFMPEG_TIMEOUT = 45
+# Gate 4 segment-loss fix (diagnosis 12, F1/F2): the YouTube
+# normalisation is a SEPARATE, heavier step than the fetch — the
+# blurred-fill filtergraph re-encodes at 1080p — so it gets its own
+# ceiling instead of sharing the direct path's trim bound. Run 4
+# measured the normalisation dying at the 45s ceiling with only
+# ~4.1–4.9s of an 8s clip written at elapsed ≈44s (≈0.10× realtime
+# on this VM), i.e. a full 8s clip needs ~73–88s; 120s covers the
+# worst measured rate with ~1.4× headroom. The fetch ceiling stays
+# 60s: 9 of run 4's 12 timed-out fetches had in fact delivered
+# complete valid 8s section files by the kill — the defect was
+# discarding them, fixed by the salvage path in download_video_clip
+# — so a longer fetch ceiling would only lengthen doomed attempts.
+NORMALIZE_FFMPEG_TIMEOUT = 120
+#: A timed-out fetch's leftover section file counts as covering the
+#: requested window when its probed duration is within this many
+#: seconds of the requested duration (run 4's complete leftovers
+#: probed 8.000–8.008s against an 8s request; a mid-write stub
+#: probes as no video at all, and a genuinely short partial section
+#: stays a failure).
+SALVAGE_DURATION_TOLERANCE_SECONDS = 0.5
 DIRECT_HTTP_TIMEOUT = (5, 20)  # (connect, read) seconds, per read
 IMAGE_HTTP_TIMEOUT = 10
 
@@ -2334,6 +2356,65 @@ def blurred_fill_filter_complex():
     )
 
 
+def _source_clip_candidates(output_path):
+    """The ``<stem>_source.*`` intermediates a yt-dlp section fetch
+    may have left for THIS output stem (never a blanket glob: a
+    concurrent attempt may share the directory)."""
+    output_path = Path(output_path)
+    if not output_path.parent.exists():
+        return []
+    return [
+        item
+        for item in output_path.parent.glob(f"{output_path.stem}_source.*")
+        if item.is_file() and item.suffix.lower() not in TEMP_FILE_SUFFIXES
+    ]
+
+
+def _probed_duration_covers(path, duration):
+    """True when ``path`` probes as a real video whose duration
+    covers the requested window (within the salvage tolerance)."""
+    probe = probe_video(path)
+    if probe is None:
+        return False
+    probed = probe.get("duration_seconds")
+    if probed is None:
+        return False
+    return probed >= float(duration) - SALVAGE_DURATION_TOLERANCE_SECONDS
+
+
+def _salvaged_source_clip(output_path, duration):
+    """Gate 4 segment-loss fix (diagnosis 12, F1): after a yt-dlp
+    timeout kill, the section fetch may already have delivered a
+    complete file — in run 4, 9 of 12 timed-out attempts left valid
+    8s clips on disk that were discarded solely because the wrapper
+    process was killed around/after the bytes arrived. Return the
+    largest leftover intermediate that probes as a valid video
+    covering the requested window, or None. A truncated stub (the
+    run's 801-byte bot-check remnants) probes as no video at all and
+    a short partial section fails the duration check, so both stay
+    honest download failures."""
+    best = None
+    for item in _source_clip_candidates(output_path):
+        if not _probed_duration_covers(item, duration):
+            continue
+        if best is None or item.stat().st_size > best.stat().st_size:
+            best = item
+    return best
+
+
+def _remove_source_intermediates(output_path):
+    """Gate 4 (diagnosis 12, F4): a failed attempt's ``*_source.*``
+    intermediates for THIS stem are removed on the failure path —
+    left behind, they pollute the scene dir and were miscounted as
+    landed downloads. Stem-scoped, so an in-flight attempt sharing
+    the directory keeps its own intermediate."""
+    for item in _source_clip_candidates(output_path):
+        try:
+            item.unlink()
+        except OSError:
+            pass
+
+
 def download_video_clip(
     video_url,
     output_path,
@@ -2464,38 +2545,51 @@ def download_video_clip(
             "yt-dlp",
         )
 
+    salvaged_clip = None
     if returncode != 0:
-        print("yt-dlp clip extraction failed:")
-        print((stderr or "")[-3000:])
-        _record_download_error(
-            output_path,
-            "timeout" if returncode == -999 else "download_failed",
-            detail=stderr or "",
-        )
-        # Run-11 fix 2: a 429 inside a failed extraction is
-        # provider-health evidence for the clip's scope — repeated
-        # 429s back the scope off instead of being retried into
-        # the ground by later candidates.
-        if "429" in str(stderr or ""):
-            provider_health.record_rate_limit(
-                provider_health.scope_for_url(video_url)
+        # Gate 4 segment-loss fix (diagnosis 12, F1): a TIMEOUT kill
+        # (returncode -999) is not proof the fetch failed — the
+        # section bytes may already be on disk as a complete clip.
+        # Promote a leftover that probes valid and covers the
+        # requested window through the normal normalisation path
+        # below instead of recording download_failed. Any other
+        # failure (bot-check refusal, 404, ...) — and a timeout that
+        # left only a stub or a short partial — fails honestly,
+        # exactly as before.
+        if returncode == -999:
+            salvaged_clip = _salvaged_source_clip(output_path, duration)
+        if salvaged_clip is not None:
+            print(
+                "yt-dlp timed out but left a complete section "
+                f"file; promoting {salvaged_clip.name} through "
+                "normalisation instead of discarding the segment."
             )
+        else:
+            print("yt-dlp clip extraction failed:")
+            print((stderr or "")[-3000:])
+            _record_download_error(
+                output_path,
+                "timeout" if returncode == -999 else "download_failed",
+                detail=stderr or "",
+            )
+            # Run-11 fix 2: a 429 inside a failed extraction is
+            # provider-health evidence for the clip's scope — repeated
+            # 429s back the scope off instead of being retried into
+            # the ground by later candidates.
+            if "429" in str(stderr or ""):
+                provider_health.record_rate_limit(
+                    provider_health.scope_for_url(video_url)
+                )
 
-        cleanup_temp_files(output_path.parent)
+            cleanup_temp_files(output_path.parent)
+            _remove_source_intermediates(output_path)
 
-        return False
+            return False
 
-    candidates = [
-        item
-        for item in output_path.parent.glob(
-            f"{output_path.stem}_source.*"
-        )
-        if (
-            item.is_file()
-            and item.suffix.lower()
-            not in TEMP_FILE_SUFFIXES
-        )
-    ]
+    if salvaged_clip is not None:
+        candidates = [salvaged_clip]
+    else:
+        candidates = _source_clip_candidates(output_path)
 
     if not candidates:
         print(
@@ -2546,7 +2640,7 @@ def download_video_clip(
 
     returncode, stdout, stderr = run_command_safe(
         ffmpeg_command,
-        DOWNLOAD_FFMPEG_TIMEOUT,
+        NORMALIZE_FFMPEG_TIMEOUT,
         "FFmpeg YouTube",
     )
 
@@ -2557,10 +2651,18 @@ def download_video_clip(
 
     cleanup_temp_files(output_path.parent)
 
-    if (
-        returncode != 0
-        or not validate_video(output_path)
-    ):
+    # Gate 4 segment-loss fix (diagnosis 12, F2): the same
+    # salvage-valid-after-timeout rule as the fetch — if the
+    # normalisation wrapper was killed at its ceiling but the
+    # output it left probes as a valid video covering the whole
+    # requested window, the clip is real and is accepted; a
+    # truncated output (no moov / short duration) still fails.
+    normalized_ok = validate_video(output_path) and (
+        returncode == 0
+        or (returncode == -999 and _probed_duration_covers(output_path, duration))
+    )
+
+    if not normalized_ok:
         print(
             "YouTube clip normalization failed."
         )
@@ -2591,6 +2693,11 @@ def download_video_clip(
     DOWNLOAD_PROVENANCE[str(output_path)] = {
         "method": "yt-dlp-download-sections",
         "partial": True,
+        **(
+            {"salvaged_after_timeout": True}
+            if salvaged_clip is not None
+            else {}
+        ),
     }
 
     return True
