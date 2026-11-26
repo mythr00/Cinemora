@@ -28,7 +28,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import text  # noqa: E402
+from sqlalchemy import func, select, text  # noqa: E402
 
 from database import SessionLocal  # noqa: E402
 import models  # noqa: E402
@@ -80,19 +80,33 @@ def main() -> int:
             .filter(models.Project.owner_id.is_(None))
             .count()
         )
-        null_runs = (
-            db.query(models.ProductionRun)
-            .filter(models.ProductionRun.owner_id.is_(None))
-            .count()
-        )
+        # ProductionRun reads are column-scoped on purpose: this
+        # script runs against the 0006 schema BY DESIGN, and full
+        # entity loads would select columns added by later
+        # migrations (e.g. Phase 4's status columns) that do not
+        # exist yet in the database it is backfilling.
+        null_runs = db.execute(
+            select(func.count())
+            .select_from(models.ProductionRun)
+            .where(models.ProductionRun.owner_id.is_(None))
+        ).scalar_one()
         disagreements = 0
-        for run in db.query(models.ProductionRun).all():
+        run_rows = db.execute(
+            select(
+                models.ProductionRun.id,
+                models.ProductionRun.project_id,
+                models.ProductionRun.owner_id,
+            )
+        ).all()
+        for run in run_rows:
             project = db.get(models.Project, run.project_id)
             if project is None or run.owner_id != project.owner_id:
                 disagreements += 1
 
         total_projects = db.query(models.Project).count()
-        total_runs = db.query(models.ProductionRun).count()
+        total_runs = db.execute(
+            select(func.count()).select_from(models.ProductionRun)
+        ).scalar_one()
         print(f"projects: {projects_updated} backfilled, {total_projects} total")
         print(f"runs: {runs_updated} backfilled, {total_runs} total")
         print(f"NULL owners remaining — projects: {null_projects}, runs: {null_runs}")

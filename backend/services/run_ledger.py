@@ -362,7 +362,8 @@ def begin_run(project_id, script_text, options=None):
 
 
 def finish_run(run_id, status, error=None, execution=None,
-               manifest_path=None, stage=None):
+               manifest_path=None, stage=None, technical_status=None,
+               release_status=None, release_findings=None):
     """Move a run to a terminal status. Returns True on success.
 
     B-02 (Phase 5a): the finish is a CONDITIONAL update guarded
@@ -387,6 +388,12 @@ def finish_run(run_id, status, error=None, execution=None,
             values["error"] = str(error)
         if execution is not None:
             values["execution"] = execution
+        if technical_status is not None:
+            values["technical_status"] = technical_status
+        if release_status is not None:
+            values["release_status"] = release_status
+        if release_findings is not None:
+            values["release_findings"] = release_findings
         if manifest_path is not None:
             values["manifest_path"] = str(manifest_path)
         db = _session()
@@ -414,7 +421,8 @@ def finish_run(run_id, status, error=None, execution=None,
             from services.billing import generation_billing
 
             generation_billing.settle_for_run(
-                str(run_id), status, execution=execution
+                str(run_id), status, execution=execution,
+                release_status=release_status,
             )
         except Exception:
             pass
@@ -689,6 +697,13 @@ def get_run(run_id):
                 "manifest_path": row.manifest_path,
                 "error": row.error,
                 "execution": row.execution,
+                "technical_status": getattr(
+                    row, "technical_status", None
+                ),
+                "release_status": getattr(row, "release_status", None),
+                "release_findings": getattr(
+                    row, "release_findings", None
+                ),
                 "cancel_requested": bool(row.cancel_requested),
                 "created_at": row.created_at,
                 "started_at": row.started_at,

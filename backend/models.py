@@ -424,11 +424,31 @@ class ProductionRun(Base):
     # Phase 8.1: denormalised owner copy (the project's owner at
     # submission time) — see Project.owner_id for the enforcement
     # note. Indexed with status for dispatcher fairness queries.
-    # Declared last to match the migrated column order (AUD-09).
+    # (Was declared last per AUD-09 until Phase 4's columns below.)
     owner_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("users.id"),
         nullable=True,
+    )
+
+    # Phase 4 technical/release status separation (migration 0016):
+    # technical_status is "passed" / "failed", release_status is
+    # "release_grade" / "not_release_grade", and release_findings
+    # carries the findings behind the release verdict (services/
+    # release_status.py). NULL means "not evaluated" — pre-Phase-4
+    # runs and runs that never reached the final audit; never
+    # backfilled. Declared last to match the migrated column order
+    # (AUD-09): migration 0016 appends the columns to the table.
+    technical_status: Mapped[str] = mapped_column(
+        String(50), nullable=True
+    )
+
+    release_status: Mapped[str] = mapped_column(
+        String(50), nullable=True
+    )
+
+    release_findings: Mapped[dict] = mapped_column(
+        JSONVariant, nullable=True
     )
 
     __table_args__ = (
