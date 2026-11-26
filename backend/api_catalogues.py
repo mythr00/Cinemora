@@ -111,6 +111,19 @@ def build_router(require_user) -> APIRouter:
         }
 
 
+    @router.get("/catalogues/languages")
+    def list_language_catalogue(principal=Depends(require_user)):
+        """Item 6: the language catalogue with honest per-language
+        support facts (narration voices that genuinely exist,
+        script and translation support), consumed by the
+        pre-generation language selector."""
+        from services import languages as languages_service
+
+        return {
+            "languages": languages_service.language_catalogue(),
+            "default_language": languages_service.DEFAULT_LANGUAGE,
+        }
+
     @router.get("/catalogues/voices")
     def list_voice_catalogue(principal=Depends(require_user)):
         voices = [

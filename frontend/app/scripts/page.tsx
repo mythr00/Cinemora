@@ -10,6 +10,7 @@ import {
   deleteScriptDraft,
   expandScriptSections,
   generateScriptDraft,
+  getLanguageCatalogue,
   getScriptDraft,
   listProjects,
   listScriptDrafts,
@@ -19,7 +20,9 @@ import {
   runScriptFactCheck,
   sendScriptToProduction,
   tightenScriptPassage,
+  translateScriptDraft,
   updateScriptDraft,
+  type LanguageCatalogueEntry,
   type ProjectSummary,
   type ScriptDraft,
   type ScriptExpandProposal,
@@ -80,6 +83,12 @@ export default function ScriptStudioPage() {
   const [expandProposal, setExpandProposal] = useState<ScriptExpandProposal | null>(null);
   const [tightenProposal, setTightenProposal] = useState<ScriptTightenProposal | null>(null);
   const [brief, setBrief] = useState({ topic: "", angle: "", category: "", target: "10" });
+  // Item 6: the script language, chosen before generation. The
+  // catalogue comes from the backend; the fallback is English
+  // plus the translation set the localization engine supports.
+  const [languages, setLanguages] = useState<LanguageCatalogueEntry[]>([]);
+  const [scriptLanguage, setScriptLanguage] = useState("en");
+  const [translateTarget, setTranslateTarget] = useState("es");
 
   const loadDrafts = useCallback(async () => {
     const data = await listScriptDrafts();
@@ -104,6 +113,9 @@ export default function ScriptStudioPage() {
         loadDrafts(),
         listProjects().catch(() => ({ projects: [] as ProjectSummary[] })),
       ]);
+      getLanguageCatalogue()
+        .then((data) => setLanguages(data.languages || []))
+        .catch(() => undefined);
       setProjects(projectList.projects || []);
       if (list.length > 0) await openDraft(list[0].id);
     } catch (caught) {
@@ -179,6 +191,7 @@ export default function ScriptStudioPage() {
         angle: brief.angle || undefined,
         category: brief.category || undefined,
         target_minutes: brief.target ? Number(brief.target) : undefined,
+        language: scriptLanguage,
       });
       await loadDrafts();
       await openDraft(created.id);
@@ -261,6 +274,17 @@ export default function ScriptStudioPage() {
       const revs = await listScriptRevisions(draft.id);
       setRevisions(revs.revisions || []);
       setNotice("Revision restored. The state before restoring was snapshotted too.");
+    });
+
+  const translate = () =>
+    run("translate", async () => {
+      if (!draft) return;
+      const created = await translateScriptDraft(draft.id, translateTarget);
+      await loadDrafts();
+      await openDraft(created.id);
+      setNotice(
+        "Translated draft created — the original is unchanged, and both versions are kept in your drafts.",
+      );
     });
 
   const sendToProduction = () =>
@@ -366,6 +390,37 @@ export default function ScriptStudioPage() {
                     onChange={(e) => setBrief({ ...brief, category: e.target.value })}
                     placeholder="engineering"
                   />
+                </label>
+                <label className="script-field">
+                  Script language
+                  <select
+                    value={scriptLanguage}
+                    onChange={(e) => setScriptLanguage(e.target.value)}
+                  >
+                    {(languages.length
+                      ? languages
+                      : [
+                          {
+                            code: "en",
+                            name: "English",
+                            narration_supported: true,
+                            voices: [],
+                            script_supported: true,
+                            translation_supported: true,
+                          } as LanguageCatalogueEntry,
+                        ]
+                    ).map((entry) => (
+                      <option key={entry.code} value={entry.code}>
+                        {entry.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="script-note">
+                    The language the narration is written in. Production
+                    narration is a separate step — a language without an
+                    installed voice is reported before any production
+                    charge, never silently replaced with English.
+                  </span>
                 </label>
                 <div className="script-field">
                   <span>Duration</span>
@@ -723,6 +778,42 @@ export default function ScriptStudioPage() {
 
                 <div className="panel script-panel">
                   <h2><Clapperboard size={16} /> Production</h2>
+                  <p className="script-note">
+                    Script language:{" "}
+                    <strong>
+                      {languages.find((entry) => entry.code === (draft.language || "en"))?.name ||
+                        draft.language ||
+                        "English"}
+                    </strong>
+                    {draft.translated_from
+                      ? " · translated from another of your drafts — the original is kept unchanged."
+                      : ""}
+                  </p>
+                  <div className="script-form">
+                    <label className="script-field">
+                      Translate this script into
+                      <select
+                        value={translateTarget}
+                        onChange={(e) => setTranslateTarget(e.target.value)}
+                      >
+                        {languages
+                          .filter((entry) => entry.code !== (draft.language || "en"))
+                          .map((entry) => (
+                            <option key={entry.code} value={entry.code}>
+                              {entry.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => void translate()}
+                      disabled={working === "translate" || languages.length === 0}
+                    >
+                      {working === "translate" ? "Translating…" : "Translate as new draft"}
+                    </button>
+                  </div>
                   <p className="script-note">
                     Sending to production creates a real project with this
                     script (section headings are structure and are not

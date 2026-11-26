@@ -976,6 +976,23 @@ export function getGenreCatalogue(signal?: AbortSignal) {
   return apiRequest<{ genres: GenreCatalogueEntry[] }>("/api/v1/catalogues/genres", { signal });
 }
 
+/** Item 6: a language and its honest support facts. */
+export type LanguageCatalogueEntry = {
+  code: string;
+  name: string;
+  narration_supported: boolean;
+  voices: { id: string; language: string; label: string }[];
+  script_supported: boolean;
+  translation_supported: boolean;
+};
+
+export function getLanguageCatalogue(signal?: AbortSignal) {
+  return apiRequest<{
+    languages: LanguageCatalogueEntry[];
+    default_language: string;
+  }>("/api/v1/catalogues/languages", { signal });
+}
+
 export function getVoiceCatalogue(signal?: AbortSignal) {
   return apiRequest<{ voices: VoiceCatalogueEntry[]; default_voice_id: string }>(
     "/api/v1/catalogues/voices",
@@ -4453,6 +4470,13 @@ export type ScriptDraft = {
    * automatically with the script, editable, carried into the
    * production project. Null until one exists. */
   video_title: string | null;
+  /** Item 6: the script's language; "en" when unset. */
+  language?: string;
+  translated_from?: {
+    script_id: string;
+    source_language: string;
+    at: string;
+  } | null;
   category: string;
   target_minutes: number | null;
   project_id: string | null;
@@ -4581,11 +4605,22 @@ export function generateScriptDraft(body: {
   angle?: string;
   category?: string;
   target_minutes?: number | null;
+  language?: string;
+  research_id?: string;
 }) {
   return apiRequest<ScriptDraft>("/api/v1/script-studio/ai/draft", {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+/** Item 6: translate a draft into a NEW draft in the target
+ * language; the original is kept unchanged. */
+export function translateScriptDraft(scriptId: string, language: string) {
+  return apiRequest<ScriptDraft>(
+    `/api/v1/script-studio/scripts/${scriptId}/translate`,
+    { method: "POST", body: JSON.stringify({ language }) },
+  );
 }
 
 export function expandScriptSections(scriptId: string) {
@@ -4940,6 +4975,8 @@ export type ProductionConfig = {
     source: string;
     voice_id: string | null;
     voice_recording: ConfigUploadRecord | null;
+    /** Item 6: the production language (defaults to English). */
+    language?: string;
   };
   captions: { mode: string; sync: string };
 };

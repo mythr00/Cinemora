@@ -1251,6 +1251,10 @@ class ProjectOptionsIn(BaseModel):
     # backend-derived from the script. The key is stripped before
     # storage (see _strip_user_genre_options).
     genre: str | None = None
+    # Item 6: the production language, chosen before generation.
+    # Injected into the production_config narration section at
+    # creation (the authoritative store); validated there.
+    language: str | None = None
     voice_id: str | None = None
     captions: str | None = None  # "burn" | "sidecar" | "off"
     # Stage H (M3): the ONE music contract — the same fields the
@@ -1652,7 +1656,18 @@ def _prepare_creation_options(db, principal, options) -> dict:
     run here — a project may legitimately be created before its
     music upload exists; the run-submission gate is where an
     unhonourable configuration refuses."""
-    raw = (options or {}).get("production_config")
+    # Item 6: a flat language choice enters the configuration
+    # document's narration section — the document stays the one
+    # authoritative store, and cleaning validates the code.
+    options = dict(options or {})
+    flat_language = options.pop("language", None)
+    raw = options.get("production_config")
+    if flat_language is not None:
+        raw = dict(raw) if isinstance(raw, dict) else {}
+        narration = dict(raw.get("narration") or {})
+        narration["language"] = flat_language
+        raw["narration"] = narration
+        options["production_config"] = raw
     if isinstance(raw, dict):
         config = _config_call(production_config.clean_config, raw)
     else:
@@ -3614,6 +3629,11 @@ class ScriptGenerateIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     topic: str = Field(min_length=1, max_length=2_000)
+    # Item 6: the script language, chosen before generation.
+    language: str | None = Field(default=None, max_length=8)
+    # Channel research (directive 2026-11-26): when set, the
+    # generation record keeps the research references used.
+    research_id: str | None = Field(default=None, max_length=64)
     angle: str | None = Field(default=None, max_length=2_000)
     category: str | None = Field(default=None, max_length=120)
     target_minutes: float | None = None
@@ -3732,6 +3752,29 @@ def generate_script_draft(body: ScriptGenerateIn, principal=Depends(post_guard))
         angle=body.angle or "",
         category=body.category or "",
         target_minutes=body.target_minutes,
+        language=body.language or "en",
+        research_id=body.research_id,
+    )
+
+
+class ScriptTranslateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: str = Field(min_length=2, max_length=8)
+
+
+@router.post("/script-studio/scripts/{script_id}/translate", status_code=201)
+def translate_script_draft(
+    script_id: str, body: ScriptTranslateIn, principal=Depends(post_guard)
+):
+    """Item 6: translate a draft into a NEW draft in the target
+    language; the original is kept unchanged."""
+    return _billed_script_call(
+        "translate",
+        script_studio.translate_draft,
+        principal.user_id,
+        script_id,
+        language=body.language,
     )
 
 

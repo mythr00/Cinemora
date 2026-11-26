@@ -600,6 +600,26 @@ def users(client):
     suffix = uuid.uuid4().hex[:8]
     a = _register(client, f"p9-a-{suffix}@example.com")
     b = _register(client, f"p9-b-{suffix}@example.com")
+    # Item 8: run submission reserves real billing, so fixture
+    # accounts carry purchased credits — the configuration gate
+    # under test is exercised under the enforced billing rule.
+    from services.billing import credits as credits_service
+
+    db = SessionLocal()
+    try:
+        for account in (a, b):
+            credits_service.grant(
+                db,
+                account["user"]["id"],
+                "purchased",
+                5000,
+                entry_type="purchase",
+                idempotency_key=f"p9-grant-{account['user']['id']}",
+                source="test_fixture",
+            )
+        db.commit()
+    finally:
+        db.close()
     return a, b
 
 

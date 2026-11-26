@@ -51,6 +51,8 @@ SCRIPT_OPERATION_CREDITS = {
     "tighten": 4,
     "analysis": 4,
     "fact_check": 4,
+    "translate": 8,
+    "channel_research": 6,
 }
 THUMBNAIL_OPERATION_CREDITS = {
     "headlines": 2,

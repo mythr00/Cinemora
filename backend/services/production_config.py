@@ -440,7 +440,8 @@ def clean_config(raw) -> dict:
     config["music"] = cleaned_music
 
     narration = _section(
-        raw, "narration", {"source", "voice_id", "voice_recording"}
+        raw, "narration",
+        {"source", "voice_id", "voice_recording", "language"},
     )
     source = narration.get("source", "ai")
     if source == "uploaded_voice":
@@ -452,7 +453,24 @@ def clean_config(raw) -> dict:
             "narration. Upload a recording to turn it into the "
             "script instead (voice-to-documentary).",
         )
+    # Item 6: the production language, chosen before generation
+    # and authoritative. Unknown codes refuse here; known codes
+    # without narration support clean fine and are refused at
+    # validate_config / run submission with the honest reason —
+    # never silently replaced with English.
+    from services import languages as languages_service
+
+    language = str(narration.get("language") or "en").strip().lower()
+    if not languages_service.is_known(language):
+        _refuse(
+            "language_unknown",
+            f"narration.language {language!r} is not a language "
+            "Cinemora supports. Supported languages: "
+            + ", ".join(sorted(languages_service.LANGUAGE_NAMES))
+            + ".",
+        )
     cleaned_narration = {
+        "language": language,
         "source": _enum("narration", "source", source, NARRATION_SOURCES),
         "voice_id": (
             str(narration["voice_id"]).strip()
@@ -750,6 +768,7 @@ def flat_options(config) -> dict:
     narration = config["narration"]
     if narration.get("voice_id"):
         flat["voice_id"] = narration["voice_id"]
+    flat["language"] = narration.get("language") or "en"
     flat["captions"] = config["captions"]["mode"]
     flat["caption_sync"] = config["captions"]["sync"]
     return flat
@@ -889,6 +908,20 @@ def validate_config(config) -> dict:
     warnings = []
 
     narration = config["narration"]
+    # Item 6: a language with no installed narration voice must
+    # stop the run BEFORE charging, with the honest reason.
+    from services import languages as languages_service
+
+    block_reason = languages_service.production_block_reason(
+        narration.get("language")
+    )
+    if block_reason:
+        errors.append(
+            {
+                "code": "language_narration_unsupported",
+                "message": block_reason,
+            }
+        )
     if narration.get("voice_id"):
         from services import narration as narration_service
 
@@ -1018,6 +1051,27 @@ def resolve_run_options(project, merged_options) -> dict:
     the document and the live system."""
     raw = (merged_options or {}).get(CONFIG_KEY)
     if not isinstance(raw, dict):
+        # Item 6: even without a configuration document, a stored
+        # flat language the narration catalogue cannot honour
+        # refuses the run before anything is queued or charged.
+        from services import languages as languages_service
+
+        flat_language = (merged_options or {}).get("language")
+        if flat_language is not None:
+            if not languages_service.is_known(flat_language):
+                raise ConfigError(
+                    422,
+                    "language_unknown",
+                    f"Language {flat_language!r} is not a language "
+                    "Cinemora supports.",
+                )
+            reason = languages_service.production_block_reason(
+                flat_language
+            )
+            if reason:
+                raise ConfigError(
+                    422, "language_narration_unsupported", reason
+                )
         return merged_options
     config = clean_config(raw)
     validation = validate_config(config)

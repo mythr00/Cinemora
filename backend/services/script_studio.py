@@ -61,7 +61,12 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from services import languages as languages_service
 from services import llm_provider, media_paths, script_analyzer, script_facts
+
+
+def language_name(code) -> str:
+    return languages_service.name_of(code)
 from services.atomic_write import write_json_atomic
 
 STORE_FILENAME = "script_studio.json"
@@ -286,6 +291,7 @@ def _public_draft(draft: dict, *, detail: bool = False) -> dict:
         "id": draft.get("id"),
         "title": draft.get("title"),
         "video_title": draft.get("video_title"),
+        "language": draft.get("language") or "en",
         "category": draft.get("category"),
         "target_minutes": draft.get("target_minutes"),
         "project_id": draft.get("project_id"),
@@ -305,6 +311,7 @@ def _public_draft(draft: dict, *, detail: bool = False) -> dict:
             sections.append(entry)
         view["sections"] = sections
         view["generation"] = draft.get("generation")
+        view["translated_from"] = draft.get("translated_from")
         view["script_text"] = assemble_script(draft)
         view["analysis"] = draft.get("analysis")
         view["fact_check"] = draft.get("fact_check")
@@ -359,7 +366,7 @@ def _clean_target(value):
 
 
 def create_draft(user_id, *, title=None, category=None, target_minutes=None,
-                 sections=None, video_title=None) -> dict:
+                 sections=None, video_title=None, language=None) -> dict:
     store = load_store(user_id)
     draft = {
         "id": _new_id("script"),
@@ -368,6 +375,11 @@ def create_draft(user_id, *, title=None, category=None, target_minutes=None,
         # working title/topic, editable, carried into production.
         "video_title": (
             str(video_title).strip()[:300] if video_title else None
+        ),
+        # Item 6: the script's language (narration text language),
+        # chosen before generation; carried into production.
+        "language": (
+            str(language).strip().lower() if language else "en"
         ),
         "category": (str(category).strip() if category else "") or DEFAULT_CATEGORY,
         "target_minutes": _clean_target(target_minutes),
@@ -575,7 +587,7 @@ _WRITER_SYSTEM = (
 
 
 def _outline_prompt(topic: str, angle: str, target_minutes: float,
-                    category: str) -> str:
+                    category: str, language: str = "en") -> str:
     target_words = int(round(target_minutes * WORDS_PER_MINUTE))
     return (
         f"Topic: {topic}\n"
@@ -584,7 +596,13 @@ def _outline_prompt(topic: str, angle: str, target_minutes: float,
         f"Target runtime: {target_minutes:g} minutes "
         f"(about {target_words} words of narration at "
         f"{WORDS_PER_MINUTE} words per minute).\n\n"
-        "Design the structure of an ORIGINAL documentary script on "
+        + (
+            f"Language: write every heading and intent in "
+            f"{language_name(language)}.\n\n"
+            if language != "en"
+            else ""
+        )
+        + "Design the structure of an ORIGINAL documentary script on "
         "this topic: an opening hook section, the story sections in "
         "order, and a closing section. Give each section a short "
         "heading, a one-sentence intent (what it must establish), "
@@ -596,19 +614,28 @@ def _outline_prompt(topic: str, angle: str, target_minutes: float,
 
 
 def _section_prompt(topic: str, heading: str, intent: str,
-                    word_budget: int, position: str) -> str:
+                    word_budget: int, position: str,
+                    language: str = "en") -> str:
+    language_line = (
+        f"Write the narration in {language_name(language)}.\n"
+        if language != "en"
+        else ""
+    )
     return (
         f"Documentary topic: {topic}\n"
         f"Section ({position}): {heading}\n"
         f"What this section must establish: {intent}\n"
-        f"Write about {word_budget} words of narration for this "
+        + language_line
+        + f"Write about {word_budget} words of narration for this "
         "section only. Plain prose paragraphs, nothing else. "
         + SCRIPT_RULES_TEXT
     )
 
 
 def generate_draft(user_id, *, topic: str, angle: str = "",
-                   category: str = "", target_minutes=None) -> dict:
+                   category: str = "", target_minutes=None,
+                   language: str = "en",
+                   research_id: str | None = None) -> dict:
     """Draft-from-brief (audit doc 02 §3 steps 4-5): outline via
     llm_json, then one llm_text call per section under its recorded
     word budget. The result is a NEW draft — generation never
@@ -616,6 +643,18 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
     topic = str(topic or "").strip()
     if not topic:
         raise ScriptError(422, "topic_required", "A topic or brief is required.")
+    # Item 6: the script language is chosen before generation.
+    # Unknown languages refuse; every known language can be
+    # WRITTEN (narration support is a separate, production-side
+    # fact enforced at run submission).
+    language = str(language or "en").strip().lower()
+    if not languages_service.is_known(language):
+        raise ScriptError(
+            422,
+            "language_unknown",
+            f"Language {language!r} is not supported for script "
+            "generation.",
+        )
     minutes = _clean_target(target_minutes) or 10.0
     if minutes < MIN_TARGET_MINUTES or minutes > MAX_TARGET_MINUTES:
         raise ScriptError(
@@ -630,7 +669,10 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
         "You design documentary script structures. Techniques and "
         "structure only — you never copy another creator's script "
         "or distinctive expression.",
-        _outline_prompt(topic, str(angle or "").strip(), minutes, category),
+        _outline_prompt(
+            topic, str(angle or "").strip(), minutes, category,
+            language,
+        ),
         max_tokens=3000,
         usage_context={
             "user_id": user_id,
@@ -681,7 +723,7 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
             llm_provider.complete_text,
             _WRITER_SYSTEM,
             _section_prompt(topic, item["heading"], item["intent"],
-                            item["word_budget"], position),
+                            item["word_budget"], position, language),
             max_tokens=8000,
             usage_context={
                 "user_id": user_id,
@@ -701,10 +743,16 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
         category=category,
         target_minutes=minutes,
         sections=sections,
+        language=language,
     )
     generation = {
         "topic": topic,
         "angle": str(angle or "").strip(),
+        "language": language,
+        # Channel research: the research record this script was
+        # developed from, so its references stay attached to the
+        # draft (and visible beside it) permanently.
+        "research_id": research_id,
         "outline": plan,
         "basis": "llm_generated_from_user_brief",
         "at": _now_iso(),
@@ -984,6 +1032,103 @@ def run_fact_check(user_id, script_id: str) -> dict:
 # ---------------------------------------------------------------------
 
 
+def translate_draft(user_id, script_id: str, *, language: str) -> dict:
+    """Translate a draft into another language as a NEW draft
+    (item 6): the original is kept unchanged beside the
+    translation, each labelled with its own language — the same
+    honesty rule the Localization Studio follows. Translation is
+    per section through the provider, and a section whose
+    "translation" comes back byte-identical to the source is
+    refused rather than passed off as translated."""
+    store = load_store(user_id)
+    draft = _find_draft(store, script_id)
+    source_language = str(draft.get("language") or "en").lower()
+    target = str(language or "").strip().lower()
+    if not languages_service.is_known(target):
+        raise ScriptError(
+            422, "language_unknown",
+            f"Language {target!r} is not supported for translation.",
+        )
+    if target == source_language:
+        raise ScriptError(
+            422, "same_language",
+            "The draft is already in that language.",
+        )
+    sections = draft.get("sections") or []
+    if not any(str(sec.get("body") or "").strip() for sec in sections):
+        raise ScriptError(
+            422, "script_empty",
+            "Write some script text before translating it.",
+        )
+    _require_ai()
+    translated_sections = []
+    for section in sections:
+        body = str(section.get("body") or "")
+        heading = str(section.get("heading") or "")
+        if not body.strip():
+            translated_sections.append(
+                {"heading": heading, "body": ""}
+            )
+            continue
+        result = _ai_call(
+            llm_provider.complete_json,
+            "You translate documentary narration faithfully. You "
+            "never summarise, add or omit content.",
+            (
+                f"Translate this documentary script section from "
+                f"{language_name(source_language)} to "
+                f"{language_name(target)}. Keep every fact, name, "
+                f"date and figure exactly. Return JSON: "
+                f'{{"heading": str, "body": str}}\n\n'
+                f"Heading: {heading}\n\nBody:\n{body}"
+            ),
+            max_tokens=8000,
+            usage_context={
+                "user_id": user_id,
+                "context": "script_studio_translate",
+            },
+        )
+        new_body = str((result or {}).get("body") or "").strip()
+        new_heading = str((result or {}).get("heading") or "").strip()
+        if not new_body:
+            raise ScriptError(
+                502, "script_ai_failed",
+                "The translation came back empty; no draft was created.",
+            )
+        if new_body == body.strip():
+            raise ScriptError(
+                502, "script_ai_failed",
+                "The translation was identical to the source text; "
+                "no draft was created.",
+            )
+        clean_body, _removed = sanitize_narration_body(new_body)
+        translated_sections.append(
+            {"heading": new_heading or heading, "body": clean_body}
+        )
+    view = create_draft(
+        user_id,
+        title=(
+            f"{draft.get('title') or 'Untitled script'} — "
+            f"{language_name(target)} script"
+        )[:300],
+        category=draft.get("category"),
+        target_minutes=draft.get("target_minutes"),
+        sections=translated_sections,
+        video_title=draft.get("video_title"),
+        language=target,
+    )
+    store = load_store(user_id)
+    record = _find_draft(store, view["id"])
+    record["translated_from"] = {
+        "script_id": script_id,
+        "source_language": source_language,
+        "at": _now_iso(),
+    }
+    save_store(user_id, store)
+    view["translated_from"] = record["translated_from"]
+    return view
+
+
 def send_to_production(user_id, script_id: str) -> dict:
     """Create a project from the draft through the normal creation
     path's own steps: plan script-length enforcement, the Project
@@ -1018,7 +1163,14 @@ def send_to_production(user_id, script_id: str) -> dict:
             ),
             script=text,
             category=draft.get("category") or DEFAULT_CATEGORY,
-            options=None,
+            # Item 6: the draft's language becomes the project's
+            # authoritative language (flat key; the run gate
+            # enforces narration support before charging).
+            options=(
+                {"language": draft["language"]}
+                if draft.get("language")
+                else None
+            ),
             status="created",
         )
         db.add(project)
