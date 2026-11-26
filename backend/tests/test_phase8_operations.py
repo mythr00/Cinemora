@@ -110,26 +110,54 @@ def test_insufficient_for_operation_rejects(db):
 
 
 def test_legacy_user_unmetered(db):
+    """Updated for Product Improvements item 8 (2026-11-26): the
+    legacy-plan unmetered posture was the same bypass class as
+    free video generation. An ordinary legacy-plan account now
+    pays the operation's listed credit price (rejected at zero
+    balance); only staff accounts stay unmetered."""
     from scripts.seed_founder import ensure_plans
 
     ensure_plans(db)
     plan = db.query(models.Plan).filter_by(name="pro").one()
-    user = models.User(
-        id=str(uuid.uuid4()),
-        email=f"{uuid.uuid4()}@example.invalid",
-        password_hash="x",
-    )
-    db.add(user)
-    db.flush()
-    db.add(
-        models.UserSubscription(
-            id=str(uuid.uuid4()), user_id=user.id, plan_id=plan.id,
-            status="active",
+
+    def _legacy_user(role="user"):
+        user = models.User(
+            id=str(uuid.uuid4()),
+            email=f"{uuid.uuid4()}@example.invalid",
+            password_hash="x",
+            role=role,
         )
+        db.add(user)
+        db.flush()
+        db.add(
+            models.UserSubscription(
+                id=str(uuid.uuid4()), user_id=user.id,
+                plan_id=plan.id, status="active",
+            )
+        )
+        db.commit()
+        return user
+
+    # Zero credits: rejected before any work runs.
+    broke = _legacy_user()
+    with pytest.raises(BillingRejected):
+        operations.begin_operation(broke.id, "scripts", "draft")
+
+    # Funded: charged the listed price, receipt refunds cleanly.
+    funded = _legacy_user()
+    credits.grant(
+        db, funded.id, "purchased", 100, entry_type="purchase",
+        idempotency_key=f"legacy-op-{funded.id}", source="test",
     )
     db.commit()
+    receipt = operations.begin_operation(funded.id, "scripts", "draft")
+    assert receipt is not None and receipt["via"] == "credits"
+    assert receipt["credits_charged"] > 0
+
+    # Staff on the same legacy plan: unmetered, as before.
+    staff = _legacy_user(role="super_admin")
     assert operations.begin_operation(
-        user.id, "scripts", "draft"
+        staff.id, "scripts", "draft"
     ) is None
 
 

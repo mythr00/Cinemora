@@ -130,11 +130,35 @@ def _bearer(user):
     return {"Authorization": f"Bearer {user['session_token']}"}
 
 
+def _fund(user_json, amount=5000):
+    """Item 8 (operations extension): priced AI operations charge
+    ordinary accounts, so fixture users carry purchased credits —
+    the operations under test run under the enforced rule."""
+    from services.billing import credits as credits_service
+
+    db = SessionLocal()
+    try:
+        credits_service.grant(
+            db,
+            user_json["user"]["id"],
+            "purchased",
+            amount,
+            entry_type="purchase",
+            idempotency_key=f"ss-grant-{user_json['user']['id']}",
+            source="test_fixture",
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
 @pytest.fixture()
 def users(client):
     suffix = uuid.uuid4().hex[:8]
     a = _register(client, f"ss-a-{suffix}@example.com")
     b = _register(client, f"ss-b-{suffix}@example.com")
+    _fund(a)
+    _fund(b)
     return a, b
 
 
@@ -432,7 +456,10 @@ def test_ai_draft_generation_is_sectioned_and_creates_new_draft(
     )
     assert response.status_code == 201, response.text
     draft = response.json()
-    assert calls == {"json": 1, "text": 2}
+    # Item 3: generation now makes one further text call — the
+    # automatic video title — after the section calls.
+    assert calls == {"json": 1, "text": 3}
+    assert draft["video_title"] == "Generated narration for call 3."
     assert [s["heading"] for s in draft["sections"]] == ["Hook", "Fallout"]
     assert draft["sections"][0]["body"] == "Generated narration for call 1."
     assert draft["generation"]["outline"][0]["word_budget"] == 700

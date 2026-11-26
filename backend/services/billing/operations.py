@@ -6,8 +6,11 @@ begin/refund contract with the routes:
 
 - begin_operation consumes one allowance unit when the user's
   current period has one left; otherwise it debits the
-  operation's credit price from the wallet. Legacy-plan users
-  are not metered (receipt None).
+  operation's credit price from the wallet. Item 8 extension
+  (2026-11-26): non-metered (legacy/no-plan) ORDINARY accounts
+  are charged the same listed credit price — the old unmetered
+  posture was the same bypass class as free video generation.
+  Only staff/operator accounts are unmetered (receipt None).
 - The route runs the operation; on ANY failure it calls
   refund_operation, which returns the allowance unit or refunds
   the debited credits to their original buckets. A user is never
@@ -55,7 +58,18 @@ def begin_operation(user_id: str, kind: str, operation: str):
     try:
         plan = plans_service.resolve_effective_plan(db, user_id)
         if plan is None or plan.billing_mode != "metered":
-            return None
+            from services.billing import generation_billing
+
+            user_row = db.get(models.User, user_id)
+            if user_row is None or (
+                (user_row.role or "")
+                in generation_billing.STAFF_ROLES
+            ):
+                return None
+            return _charge_operation_credits(
+                db, user_id, kind, operation, int(table[operation]),
+                allowance_exhausted=False,
+            )
         period = periods_service.ensure_current_period(db, user_id)
         if period is not None and periods_service.consume_allowance(
             db, period, kind
@@ -68,37 +82,57 @@ def begin_operation(user_id: str, kind: str, operation: str):
                 "period_id": period.id,
                 "credits_charged": 0,
             }
-        price = int(table[operation])
-        key = f"op:{uuid.uuid4().hex}"
-        try:
-            split = credits.spend(
-                db,
-                user_id,
-                price,
-                idempotency_key=key,
-                reason=f"{kind} operation: {operation}",
-                details={"operation": operation, "kind": kind},
-            )
-        except credits.InsufficientCreditsError as exc:
-            db.rollback()
-            raise BillingRejected(
-                "insufficient_credits",
-                f"This {kind[:-1]} operation needs {exc.needed} "
-                f"credits but only {exc.available} are available, "
-                "and your included allowance for this period is "
-                "used up.",
-            ) from exc
-        db.commit()
-        return {
-            "via": "credits",
-            "kind": kind,
-            "operation": operation,
-            "split": split,
-            "key": key,
-            "credits_charged": price,
-        }
+        return _charge_operation_credits(
+            db, user_id, kind, operation, int(table[operation]),
+            allowance_exhausted=True,
+        )
     finally:
         db.close()
+
+
+def _charge_operation_credits(db, user_id, kind, operation, price,
+                              *, allowance_exhausted: bool):
+    """Debit one operation's listed credit price, or raise the
+    customer-facing BillingRejected. Shared by the metered path
+    (allowance used up) and the non-metered path (item 8: an
+    ordinary account pays the price or does not run)."""
+    key = f"op:{uuid.uuid4().hex}"
+    try:
+        split = credits.spend(
+            db,
+            user_id,
+            price,
+            idempotency_key=key,
+            reason=f"{kind} operation: {operation}",
+            details={"operation": operation, "kind": kind},
+        )
+    except credits.InsufficientCreditsError as exc:
+        db.rollback()
+        message = (
+            f"This {kind[:-1]} operation needs {exc.needed} "
+            f"credits but only {exc.available} are available."
+        )
+        if allowance_exhausted:
+            message += (
+                " Your included allowance for this period is "
+                "used up."
+            )
+        message += (
+            " Subscribe to a plan or buy a top-up credit pack "
+            "to continue."
+        )
+        raise BillingRejected(
+            "insufficient_credits", message
+        ) from exc
+    db.commit()
+    return {
+        "via": "credits",
+        "kind": kind,
+        "operation": operation,
+        "split": split,
+        "key": key,
+        "credits_charged": price,
+    }
 
 
 def refund_operation(user_id: str, receipt) -> None:

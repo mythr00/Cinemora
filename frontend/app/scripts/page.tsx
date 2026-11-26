@@ -62,6 +62,10 @@ function toSectionDrafts(draft: ScriptDraft): SectionDraft[] {
   }));
 }
 
+/** Duration presets (founder directive): the standard lengths
+ * offered before generation; Custom accepts any 5–60 value. */
+const DURATION_PRESETS = [5, 10, 15, 20, 25, 30, 40, 45, 60];
+
 export default function ScriptStudioPage() {
   const [drafts, setDrafts] = useState<ScriptDraft[]>([]);
   const [draft, setDraft] = useState<ScriptDraft | null>(null);
@@ -143,6 +147,8 @@ export default function ScriptStudioPage() {
       if (!draft) return;
       const saved = await updateScriptDraft(draft.id, {
         title: draft.title,
+        video_title: draft.video_title || undefined,
+        clear_video_title: !draft.video_title,
         category: draft.category,
         target_minutes: draft.target_minutes,
         sections,
@@ -361,16 +367,38 @@ export default function ScriptStudioPage() {
                     placeholder="engineering"
                   />
                 </label>
-                <label className="script-field">
-                  Target minutes (5–60)
+                <div className="script-field">
+                  <span>Duration</span>
+                  <div className="script-duration-presets" role="group" aria-label="Duration presets">
+                    {DURATION_PRESETS.map((minutes) => (
+                      <button
+                        key={minutes}
+                        type="button"
+                        className={
+                          brief.target === String(minutes)
+                            ? "script-duration-chip is-active"
+                            : "script-duration-chip"
+                        }
+                        onClick={() => setBrief({ ...brief, target: String(minutes) })}
+                      >
+                        {minutes} min
+                      </button>
+                    ))}
+                  </div>
                   <input
                     type="number"
                     min={5}
                     max={60}
-                    value={brief.target}
+                    aria-label="Custom duration in minutes"
+                    placeholder="Custom minutes (5–60)"
+                    value={
+                      DURATION_PRESETS.includes(Number(brief.target))
+                        ? ""
+                        : brief.target
+                    }
                     onChange={(e) => setBrief({ ...brief, target: e.target.value })}
                   />
-                </label>
+                </div>
                 <button
                   type="button"
                   className="button button-primary"
@@ -411,11 +439,26 @@ export default function ScriptStudioPage() {
                   <h2><FileText size={16} /> The draft</h2>
                   <div className="script-form script-form-stack">
                     <label className="script-field">
-                      Title
+                      Working title
                       <input
                         value={draft.title}
                         onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                       />
+                    </label>
+                    <label className="script-field">
+                      Video title
+                      <input
+                        value={draft.video_title ?? ""}
+                        placeholder="Generated with the script — edit freely"
+                        onChange={(e) =>
+                          setDraft({ ...draft, video_title: e.target.value })
+                        }
+                      />
+                      <span className="script-note">
+                        The documentary&apos;s public title. It is saved with the
+                        draft and becomes the production&apos;s title — it is
+                        never part of the narration.
+                      </span>
                     </label>
                     <div className="script-form">
                       <label className="script-field">

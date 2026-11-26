@@ -168,6 +168,91 @@ def _count_words(text: str) -> int:
     return len(re.findall(r"\S+", text or ""))
 
 
+# ---------------------------------------------------------------------
+# Permanent script rules (founder directive 2026-11-26): a script
+# is natural narration ONLY. It must never contain timestamps or
+# timers ([00:30], 00:30 markers), HOOK / INTRODUCTION /
+# CONCLUSION headings, chapter headings or numbers, section
+# labels, or production instructions. Word count and estimated
+# duration are metadata shown separately — never script content.
+# Prompts state the rules; this sanitizer ENFORCES them on every
+# AI-produced body before it is stored or proposed, so a model
+# slip cannot put production furniture into narration.
+# ---------------------------------------------------------------------
+
+_TIMESTAMP_LINE = re.compile(
+    r"^\[?\(?\d{1,2}:\d{2}(?::\d{2})?\)?\]?$"
+)
+_TIMESTAMP_INLINE = re.compile(r"\[\d{1,2}:\d{2}(?::\d{2})?\]")
+_LABEL_LINE = re.compile(
+    r"^(HOOK|INTRO|INTRODUCTION|OUTRO|CONCLUSION|EPILOGUE|PROLOGUE)"
+    r"\s*[:.\-—]?\s*$",
+    re.IGNORECASE,
+)
+_NUMBERED_HEADING_LINE = re.compile(
+    r"^(CHAPTER|SECTION|PART|SCENE|ACT)\s+\d+\s*[:.\-—]?\s*.{0,80}$",
+    re.IGNORECASE,
+)
+_BRACKETED_LINE = re.compile(r"^(\[.+\]|\(.+\))$", re.DOTALL)
+_SPEAKER_PREFIX = re.compile(
+    r"^(NARRATOR|VOICEOVER|V\.O\.|VO)\s*:\s*", re.IGNORECASE
+)
+
+SCRIPT_RULES_TEXT = (
+    "The script is natural narration only. Never include "
+    "timestamps or timers (no [00:30], no 00:30 markers), no "
+    "HOOK, INTRODUCTION or CONCLUSION headings, no chapter "
+    "headings or numbers, no section labels, and no production "
+    "instructions or stage directions. Word counts and durations "
+    "are metadata, never written into the narration."
+)
+
+
+def sanitize_narration_body(text: str) -> tuple[str, int]:
+    """Remove production furniture from an AI-produced narration
+    body. Returns (clean_text, removed_count). Conservative by
+    design: only unambiguous furniture is removed — whole lines
+    that are nothing but a timestamp, a structural label or a
+    numbered chapter heading; whole lines wrapped in brackets
+    (directions); markdown heading lines; inline [mm:ss] markers;
+    and NARRATOR:-style speaker prefixes (the spoken text after
+    the prefix is kept). Ordinary prose is never altered."""
+    if not text:
+        return "", 0
+    removed = 0
+    kept: list[str] = []
+    for raw_line in str(text).splitlines():
+        line = raw_line.strip()
+        if line:
+            if _TIMESTAMP_LINE.match(line):
+                removed += 1
+                continue
+            if _LABEL_LINE.match(line):
+                removed += 1
+                continue
+            if _NUMBERED_HEADING_LINE.match(line):
+                removed += 1
+                continue
+            if line.startswith("#"):
+                removed += 1
+                continue
+            if _BRACKETED_LINE.match(line) and len(line) <= 200:
+                removed += 1
+                continue
+            line = _SPEAKER_PREFIX.sub("", line)
+            inline_hits = len(_TIMESTAMP_INLINE.findall(line))
+            if inline_hits:
+                removed += inline_hits
+                line = _TIMESTAMP_INLINE.sub("", line).strip()
+                line = re.sub(r"\s{2,}", " ", line)
+            if not line:
+                continue
+        kept.append(line)
+    cleaned = "\n".join(kept)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned, removed
+
+
 def section_metrics(section: dict) -> dict:
     body = str(section.get("body") or "")
     words = _count_words(body)
@@ -200,6 +285,7 @@ def _public_draft(draft: dict, *, detail: bool = False) -> dict:
     view = {
         "id": draft.get("id"),
         "title": draft.get("title"),
+        "video_title": draft.get("video_title"),
         "category": draft.get("category"),
         "target_minutes": draft.get("target_minutes"),
         "project_id": draft.get("project_id"),
@@ -273,11 +359,16 @@ def _clean_target(value):
 
 
 def create_draft(user_id, *, title=None, category=None, target_minutes=None,
-                 sections=None) -> dict:
+                 sections=None, video_title=None) -> dict:
     store = load_store(user_id)
     draft = {
         "id": _new_id("script"),
         "title": (str(title).strip() if title else "") or "Untitled script",
+        # Item 3: the public video title — distinct from the
+        # working title/topic, editable, carried into production.
+        "video_title": (
+            str(video_title).strip()[:300] if video_title else None
+        ),
         "category": (str(category).strip() if category else "") or DEFAULT_CATEGORY,
         "target_minutes": _clean_target(target_minutes),
         "sections": _clean_sections(sections),
@@ -310,6 +401,7 @@ def _snapshot(draft: dict, source: str) -> dict:
         "at": _now_iso(),
         "source": source,
         "title": draft.get("title"),
+        "video_title": draft.get("video_title"),
         "category": draft.get("category"),
         "target_minutes": draft.get("target_minutes"),
         "sections": [
@@ -321,6 +413,7 @@ def _snapshot(draft: dict, source: str) -> dict:
 
 def update_draft(user_id, script_id: str, *, title=None, category=None,
                  target_minutes="__unset__", sections=None,
+                 video_title="__unset__",
                  source: str = "edit") -> dict:
     store = load_store(user_id)
     draft = _find_draft(store, script_id)
@@ -335,7 +428,10 @@ def update_draft(user_id, script_id: str, *, title=None, category=None,
     else:
         pending_sections = None
     meta_changed = (
-        (title is not None and str(title).strip() != (draft.get("title") or ""))
+        (video_title != "__unset__"
+         and (str(video_title).strip() if video_title else None)
+         != draft.get("video_title"))
+        or (title is not None and str(title).strip() != (draft.get("title") or ""))
         or (category is not None and str(category).strip() != (draft.get("category") or ""))
         or (
             target_minutes != "__unset__"
@@ -356,6 +452,10 @@ def update_draft(user_id, script_id: str, *, title=None, category=None,
         # stale results pose as current.
         draft["analysis"] = None
         draft["fact_check"] = None
+    if video_title != "__unset__":
+        draft["video_title"] = (
+            str(video_title).strip()[:300] if video_title else None
+        )
     if title is not None:
         draft["title"] = str(title).strip() or draft["title"]
     if category is not None:
@@ -405,6 +505,7 @@ def restore_revision(user_id, script_id: str, revision_id: str) -> dict:
     revisions.append(_snapshot(draft, "pre_restore"))
     del revisions[:-MAX_REVISIONS]
     draft["title"] = target.get("title") or draft["title"]
+    draft["video_title"] = target.get("video_title")
     draft["category"] = target.get("category") or draft["category"]
     draft["target_minutes"] = target.get("target_minutes")
     draft["sections"] = _clean_sections(target.get("sections") or [])
@@ -469,7 +570,7 @@ _WRITER_SYSTEM = (
     "documentary channel. Write original narration prose: concrete, "
     "factual in tone, no filler, no generic AI phrasing, no "
     "self-reference, no markdown, no stage directions. Write only "
-    "the narration text you are asked for."
+    "the narration text you are asked for. " + SCRIPT_RULES_TEXT
 )
 
 
@@ -501,7 +602,8 @@ def _section_prompt(topic: str, heading: str, intent: str,
         f"Section ({position}): {heading}\n"
         f"What this section must establish: {intent}\n"
         f"Write about {word_budget} words of narration for this "
-        "section only. Plain prose paragraphs, nothing else."
+        "section only. Plain prose paragraphs, nothing else. "
+        + SCRIPT_RULES_TEXT
     )
 
 
@@ -567,6 +669,7 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
             "The AI provider returned an empty outline; no draft was created.",
         )
     sections = []
+    removed_total = 0
     total = len(plan)
     for index, item in enumerate(plan):
         position = (
@@ -585,8 +688,12 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
                 "context": "script_studio_draft",
             },
         )
+        clean_body, body_removed = sanitize_narration_body(
+            str(body or "")
+        )
+        removed_total += body_removed
         sections.append(
-            {"id": _new_id("sec"), "heading": item["heading"], "body": str(body or "").strip()}
+            {"id": _new_id("sec"), "heading": item["heading"], "body": clean_body}
         )
     view = create_draft(
         user_id,
@@ -601,13 +708,69 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
         "outline": plan,
         "basis": "llm_generated_from_user_brief",
         "at": _now_iso(),
+        "script_rules_sanitised": removed_total,
     }
     store = load_store(user_id)
     record = _find_draft(store, view["id"])
     record["generation"] = generation
+    # Item 3: every generated script automatically receives a
+    # compelling video title, distinct from the working topic.
+    # Title generation is best-effort: a title failure must never
+    # destroy a completed script — the draft then simply carries
+    # no video title until one is set.
+    video_title = _generate_video_title(
+        user_id, topic=topic, category=category, sections=sections
+    )
+    if video_title:
+        record["video_title"] = video_title
     save_store(user_id, store)
     view["generation"] = generation
+    view["video_title"] = record.get("video_title")
     return view
+
+
+def _generate_video_title(user_id, *, topic: str, category: str,
+                          sections: list[dict]) -> str | None:
+    """One AI call for the video title (item 3). The title is the
+    documentary's public name — compelling and specific, never a
+    restatement of the topic, never inside the narration. Returns
+    None on any failure or unusable answer."""
+    opening = ""
+    for section in sections:
+        if str(section.get("body") or "").strip():
+            opening = str(section["body"]).strip()[:600]
+            break
+    prompt = (
+        f"Documentary topic (working brief, NOT the title): {topic}\n"
+        f"Category: {category}\n"
+        f"Opening narration excerpt: {opening}\n\n"
+        "Write ONE compelling, specific title for this documentary "
+        "video — the title a viewer would see. It must be "
+        "interesting on its own, truthful to the subject, and "
+        "clearly different from the topic wording above. No "
+        "quotation marks, no clickbait deception, at most 100 "
+        "characters. Return only the title."
+    )
+    try:
+        raw = _ai_call(
+            llm_provider.complete_text,
+            "You write documentary video titles.",
+            prompt,
+            max_tokens=120,
+            usage_context={
+                "user_id": user_id,
+                "context": "script_studio_title",
+            },
+        )
+    except Exception:
+        return None
+    title = str(raw or "").strip().strip('"').strip()
+    title = title.splitlines()[0].strip() if title else ""
+    if not title or len(title) > 300:
+        return None
+    if title.lower() == str(topic or "").strip().lower():
+        return None
+    return title
 
 
 def expand_sections(user_id, script_id: str) -> dict:
@@ -649,11 +812,12 @@ def expand_sections(user_id, script_id: str) -> dict:
         body = _ai_call(
             llm_provider.complete_text, _WRITER_SYSTEM, prompt, max_tokens=8000
         )
+        clean_body, _removed = sanitize_narration_body(str(body or ""))
         proposed.append(
             {
                 "id": section.get("id"),
                 "heading": section.get("heading"),
-                "body": str(body or "").strip(),
+                "body": clean_body,
                 "word_budget": per_section,
             }
         )
@@ -689,14 +853,17 @@ def tighten_passage(user_id, script_id: str, *, section_id: str,
     tightened = _ai_call(
         llm_provider.complete_text, _WRITER_SYSTEM, prompt, max_tokens=8000
     )
+    clean_tightened, _removed = sanitize_narration_body(
+        str(tightened or "")
+    )
     return {
         "script_id": script_id,
         "proposal": {
             "section_id": section_id,
             "original": original,
-            "tightened": str(tightened or "").strip(),
+            "tightened": clean_tightened,
             "original_words": _count_words(original),
-            "tightened_words": _count_words(str(tightened or "")),
+            "tightened_words": _count_words(clean_tightened),
         },
         "basis": "llm_tighten_proposal",
     }
@@ -841,7 +1008,14 @@ def send_to_production(user_id, script_id: str) -> dict:
         project = Project(
             id=str(uuid.uuid4()),
             owner_id=user_id,
-            title=draft.get("title") or "Untitled script",
+            # Item 3: the production carries the video title (the
+            # documentary's public name) when one exists; the
+            # working title is only the fallback.
+            title=(
+                draft.get("video_title")
+                or draft.get("title")
+                or "Untitled script"
+            ),
             script=text,
             category=draft.get("category") or DEFAULT_CATEGORY,
             options=None,

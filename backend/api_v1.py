@@ -3592,6 +3592,7 @@ class ScriptDraftIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, max_length=300)
+    video_title: str | None = Field(default=None, max_length=300)
     category: str | None = Field(default=None, max_length=120)
     target_minutes: float | None = None
     sections: list[ScriptSectionIn] | None = None
@@ -3601,6 +3602,8 @@ class ScriptDraftUpdateIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, max_length=300)
+    video_title: str | None = Field(default=None, max_length=300)
+    clear_video_title: bool = False
     category: str | None = Field(default=None, max_length=120)
     target_minutes: float | None = None
     clear_target: bool = False
@@ -3646,6 +3649,7 @@ def create_script_draft(body: ScriptDraftIn, principal=Depends(post_guard)):
         script_studio.create_draft,
         principal.user_id,
         title=body.title,
+        video_title=body.video_title,
         category=body.category,
         target_minutes=body.target_minutes,
         sections=_sections_payload(body.sections),
@@ -3663,11 +3667,18 @@ def update_script_draft(
 ):
     target = None if body.clear_target else body.target_minutes
     target_arg = target if (body.clear_target or body.target_minutes is not None) else "__unset__"
+    video_title_arg = (
+        None if body.clear_video_title
+        else body.video_title
+        if body.video_title is not None
+        else "__unset__"
+    )
     return _script_call(
         script_studio.update_draft,
         principal.user_id,
         script_id,
         title=body.title,
+        video_title=video_title_arg,
         category=body.category,
         target_minutes=target_arg,
         sections=_sections_payload(body.sections),

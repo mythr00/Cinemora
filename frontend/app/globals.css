@@ -2984,3 +2984,14 @@ body { min-height: 100dvh; }
   .chart-row { grid-template-columns: 104px 1fr 58px; }
   .chart-row strong { font-size: 17px; }
 }
+
+/* Item 3: duration preset chips in Script Generation. */
+.script-duration-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.script-duration-chip {
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink); border-radius: 999px; padding: 4px 10px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.script-duration-chip.is-active {
+  background: var(--ink); color: var(--surface); border-color: var(--ink);
+}

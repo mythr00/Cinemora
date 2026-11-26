@@ -4419,6 +4419,10 @@ export type ScriptFactCheck = {
 export type ScriptDraft = {
   id: string;
   title: string;
+  /** Item 3: the documentary's public video title — generated
+   * automatically with the script, editable, carried into the
+   * production project. Null until one exists. */
+  video_title: string | null;
   category: string;
   target_minutes: number | null;
   project_id: string | null;
@@ -4477,6 +4481,7 @@ export function listScriptDrafts(signal?: AbortSignal) {
 
 export function createScriptDraft(body: {
   title?: string;
+  video_title?: string;
   category?: string;
   target_minutes?: number | null;
   sections?: { heading?: string; body?: string }[];
@@ -4495,6 +4500,8 @@ export function updateScriptDraft(
   scriptId: string,
   body: {
     title?: string;
+    video_title?: string | null;
+    clear_video_title?: boolean;
     category?: string;
     target_minutes?: number | null;
     clear_target?: boolean;
