@@ -5142,6 +5142,20 @@ def remove_project_member(
         db.close()
 
 
+@router.get("/team/overview")
+def get_team_overview(principal=Depends(require_user)):
+    """Item 4: the workspace-level Team Space aggregation —
+    every project the account owns or belongs to, its people,
+    and the account's pending invitations. Available from the
+    moment an account exists; no production or completed video
+    is involved anywhere in team membership."""
+    db = SessionLocal()
+    try:
+        return collaboration.team_overview(db, principal.user_id)
+    finally:
+        db.close()
+
+
 @router.get("/invitations")
 def list_invitations(principal=Depends(require_user)):
     db = SessionLocal()

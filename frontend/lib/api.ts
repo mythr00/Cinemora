@@ -4275,6 +4275,36 @@ export async function removeProjectMember(projectId: string, userId: string) {
   });
 }
 
+/** Item 4: the workspace-level Team Space aggregation. */
+export type TeamProject = {
+  project_id: string;
+  project_title?: string | null;
+  project_category?: string | null;
+  your_role?: string | null;
+  owner: MemberUser | null;
+  members: ProjectMemberEntry[];
+  invitations: ProjectMemberEntry[];
+};
+
+export type TeamPerson = {
+  user: MemberUser;
+  projects: {
+    project_id: string;
+    project_title?: string | null;
+    role: string;
+  }[];
+};
+
+export type TeamOverview = {
+  projects: TeamProject[];
+  people: TeamPerson[];
+  invitations_in: PendingInvitation[];
+};
+
+export function getTeamOverview(signal?: AbortSignal) {
+  return apiRequest<TeamOverview>("/api/v1/team/overview", { signal });
+}
+
 export function listInvitations() {
   return apiRequest<{ invitations: PendingInvitation[] }>("/api/v1/invitations");
 }

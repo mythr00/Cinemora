@@ -343,6 +343,87 @@ def pending_invitations(db, user_id: str) -> list[dict]:
     return out
 
 
+def team_overview(db, user_id: str) -> dict:
+    """Workspace-level Team Space aggregation (Product
+    Improvements item 4): the account's whole collaboration
+    graph in one view — every project it owns or is an accepted
+    member of, with that project's people; a people directory
+    across those projects; and the invitations addressed to the
+    account. Membership itself stays per-project (the model the
+    rest of the system enforces); this is the workspace-level
+    surface over it. Nothing here depends on any production or
+    completed video."""
+    from models import Project
+
+    user_id = str(user_id)
+    owned = (
+        db.query(Project)
+        .filter(Project.owner_id == user_id)
+        .order_by(Project.created_at.desc())
+        .all()
+    )
+    owned_ids = {project.id for project in owned}
+    shared = []
+    for project_id in shared_project_ids(db, user_id):
+        if project_id in owned_ids:
+            continue
+        project = db.get(Project, project_id)
+        if project is not None:
+            shared.append(project)
+
+    class _Principal:
+        def __init__(self, uid):
+            self.user_id = uid
+
+    principal = _Principal(user_id)
+    projects_out = []
+    people: dict[str, dict] = {}
+    for project, is_owner in (
+        [(p, True) for p in owned] + [(p, False) for p in shared]
+    ):
+        overview = members_overview(db, project)
+        entry = {
+            "project_id": project.id,
+            "project_title": project.title,
+            "project_category": project.category,
+            "your_role": (
+                ROLE_OWNER
+                if is_owner
+                else role_for(db, project, principal)
+            ),
+            "owner": overview["owner"],
+            "members": overview["members"],
+            # Outgoing pending invitations are the owner's to
+            # manage; members don't see the project's invite list.
+            "invitations": overview["invitations"] if is_owner else [],
+        }
+        projects_out.append(entry)
+        cast = []
+        if overview["owner"]:
+            cast.append((overview["owner"], ROLE_OWNER))
+        for member in overview["members"]:
+            cast.append((member.get("user"), member.get("role")))
+        for brief, role in cast:
+            if not brief or not brief.get("user_id"):
+                continue
+            person = people.setdefault(
+                brief["user_id"],
+                {"user": brief, "projects": []},
+            )
+            person["projects"].append(
+                {
+                    "project_id": project.id,
+                    "project_title": project.title,
+                    "role": role,
+                }
+            )
+    return {
+        "projects": projects_out,
+        "people": list(people.values()),
+        "invitations_in": pending_invitations(db, user_id),
+    }
+
+
 def members_overview(db, project) -> dict:
     """Owner + accepted members + pending invitations for the
     project's Team surface. History rows (declined/removed) are
