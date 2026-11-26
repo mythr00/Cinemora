@@ -97,7 +97,6 @@ jobs:
             -e DATABASE_URL=sqlite:////tmp/smoke.db \
             -e REDIS_URL=redis://localhost:6379/15 \
             -e BREWKEG_API_KEY=ci-dummy \
-            -e SERPER_API_KEY=ci-dummy \
             --entrypoint python \
             cinemora:ci-smoke \
             -c "import main; from services.frame_verification import _rapidocr_engine; engine = _rapidocr_engine(); assert engine is not None, 'OCR engine unavailable in image'; print('image smoke ok')"

@@ -49,12 +49,12 @@ def effective_settings() -> dict:
     groups = {
         "credentials": [
             _value("CINEMORA_API_TOKEN", secret=True),
-            _value("SERPER_API_KEY", secret=True),
             _value("BREWKEG_API_KEY", secret=True),
             _value("DATABASE_URL", secret=True),
             _value("REDIS_URL", secret=True),
         ],
         "providers": [
+            _value("SEARXNG_URL"),
             _value("BREWKEG_MODEL"),
             _value("CINEMORA_DISABLED_PROVIDERS"),
             _value("CINEMORA_FOUNDER_EMAIL"),

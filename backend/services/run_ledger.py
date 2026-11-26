@@ -2499,7 +2499,7 @@ _SECRET_PATTERNS = [
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),                 # GitHub classic PAT
     re.compile(r"AKIA[0-9A-Z]{16}"),                     # AWS access key id
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),   # PEM private key
-    re.compile(r"\b[0-9a-f]{40}\b"),                     # Serper-style hex key
+    re.compile(r"\b[0-9a-f]{40}\b"),                     # hex API-key shape
 ]
 
 _MANIFEST_REQUIRED_KEYS = (
@@ -2523,8 +2523,8 @@ def provider_snapshot():
     NAMES and whether their credential is configured (a boolean —
     never the credential itself)."""
     return {
-        "serper": {
-            "enabled": bool(os.getenv("SERPER_API_KEY")),
+        "searxng": {
+            "enabled": bool(os.getenv("SEARXNG_URL")),
             "role": "discovery (web / images / videos)",
         },
         "archive_org": {

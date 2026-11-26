@@ -167,9 +167,9 @@ def usage(days: int = 30, principal=Depends(admin_guard)):
     grouped by provider + model + day. Cost is null with
     pricing_status "not_configured": no price table exists, and
     no figure is invented (the Phase 8 cost engine will price
-    these events later). The search section exposes Serper's
-    in-process counters, labelled process-local — they are not
-    a platform-wide ledger."""
+    these events later). The search section exposes the search
+    provider's in-process counters, labelled process-local —
+    they are not a platform-wide ledger."""
     from services import provider_usage
 
     db = SessionLocal()

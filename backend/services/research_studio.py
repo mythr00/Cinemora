@@ -13,7 +13,7 @@ workspace OVER that engine, never a parallel store:
   persisted source library, citations, entity corrections, entity
   KB checks, user timeline events, fact-check runs and summaries.
 - SESSIONS run the existing machinery only: services.research
-  (query angles + Serper via search_provider) and kb_client for
+  (query angles + SearXNG via search_provider) and kb_client for
   the topic verdict. No second search stack.
 - The Case Bible surface READS case_bible.json exactly as recorded
   (entities, timeline, script_facts) and never rewrites it except
@@ -210,7 +210,7 @@ def _domain_of(url: str | None) -> str | None:
 
 def run_session(project_id, topic: str) -> dict:
     """Run one topic research session over the existing machinery
-    (services.research query angles + Serper, kb_client for the
+    (services.research query angles + SearXNG, kb_client for the
     topic verdict) and persist the session + its sources into the
     project library.
 
@@ -283,7 +283,7 @@ def run_session(project_id, topic: str) -> dict:
             "title": item.get("title") or "",
             "url": url,
             "snippet": item.get("snippet") or "",
-            "provider": item.get("source") or "google_serper",
+            "provider": item.get("source") or "searxng",
             "research_type": item.get("research_type"),
             "query": item.get("query"),
             "domain": _domain_of(url),

@@ -1,64 +1,59 @@
-"""Search providers (Master Project Directive Phase 4c / D-08;
-Master Implementation Directive 2026-11-26 — SearXNG primary).
+"""Search provider (Master Project Directive Phase 4c / D-08;
+Master Implementation Directive 2026-11-26 — SearXNG primary;
+founder decision 2026-11-26 — the former paid provider removed
+completely).
 
 This module is the ONE search choke point for the whole platform
 (web / images / videos). Every live caller reaches search through
-here: the request construction, provider routing, the bounded
-concurrency / retry policies, the result-cache and the call
-metrics all live in this single place. (The former duplicate
-client ``services/asset_finder.py`` had zero importers anywhere
-in the repo and was removed in Phase 4c — see the D-08 census in
+here: the request construction, the bounded concurrency / retry
+policies, the result-cache and the call metrics all live in this
+single place. (The former duplicate client
+``services/asset_finder.py`` had zero importers anywhere in the
+repo and was removed in Phase 4c — see the D-08 census in
 PHASE4-CAPABILITY-DECISIONS.md's companion report / commit.)
 
-PROVIDER ROUTING (2026-11-26). Two providers sit behind the seam:
+SOLE PROVIDER (2026-11-26). SearXNG (self-hosted, no API key) is
+the platform's only search provider. The former paid provider
+was removed completely by founder decision: there is no second
+provider, no fallback chain and no automatic provider switching
+anywhere in the system. Results are normalised into the result shapes the
+pipeline has always consumed, deduplicated by URL, and carry the
+supplying engine in ``source`` plus ``domain`` / ``category`` /
+``retrieved_at`` metadata.
 
-- SearXNG (self-hosted, no API key) is the PRIMARY provider
-  whenever it is configured (``SEARXNG_URL`` set, or
-  ``CINEMORA_SEARCH_PROVIDER=searxng``). Results are normalised
-  into the same shapes Serper has always produced, deduplicated
-  by URL, and carry the supplying engine in ``source`` plus
-  ``domain`` / ``category`` / ``retrieved_at`` metadata.
-- Serper is the FALLBACK: it serves a query only when SearXNG is
-  unavailable (transport/HTTP failure after bounded retries, a
-  malformed body, or the circuit breaker open) or returns an
-  unusable (empty) result — and only when fallback is enabled
-  (``CINEMORA_SEARCH_FALLBACK``, default on) and a Serper key is
-  configured. Every fallback is recorded (run_metrics counter +
-  structured log event); a failed SearXNG trips a circuit
-  breaker (``SEARXNG_FAILURE_COOLDOWN_SECONDS``, default 60) so
-  a down instance is not hammered query after query.
-- With no SearXNG configured, behaviour is exactly the pre-2026
-  Serper-only behaviour: ``CINEMORA_SEARCH_PROVIDER=serper``
-  forces that even when a SearXNG URL exists.
+When SearXNG is unconfigured (``SEARXNG_URL`` unset) or
+unavailable (transport/HTTP failure after the bounded retries, a
+malformed body, or the circuit breaker open), a search fails
+with the typed :class:`SearchProviderError` — it never silently
+switches providers and never fabricates results. A failed
+instance trips a circuit breaker
+(``SEARXNG_FAILURE_COOLDOWN_SECONDS``, default 60) so a down
+instance is not hammered query after query. An empty result set
+from a healthy instance is a legitimate answer and is returned
+as an empty list, not an error.
 
-Attribution: a logical search is served by exactly ONE provider,
-so provider identity is recorded per call at this choke point —
-run_metrics counters, the provider-usage ledger (one row per real
-HTTP attempt, priced by the Phase 8 cost engine) and the
-``search_call`` / ``search_fallback`` log events — while each
-result's ``source`` keeps the supplying engine/site name the
-pipeline has always preserved as provenance. Search results are
-evidence, never verified facts; downstream fact verification is
-untouched by which provider supplied a result.
+Attribution is recorded per call at this choke point —
+run_metrics counters, the provider-usage ledger (one row per
+real HTTP attempt, priced by the Phase 8 cost engine) and the
+``search_call`` log event — while each result's ``source`` keeps
+the supplying engine/site name the pipeline has always preserved
+as provenance. Search results are evidence, never verified
+facts; downstream fact verification is untouched by search.
 
 Failures are TYPED, following the llm_provider taxonomy style
 (Phase 4b): :class:`SearchProviderError` carries a ``kind`` —
 ``not_configured`` / ``quota`` (HTTP 402) / ``auth`` (401/403) /
 ``rate_limit`` (429, after the bounded retries) / ``upstream``
 (5xx after retries, other HTTP, transport errors) — so consumers
-branch on the kind instead of parsing message text. Pipeline
-behaviour (queries, per-production budgets, result shapes) is
-unchanged by the seam: the Serper parsers below are byte-identical
-to Phase 4c and their shapes are pinned by contract tests.
+branch on the kind instead of parsing message text.
 """
 
 import logging
 import os
-import random
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Callable, Dict, List
+from typing import Dict, List
 from urllib.parse import urlparse
 
 import requests
@@ -69,7 +64,7 @@ try:
 except ImportError:  # pragma: no cover - flat-layout fallback
     import logging_setup
 
-# B-13 (Phase 5c-1): real Serper requests emit one structured
+# B-13 (Phase 5c-1): real search requests emit one structured
 # event at the choke point below.
 logger = logging_setup.get_logger("search_provider")
 
@@ -85,22 +80,9 @@ except ImportError:  # pragma: no cover - flat-layout fallback
 
 load_dotenv()
 
-SERPER_API_KEY = os.getenv("SERPER_API_KEY")
-
-SERPER_HEADERS = {
-    "X-API-KEY": SERPER_API_KEY or "",
-    "Content-Type": "application/json",
-}
-
-SERPER_BASE = "https://google.serper.dev"
-SERPER_MAX_CONCURRENCY = int(os.getenv("SERPER_MAX_CONCURRENCY", "4"))
-SERPER_MAX_ATTEMPTS = 4
-
-_serper_sem = threading.BoundedSemaphore(SERPER_MAX_CONCURRENCY)
-
 
 class SearchProviderError(RuntimeError):
-    """Serper could not serve the call. ``kind`` is one of
+    """SearXNG could not serve the call. ``kind`` is one of
     ``not_configured``, ``quota``, ``auth``, ``rate_limit``,
     ``upstream``; ``status_code`` is the HTTP status when one was
     received (else None). A RuntimeError subclass, so pre-Phase-4c
@@ -112,46 +94,6 @@ class SearchProviderError(RuntimeError):
         super().__init__(message)
         self.kind = kind
         self.status_code = status_code
-
-    @classmethod
-    def for_status(cls, status_code, body_text=""):
-        if status_code == 402:
-            kind = "quota"
-        elif status_code in (401, 403):
-            kind = "auth"
-        elif status_code == 429:
-            kind = "rate_limit"
-        else:
-            kind = "upstream"
-        return cls(
-            kind,
-            f"Serper request failed (HTTP {status_code}): "
-            f"{str(body_text)[:500]}",
-            status_code=status_code,
-        )
-
-
-def _api_key():
-    """The Serper key, resolved at CALL time (env wins; the
-    import-time module constant is the fallback), so deployment
-    config and test monkeypatching are honoured without a restart
-    of the import graph."""
-    return os.getenv("SERPER_API_KEY") or SERPER_API_KEY
-
-
-def _headers():
-    return {
-        "X-API-KEY": _api_key() or "",
-        "Content-Type": "application/json",
-    }
-
-
-def check_api_key():
-    if not _api_key():
-        raise SearchProviderError(
-            "not_configured",
-            "SERPER_API_KEY is missing from the .env file.",
-        )
 
 
 def _record_search_usage(provider: str, kind: str) -> None:
@@ -178,95 +120,12 @@ def _record_search_usage(provider: str, kind: str) -> None:
         pass
 
 
-def _post_with_retry(path: str, query: str) -> dict:
-    """
-    One real Serper request, with bounded concurrency and exponential
-    backoff on HTTP 429 / 5xx. Every real request is counted.
-    """
-    last_exc = None
-
-    for attempt in range(SERPER_MAX_ATTEMPTS):
-        with _serper_sem:
-            # Phase 8.4: the platform token bucket sits in front of
-            # the per-process semaphore — the Serper key's rate
-            # limit is a platform resource shared by every worker
-            # (design 03 §5). Fail-open if Redis is down.
-            try:
-                from services import rate_bucket
-
-                rate_bucket.acquire("serper", timeout=30.0)
-            except Exception:
-                pass
-            source_cache.bump("serper_calls")
-            # Stage 0 metrics: this function is the single choke
-            # point every real Serper request passes through (cache
-            # hits never reach it), split by endpoint = search type.
-            run_metrics.serper_call(path)
-            _record_search_usage("serper", path)
-            logging_setup.log_event(
-                logger,
-                logging.INFO,
-                "search_call",
-                provider="serper",
-                endpoint=path,
-                attempt=attempt + 1,
-            )
-            try:
-                response = requests.post(
-                    f"{SERPER_BASE}/{path}",
-                    headers=_headers(),
-                    json={"q": query},
-                    timeout=30,
-                )
-            except requests.RequestException as exc:
-                # Transport failure: retryable, classified upstream
-                # if the bounded attempts are exhausted.
-                last_exc = SearchProviderError(
-                    "upstream", f"Serper request failed (transport): {exc}"
-                )
-                last_exc.__cause__ = exc
-                response = None
-
-        if response is not None:
-            if response.status_code == 429:
-                source_cache.bump("serper_429")
-            if response.status_code != 429 and response.status_code < 500:
-                if response.status_code >= 400:
-                    # Non-retryable HTTP failure (auth / quota /
-                    # client error): typed, raised immediately —
-                    # the same point the old raise_for_status() hit.
-                    raise SearchProviderError.for_status(
-                        response.status_code,
-                        getattr(response, "text", "") or "",
-                    )
-                return response.json()
-            last_exc = SearchProviderError.for_status(
-                response.status_code,
-                getattr(response, "text", "") or "",
-            )
-            retry_after = response.headers.get("Retry-After")
-            delay = float(retry_after) if retry_after and retry_after.isdigit() else None
-        else:
-            delay = None
-
-        if attempt < SERPER_MAX_ATTEMPTS - 1:
-            if delay is None:
-                delay = (2 ** attempt) + random.uniform(0, 0.5)
-            time.sleep(min(delay, 20))
-
-    raise last_exc if last_exc else SearchProviderError(
-        "upstream", "Serper request failed"
-    )
-
-
 # ---------------------------------------------------------------------
-# SearXNG (Master Implementation 2026-11-26) — self-hosted primary
-# provider. Configuration is env-driven and resolved at call time,
-# like the Serper key, so deployments and tests can reconfigure
-# without an import restart:
+# SearXNG (Master Implementation 2026-11-26) — self-hosted, the
+# platform's sole search provider. Configuration is env-driven
+# and resolved at call time, so deployments and tests can
+# reconfigure without an import restart:
 #   SEARXNG_URL                          instance base URL (no key)
-#   CINEMORA_SEARCH_PROVIDER             auto | searxng | serper
-#   CINEMORA_SEARCH_FALLBACK             1/0 (default 1)
 #   SEARXNG_TIMEOUT_SECONDS              per-attempt timeout (20)
 #   SEARXNG_MAX_ATTEMPTS                 bounded attempts (2)
 #   SEARXNG_MAX_CONCURRENCY              per-process semaphore (4)
@@ -281,7 +140,7 @@ _SEARXNG_KIND_CATEGORIES = {
 }
 
 # Kind -> the endpoint-path vocabulary run_metrics counts in
-# (the Serper endpoint names: the web endpoint is "search").
+# (the web endpoint is counted as "search").
 _KIND_TO_PATH = {
     "web": "search",
     "images": "images",
@@ -303,20 +162,11 @@ def _searxng_url() -> str:
     return (os.getenv("SEARXNG_URL") or "").strip().rstrip("/")
 
 
-def _primary_provider() -> str:
-    """Which provider serves first. `auto` (the default) picks
-    SearXNG whenever an instance URL is configured and Serper
-    otherwise — so an unconfigured deployment behaves exactly as
-    the pre-2026 Serper-only platform did."""
-    mode = (os.getenv("CINEMORA_SEARCH_PROVIDER") or "auto").strip().lower()
-    if mode in ("serper", "searxng"):
-        return mode
-    return "searxng" if _searxng_url() else "serper"
-
-
-def _fallback_enabled() -> bool:
-    raw = (os.getenv("CINEMORA_SEARCH_FALLBACK") or "1").strip().lower()
-    return raw not in ("0", "false", "no", "off")
+def searxng_configured() -> bool:
+    """Whether a SearXNG instance URL is configured. The one
+    configuration check consumers (assistant tools, reports) use
+    instead of knowing provider details."""
+    return bool(_searxng_url())
 
 
 def _searxng_timeout() -> float:
@@ -383,10 +233,9 @@ def _dedupe_by_url(results: List[Dict], key: str = "url") -> List[Dict]:
 
 
 def _result_meta(kind: str, url: str) -> dict:
-    """The directive's retained source metadata for results from
-    the new provider: source domain, search category and the
-    retrieval timestamp (title/URL/snippet ride in the core
-    fields, exactly as Serper results carry them)."""
+    """The retained source metadata for search results: source
+    domain, search category and the retrieval timestamp
+    (title/URL/snippet ride in the core fields)."""
     return {
         "domain": urlparse(url).netloc.lower() if url else "",
         "category": kind,
@@ -464,7 +313,7 @@ def _searxng_search(kind: str, query: str) -> List[Dict]:
     """One logical SearXNG search: bounded concurrency, the
     platform rate bucket, bounded retries, typed failures.
     Raises SearchProviderError when the instance cannot serve a
-    usable response; the router decides what happens next."""
+    usable response — there is no fallback provider."""
     url = _searxng_url()
     if not url:
         raise SearchProviderError(
@@ -593,165 +442,41 @@ def searxng_health() -> dict:
 
 
 def search_health() -> dict:
-    """Provider routing health for admin/ops surfaces: the
-    configured primary, fallback posture, breaker state and each
-    provider's readiness. Never raises."""
+    """Search health for admin/ops surfaces: the sole provider's
+    readiness and circuit-breaker state. Never raises."""
     return {
-        "primary": _primary_provider(),
-        "fallback_enabled": _fallback_enabled(),
+        "primary": "searxng",
         "searxng": {
             **searxng_health(),
             "breaker_open": _breaker_is_open(),
         },
-        "serper": {"configured": bool(_api_key())},
     }
 
 
-def _serper_search(
-    kind: str,
-    path: str,
-    query: str,
-    parse: Callable[[dict], List[Dict]],
-) -> List[Dict]:
-    check_api_key()
-    data = _post_with_retry(path, query)
-    return parse(data)
-
-
-def _record_fallback(kind: str, reason: str, error) -> None:
-    """One fallback event, recorded at the choke point: metrics
-    counter, stats bump and the structured log event."""
-    run_metrics.search_fallback()
-    source_cache.bump("search_fallbacks")
-    logging_setup.log_event(
-        logger,
-        logging.WARNING,
-        "search_fallback",
-        provider="serper",
-        endpoint=kind,
-        reason=reason,
-        error=str(error) if error else None,
-    )
-
-
-def _routed_search(
-    kind: str,
-    path: str,
-    query: str,
-    parse: Callable[[dict], List[Dict]],
-) -> List[Dict]:
-    """Serve one logical search through the provider routing:
-    SearXNG primary (when configured/selected), Serper fallback
-    on failure or an unusable (empty) result, Serper alone when
-    it is the primary. The batch a caller receives always comes
-    from exactly one provider."""
-    if _primary_provider() != "searxng":
-        return _serper_search(kind, path, query, parse)
-
-    error = None
-    try:
-        results = _searxng_search(kind, query)
-        if results:
-            return results
-        reason = "empty"
-    except SearchProviderError as exc:
-        error = exc
-        reason = "error"
-        if exc.kind != "not_configured":
-            run_metrics.search_provider_failure("searxng")
-
-    if not _fallback_enabled():
-        if error is not None:
-            raise error
-        return []
-
-    _record_fallback(kind, reason, error)
-    try:
-        return _serper_search(kind, path, query, parse)
-    except SearchProviderError:
-        if error is not None:
-            # The primary's failure is the informative one; the
-            # fallback's is recorded in its own metrics/log lines.
-            raise error
-        raise
-
-
-def _cached_search(
-    kind: str,
-    path: str,
-    query: str,
-    parse: Callable[[dict], List[Dict]],
-) -> List[Dict]:
+def _cached_search(kind: str, query: str) -> List[Dict]:
     cached = source_cache.search_get(kind, query)
     if cached is not None:
         return cached
 
-    results = _routed_search(kind, path, query, parse)
+    try:
+        results = _searxng_search(kind, query)
+    except SearchProviderError as exc:
+        if exc.kind != "not_configured":
+            run_metrics.search_provider_failure("searxng")
+        raise
     source_cache.search_put(kind, query, results)
     return results
 
 
-def _parse_web(data: dict) -> List[Dict]:
-    results = []
-    for item in data.get("organic", []):
-        results.append({
-            "title": item.get("title", ""),
-            "url": item.get("link", ""),
-            "snippet": item.get("snippet", ""),
-            "source": "google_serper",
-        })
-    return results
-
-
-def _parse_images(data: dict) -> List[Dict]:
-    results = []
-    for item in data.get("images", []):
-        image_url = item.get("imageUrl", "")
-        source_url = item.get("link", "")
-
-        if not image_url:
-            continue
-
-        results.append({
-            "title": item.get("title", ""),
-            "image_url": image_url,
-            "source_url": source_url,
-            "url": image_url,
-            "snippet": item.get("snippet", ""),
-            "source": item.get("source", "google_images"),
-        })
-    return results
-
-
-def _parse_videos(data: dict) -> List[Dict]:
-    results = []
-    for item in data.get("videos", []):
-        video_url = item.get("link", "")
-
-        if not video_url:
-            continue
-
-        results.append({
-            "title": item.get("title", ""),
-            "video_url": video_url,
-            "url": video_url,
-            "snippet": item.get("snippet", ""),
-            "source": item.get("source", ""),
-            "date": item.get("date", ""),
-            "duration": item.get("duration", ""),
-        })
-    return results
-
-
 def search_web(query: str) -> List[Dict]:
-    return _cached_search("web", "search", query, _parse_web)
+    return _cached_search("web", query)
 
 
 def search_images(query: str, limit: int = 20) -> List[Dict]:
     # The full parsed list is cached; the limit is applied on the way out,
     # so a later call with a different limit still hits the cache.
-    return _cached_search("images", "images", query, _parse_images)[:limit]
+    return _cached_search("images", query)[:limit]
 
 
 def search_videos(query: str, limit: int = 15) -> List[Dict]:
-    return _cached_search("videos", "videos", query, _parse_videos)[:limit]
+    return _cached_search("videos", query)[:limit]

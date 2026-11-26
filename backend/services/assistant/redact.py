@@ -18,13 +18,12 @@ import re
 
 _SECRET_ENV_VARS = (
     "BREWKEG_API_KEY",
-    "SERPER_API_KEY",
     "CINEMORA_API_TOKEN",
     "CINEMORA_ADMIN_TOKEN",
 )
 
 # The key side matches a full identifier CONTAINING a sensitive
-# term, so prefixed real-world names (SERPER_API_KEY,
+# term, so prefixed real-world names (BREWKEG_API_KEY,
 # MY_APP_ACCESS_TOKEN) are caught — a bare \b before "api" misses
 # them because "_" is a word character.
 _ASSIGNMENT_RE = re.compile(

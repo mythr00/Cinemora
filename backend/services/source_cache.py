@@ -2,7 +2,7 @@
 Persistent source-intelligence cache for the Asset Manager.
 
 Stores, across process restarts:
-  * search_cache    - Serper results keyed by normalized query
+  * search_cache    - search results keyed by normalized query
   * source_profile  - one row per YouTube/web URL (duration, chapters,
                       transcript status, failures included)
   * moment          - indexed relevant moments inside a source
@@ -55,10 +55,7 @@ _STOP = {
 STATS = {
     "search_hit": 0,
     "search_miss": 0,
-    "serper_calls": 0,
-    "serper_429": 0,
     "searxng_calls": 0,
-    "search_fallbacks": 0,
     "profile_hit": 0,
     "profile_miss": 0,
     "ytdlp_calls": 0,

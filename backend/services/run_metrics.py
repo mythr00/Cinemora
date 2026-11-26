@@ -13,7 +13,7 @@ Design rules:
   a metrics bug must never be able to fail a production run.
 - HONEST COSTS. No price table is configured for any provider, so
   monetary_cost_usd is None (unknown) — never 0, never estimated.
-- Counts are of REAL work: the Serper counter sits at the HTTP choke
+- Counts are of REAL work: the search counter sits at the HTTP choke
   point, so cache hits are not counted as API calls.
 - RUN-SCOPED (Phase 8.4): states live in a dict keyed by run id;
   begin_run(run_id) creates and binds that run's state, counters
@@ -35,8 +35,8 @@ import uuid
 
 _LOCK = threading.Lock()
 
-# Serper endpoint path -> report bucket. "search" is the web endpoint.
-_SERPER_KINDS = {"search": "web", "images": "images", "videos": "video"}
+# Search endpoint path -> report bucket. "search" is the web endpoint.
+_SEARCH_KINDS = {"search": "web", "images": "images", "videos": "video"}
 
 _COST_NOTE = "unknown — no price table configured"
 
@@ -44,17 +44,12 @@ _COST_NOTE = "unknown — no price table configured"
 def _fresh_state():
     return {
         "started_monotonic": None,
-        "serper": {"total": 0, "web": 0, "images": 0, "video": 0},
-        # Master Implementation 2026-11-26: multi-provider search
-        # counters. `serper` above keeps its original meaning (real
-        # Serper HTTP requests, whichever route served the query);
-        # this block adds the SearXNG side plus the routing events
-        # (fallbacks to Serper, SearXNG failures) so a run's search
-        # cost can be attributed per provider.
+        # Search counters (SearXNG is the sole provider since the
+        # 2026-11-26 removal): real HTTP attempts per kind plus
+        # the failure count, so a run's search cost is visible.
         "search": {
             "searxng": {"total": 0, "web": 0, "images": 0, "video": 0},
             "searxng_failures": 0,
-            "fallback_events": 0,
         },
         "llm": {"total": 0, "total_tokens": 0},
         "archive_org_searches": 0,
@@ -134,20 +129,6 @@ def _state_for(run_id=None) -> dict:
     return _bound_state()
 
 
-def serper_call(path):
-    """One real Serper HTTP request. `path` is the endpoint path used
-    by services.search_provider ("search" / "images" / "videos");
-    each retry attempt is a real call and is counted."""
-    try:
-        kind = _SERPER_KINDS.get(str(path or "").strip().lower())
-        with _LOCK:
-            _bound_state()["serper"]["total"] += 1
-            if kind:
-                _bound_state()["serper"][kind] += 1
-    except Exception:
-        pass
-
-
 def bound_run_id():
     """The real run id currently bound, or None when the binding
     is an ad-hoc holder (choke points firing outside a run).
@@ -165,12 +146,11 @@ def bound_run_id():
 
 def search_call(provider, path):
     """One real search-provider HTTP request (Master
-    Implementation 2026-11-26). `provider` is "searxng" (Serper
-    requests keep their historical counter in serper_call);
-    `path` is the endpoint kind ("search" / "images" / "videos")
-    mapped through the same kind table as Serper's."""
+    Implementation 2026-11-26). `provider` is "searxng" (the sole
+    provider); `path` is the endpoint kind ("search" / "images" /
+    "videos") mapped through the kind table."""
     try:
-        kind = _SERPER_KINDS.get(str(path or "").strip().lower())
+        kind = _SEARCH_KINDS.get(str(path or "").strip().lower())
         with _LOCK:
             block = _bound_state()["search"].setdefault(
                 str(provider),
@@ -184,27 +164,13 @@ def search_call(provider, path):
 
 
 def search_provider_failure(provider):
-    """The primary search provider failed a logical call (after
-    its bounded retries) and routing fell back or raised."""
+    """The search provider failed a logical call (after its
+    bounded retries) and the typed error was raised."""
     try:
         with _LOCK:
             block = _bound_state()["search"]
             key = f"{provider}_failures"
             block[key] = int(block.get(key) or 0) + 1
-    except Exception:
-        pass
-
-
-def search_fallback():
-    """One routing fallback event: the primary provider was
-    unavailable or returned an unusable (empty) result and the
-    fallback provider was consulted for the same query."""
-    try:
-        with _LOCK:
-            block = _bound_state()["search"]
-            block["fallback_events"] = (
-                int(block.get("fallback_events") or 0) + 1
-            )
     except Exception:
         pass
 
@@ -329,13 +295,10 @@ def process_totals() -> dict:
     such. Never raises."""
     try:
         with _LOCK:
-            serper = {"total": 0, "web": 0, "images": 0, "video": 0}
             llm = {"total": 0, "total_tokens": 0}
             searxng = {"total": 0, "web": 0, "images": 0, "video": 0}
-            search_events = {"searxng_failures": 0, "fallback_events": 0}
+            searxng_failures = 0
             for state in _STATES.values():
-                for key in serper:
-                    serper[key] += int(state["serper"].get(key) or 0)
                 llm["total"] += int(state["llm"].get("total") or 0)
                 llm["total_tokens"] += int(
                     state["llm"].get("total_tokens") or 0
@@ -344,24 +307,20 @@ def process_totals() -> dict:
                 sx = block.get("searxng") or {}
                 for key in searxng:
                     searxng[key] += int(sx.get(key) or 0)
-                for key in search_events:
-                    search_events[key] += int(block.get(key) or 0)
+                searxng_failures += int(block.get("searxng_failures") or 0)
             return {
-                "serper_calls": serper,
                 "llm_calls": llm,
                 "search_calls": {
                     "searxng": searxng,
-                    **search_events,
+                    "searxng_failures": searxng_failures,
                 },
             }
     except Exception:
         return {
-            "serper_calls": {"total": 0, "web": 0, "images": 0, "video": 0},
             "llm_calls": {"total": 0, "total_tokens": 0},
             "search_calls": {
                 "searxng": {"total": 0, "web": 0, "images": 0, "video": 0},
                 "searxng_failures": 0,
-                "fallback_events": 0,
             },
         }
 
@@ -384,7 +343,6 @@ def snapshot(run_id=None):
             return {
                 "wall_time_seconds": wall,
                 "stage_durations_seconds": dict(state["stage_durations"]),
-                "serper_calls": dict(state["serper"]),
                 "search_calls": {
                     "searxng": dict(
                         search_block.get("searxng")
@@ -392,9 +350,6 @@ def snapshot(run_id=None):
                     ),
                     "searxng_failures": int(
                         search_block.get("searxng_failures") or 0
-                    ),
-                    "fallback_events": int(
-                        search_block.get("fallback_events") or 0
                     ),
                 },
                 "llm_calls": dict(state["llm"]),
@@ -418,11 +373,9 @@ def snapshot(run_id=None):
         return {
             "wall_time_seconds": None,
             "stage_durations_seconds": {},
-            "serper_calls": {"total": 0, "web": 0, "images": 0, "video": 0},
             "search_calls": {
                 "searxng": {"total": 0, "web": 0, "images": 0, "video": 0},
                 "searxng_failures": 0,
-                "fallback_events": 0,
             },
             "llm_calls": {"total": 0, "total_tokens": 0},
             "archive_org_searches": 0,

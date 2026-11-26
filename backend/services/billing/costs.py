@@ -30,18 +30,15 @@ from datetime import datetime, timedelta, timezone
 import models
 
 
-#: Search cost rules seeded by ensure_pricing_rules (Master
-#: Implementation Part 4). Serper's Scale plan is $0.50 per 1,000
-#: calls = $0.0005 per call = 500 microusd (verified against
-#: serper.dev pricing in the 2026-11-26 pricing audit). SearXNG is
-#: self-hosted: its MARGINAL cost per search is $0. The instance's
-#: infrastructure cost is attributed in the profitability report
-#: from measured resource use — never folded into a per-search
-#: price, which would misstate both numbers. effective_from is
-#: set in the past so every recorded search event prices.
+#: Search cost rule seeded by ensure_pricing_rules (Master
+#: Implementation Part 4). SearXNG — the sole search provider
+#: since the 2026-11-26 removal — is self-hosted: its MARGINAL
+#: cost per search is $0. The instance's infrastructure cost is
+#: attributed in the profitability report from measured resource
+#: use — never folded into a per-search price, which would
+#: misstate both numbers. effective_from is set in the past so
+#: every recorded search event prices.
 SEEDED_PRICING_RULES = (
-    {"provider": "serper", "model": None, "unit": "per_search",
-     "rate_microusd": 500},
     {"provider": "searxng", "model": None, "unit": "per_search",
      "rate_microusd": 0},
 )

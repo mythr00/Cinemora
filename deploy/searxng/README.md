@@ -1,7 +1,8 @@
 # SearXNG for Cinemora — deployment runbook
 
 Master Implementation (2026-11-26), Part 1: SearXNG is the
-platform's primary search provider; Serper remains the fallback.
+platform's ONLY search provider (the former paid fallback was
+removed completely by founder decision, 2026-11-26).
 The backend reaches SearXNG over the internal compose network —
 there is no API key and no public exposure.
 
@@ -14,9 +15,9 @@ there is no API key and no public exposure.
 - The backend env anchor sets
   `SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8888}` — override
   only to point at an instance hosted elsewhere.
-- Provider selection is config-driven
-  (`CINEMORA_SEARCH_PROVIDER` = auto/searxng/serper,
-  `CINEMORA_SEARCH_FALLBACK` = 1/0; see `backend/.env.example`).
+- There is no provider selection to configure: SearXNG is the
+  sole provider (see `backend/.env.example` for its tuning
+  variables).
 
 ## Validated version and measured footprint
 
@@ -53,16 +54,17 @@ query classes (general / images / videos):
 
 - **Health**: `/healthz` returns `OK`. The backend also probes
   it (cached 30 s) for its own search-health view, and a failed
-  SearXNG trips a 60 s circuit breaker that routes straight to
-  Serper until the instance recovers — productions keep working
-  with SearXNG down, at Serper prices.
+  SearXNG trips a 60 s circuit breaker: while it is open (and
+  while the instance is down) searches fail with an honest typed
+  error — there is no fallback provider, by founder decision.
+  Restore the instance; do not paper over an outage.
 - **Engines**: upstream engines occasionally rate-limit or
   CAPTCHA a host (observed during validation: Brave throttled,
   DuckDuckGo CAPTCHA from a shared egress IP). SearXNG aggregates
   many engines, so individual suspensions degrade results rather
-  than break them; the backend's Serper fallback covers the rest.
-  If one engine is persistently suspended on the production host,
-  disable it in `settings.yml` under `engines:`.
+  than break them. If one engine is persistently suspended on
+  the production host, disable it in `settings.yml` under
+  `engines:`.
 - **Updates**: bump the image, `docker compose up -d searxng`,
   re-run the smoke search. Settings are stateless (no volume) —
   the file in this directory is the whole configuration.

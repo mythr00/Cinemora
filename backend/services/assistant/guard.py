@@ -67,7 +67,7 @@ _PATTERNS = (
         re.compile(
             r"(?i)(which|what)\s+(provider|api|service|backend|vendor)\s+"
             r"[^.?!]{0,40}(use|used|using|power|powers|behind|configured)|"
-            r"\b(serper|brewkeg)\b"
+            r"\b(searxng|brewkeg)\b"
         ),
     ),
     (

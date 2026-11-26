@@ -1,7 +1,7 @@
 """Discovery seam of the former media_pipeline monolith (Phase 5.4).
 
 Provider/search half of the pipeline: the per-provider search entry
-points (Serper web/images/videos via services.search_provider,
+points (SearXNG web/images/videos via services.search_provider,
 Wikimedia Commons, Archive.org, YouTube), hit shaping and ranking,
 title filters, the dedupe-drop record, the AM-021 per-query log stack,
 and _uve_scenario_search — the scenario search that assembles a beat's
@@ -222,7 +222,7 @@ def _web_source_is_video_candidate(candidate):
 
 
 def search_image_sources(query, limit=5):
-    """Real image candidates from Serper image search (AUD-13).
+    """Real image candidates from SearXNG image search (AUD-13).
 
     Normalised to the same candidate shape as the other providers. The
     licence of a web image is NOT known, so it is recorded as "unknown" —
@@ -356,7 +356,7 @@ def _disabled_providers():
 def search_videos_multi(query, limit=5):
     """Multi-source video discovery (MS-1).
 
-    Serper's video index covers many hosts — YouTube, Vimeo, news sites,
+    SearXNG's video index covers many hosts — YouTube, Vimeo, news sites,
     archives and more. The previous implementation DISCARDED every result
     that was not a YouTube watch URL and stamped the survivors
     source="youtube". This function preserves every result, tags it with
@@ -412,7 +412,7 @@ def search_videos_multi(query, limit=5):
             "source": provider,
             "provider": provider,
             "source_domain": host,
-            # Serper's per-result "source" is the channel/site name —
+            # SearXNG's per-result "source" is the channel/site name —
             # keep it as creator evidence (AUD-15).
             "channel": hit.get("source", ""),
             "creator": hit.get("source", ""),
@@ -634,7 +634,7 @@ def _uve_scenario_search(
     seen_image_urls = set()
 
     # Remove duplicate / near-duplicate search queries before
-    # spending Serper calls. Keep the first useful wording.
+    # spending SearXNG calls. Keep the first useful wording.
     unique_queries = []
     query_signatures = []
 
@@ -734,7 +734,7 @@ def _uve_scenario_search(
                 limit=8,
             )
         except Exception as error:
-            _media_pipeline()._record_discovery_failure("serper-videos", query, error)
+            _media_pipeline()._record_discovery_failure("searxng-videos", query, error)
             print(
                 f"Video search failed "
                 f"for '{query}': {error}"
@@ -747,7 +747,7 @@ def _uve_scenario_search(
                 limit=5,
             )
         except Exception as error:
-            _media_pipeline()._record_discovery_failure("serper-web", query, error)
+            _media_pipeline()._record_discovery_failure("searxng-web", query, error)
             print(
                 f"Web search failed "
                 f"for '{query}': {error}"
@@ -760,14 +760,14 @@ def _uve_scenario_search(
                 limit=5,
             )
         except Exception as error:
-            _media_pipeline()._record_discovery_failure("serper-images", query, error)
+            _media_pipeline()._record_discovery_failure("searxng-images", query, error)
             print(
                 f"Image search failed "
                 f"for '{query}': {error}"
             )
             found_images = []
 
-        # Wikimedia Commons fallback (AUD-15): appended after Serper
+        # Wikimedia Commons supplement (AUD-15): appended after SearXNG
         # results; carries genuine licence evidence when available.
         try:
             found_images = found_images + _media_pipeline().search_wikimedia_images(
@@ -858,7 +858,7 @@ def _uve_scenario_search(
         try:
             shaped_images = _media_pipeline().search_image_sources(shaped_query, limit=5)
         except Exception as error:
-            _media_pipeline()._record_discovery_failure("serper-images", shaped_query, error)
+            _media_pipeline()._record_discovery_failure("searxng-images", shaped_query, error)
             print(f"Shaped image search failed for '{shaped_query}': {error}")
         try:
             shaped_images = shaped_images + _media_pipeline().search_wikimedia_images(
@@ -877,7 +877,7 @@ def _uve_scenario_search(
 
     # MS-4 / Gate 2 (footage-discovery directive, 2026-11-26):
     # supplementary independent providers, queried for EVERY unique
-    # scenario query — the same queries the Serper channels run on —
+    # scenario query — the same queries the SearXNG channels run on —
     # not only the primary query. YouTube is one source among many;
     # the keyless archival providers (Archive.org, Wikimedia Commons
     # video) get parity of opportunity per query. Each provider call
@@ -1020,14 +1020,14 @@ def _uve_scenario_search(
                 )
                 _merge_videos(_targeted_hits)
             except Exception as error:
-                _media_pipeline()._record_discovery_failure("serper-videos-targeted", primary_query, error)
+                _media_pipeline()._record_discovery_failure("searxng-videos-targeted", primary_query, error)
                 print(f"Targeted search failed for '{primary_query}': {error}")
 
     # Transformation Phase 4.2: institutional source hints. The
     # need's pack-derived hint queries (stamped by build_shot_needs
     # from the genre pack's source_hints templates) run on their
     # own channels — Commons category / free-text searches,
-    # Archive.org advanced-search fragments, Serper site-scoped
+    # Archive.org advanced-search fragments, SearXNG site-scoped
     # searches — and merge into the same pools under the same
     # dedupe. Direct (T1) passes only: tier-ladder derived needs
     # may inherit the stamp but must not re-spend the hints at

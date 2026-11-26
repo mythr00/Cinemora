@@ -612,45 +612,48 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
     )
 
     # ---- discovery state (Phase 3 / AM-022, reporting only) ----------
-    # "Discovery degraded: no search key" is a first-class run-level
-    # fact, recorded ONLY when the run made zero Serper calls BECAUSE
-    # no search key was configured. Zero calls for any other reason
-    # (key configured but the run never needed Serper, cache hits,
-    # ...) is a different fact and never wears this label; a run with
-    # no execution record at all reports state "unknown". Key supply
-    # itself is NOT an engineering change (DM-4 is the founder's) —
-    # this block only reports.
-    _serper_calls = None
+    # "Discovery degraded: search not configured" is a first-class
+    # run-level fact, recorded ONLY when the run made zero search
+    # calls BECAUSE no SearXNG instance was configured. Zero calls
+    # for any other reason (instance configured but the run never
+    # needed search, cache hits, ...) is a different fact and never
+    # wears this label; a run with no execution record at all
+    # reports state "unknown". Instance supply itself is NOT an
+    # engineering change (DM-4 is the founder's) — this block only
+    # reports.
+    _search_calls = None
     if isinstance(execution, dict):
-        _serper_block = execution.get("serper_calls")
-        if isinstance(_serper_block, dict):
-            _serper_calls = _serper_block.get("total")
-    _search_key_configured = bool(os.getenv("SERPER_API_KEY"))
-    if _serper_calls is None:
+        _search_block = (execution.get("search_calls") or {}).get(
+            "searxng"
+        )
+        if isinstance(_search_block, dict):
+            _search_calls = _search_block.get("total")
+    _search_configured = bool(os.getenv("SEARXNG_URL"))
+    if _search_calls is None:
         discovery = {
             "state": "unknown",
             "degraded": None,
             "reason": None,
-            "serper_calls": None,
-            "search_key_configured": _search_key_configured,
+            "search_calls": None,
+            "search_configured": _search_configured,
             "fact": None,
         }
-    elif _serper_calls == 0 and not _search_key_configured:
+    elif _search_calls == 0 and not _search_configured:
         discovery = {
-            "state": "degraded_no_search_key",
+            "state": "degraded_search_unconfigured",
             "degraded": True,
-            "reason": "no_search_key",
-            "serper_calls": 0,
-            "search_key_configured": False,
-            "fact": "discovery degraded: no search key",
+            "reason": "search_not_configured",
+            "search_calls": 0,
+            "search_configured": False,
+            "fact": "discovery degraded: search not configured",
         }
     else:
         discovery = {
             "state": "recorded",
             "degraded": False,
-            "reason": None if _serper_calls else "no_serper_calls",
-            "serper_calls": _serper_calls,
-            "search_key_configured": _search_key_configured,
+            "reason": None if _search_calls else "no_search_calls",
+            "search_calls": _search_calls,
+            "search_configured": _search_configured,
             "fact": None,
         }
 
@@ -1173,13 +1176,13 @@ def build_asset_report(processed_scenes, timeline_result=None, renderer_audit=No
             ),
             "discovery": (
                 "Phase 3 / AM-022 — the run-level discovery fact. "
-                "state degraded_no_search_key (with fact 'discovery "
-                "degraded: no search key') ONLY when the run's "
-                "Serper calls were zero AND no SERPER_API_KEY was "
-                "configured; zero calls with a key configured is "
-                "state recorded with reason no_serper_calls and is "
-                "NOT degraded; no execution record is state unknown "
-                "with degraded null."
+                "state degraded_search_unconfigured (with fact "
+                "'discovery degraded: search not configured') ONLY "
+                "when the run's search calls were zero AND no "
+                "SEARXNG_URL was configured; zero calls with search "
+                "configured is state recorded with reason "
+                "no_search_calls and is NOT degraded; no execution "
+                "record is state unknown with degraded null."
             ),
             "query_diagnostics": (
                 "Phase 3 / AM-021 — one entry per (scene, beat, "

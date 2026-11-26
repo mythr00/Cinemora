@@ -123,7 +123,7 @@ def runs_in_period(db, user_id: str, period_start: datetime) -> int:
 
 
 def provider_usage_in_period(db, user_id: str, period_start: datetime) -> dict:
-    """Aggregate the per-run execution records (02 §5.2). Serper
+    """Aggregate the per-run execution records (02 §5.2). Search
     counts exist for every finished run; LLM counts exist once the
     Phase 8.5 choke-point counter lands (absent key = not counted,
     reported as such by the caller, never invented)."""
@@ -136,23 +136,23 @@ def provider_usage_in_period(db, user_id: str, period_start: datetime) -> dict:
         )
         .all()
     )
-    serper_total = 0
+    search_total = 0
     llm_calls = 0
     llm_tokens = 0
     llm_counted_runs = 0
     for (execution,) in rows:
         if not isinstance(execution, dict):
             continue
-        serper = execution.get("serper_calls") or {}
-        if isinstance(serper, dict):
-            serper_total += int(serper.get("total") or 0)
+        search = (execution.get("search_calls") or {}).get("searxng") or {}
+        if isinstance(search, dict):
+            search_total += int(search.get("total") or 0)
         llm = execution.get("llm_calls")
         if isinstance(llm, dict):
             llm_counted_runs += 1
             llm_calls += int(llm.get("total") or 0)
             llm_tokens += int(llm.get("total_tokens") or 0)
     return {
-        "serper_calls": serper_total,
+        "search_calls": search_total,
         "llm_calls": llm_calls,
         "llm_tokens": llm_tokens,
         "llm_counted_runs": llm_counted_runs,

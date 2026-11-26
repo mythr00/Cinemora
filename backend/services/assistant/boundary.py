@@ -48,7 +48,7 @@ def is_staff(principal) -> bool:
 # ---------------------------------------------------------------------
 
 _PROVIDER_NAMES = (
-    (re.compile(r"\bSerper\b", re.IGNORECASE), "the web search service"),
+    (re.compile(r"\bSearXNG\b", re.IGNORECASE), "the web search service"),
     (re.compile(r"\bBrewKeg\b", re.IGNORECASE), "the media generation service"),
     (re.compile(r"\byt-dlp\b", re.IGNORECASE), "the video importer"),
     (re.compile(r"Wikimedia Commons", re.IGNORECASE), "public media archives"),
@@ -117,9 +117,8 @@ def sanitize_text(text: str) -> str:
 
 # Dict keys / source ids that ARE provider identifiers.
 _KEY_LABELS = {
-    "serper": "web_search",
-    "google_serper": "web_search",
-    "serper_videos": "video_search",
+    "searxng": "web_search",
+    "searxng_videos": "video_search",
     "wikimedia": "public_archives",
     "wikimedia_commons": "public_archives",
     "archive_org": "public_archives",

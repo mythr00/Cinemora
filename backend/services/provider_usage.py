@@ -16,7 +16,7 @@ Design rules:
 - FAIL-SOFT RECORDING. :func:`record_usage` never raises: a
   ledger problem (DB down, table missing) is logged and the LLM
   call that triggered the recording proceeds untouched.
-- SEARCH COUNTERS ARE PROCESS-LOCAL. Serper usage is tracked
+- SEARCH COUNTERS ARE PROCESS-LOCAL. Search usage is tracked
   in-process by services/run_metrics (per-run states in memory);
   the aggregate labels those numbers ``process_local`` instead
   of pretending they are a global ledger.
@@ -97,7 +97,7 @@ def aggregate_usage(db, *, days: int = 30) -> dict:
     no price table exists (Phase 8 will price these events).
 
     The search section exposes services/run_metrics' in-process
-    Serper counters, explicitly labelled process-local."""
+    search counters, explicitly labelled process-local."""
     from models import ProviderUsageEvent
 
     days = max(1, min(int(days or 30), 365))
@@ -152,10 +152,10 @@ def aggregate_usage(db, *, days: int = 30) -> dict:
     totals["pricing_status"] = PRICING_STATUS
 
     search_section = {
-        "provider": "serper",
+        "provider": "searxng",
         "scope": "process_local",
         "note": (
-            "Serper counters are held in-process by "
+            "Search counters are held in-process by "
             "services/run_metrics (per-run states in memory); "
             "they cover only this process and its most recent "
             "runs, not the whole platform."
@@ -166,8 +166,8 @@ def aggregate_usage(db, *, days: int = 30) -> dict:
         from services import run_metrics
 
         search_section["calls"] = run_metrics.process_totals()[
-            "serper_calls"
-        ]
+            "search_calls"
+        ]["searxng"]
     except Exception:
         logger.warning(
             "search counter read failed", exc_info=True

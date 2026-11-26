@@ -30,12 +30,11 @@ x-backend-env: &backend-env
   CINEMORA_COOKIE_SECURE: "1"
   CINEMORA_ALLOW_OPERATOR_TOKEN: ${CINEMORA_ALLOW_OPERATOR_TOKEN:-0}
   CINEMORA_API_TOKEN: ${CINEMORA_API_TOKEN:-}
-  SERPER_API_KEY: ${SERPER_API_KEY:-}
   BREWKEG_API_KEY: ${BREWKEG_API_KEY:-}
   # Search (Master Implementation 2026-11-26): the self-hosted
-  # SearXNG service below is the primary search provider; Serper
-  # stays the fallback. Internal compose hostname only — never
-  # point this at a public URL.
+  # SearXNG service below is the platform's only search provider.
+  # Internal compose hostname only — never point this at a
+  # public URL.
   SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8888}
 
 services:
@@ -87,8 +86,9 @@ services:
       redis:
         condition: service_started
       # Not a hard dependency: with SearXNG down the backend
-      # falls back to Serper (circuit breaker). Started first
-      # only so the common path is warm.
+      # still boots and search fails honestly (typed error,
+      # circuit breaker). Started first only so the common
+      # path is warm.
       searxng:
         condition: service_started
 

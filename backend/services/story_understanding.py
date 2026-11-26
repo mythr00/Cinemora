@@ -455,7 +455,7 @@ def find_mentions(text, alias_index):
 # --------------------------------------------------------------------------
 # After the bible is built, a bounded web-research pass grounds it:
 # the most-mentioned subjects are searched (via
-# services.search_provider.search_web ONLY — never Serper directly),
+# services.search_provider.search_web ONLY — never a provider directly),
 # the retrieved sources are attached to their bible entities, bible
 # facts are labelled "externally_supported" / "script_asserted", and
 # disagreements between sources are recorded as conflicts — never
@@ -2407,7 +2407,7 @@ def is_banned_provider(candidate):
             return True
     # Stage 1 gap closure: the label check alone missed candidates
     # whose labels are innocuous but whose URL points at a banned
-    # host (e.g. Serper image results carry a site label and no
+    # host (e.g. search image results carry a site label and no
     # provider key), and the head-token rule missed "www."-prefixed
     # domains. Inspect the URL host's tokens as a second signal: any
     # host label equal to a banned name rejects the candidate.

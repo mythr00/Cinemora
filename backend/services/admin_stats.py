@@ -66,7 +66,7 @@ def overview(db, *, days: int = 30, now: datetime | None = None) -> dict:
     window_by_status: dict[str, int] = {}
     walls: list[float] = []
     window_walls: list[float] = []
-    serper_total_window = 0
+    search_total_window = 0
     llm_total_window = 0
     latest_failures = []
     for run in runs:
@@ -78,9 +78,11 @@ def overview(db, *, days: int = 30, now: datetime | None = None) -> dict:
                 window_by_status.get(run.status, 0) + 1
             )
             execution = run.execution or {}
-            serper = execution.get("serper_calls") or {}
-            if isinstance(serper.get("total"), (int, float)):
-                serper_total_window += int(serper["total"])
+            search = (execution.get("search_calls") or {}).get(
+                "searxng"
+            ) or {}
+            if isinstance(search.get("total"), (int, float)):
+                search_total_window += int(search["total"])
             llm = execution.get("llm_calls") or {}
             if isinstance(llm.get("total"), (int, float)):
                 llm_total_window += int(llm["total"])
@@ -119,7 +121,7 @@ def overview(db, *, days: int = 30, now: datetime | None = None) -> dict:
         "median_wall_seconds_window": (
             statistics.median(window_walls) if window_walls else None
         ),
-        "serper_calls_window": serper_total_window,
+        "search_calls_window": search_total_window,
         "llm_calls_window": llm_total_window,
         "active_runs": sum(by_status.get(s, 0) for s in ACTIVE_STATUSES),
         "latest_failures": [
@@ -292,7 +294,7 @@ def provider_usage(db, *, days: int = 30, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     since = _window_start(days, now)
     totals = {
-        "serper_calls": {"total": 0, "web": 0, "images": 0, "video": 0},
+        "search_calls": {"total": 0, "web": 0, "images": 0, "video": 0},
         "llm_calls": {"total": 0, "total_tokens": 0},
         "archive_org_searches": 0,
         "wikimedia_searches": 0,
@@ -314,10 +316,12 @@ def provider_usage(db, *, days: int = 30, now: datetime | None = None) -> dict:
         if not execution:
             continue
         runs_in_window += 1
-        serper = execution.get("serper_calls") or {}
+        search = (execution.get("search_calls") or {}).get(
+            "searxng"
+        ) or {}
         for kind in ("total", "web", "images", "video"):
-            if isinstance(serper.get(kind), (int, float)):
-                totals["serper_calls"][kind] += int(serper[kind])
+            if isinstance(search.get(kind), (int, float)):
+                totals["search_calls"][kind] += int(search[kind])
         llm = execution.get("llm_calls") or {}
         for kind in ("total", "total_tokens"):
             if isinstance(llm.get(kind), (int, float)):
@@ -335,7 +339,7 @@ def provider_usage(db, *, days: int = 30, now: datetime | None = None) -> dict:
                 "run_id": run.id,
                 "project_id": run.project_id,
                 "status": run.status,
-                "serper_calls": serper,
+                "search_calls": search,
                 "llm_calls": llm,
                 "downloads": downloads,
             }

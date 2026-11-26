@@ -1,8 +1,8 @@
 """Bounded HTTP retry with exponential backoff and Retry-After support.
 
 Provider resilience (founder directive, 2026-11-19): a single rate-limited
-provider must not terminate visual discovery. Serper already retries inside
-``search_provider._post_with_retry``; the Wikimedia Commons, archive.org and
+provider must not terminate visual discovery. The search provider already
+retries inside ``services.search_provider``; the Wikimedia Commons, archive.org and
 direct-download paths used bare ``requests`` calls, so one HTTP 429 killed
 that request outright. This module gives those paths the same discipline:
 

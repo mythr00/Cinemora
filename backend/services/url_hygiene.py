@@ -1,6 +1,6 @@
 """URL hygiene at discovery (run-11 coverage fix 1, 2026-11-22).
 
-Run 11 measured the failure this module exists to prevent: Serper
+Run 11 measured the failure this module exists to prevent: search
 video results arrive with ``google.com/goto?url=<opaque token>``
 redirect wrappers as their link. The pipeline treated the wrapper
 as the candidate's URL, so the segment-evidence stage handed the

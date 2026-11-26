@@ -1,8 +1,8 @@
 """Platform token buckets at the provider choke points (Phase 8.4;
 design 03 §5).
 
-Provider rate limits are PLATFORM resources: one Serper key and one
-BrewKeg key serve every tenant, so the limit must be enforced where
+Provider rate limits are PLATFORM resources: one SearXNG instance
+and one BrewKeg key serve every tenant, so the limit must be enforced where
 all workers can see it — Redis — not per process (01 §4.5). The
 bucket is a fixed window: at most `limit` acquisitions per
 `window_seconds` per scope, counted with INCR + EXPIRE at the
@@ -59,8 +59,8 @@ def _limit_for(scope: str) -> tuple[int, float]:
     """(max acquisitions, window seconds) for a scope, from env:
     CINEMORA_<SCOPE>_RPS (per-second rate, fractional allowed via
     a longer window). Defaults are deliberately generous — the
-    bucket is a coordination ceiling, not a throttle: Serper 20/s,
-    LLM 10/s platform-wide."""
+    bucket is a coordination ceiling, not a throttle: 10/s for
+    every scope platform-wide."""
     raw = os.getenv(f"CINEMORA_{scope.upper()}_RPS")
     if raw:
         try:
@@ -71,7 +71,7 @@ def _limit_for(scope: str) -> tuple[int, float]:
                 return 1, 1.0 / rps
         except ValueError:
             pass
-    return (20 if scope == "serper" else 10), 1.0
+    return 10, 1.0
 
 
 def acquire(scope: str, timeout: float = 30.0) -> bool:

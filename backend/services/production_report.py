@@ -399,11 +399,11 @@ def _questions(measurement, asset_report, verdicts):
                  else None),
         # Master Directive Phase 3 / AM-022: the discovery question —
         # answered from the asset report's discovery block. The
-        # degraded state (zero Serper calls BECAUSE no search key
-        # was configured) is a first-class run fact, distinct from
+        # degraded state (zero search calls BECAUSE search was not
+        # configured) is a first-class run fact, distinct from
         # zero calls for other reasons and from no record at all
         # (pre-Phase-3 productions report unknown).
-        "q28": q("Was discovery degraded because no search key was "
+        "q28": q("Was discovery degraded because search was not "
                  "configured?",
                  asset_report.get("discovery")
                  if isinstance(asset_report.get("discovery"), dict)

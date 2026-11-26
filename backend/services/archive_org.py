@@ -1,7 +1,7 @@
 """Archive.org moving-image discovery (MS-4).
 
 An independent provider in Cinemora's multi-source retrieval: it does
-not depend on Serper, YouTube or any search index. Two public,
+not depend on any search provider, YouTube or any search index. Two public,
 key-less endpoints:
 
 - advancedsearch.php — finds items with mediatype:movies.

@@ -3,15 +3,13 @@
 Honesty rules enforced here, not in prompts: results pass through
 verbatim from the provider; an empty result set is reported as
 empty; "news / government / research" phrasing is labelled as what
-it is — query results over the single Serper index plus the
+it is — query results over the single SearXNG index plus the
 Commons/Archive sources, not dedicated feeds (design 02 §C).
-Provider unavailability (no Serper key) raises the typed
-unavailable error rather than inventing results.
+Provider unavailability (no SearXNG instance configured) raises
+the typed unavailable error rather than inventing results.
 """
 
 from __future__ import annotations
-
-import os
 
 from pydantic import BaseModel, Field
 
@@ -21,13 +19,13 @@ from services.assistant import fetcher, knowledge
 from services.assistant.registry import READ, ToolSpec, register
 
 
-def _require_serper():
-    if not os.environ.get("SERPER_API_KEY"):
+def _require_search():
+    if not search_provider.searxng_configured():
         raise ApiError(
             503,
             "search_unavailable",
-            "Web search is unavailable on this deployment: the "
-            "Web search is not available on this deployment.",
+            "Web search is unavailable on this deployment: no "
+            "search instance is configured.",
         )
 
 
@@ -50,28 +48,28 @@ def _normalise(item: dict, default_source: str) -> dict:
 
 
 def _web(principal, args):
-    _require_serper()
+    _require_search()
     try:
         results = search_provider.search_web(args.query)
     except Exception as error:
         raise ApiError(
             502, "search_failed", f"Web search failed: {type(error).__name__}."
         ) from error
-    results = [_normalise(item, "google_serper") for item in results]
+    results = [_normalise(item, "searxng") for item in results]
     return {
         "query": args.query,
-        "provider": "Serper web index",
+        "provider": "SearXNG web index",
         "results": results[: args.limit],
         "result_count": min(len(results), args.limit),
     }
 
 
 def _youtube(principal, args):
-    _require_serper()
+    _require_search()
     merged: dict[str, dict] = {}
     try:
         for item in search_provider.search_videos(args.query, limit=args.limit):
-            normalised = _normalise(item, "serper_videos")
+            normalised = _normalise(item, "searxng_videos")
             if normalised["url"]:
                 merged[normalised["url"]] = normalised
     except Exception as error:
@@ -79,7 +77,7 @@ def _youtube(principal, args):
             502, "search_failed", f"Video search failed: {type(error).__name__}."
         ) from error
     # The discovery layer's multi-source video search (YouTube via
-    # yt-dlp, Vimeo, Archive, Commons). Fail-soft: Serper results
+    # yt-dlp, Vimeo, Archive, Commons). Fail-soft: search results
     # already answer; a discovery failure is noted, not fatal.
     discovery_note = None
     try:
@@ -94,7 +92,7 @@ def _youtube(principal, args):
     results = list(merged.values())[: args.limit]
     return {
         "query": args.query,
-        "provider": "Serper videos + discovery sources",
+        "provider": "SearXNG videos + discovery sources",
         "results": results,
         "result_count": len(results),
         "note": discovery_note,
@@ -151,21 +149,21 @@ def _research_sources(principal, args):
             "results": results[: args.limit],
             "result_count": min(len(results), args.limit),
         }
-    # "web": query-shaped over the one Serper index — labelled as
+    # "web": query-shaped over the one SearXNG index — labelled as
     # such, never dressed up as a dedicated news/government feed.
-    _require_serper()
+    _require_search()
     try:
         results = search_provider.search_web(args.query)
     except Exception as error:
         raise ApiError(
             502, "search_failed", f"Web search failed: {type(error).__name__}."
         ) from error
-    results = [_normalise(item, "google_serper") for item in results]
+    results = [_normalise(item, "searxng") for item in results]
     return {
         "query": args.query,
         "source_kind": "web",
         "provider": (
-            "Serper web index (general web results; not a dedicated "
+            "SearXNG web index (general web results; not a dedicated "
             "news, government or research-paper feed)"
         ),
         "results": results[: args.limit],
@@ -267,21 +265,21 @@ def _navigation_link(principal, args):
 register(ToolSpec(
     name="search_web", family="search", action_class=READ,
     label="Search the web",
-    summary="Web search over the Serper index. Returns source, title, URL and snippet for each result, verbatim from the provider.",
+    summary="Web search over the SearXNG index. Returns source, title, URL and snippet for each result, verbatim from the provider.",
     input_model=SearchArgs, handler=_web,
     scan_source="search_result",
 ))
 register(ToolSpec(
     name="search_youtube", family="search", action_class=READ,
     label="Search videos",
-    summary="Video search (Serper videos + discovery sources incl. YouTube). Returns title, URL, source and duration when known.",
+    summary="Video search (SearXNG videos + discovery sources incl. YouTube). Returns title, URL, source and duration when known.",
     input_model=SearchArgs, handler=_youtube,
     scan_source="search_result",
 ))
 register(ToolSpec(
     name="search_research_sources", family="search", action_class=READ,
     label="Search research sources",
-    summary="Research sources by kind: wikimedia (Commons images/videos with licence evidence), archive (Archive.org videos), kb (Wikidata/Wikipedia entity verdict for the query), web (general Serper results, labelled as such).",
+    summary="Research sources by kind: wikimedia (Commons images/videos with licence evidence), archive (Archive.org videos), kb (Wikidata/Wikipedia entity verdict for the query), web (general SearXNG results, labelled as such).",
     input_model=ResearchArgs, handler=_research_sources,
     scan_source="search_result",
 ))

@@ -57,7 +57,7 @@ in pipeline code. Each pack declares:
 - source_hints (Transformation Phase 4.2): a top-level block of
   institutional discovery templates — Wikimedia Commons category
   searches, Commons free-text searches, Archive.org advanced-
-  search (Lucene) fragments and Serper web searches aimed at
+  search (Lucene) fragments and SearXNG web searches aimed at
   institutional material (NTSB, NASA, national archives, port
   authorities, government footage) that generic web search
   surfaces poorly. Templates carry {subject} / {place} / {era} /
@@ -496,7 +496,7 @@ def _with_visual_profile(result):
 #: Commons image/video searches; wikimedia_query templates are
 #: Commons free-text searches; archive templates are Archive.org
 #: advanced-search (Lucene) fragments — search_archive_videos
-#: appends "AND mediatype:movies"; web templates are Serper
+#: appends "AND mediatype:movies"; web templates are SearXNG
 #: searches (videos + web + images).
 SOURCE_HINT_CHANNELS = (
     "wikimedia_category", "wikimedia_query", "archive", "web",
