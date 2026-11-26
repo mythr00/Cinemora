@@ -4655,16 +4655,26 @@ def build_motion_graphics_assets(
         ) or {}
         scenario = target.get("scenario") or {}
         facts = {"names": [], "places": [], "dates": [], "labels": []}
+        # Provenance per fact value (lower-cased): "beat" when the
+        # value is recorded for THIS sentence (its text, its
+        # analysis record, or its scenario), "bible" when it comes
+        # only from production-global sources (case-bible entities,
+        # timeline). The terminal sweep's title exclusion is
+        # provenance-based, so the source of every fact must be
+        # known — a beat fact that merely string-matches the
+        # production title is still a beat payload.
+        sources = {}
 
-        def _add(kind, value):
+        def _add(kind, value, source="beat"):
             value = clean_text(value or "")
             if (
                 value
                 and is_short_payload(value)
                 and not is_metadata_title(value)
-                and value not in facts[kind]
             ):
-                facts[kind].append(value)
+                sources.setdefault(value.lower(), set()).add(source)
+                if value not in facts[kind]:
+                    facts[kind].append(value)
 
         date = detect_date(text)
         if date:
@@ -4701,20 +4711,38 @@ def build_motion_graphics_assets(
                 in ("place", "location")
                 else "names"
             )
-            _add(kind, entity.get("canonical") or entity.get("name"))
+            _add(
+                kind, entity.get("canonical") or entity.get("name"),
+                source="bible",
+            )
         for event in timeline_events or []:
             if isinstance(event, dict):
-                _add("dates", event.get("when"))
+                _add("dates", event.get("when"), source="bible")
 
         facts["title"] = short_title_for(target, text)
+        # facts["title"] is a BEAT title (the scenario label or the
+        # sentence's own first entity/place label, per
+        # short_title_for) — never the production title — so record
+        # its provenance as such; it must not act as a title
+        # exclusion in the sweep.
+        if facts["title"]:
+            sources.setdefault(
+                facts["title"].lower(), set()).add("beat")
+        _selected = short_payload_for(text, sentence_record=sentence)
+        if _selected:
+            # Selected from the sentence text / its own record.
+            sources.setdefault(_selected.lower(), set()).add("beat")
         facts["payload"] = (
-            short_payload_for(text, sentence_record=sentence)
+            _selected
             or (facts["names"] or [None])[0]
             or (facts["dates"] or [None])[0]
             or (facts["places"] or [None])[0]
             or (facts["labels"] or [None])[0]
             or ""
         )
+        facts["_sources"] = {
+            value: sorted(kinds) for value, kinds in sources.items()
+        }
         return facts
 
     def _terminal_candidates(target, text, facts):
@@ -4758,16 +4786,39 @@ def build_motion_graphics_assets(
         candidates = []
         title = facts.get("title") or ""
         kicker = clean_text((case_bible or {}).get("title") or "")
-        # Gate 4 (B3): one closing-card candidate per DISTINCT
-        # short payload the beat's facts offer (its own payload,
-        # then its names / dates / places / labels), so the
-        # repetition guard in the sweep can move a beat whose
-        # first payload already serves another sentence onto a
-        # different designed element instead of repeating the
-        # identical card. A payload equal to the production title
-        # / kicker is NOT a beat payload at all — it produced the
-        # Gate 4 S21 title-only card (the film's own title under
-        # its thesis sentence) — and is excluded.
+        # Gate 4 (B3), provenance-corrected: one closing-card
+        # candidate per DISTINCT short payload the beat's facts
+        # offer (its own payload, then its names / dates / places
+        # / labels), so the repetition guard in the sweep can move
+        # a beat whose first payload already serves another
+        # sentence onto a different designed element instead of
+        # repeating the identical card. The title exclusion targets
+        # payloads BY PROVENANCE, not by string: a payload whose
+        # ONLY source is production-global (the case bible /
+        # timeline) and which string-matches the production title
+        # / kicker is the production title itself standing in as a
+        # placeholder — it produced the Gate 4 S21 title-only card
+        # (the film's own title under its thesis sentence) — and
+        # is excluded. A payload recorded for THIS beat (its text,
+        # analysis record or scenario) is a designed element (a
+        # name/date/place card) even when its text happens to
+        # string-match the title — e.g. a film titled with its
+        # subject's name, where the closing beat's own name fact
+        # is that name. facts["title"] is a beat title (see
+        # _terminal_facts), never the production title, so it is
+        # not an exclusion at all. With no provenance recorded
+        # (a hand-built fact record), fall back to the original
+        # string exclusion so the S21 behaviour is preserved.
+        _sources = facts.get("_sources") or {}
+
+        def _is_title_placeholder(value):
+            if not kicker or value.lower() != kicker.lower():
+                return False
+            value_sources = _sources.get(value.lower())
+            if value_sources is None:
+                return True
+            return "beat" not in value_sources
+
         _payload_options = []
         for _option in (
             [facts.get("payload") or ""]
@@ -4781,8 +4832,7 @@ def build_motion_graphics_assets(
                 _option
                 and _option.lower() not in
                 [p.lower() for p in _payload_options]
-                and _option.lower() != kicker.lower()
-                and _option.lower() != title.lower()
+                and not _is_title_placeholder(_option)
             ):
                 _payload_options.append(_option)
         for _option in _payload_options:
@@ -4806,7 +4856,7 @@ def build_motion_graphics_assets(
                     (facts["places"] or [None])[0],
                     title,
                 )
-                if v and v.lower() != kicker.lower()
+                if v and not _is_title_placeholder(v)
             ),
             "",
         )
@@ -5541,7 +5591,7 @@ def build_motion_graphics_assets(
                     "facts_available": sorted(
                         kind
                         for kind, values in _facts.items()
-                        if values
+                        if values and not kind.startswith("_")
                     ),
                 }
 
