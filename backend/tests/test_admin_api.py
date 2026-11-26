@@ -208,6 +208,17 @@ ADMIN_ROUTES = [
      {"provider": "x", "unit": "per_call", "rate_microusd": 1,
       "effective_from": "2026-01-01T00:00:00Z"}),
     ("DELETE", "/api/v1/admin/billing/pricing-rules/{rule_id}", None),
+    # Product Improvements item 1 — affiliates administration
+    # (api_admin.py: overview, entries, entry decision and
+    # affiliate status — the two writes are super_admin-gated —
+    # and the CSV export).
+    ("GET", "/api/v1/admin/affiliates", None),
+    ("GET", "/api/v1/admin/affiliates/entries", None),
+    ("POST", "/api/v1/admin/affiliates/entries/{entry_id}/decision",
+     {"decision": "approve"}),
+    ("POST", "/api/v1/admin/affiliates/{affiliate_id}/status",
+     {"status": "suspended"}),
+    ("GET", "/api/v1/admin/affiliates/export", None),
 ]
 
 
