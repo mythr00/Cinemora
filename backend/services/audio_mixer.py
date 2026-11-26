@@ -1,5 +1,7 @@
 import json
+import os
 import subprocess
+import uuid
 from pathlib import Path
 
 
@@ -106,6 +108,19 @@ def add_narration(
         f"{video_duration:.3f}s"
     )
 
+    # Phase 1 durability: mux to a .partial sibling in the same
+    # directory and publish with os.replace() only after ffmpeg
+    # succeeds — a kill mid-mux (with +faststart, the partial has
+    # no moov atom) never leaves an unplayable file at the final
+    # output path, and a pre-existing output stays byte-identical
+    # on failure.
+    # Media suffix stays last: ffmpeg infers the output muxer
+    # from the file extension.
+    partial_file = output_file.with_name(
+        f"{output_file.stem}.partial-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        f"{output_file.suffix}"
+    )
+
     command = [
         "ffmpeg",
         "-y",
@@ -140,10 +155,19 @@ def add_narration(
         "-movflags",
         "+faststart",
 
-        str(output_file),
+        str(partial_file),
     ]
 
-    run_ffmpeg(command)
+    try:
+        run_ffmpeg(command)
+    except BaseException:
+        try:
+            partial_file.unlink()
+        except OSError:
+            pass
+        raise
+
+    os.replace(partial_file, output_file)
 
     print(
         "\nNARRATION MIX COMPLETE"

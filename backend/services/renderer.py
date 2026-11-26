@@ -1,5 +1,7 @@
 ﻿import json
+import os
 import subprocess
+import uuid
 from pathlib import Path
 
 from services.atomic_write import write_json_atomic, write_text_atomic
@@ -54,6 +56,39 @@ def run_ffmpeg(command, timeout=FFMPEG_TIMEOUT):
     except Exception as error:
         print(f"FFMPEG ERROR: {error}")
         return False
+
+
+def _partial_path(final_path):
+    """Sibling temp path for an in-progress encode of ``final_path``.
+
+    Phase 1 durability: ffmpeg always encodes to a ``.partial-*``
+    sibling in the SAME directory (so the publish rename is a
+    same-filesystem rename) and the result is moved onto the final
+    path with ``os.replace()`` only after the encode succeeds and
+    validates. A process killed mid-encode can therefore never
+    leave an unplayable file (e.g. one missing its moov atom, the
+    known failure mode of ``-movflags +faststart`` written straight
+    to the final path) sitting at a final path.
+    """
+    final_path = Path(final_path)
+    # The media suffix stays LAST (clip_0001.partial-<pid>-<rand>.mp4):
+    # ffmpeg infers the output muxer from the file extension, so a
+    # trailing .partial-* suffix would make every encode fail.
+    return final_path.with_name(
+        f"{final_path.stem}.partial-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        f"{final_path.suffix}"
+    )
+
+
+def _discard_partial(partial_path):
+    try:
+        Path(partial_path).unlink()
+    except OSError:
+        pass
+
+
+def _publish_partial(partial_path, final_path):
+    os.replace(partial_path, final_path)
 
 
 def probe_media(path):
@@ -444,6 +479,7 @@ def create_image_clip(image_path, duration, output_path, frame_count=None, motio
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    partial_path = _partial_path(output_path)
     command = [
         "ffmpeg", "-y",
         "-loop", "1",
@@ -457,11 +493,19 @@ def create_image_clip(image_path, duration, output_path, frame_count=None, motio
         "-pix_fmt", "yuv420p",
         "-an",
         "-movflags", "+faststart",
-        str(output_path),
+        str(partial_path),
     ]
 
     success = run_ffmpeg(command)
-    if not success or not valid_media(output_path):
+    if not success or not valid_media(partial_path):
+        _discard_partial(partial_path)
+        print("Image clip was not created.")
+        return False
+
+    try:
+        _publish_partial(partial_path, output_path)
+    except OSError:
+        _discard_partial(partial_path)
         print("Image clip was not created.")
         return False
 
@@ -523,6 +567,7 @@ def create_video_clip(video_path, duration, output_path, frame_count=None, start
         f",tpad=stop_mode=clone:stop_duration={float(duration):.3f}"
     )
 
+    partial_path = _partial_path(output_path)
     command = [
         "ffmpeg", "-y",
     ]
@@ -542,11 +587,19 @@ def create_video_clip(video_path, duration, output_path, frame_count=None, start
         "-pix_fmt", "yuv420p",
         "-an",
         "-movflags", "+faststart",
-        str(output_path),
+        str(partial_path),
     ])
 
     success = run_ffmpeg(command)
-    if not success or not valid_media(output_path):
+    if not success or not valid_media(partial_path):
+        _discard_partial(partial_path)
+        print("Video clip was not created.")
+        return False
+
+    try:
+        _publish_partial(partial_path, output_path)
+    except OSError:
+        _discard_partial(partial_path)
         print("Video clip was not created.")
         return False
 
@@ -933,12 +986,15 @@ def concatenate_clips(clips, output_path, expected_frames=None):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     concat_file = write_concat_file(clips, output_path)
 
-    repaired_output = output_path.parent / "documentary_repaired.mp4"
-    if repaired_output.exists():
-        try:
-            repaired_output.unlink()
-        except OSError:
-            pass
+    # Phase 1 durability: the re-encode lands on a unique partial
+    # sibling, never on documentary_repaired.mp4 / the master path
+    # itself, and is published onto output_path with os.replace()
+    # only after the frame-count validation below passes. A kill
+    # mid-encode leaves at most an orphaned .partial file; the
+    # previous master (if any) stays byte-identical throughout.
+    repaired_output = _partial_path(
+        output_path.parent / "documentary_repaired.mp4"
+    )
 
     repair_filter = (
         f"fps={FPS},"
@@ -974,6 +1030,7 @@ def concatenate_clips(clips, output_path, expected_frames=None):
     print("=" * 70)
     success = run_ffmpeg(command, timeout=max(FFMPEG_TIMEOUT, 900))
     if not success or not valid_media(repaired_output):
+        _discard_partial(repaired_output)
         return False
 
     repaired_info = probe_media(repaired_output)
@@ -989,16 +1046,19 @@ def concatenate_clips(clips, output_path, expected_frames=None):
 
     if expected_frames is not None and repaired_frames is not None:
         if abs(int(repaired_frames) - int(expected_frames)) > 2:
+            _discard_partial(repaired_output)
             raise RuntimeError(
                 "RENDERER FRAME REPAIR FAILED: "
                 f"expected {expected_frames} frames, got {repaired_frames}."
             )
 
     try:
-        if output_path.exists():
-            output_path.unlink()
-        repaired_output.replace(output_path)
+        # Atomic publish: os.replace overwrites the target in one
+        # rename — the target is NEVER unlinked first, so there is
+        # no window in which no master exists.
+        _publish_partial(repaired_output, output_path)
     except OSError as error:
+        _discard_partial(repaired_output)
         raise RuntimeError(f"Could not finalize documentary: {error}")
 
     print("CONCAT COMPLETE.")
@@ -1331,12 +1391,11 @@ def _render_timeline_impl(scenes, project_dir, expected_duration=None):
     print()
     print(f"Renderer timing audit: {audit_file}")
 
+    # Phase 1 durability: the existing master is NEVER deleted up
+    # front. concatenate_clips publishes its validated replacement
+    # over it with os.replace(), so a kill during the (long)
+    # re-encode leaves the previous master in place.
     raw_video = project_dir / "documentary.mp4"
-    if raw_video.exists():
-        try:
-            raw_video.unlink()
-        except OSError:
-            pass
 
     success = concatenate_clips(
         join_clips,
