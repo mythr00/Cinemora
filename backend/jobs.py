@@ -160,6 +160,23 @@ def save_production_state(project_dir: Path, state: dict):
     return state_file
 
 
+def _evidence_ledger_entries(project_dir):
+    """Phase 3: the production's durable evidence-ledger rows for
+    the asset report (services.discovery_memory's evidence table,
+    opened on the project directory). Fail-soft: an unusable store
+    yields an empty list — the report then states "not_recorded",
+    never an error."""
+    try:
+        from services.discovery_memory import DiscoveryMemory
+
+        store = DiscoveryMemory.open(str(project_dir))
+        if store is None:
+            return []
+        return store.evidence_entries()
+    except Exception:
+        return []
+
+
 def _set_project_status(project_id, status: str):
     """AUD-03: write the run's status back to the Project row.
 
@@ -387,6 +404,7 @@ def fail_pipeline(state: dict, stage: str, error: Exception, project_dir: Path):
             run_failure={"stage": stage, "error": str(error)},
             execution=run_metrics.snapshot(),
             genre_pack=state.get("genre_pack"),
+            evidence_ledger=_evidence_ledger_entries(project_dir),
             # Stage H: a run that reached the Sound Designer stage
             # carries its soundtrack record in state — including the
             # "failed" record for a corrupt music file — and the
@@ -2499,12 +2517,26 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             # the authoritative graphics manifest; graphics generation
             # consumes the manifest — no manifest entry, no graphic.
             # visual_plan.json is upgraded in place to v2 and
-            # graphics_manifest.json written beside it (both fail-soft).
-            # D2 record-and-continue: if reconciliation itself fails,
-            # the failure is printed and production continues on the
-            # legacy targets path rather than dying.
+            # graphics_manifest.json written beside it.
+            # Phase 3 (Master Production Recovery, §11 — one
+            # authoritative planning pathway) SUPERSEDES the D2
+            # record-and-continue rule for this block: reconciliation
+            # is NON-BYPASSABLE. A failure here — plan building,
+            # evidence, the reconcile itself, or a failed document
+            # write — fails the motion-designer stage loudly (and
+            # Phase 1 same-run resume retries it) instead of silently
+            # continuing on the legacy targets path, which let two
+            # planning pathways produce two different films from one
+            # production (Phase 0 root cause 3).
             _graphics_manifest = None
             try:
+                # Phase 3: _plan_document is bound HERE, not only in
+                # the script_analysis stage — on a resumed run that
+                # ADOPTS that stage the earlier import never runs,
+                # and the old fail-soft bypass silently hid the
+                # resulting UnboundLocalError (Pass-2 "failed" on
+                # every such resume and nobody could see why).
+                from services import plan_document as _plan_document
                 from services import visual_director as _visual_director
 
                 _plan_v1 = _plan_document.visual_plan_from_analysis(
@@ -2585,12 +2617,26 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 (_plan_v2.setdefault("summary", {}))[
                     "evidence_production"
                 ] = _evidence_record
-                _plan_document.write_visual_plan_v2_document(
+                _plan_path = _plan_document.write_visual_plan_v2_document(
                     project_dir, _plan_v2
                 )
-                _plan_document.write_graphics_manifest_document(
-                    project_dir, _graphics_manifest
+                _manifest_path = (
+                    _plan_document.write_graphics_manifest_document(
+                        project_dir, _graphics_manifest
+                    )
                 )
+                if _plan_path is None or _manifest_path is None:
+                    # The reconciled plan IS the production's plan;
+                    # if it did not persist, downstream stages would
+                    # read a stale v1 (or nothing) and silently plan
+                    # a different film. Fail loudly (Phase 3).
+                    raise RuntimeError(
+                        "Visual Director Pass-2 documents did not "
+                        "persist (plan "
+                        f"{'written' if _plan_path else 'FAILED'}, "
+                        "manifest "
+                        f"{'written' if _manifest_path else 'FAILED'})"
+                    )
                 print(
                     "Visual Director Pass-2: "
                     f"{len(_graphics_manifest.get('entries') or [])} "
@@ -2599,11 +2645,14 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                     "composition decision(s)."
                 )
             except Exception as _director_error:
+                # Phase 3: recorded AND raised — the stage fails and
+                # Phase 1 resume retries it; the production never
+                # silently falls back to the legacy targets pathway.
                 print(
-                    "Visual Director Pass-2 FAILED (continuing on "
-                    f"legacy targets): {_director_error}"
+                    "Visual Director Pass-2 FAILED (failing the "
+                    f"motion-designer stage): {_director_error}"
                 )
-                _graphics_manifest = None
+                raise
 
         # MG-11: sentence slot durations from the narration
         # parts' measured lengths (parts are sequential; part
@@ -3294,6 +3343,7 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 else _research_stage_record({"analysis": analysis})
             ),
             execution=run_metrics.snapshot(),
+            evidence_ledger=_evidence_ledger_entries(project_dir),
             soundtrack=(
                 soundtrack_record
                 if isinstance(soundtrack_record, dict)

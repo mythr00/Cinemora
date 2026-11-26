@@ -42,7 +42,6 @@ class RunContext:
         segment_basis=None,
         segment_attempts=None,
         segment_failure_cause=None,
-        yt_segment_uses=None,
         youtube_metadata_cache=None,
         youtube_transcript_cache=None,
         yt_info_failed=None,
@@ -76,9 +75,12 @@ class RunContext:
         self.segment_failure_cause = (
             segment_failure_cause if segment_failure_cause is not None else {}
         )
-        self.yt_segment_uses = (
-            yt_segment_uses if yt_segment_uses is not None else {}
-        )
+        # Phase 3: selection-time segment state is NOT a context
+        # container any more — planned segments live on the
+        # production's VisualRegistry (services.visual_registry),
+        # the same store that owns the committed ranges, so the
+        # two can never disagree (the retired yt_segment_uses dict
+        # was the second store Phase 0 root cause 3 named).
         self.youtube_metadata_cache = (
             youtube_metadata_cache if youtube_metadata_cache is not None else {}
         )

@@ -36,7 +36,9 @@ def download_image(image_url, output_path):
 
 from datetime import datetime, timezone
 
-from services.visual_registry import get_registry
+from services.visual_registry import clear_all_planned_segments, get_registry
+from services import authenticity
+from services import global_assignment
 from services import run_metrics
 from services import rejection_diagnostics
 from services import story_understanding as story
@@ -1000,15 +1002,6 @@ def entity_anchor_shots(entities):
 
 def generic_filler_shots():
     return []
-
-
-def build_visual_plan(sentences):
-    entities = extract_entities(" ".join(sentences))
-    beats = segment_beats(sentences)
-    shots = entity_anchor_shots(entities)
-    for beat in beats:
-        shots.extend(beat.shots)
-    return {"entities": entities, "beats": beats, "shots": shots}
 
 
 # ==========================================================================
@@ -2845,7 +2838,50 @@ def _uve_safe_filename(value, max_length=70):
     return (value or "visual")[:max_length]
 
 
-_yt_segment_uses = {}
+def _active_visual_registry():
+    """The active production's visual registry: the registry of
+    the project the active run context names, else the default
+    registry. Phase 3 moved selection-time segment state onto the
+    registry, so the segment selectors resolve it through here."""
+    try:
+        ctx = run_context.current_context()
+    except Exception:
+        ctx = None
+    project_id = getattr(ctx, "project_id", None) if ctx else None
+    return get_registry(project_id or "")
+
+
+def _segment_ranges_in_use(url):
+    """Every (start, end) range a new segment selection must avoid
+    for this source: committed segments plus planned ones, read
+    from the ONE registry store (Phase 3 segment unification).
+
+    This replaces the retired ``_yt_segment_uses`` dict — a second,
+    raw-keyed, run-scoped store whose ranges could disagree with
+    the registry's canonical committed record, most sharply after
+    a registry restore brought committed segments back while the
+    dict restarted empty (Phase 0 root cause 3). Fail-soft: an
+    unresolvable registry reads as no ranges, exactly the old
+    dict's empty state."""
+    if not url:
+        return []
+    try:
+        return _active_visual_registry().segment_ranges_in_use(url)
+    except Exception:
+        return []
+
+
+def _note_planned_segment(url, start, end):
+    """Record a selection-time planned segment on the registry, so
+    every later selection — in this run and, via the registry's
+    export, after a resume — avoids it (Phase 3)."""
+    if not url or start is None or end is None:
+        return
+    try:
+        _active_visual_registry().plan_segment(url, start, end)
+    except Exception:
+        pass
+
 
 _youtube_metadata_cache = {}
 _youtube_transcript_cache = {}
@@ -2881,7 +2917,12 @@ def reset_media_caches():
     reset. The persistent source_cache (SQLite) is intentionally NOT
     cleared — it is the cross-project memory; these are per-job only.
     """
-    _yt_segment_uses.clear()
+    # Phase 3: planned segment ranges live on the registries now;
+    # clearing them everywhere preserves this function's AUD-18
+    # contract (selection-time segment state never leaks across
+    # productions). Committed ranges stand — they are each
+    # registry's own per-production record, reset by jobs.
+    clear_all_planned_segments()
     _youtube_metadata_cache.clear()
     _youtube_transcript_cache.clear()
     _yt_info_failed.clear()
@@ -2935,7 +2976,6 @@ _RUN_CONTEXT_BINDINGS = {
     "_SEGMENT_BASIS": "segment_basis",
     "_SEGMENT_ATTEMPTS": "segment_attempts",
     "_SEGMENT_FAILURE_CAUSE": "segment_failure_cause",
-    "_yt_segment_uses": "yt_segment_uses",
     "_youtube_metadata_cache": "youtube_metadata_cache",
     "_youtube_transcript_cache": "youtube_transcript_cache",
     "_yt_info_failed": "yt_info_failed",
@@ -2964,7 +3004,6 @@ _DEFAULT_RUN_CONTEXT = run_context.RunContext(
     segment_basis=_SEGMENT_BASIS,
     segment_attempts=_SEGMENT_ATTEMPTS,
     segment_failure_cause=_SEGMENT_FAILURE_CAUSE,
-    yt_segment_uses=_yt_segment_uses,
     youtube_metadata_cache=_youtube_metadata_cache,
     youtube_transcript_cache=_youtube_transcript_cache,
     yt_info_failed=_yt_info_failed,
@@ -3684,10 +3723,7 @@ def _youtube_transcript_segment(
     # timestamp.
     candidates = candidates[:40]
 
-    used = _yt_segment_uses.setdefault(
-        key,
-        [],
-    )
+    used = _segment_ranges_in_use(key)
 
     duration = int(
         DEFAULT_CLIP_DURATION
@@ -3728,6 +3764,7 @@ def _youtube_transcript_segment(
         if overlaps or too_close:
             continue
 
+        _note_planned_segment(key, start_time, end_time)
         used.append(
             (
                 start_time,
@@ -4041,7 +4078,7 @@ def _youtube_start(
     if not key:
         return None
 
-    used = _yt_segment_uses.setdefault(key, [])
+    used = _segment_ranges_in_use(key)
     duration = int(DEFAULT_CLIP_DURATION)
 
     # ---------------------------------------------------------
@@ -4147,6 +4184,9 @@ def _youtube_start(
         return True
 
     def register(start_time):
+        _note_planned_segment(
+            key, int(start_time), int(start_time) + duration
+        )
         used.append(
             (
                 int(start_time),
@@ -4291,8 +4331,8 @@ def _youtube_start(
     )
 
     if transcript_start is not None:
-        # _youtube_transcript_segment() already registered
-        # the range in _yt_segment_uses.
+        # _youtube_transcript_segment() already planned
+        # the range on the registry.
         print(
             f"YOUTUBE SEGMENT: {key} "
             f"start={transcript_start}s "
@@ -4669,7 +4709,7 @@ def _positional_direct_window(url, source_duration, clip):
     if total <= 0 or step <= 0:
         return None
     max_start = max(0, int(total) - step)
-    used = _yt_segment_uses.setdefault(key, [])
+    used = _segment_ranges_in_use(key)
     candidate = 0
     while candidate <= max_start:
         end = candidate + step
@@ -4677,6 +4717,7 @@ def _positional_direct_window(url, source_duration, clip):
             candidate < used_end and end > used_start
             for used_start, used_end in used
         ):
+            _note_planned_segment(key, candidate, end)
             used.append((candidate, end))
             return candidate
         candidate += step
@@ -5369,14 +5410,21 @@ def _download_url_key_for(candidate, is_image):
     return canonical_source_key(raw) or raw.lower()
 
 
-def _stamp_duplicate_content(candidate, digest, owner_sentence):
+def _stamp_duplicate_content(candidate, digest, owner_sentence,
+                             sentence_number=None):
     """Record a cross-beat duplicate-content block on the candidate
     (Gate 4, diagnosis §6): the bytes are already committed to
     another beat this run. The taxonomy stamp is taken, then its
     class is set to ``duplicate`` — the class whose contract is
     exactly "already seen this run, never re-requested" — so the
     fetch loop's failure record tells the truth about why this
-    pick produced no asset."""
+    pick produced no asset.
+
+    Phase 3: when the blocked download's own sentence is known, the
+    durable evidence ledger row is linked to the owning sentence as
+    well (``duplicate_of``), so the ledger — not just this run's
+    candidate stamps — records that the bytes are one piece of
+    evidence (acceptance #11)."""
     candidate["_download_error"] = "duplicate_content_this_run"
     _stamp_download_failure(candidate, "duplicate_content_this_run")
     if isinstance(candidate.get("_download_failure"), dict):
@@ -5386,6 +5434,15 @@ def _stamp_duplicate_content(candidate, digest, owner_sentence):
         "content_hash": digest,
         "first_sentence_number": owner_sentence,
     }
+    if sentence_number is not None and candidate.get("candidate_id"):
+        _ledger = _active_discovery_memory()
+        if _ledger is not None:
+            _ledger.mark_evidence_duplicate(
+                candidate["candidate_id"],
+                sentence_number,
+                content_hash=digest,
+                duplicate_of=f"sentence:{owner_sentence}",
+            )
 
 
 def _uve_download_any_candidate(candidate, scene_dir, sentence_number, asset_index):
@@ -5473,6 +5530,7 @@ def _uve_download_any_candidate(candidate, scene_dir, sentence_number, asset_ind
                     candidate,
                     cached.get("content_hash"),
                     cached.get("sentence_number"),
+                    sentence_number=sentence_number,
                 )
                 return None
 
@@ -5552,6 +5610,23 @@ def _uve_download_any_candidate(candidate, scene_dir, sentence_number, asset_ind
             if not asset.get("content_hash"):
                 asset["content_hash"] = digest
             owner = _COMMITTED_CONTENT_OWNERS.get(digest)
+            if owner is None:
+                # Phase 3 (evidence ledger, acceptance #11): the
+                # in-run owner map dies with the run; the durable
+                # ledger does not. Bytes already ACCEPTED for a
+                # different sentence in an earlier run of this
+                # production are the same evidence — never a second
+                # piece of it — so the durable owner is honoured
+                # with exactly the in-run owner's standing. The
+                # ledger row for this download is then recorded as
+                # a duplicate OF the owning row at the stamp site.
+                _ledger = _active_discovery_memory()
+                if _ledger is not None:
+                    _durable_owner = _ledger.evidence_content_owner(
+                        digest
+                    )
+                    if _durable_owner is not None:
+                        owner = _durable_owner.get("sentence_number")
             if owner is not None and owner != sentence_key:
                 # Cross-beat duplicate content: these exact bytes
                 # are already committed to another beat. Remove the
@@ -5564,13 +5639,197 @@ def _uve_download_any_candidate(candidate, scene_dir, sentence_number, asset_ind
                         os.remove(dup_path)
                 except OSError:
                     pass
-                _stamp_duplicate_content(candidate, digest, owner)
+                _stamp_duplicate_content(
+                    candidate, digest, owner,
+                    sentence_number=(
+                        sentence_key
+                        if isinstance(sentence_key, int) else None
+                    ),
+                )
                 return None
             _COMMITTED_CONTENT_OWNERS.setdefault(digest, sentence_key)
         if dl_key:
             _DOWNLOADED_ASSETS_BY_URL[dl_key] = dict(asset)
 
     return asset
+
+
+def _uve_intent_bonus(kind, scenario):
+    """The format-intent bonus for one pool kind: how much the
+    scenario's declared format intent (at its recorded confidence)
+    favours this kind. Bounded at 0.10 — it can tip a close contest
+    toward the format that best communicates the sentence, never
+    rescue a weak candidate (see _uve_rank_stamp)."""
+    intent = str((scenario or {}).get("format_intent") or "any").lower()
+    intent_conf = (scenario or {}).get("format_intent_confidence") or 0.0
+    try:
+        intent_conf = float(intent_conf)
+    except (TypeError, ValueError):
+        intent_conf = 0.0
+    if intent == "any" or intent_conf <= 0:
+        return 0.0
+    if kind == "video":
+        return 0.10 * intent_conf if intent == "footage" else 0.0
+    # image-side candidates serve photograph/document/
+    # map/chart intents fully, graphic intents partially.
+    if intent in {"photograph", "document", "map", "chart"}:
+        return 0.10 * intent_conf
+    if intent == "graphic":
+        return 0.05 * intent_conf
+    return 0.0
+
+
+def _uve_rank_stamp(item, kind, scenario, shot_need):
+    """Phase 3 ranking stamp: selection score = universal score
+    + format-intent bonus + the bounded intent adjustment from
+    _intent_rank_adjustment (medium fit / misrepresentation
+    demotion), with the adjustment and its reasons recorded on
+    the item. Ranking only — the verifier already decided
+    eligibility; this never changes a verdict."""
+    _bonus = _uve_intent_bonus(kind, scenario)
+    _adjustment, _reasons = _intent_rank_adjustment(
+        item, kind, shot_need, scenario, _bonus
+    )
+    item["_intent_adjustment"] = _adjustment
+    if _reasons:
+        item["_intent_reasons"] = _reasons
+    item["_selection_score"] = (
+        (item.get("universal_score") or 0) + _bonus + _adjustment
+    )
+    return item
+
+
+def _uve_build_combined_pool(
+    scored_videos, scored_web_sources, scored_images,
+    scenario, shot_need,
+):
+    """F-2: UNIFIED SELECTION pool assembly. Verified video
+    candidates, footage-capable web candidates (MS-2) and verified
+    image candidates compete in ONE pool for this scenario, ranked
+    by relevance (universal_score) adjusted by format-intent fit.
+
+    This is the ONE assembly implementation, shared by the real
+    pass (_uve_search_and_pick) and the Phase 3 global-assignment
+    survey (_uve_survey_pool): the survey's pools and the pass's
+    pools are built by the same code, so a plan computed from a
+    survey pool describes the pool the pick will actually see."""
+    combined_pool = []
+    pool_keys = set()
+    for item in scored_videos:
+        item = dict(item)
+        item["_pool_kind"] = "video"
+        _uve_rank_stamp(item, "video", scenario, shot_need)
+        combined_pool.append(item)
+        pool_keys.add(_uve_candidate_key(item))
+    for web_item in scored_web_sources:
+        if not _web_source_is_video_candidate(web_item):
+            continue
+        web_key = _uve_candidate_key(web_item)
+        if not web_key or web_key in pool_keys:
+            continue
+        pool_keys.add(web_key)
+        web_item = dict(web_item)
+        web_item["_pool_kind"] = "video"
+        _uve_rank_stamp(web_item, "video", scenario, shot_need)
+        combined_pool.append(web_item)
+    for item in scored_images:
+        item = dict(item)
+        item["_pool_kind"] = "image"
+        _uve_rank_stamp(item, "image", scenario, shot_need)
+        combined_pool.append(item)
+    combined_pool.sort(
+        key=lambda c: c.get("_selection_score") or 0, reverse=True
+    )
+    return combined_pool
+
+
+def _assignment_identity_for(candidate):
+    """The durable identity the global assignment plan keys on:
+    the candidate_id verification stamped, else the canonical
+    candidate key the pool itself dedupes by."""
+    return (
+        (candidate or {}).get("candidate_id")
+        or _uve_candidate_key(candidate or {})
+        or ""
+    )
+
+
+def _apply_global_assignment(pool, unit_plan):
+    """Apply one unit's slice of the scene's global assignment
+    plan to its pool copies, in place.
+
+    Planned picks are boosted above every unplanned candidate —
+    spaced by 0.25 in plan order, far beyond the pick's reuse
+    penalty (<= 0.15), video-preference and tie-break epsilons —
+    so _uve_pick considers them first, in the planned order; its
+    caps and registry rules still apply, so a plan the live state
+    contradicts degrades to the ordinary pick instead of forcing
+    an assignment. Candidates the plan reserved for another unit
+    are marked ``_global_reserved_for``; _uve_pick stamps them
+    ``global_assignment_reserved`` and never consumes them here.
+    """
+    picks = list((unit_plan or {}).get("picks") or [])
+    reserved = dict((unit_plan or {}).get("reserved") or {})
+    if not picks and not reserved:
+        return
+    pick_rank = {identity: rank for rank, identity in enumerate(picks)}
+    base = max(
+        (item.get("_selection_score") or 0 for item in pool),
+        default=0,
+    )
+    for item in pool:
+        identity = _assignment_identity_for(item)
+        if identity in reserved:
+            item["_global_reserved_for"] = reserved[identity]
+        elif identity in pick_rank:
+            rank = pick_rank[identity]
+            item["_global_assignment"] = {"planned_rank": rank}
+            item["_selection_score"] = (
+                base + 1.0 + (len(picks) - rank) * 0.25
+            )
+    pool.sort(
+        key=lambda c: c.get("_selection_score") or 0, reverse=True
+    )
+
+
+def _uve_survey_pool(scenario, shot_need, *, search_cache, project_id,
+                     bible):
+    """Phase 3 survey: one unit's VERIFIED pool, built without
+    picking, downloading or any scene accounting.
+
+    The survey runs the same search + verification the real pass
+    will run, through the scene's shared search_cache and the
+    Phase 2 verdict caches, so the real pass re-pays neither the
+    searches nor (ordinarily) the scoring. Its only durable side
+    effect is the evidence ledger's verified rows — the same rows
+    the real pass records, upserted idempotently. Dedupe-drop
+    records are rolled back: they belong to the real pass's own
+    evaluation accounting, which re-derives them when it runs.
+    """
+    _drops_before = len(_DEDUPE_DROPS)
+    try:
+        videos, web_sources, images = _uve_scenario_search(
+            scenario, search_cache, project_id, shot_need=shot_need
+        )
+        scored_videos = _uve_verify_all(
+            videos, scenario, bible, shot_need
+        )
+        scored_web_sources = _uve_verify_all(
+            web_sources, scenario, bible, shot_need
+        )
+        scored_images = _uve_verify_all(
+            images, scenario, bible, shot_need
+        )
+    finally:
+        del _DEDUPE_DROPS[_drops_before:]
+    pool = _uve_build_combined_pool(
+        scored_videos, scored_web_sources, scored_images,
+        scenario, shot_need,
+    )
+    return [
+        item for item in pool
+        if (item.get("verification") or {}).get("accepted")
+    ]
 
 
 def _uve_search_and_pick(
@@ -5580,6 +5839,7 @@ def _uve_search_and_pick(
     scenario_index, queries, review_records,
     query_pass="primary",
     phase="full",
+    global_plan=None,
 ):
     """One full discovery pass for a scenario.
 
@@ -5755,72 +6015,25 @@ def _uve_search_and_pick(
     # clearly more relevant one of another format, and never
     # admits a verifier-rejected candidate (_uve_pick still
     # enforces acceptance). No format is tried "first" any
-    # more: the old video->image cascade is gone.
-    intent = str(scenario.get("format_intent") or "any").lower()
-    intent_conf = scenario.get("format_intent_confidence") or 0.0
-    try:
-        intent_conf = float(intent_conf)
-    except (TypeError, ValueError):
-        intent_conf = 0.0
-
-    def _intent_bonus(kind):
-        if intent == "any" or intent_conf <= 0:
-            return 0.0
-        if kind == "video":
-            return 0.10 * intent_conf if intent == "footage" else 0.0
-        # image-side candidates serve photograph/document/
-        # map/chart intents fully, graphic intents partially.
-        if intent in {"photograph", "document", "map", "chart"}:
-            return 0.10 * intent_conf
-        if intent == "graphic":
-            return 0.05 * intent_conf
-        return 0.0
-
+    # more: the old video->image cascade is gone. The assembly
+    # itself is _uve_build_combined_pool — the ONE implementation
+    # the Phase 3 survey shares, so a survey pool and this pool
+    # are built identically.
     def _rank_stamp(_item, _kind):
-        """Phase 3 ranking stamp: selection score = universal score
-        + format-intent bonus + the bounded intent adjustment from
-        _intent_rank_adjustment (medium fit / misrepresentation
-        demotion), with the adjustment and its reasons recorded on
-        the item. Ranking only — the verifier already decided
-        eligibility; this never changes a verdict."""
-        _bonus = _intent_bonus(_kind)
-        _adjustment, _reasons = _intent_rank_adjustment(
-            _item, _kind, shot_need, scenario, _bonus
-        )
-        _item["_intent_adjustment"] = _adjustment
-        if _reasons:
-            _item["_intent_reasons"] = _reasons
-        _item["_selection_score"] = (
-            (_item.get("universal_score") or 0) + _bonus + _adjustment
-        )
-        return _item
+        return _uve_rank_stamp(_item, _kind, scenario, shot_need)
 
-    combined_pool = []
-    pool_keys = set()
-    for item in scored_videos:
-        item = dict(item)
-        item["_pool_kind"] = "video"
-        _rank_stamp(item, "video")
-        combined_pool.append(item)
-        pool_keys.add(_uve_candidate_key(item))
-    for web_item in scored_web_sources:
-        if not _web_source_is_video_candidate(web_item):
-            continue
-        web_key = _uve_candidate_key(web_item)
-        if not web_key or web_key in pool_keys:
-            continue
-        pool_keys.add(web_key)
-        web_item = dict(web_item)
-        web_item["_pool_kind"] = "video"
-        _rank_stamp(web_item, "video")
-        combined_pool.append(web_item)
-    for item in scored_images:
-        item = dict(item)
-        item["_pool_kind"] = "image"
-        _rank_stamp(item, "image")
-        combined_pool.append(item)
+    combined_pool = _uve_build_combined_pool(
+        scored_videos, scored_web_sources, scored_images,
+        scenario, shot_need,
+    )
 
-    combined_pool.sort(key=lambda c: c.get("_selection_score") or 0, reverse=True)
+    # Phase 3 (global assignment): apply this unit's slice of the
+    # scene's assignment plan when the driver's survey computed
+    # one — planned picks boosted in plan order, candidates
+    # reserved for another unit marked for _uve_pick to refuse
+    # with the truthful global_assignment_reserved reason.
+    if global_plan:
+        _apply_global_assignment(combined_pool, global_plan)
 
     picks = _uve_pick(combined_pool, scenario, registry, used_keys, shot_need=shot_need)
     fetch_failures = []
@@ -6909,6 +7122,13 @@ def _uve_search_and_pick_extended(_state):
                 or (shot_need or {}).get("tier")
                 or "direct"
             ),
+            # Phase 3: the candidate's authenticity classification
+            # — the stamp verification applied, re-derived from the
+            # item's provenance when a seam produced it unstamped.
+            classification=(
+                _item.get("classification")
+                or authenticity.classify_candidate(_item)
+            ),
         )
         # Metadata-absence bypass (run-6345 fix): a speculative
         # candidate's events carry the bypass marker, the recorded
@@ -6959,12 +7179,17 @@ def _uve_search_and_pick_extended(_state):
         # pool copies — including, since Stage 6, the pick-loop
         # remainder (pick_limit_reached); verification-stage ones
         # are already recorded from the scored lists above.
-        if _item.get("rejection_stage") == "selection":
+        # Phase 3: global-assignment reservations are stamped by
+        # _uve_pick under their own stage and recorded through the
+        # same full-event path, with the stage kept truthful.
+        if _item.get("rejection_stage") in (
+            "selection", "global_assignment",
+        ):
             _record = _event_for(
                 _item,
                 str(_item.get("_pool_kind") or ""),
                 "rejected",
-                "selection",
+                _item.get("rejection_stage"),
                 _item.get("reject_reason") or "registry_block",
             )
             for _field in ("selection_rank", "reuse_penalty"):
@@ -7686,6 +7911,116 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
     all_images, all_videos, sentence_results = [], [], []
     results_by_number = {}
 
+    # Phase 3 — the global assignment survey. Before ANY beat's
+    # pick consumes a source, every searchable beat's scenarios are
+    # searched and verified (the scene's shared search_cache and
+    # the Phase 2 verdict caches mean the real passes below re-pay
+    # neither), and the scene's verified pools are assigned
+    # GLOBALLY by services.global_assignment: units are served
+    # most-constrained first, and within a unit a candidate other
+    # units also need carries an opportunity-cost discount, so a
+    # scarce asset goes to the sentence it serves best instead of
+    # the sentence that happens to run first (Phase 0 root cause
+    # 3; acceptance #14). The plan is advisory to the pick —
+    # _uve_pick still enforces every cap and registry rule — and
+    # its outcome is recorded on the scene stats either way. A
+    # survey failure never blocks the scene: the passes below run
+    # unplanned, exactly as before Phase 3.
+    _global_plan = {}
+    try:
+        _survey_units = []
+        for _sbeat in beats:
+            if not _sbeat.get("searchable", True):
+                continue
+            for _sidx, _sscenario in enumerate(
+                _beat_scenarios(_sbeat), start=1
+            ):
+                _sneed = {}
+                for _need in _sbeat.get("shot_needs") or []:
+                    if _need.get("shot_index") == _sidx:
+                        _sneed = _need
+                        break
+                _squeries = list(
+                    _sneed.get("queries")
+                    or _sscenario.get("queries")
+                    or (
+                        [_sscenario["visual"]]
+                        if _sscenario.get("visual") else []
+                    )
+                )
+                if not _squeries:
+                    continue
+                if _sneed.get("queries"):
+                    _sscenario = dict(_sscenario)
+                    _sscenario["queries"] = _sneed["queries"]
+                _spool = _uve_survey_pool(
+                    _sscenario, _sneed,
+                    search_cache=search_cache,
+                    project_id=project_id, bible=bible,
+                )
+                _survey_units.append({
+                    "key": (_sbeat.get("beat_id"), _sidx),
+                    "candidates": [
+                        {
+                            "identity": _assignment_identity_for(
+                                _item
+                            ),
+                            "source_key": canonical_source_key(str(
+                                _item.get("url")
+                                or _item.get("video_url")
+                                or _item.get("link") or ""
+                            )),
+                            "score": (
+                                _item.get("_selection_score") or 0
+                            ),
+                        }
+                        for _item in _spool
+                    ],
+                })
+        if _survey_units:
+            _source_usage = {}
+            for _unit in _survey_units:
+                for _cand in _unit["candidates"]:
+                    _sk = _cand["source_key"]
+                    if _sk not in _source_usage:
+                        _source_usage[_sk] = (
+                            registry.source_usage_by_key(_sk)
+                        )
+            _global_plan = global_assignment.plan_assignments(
+                _survey_units,
+                source_cap=registry.max_source_uses,
+                source_usage=_source_usage,
+            )
+            scene_stats["global_assignment"] = {
+                "units": len(_survey_units),
+                "units_with_pools": sum(
+                    1 for _unit in _survey_units
+                    if _unit["candidates"]
+                ),
+                "planned_picks": sum(
+                    len(_entry["picks"])
+                    for _entry in _global_plan.values()
+                ),
+                "reservations": sum(
+                    _entry["contended"]
+                    for _entry in _global_plan.values()
+                ),
+            }
+            print(
+                "  GLOBAL ASSIGNMENT: "
+                f"{scene_stats['global_assignment']['units']} unit(s), "
+                f"{scene_stats['global_assignment']['planned_picks']} "
+                "planned pick(s), "
+                f"{scene_stats['global_assignment']['reservations']} "
+                "reservation(s)"
+            )
+    except Exception as _survey_error:
+        print(
+            "  GLOBAL ASSIGNMENT SURVEY FAILED (continuing "
+            f"unplanned): {_survey_error}"
+        )
+        _global_plan = {}
+
     # Phase 2 — the fair initial pass. The scene's beats run in TWO
     # passes over _beat_states: pass 1 (this loop) gives every beat
     # its INITIAL discovery — the unsearched-role ladder entry for
@@ -7832,6 +8167,9 @@ def _uve_process_scene_media(scene, project_dir, image_count=3, video_count=3):
                     scenario_index=scenario_index, queries=queries,
                     review_records=review_records,
                     phase="initial",
+                    global_plan=_global_plan.get(
+                        (beat.get("beat_id"), scenario_index)
+                    ),
                 )
                 _bstate["pending_extended"].append(_pending)
             if not scenarios:

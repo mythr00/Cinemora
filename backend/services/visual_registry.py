@@ -40,6 +40,17 @@ class VisualRegistry:
         self.recent_sources = []
         self.usage_counts = {}
         self.used_segments = {}  # scoped source url -> [(start, end), ...]
+        # Phase 3 (segment unification): segments PLANNED by the
+        # timestamp selectors at selection time, before any download
+        # commits them. One store, owned here alongside the committed
+        # ranges it must never disagree with — this replaces
+        # media_pipeline's separate _yt_segment_uses dict, whose raw
+        # (uncanonicalised) keys and run-scoped lifetime let the two
+        # protections disagree after a registry restore (Phase 0
+        # root cause 3). Planned ranges block later selections
+        # exactly like committed ones; they are not assignments and
+        # never appear in can_use's committed-segment branch.
+        self.planned_segments = {}  # scoped source url -> [(start, end), ...]
         self.max_recent = 12
         self.max_source_uses = 3
 
@@ -96,6 +107,36 @@ class VisualRegistry:
         """Used (start, end) ranges for a source - lets the timestamp
         selector avoid them before it even proposes a segment."""
         return list(self.used_segments.get(self._scoped_source(url), []))
+
+    def plan_segment(self, url, start, end):
+        """Record a segment the timestamp selector has PLANNED for
+        a source (Phase 3): chosen at selection time, not yet
+        committed by a download. Later selections must avoid it
+        exactly as if it were committed."""
+        if not url or start is None or end is None:
+            return
+        self.planned_segments.setdefault(
+            self._scoped_source(url), []
+        ).append((float(start), float(end)))
+
+    def planned_segments_for(self, url):
+        """Planned (start, end) ranges for a source."""
+        return list(
+            self.planned_segments.get(self._scoped_source(url), [])
+        )
+
+    def segment_ranges_in_use(self, url):
+        """EVERY range a new selection must avoid for a source:
+        committed segments plus planned ones, in one list. This is
+        the single read the timestamp selectors use (Phase 3) — the
+        read the retired _yt_segment_uses dict used to serve, now
+        incapable of disagreeing with the registry's own committed
+        record."""
+        return self.segments_for(url) + self.planned_segments_for(url)
+
+    def clear_planned_segments(self):
+        """Drop every planned range (committed ranges stand)."""
+        self.planned_segments = {}
 
     def is_segment_used(self, url, start, end, pad=None):
         if not url or start is None or end is None:
@@ -171,6 +212,17 @@ class VisualRegistry:
             return 0
         return self.usage_counts.get(self._scoped_source(url), 0)
 
+    def source_usage_by_key(self, source_key):
+        """Committed uses of an already-canonical source key
+        (services.canonical_media.canonical_source_key output).
+        The global assignment planner works in canonical keys, not
+        raw URLs, so it reads usage through here."""
+        if not source_key:
+            return 0
+        return self.usage_counts.get(
+            f"{self.project_id}|{source_key}", 0
+        )
+
     # ------------------------------------------------------------ writes
 
     def register(self, *, path=None, url=None, title=None, clip_key=None,
@@ -240,6 +292,10 @@ class VisualRegistry:
                 key: [list(pair) for pair in pairs]
                 for key, pairs in self.used_segments.items()
             },
+            "planned_segments": {
+                key: [list(pair) for pair in pairs]
+                for key, pairs in self.planned_segments.items()
+            },
             "max_recent": self.max_recent,
             "max_source_uses": self.max_source_uses,
             "segment_pad": self.segment_pad,
@@ -275,6 +331,14 @@ class VisualRegistry:
                 if isinstance(pair, (list, tuple)) and len(pair) == 2
             ]
             for key, pairs in (data.get("used_segments") or {}).items()
+        }
+        self.planned_segments = {
+            str(key): [
+                (float(pair[0]), float(pair[1]))
+                for pair in pairs
+                if isinstance(pair, (list, tuple)) and len(pair) == 2
+            ]
+            for key, pairs in (data.get("planned_segments") or {}).items()
         }
         if data.get("max_recent"):
             self.max_recent = int(data["max_recent"])
@@ -319,6 +383,16 @@ def get_registry(project_id=""):
     if key not in _registries:
         _registries[key] = VisualRegistry(project_id=key)
     return _registries[key]
+
+
+def clear_all_planned_segments():
+    """Clear PLANNED segment ranges on every live registry
+    (committed ranges stand). media_pipeline.reset_media_caches
+    calls this so selection-time segment state never leaks across
+    productions — the AUD-18 contract the retired per-run dict
+    carried, now served by the unified store."""
+    for registry in list(_registries.values()):
+        registry.clear_planned_segments()
 
 
 def reset_registry(project_id=None):

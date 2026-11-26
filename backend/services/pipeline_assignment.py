@@ -847,6 +847,18 @@ def _uve_pick(
         # reached. The rank is the candidate's position in the
         # effective-score order it was considered in.
         candidate["selection_rank"] = _rank
+        # Phase 3 (global assignment): a candidate the scene's
+        # global plan reserved for another unit is never consumed
+        # here, however it ranks — the scarce asset goes to the
+        # unit the plan assigned it to. The refusal is stamped
+        # with its own reason/stage so the candidate record (and
+        # the sentence's coverage accounting) can tell "searched,
+        # verified, but assigned elsewhere" apart from a genuine
+        # discovery gap (acceptance #7, assignment half).
+        if candidate.get("_global_reserved_for") is not None:
+            candidate["reject_reason"] = "global_assignment_reserved"
+            candidate["rejection_stage"] = "global_assignment"
+            continue
         # MS-1: the per-source usage cap applies to EVERY provider
         # equally. Previously it applied only to YouTube URLs.
         # Phase 2: counted on the CANONICAL source key, so respelled
