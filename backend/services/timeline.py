@@ -75,6 +75,21 @@ TIMELINE_MAX_FILE_RUNTIME_SHARE = 0.5
 # different cap at a different stage and is untouched.
 TIMELINE_MAX_SEGMENT_USES = TIMELINE_MAX_FILE_USES
 
+# Gate 4 / B5 (Production Recovery, 2026-11-26): a video segment
+# shorter than its sentence slot was silently freeze-padded by the
+# renderer (tpad clone of the last frame) — the Hyatt test film's
+# S01 held a frozen frame for the final ~3.5 s of its 11.5 s slot.
+# The founder's rule is that footage plays as continuous segments;
+# a frozen hold is a defect. Assembly therefore tolerates at most
+# FREEZE_TOLERANCE_SECONDS of freeze (a brief transition tolerance):
+# when the chosen segment cannot cover its slot beyond that, the
+# assembly substitutes the sentence's next verified segment that
+# DOES cover, and when none exists it records an explicit
+# timeline defect on the item (aggregated into the project
+# timeline's ``timeline_defects``) instead of freezing silently.
+# Narration/caption timing is never touched by any of this.
+FREEZE_TOLERANCE_SECONDS = 0.5
+
 
 def _pick_rotation_visual(visuals, usage_counts, usage_durations,
                           previous_path, item_duration, scene_duration,
@@ -374,6 +389,25 @@ def get_clip_start(visual):
     return value if value > 0 else 0.0
 
 
+def _segment_length_seconds(visual):
+    """The visual's recorded segment length in seconds, or None.
+
+    The same fields the item-window computation reads
+    (``clip_duration``, then ``duration_seconds``); a visual with
+    no recorded length has UNKNOWN coverage — never assumed short
+    and never assumed long.
+    """
+    if not isinstance(visual, dict):
+        return None
+    for _length_field in ("clip_duration", "duration_seconds"):
+        _length_value = visual.get(_length_field)
+        if isinstance(_length_value, (int, float)) and not isinstance(
+            _length_value, bool
+        ):
+            return float(_length_value)
+    return None
+
+
 def get_visual_type(visual):
     visual_type = (
         visual.get("type")
@@ -663,6 +697,13 @@ def build_scene_timeline(
     # silently illustrate sentence B.
     assigned_by_position = {}
 
+    # Gate 4 / B5: the sentence's FULL eligible candidate list, in
+    # the pipeline's own order — the assigned pick is its first
+    # entry, and the remainder are the sentence's alternate verified
+    # segments, the covering options the freeze fix below may
+    # substitute when the pick cannot cover its slot.
+    assigned_candidates_by_position = {}
+
     for position, sentence_result in enumerate(
         scene_media.get("sentences", []) or []
     ):
@@ -684,8 +725,11 @@ def build_scene_timeline(
             if not timeline_eligible(candidate):
                 continue
             if visual_exists(candidate):
-                assigned_by_position[position] = candidate
-                break
+                assigned_candidates_by_position.setdefault(
+                    position, []
+                ).append(candidate)
+                if position not in assigned_by_position:
+                    assigned_by_position[position] = candidate
 
     # If the scene-level aggregates are empty but per-sentence assignments
     # exist, the assignments themselves are the scene's visuals.
@@ -795,6 +839,29 @@ def build_scene_timeline(
         # screen so far (any assignment kind, charged or spanning)
         # — the rotation draw's variety tiebreak.
         shown_keys = set()
+
+        def _segment_coverage_seconds(visual):
+            """Gate 4 / B5: seconds of ``visual``'s segment this
+            build can still show from the window it would start
+            at, or None when no segment length is recorded.
+            Mirrors the window computation below: a segment already
+            shown continues from its furthest shown end; generated
+            graphics restart by definition and are judged from
+            their head."""
+            _length = _segment_length_seconds(visual)
+            if _length is None:
+                return None
+            _base = get_clip_start(visual)
+            _start = _base
+            if not (
+                visual.get("motion_graphic") or visual.get("generated")
+            ):
+                _shown = shown_windows.get(_use_key(visual)) or []
+                if _shown:
+                    _furthest = max(_e for _, _e in _shown)
+                    if _base < _furthest < _base + _length:
+                        _start = _furthest
+            return max(0.0, (_base + _length) - _start)
 
         # Coverage fix (founder live test 2, part b): own-beat
         # spanning. A background beat's accepted asset is the beat's
@@ -907,6 +974,7 @@ def build_scene_timeline(
                 if v.get("motion_graphic")
                 and v.get("sentence_index") == sentence_index
             ]
+            _coverage_substitution = None
             if sentence_index in assigned_by_position:
                 # AUD-14 + AUD-21: the visual the pipeline verified for
                 # THIS sentence always wins — including over a generated
@@ -934,6 +1002,68 @@ def build_scene_timeline(
                     )
                     continue
                 assignment = "rotation"
+
+            # Gate 4 / B5: freeze prevention for sentence-assigned
+            # video. When the pipeline's pick cannot cover this
+            # slot (its remaining segment falls short of the slot
+            # by more than FREEZE_TOLERANCE_SECONDS), substitute
+            # the sentence's next verified segment that DOES cover
+            # — the renderer must never be handed a segment it can
+            # only fill by holding a frozen frame. The substitute
+            # is one of the sentence's own verified candidates, so
+            # the AUD-14 assignment and its relevance stamp stay
+            # truthful; the swap is recorded on the item below.
+            # No covering alternate -> the pick stands and the
+            # window computation's shortfall is stamped as an
+            # explicit timeline defect (see the video branch).
+            if (
+                assignment == "sentence"
+                and get_visual_type(visual) == "video"
+            ):
+                _chosen_coverage = _segment_coverage_seconds(visual)
+                if (
+                    _chosen_coverage is not None
+                    and sentence_duration - _chosen_coverage
+                    > FREEZE_TOLERANCE_SECONDS
+                ):
+                    _chosen_key = _use_key(visual)
+                    for _alternate in (
+                        assigned_candidates_by_position.get(
+                            sentence_index, []
+                        )
+                    ):
+                        if _alternate is visual:
+                            continue
+                        if get_visual_type(_alternate) != "video":
+                            continue
+                        if (
+                            _alternate.get("motion_graphic")
+                            or _alternate.get("generated")
+                        ):
+                            continue
+                        if _use_key(_alternate) == _chosen_key:
+                            continue
+                        _alt_coverage = _segment_coverage_seconds(
+                            _alternate
+                        )
+                        if _alt_coverage is None:
+                            continue
+                        if (
+                            sentence_duration - _alt_coverage
+                            <= FREEZE_TOLERANCE_SECONDS
+                        ):
+                            _coverage_substitution = {
+                                "reason": "segment_shorter_than_slot",
+                                "original_file": get_visual_path(visual),
+                                "original_coverage_seconds": round(
+                                    _chosen_coverage, 3
+                                ),
+                                "slot_seconds": round(
+                                    sentence_duration, 3
+                                ),
+                            }
+                            visual = _alternate
+                            break
 
             visual_type = get_visual_type(
                 visual
@@ -1096,6 +1226,11 @@ def build_scene_timeline(
             # carries no stamp, like the other hygiene stamps).
             if _floor_padded:
                 item["padded"] = True
+
+            # Gate 4 / B5: a freeze-avoidance substitution (above)
+            # is recorded on the item it changed.
+            if _coverage_substitution is not None:
+                item["coverage_substitution"] = _coverage_substitution
 
             # Stage 7 / R7+R8: the item carries the segment identity
             # of the visual actually used and the verification
@@ -1266,6 +1401,50 @@ def build_scene_timeline(
                 item["clip_end"] = round(_clip_end, 3)
                 if _continued:
                     item["clip_continued"] = True
+
+                # Gate 4 / B5: the shown window is now final
+                # (continuation + shot snap applied). Any slot
+                # remainder beyond the freeze tolerance is time the
+                # renderer can only fill by holding the segment's
+                # last frame — record it as an explicit timeline
+                # defect on the item (aggregated into the project
+                # timeline's timeline_defects) rather than letting
+                # the freeze pass silently.
+                _shown_seconds = item["clip_end"] - item["clip_start"]
+                if _segment_end is not None:
+                    # The degenerate-window branch above can record
+                    # a window running past the segment's real end;
+                    # the segment's end is the honest shown limit.
+                    _shown_seconds = min(
+                        _shown_seconds,
+                        max(0.0, _segment_end - item["clip_start"]),
+                    )
+                _freeze_seconds = (
+                    float(item["duration"] or 0.0) - _shown_seconds
+                )
+                if _freeze_seconds > FREEZE_TOLERANCE_SECONDS:
+                    item["timeline_defect"] = {
+                        "kind": "segment_shorter_than_slot",
+                        "freeze_seconds": round(_freeze_seconds, 3),
+                        "tolerance_seconds": FREEZE_TOLERANCE_SECONDS,
+                        "slot_seconds": round(
+                            float(item["duration"] or 0.0), 3
+                        ),
+                        "shown_seconds": round(_shown_seconds, 3),
+                        "segment_seconds": (
+                            round(_segment_length, 3)
+                            if _segment_length is not None
+                            else None
+                        ),
+                    }
+                    print(
+                        "TIMELINE DEFECT: sentence "
+                        f"{timing['sentence_index'] + 1} video segment "
+                        f"covers {_shown_seconds:.2f}s of its "
+                        f"{float(item['duration'] or 0.0):.2f}s slot — "
+                        f"{_freeze_seconds:.2f}s would freeze "
+                        "(segment_shorter_than_slot)."
+                    )
 
             else:
 
@@ -2021,6 +2200,21 @@ def build_project_timeline(
         "complete": not uncovered_sentences,
     }
 
+    # Gate 4 / B5: explicit timeline defects recorded on items by
+    # build_scene_timeline (e.g. a video segment too short for its
+    # slot, whose remainder would freeze) are aggregated here so
+    # the timeline manifest names them at project level — a defect
+    # is data, never a silent freeze.
+    timeline_defects = []
+    for _item in all_items:
+        _defect = _item.get("timeline_defect")
+        if isinstance(_defect, dict):
+            timeline_defects.append({
+                "scene_number": _item.get("scene_number"),
+                "sentence_index": _item.get("sentence_index"),
+                **_defect,
+            })
+
     # --------------------------------------------------------
     # FINAL DURATION MUST EQUAL NARRATION
     # --------------------------------------------------------
@@ -2046,6 +2240,9 @@ def build_project_timeline(
 
         "coverage":
             coverage,
+
+        "timeline_defects":
+            timeline_defects,
 
         "sentence_count":
             len(sentence_timings),
