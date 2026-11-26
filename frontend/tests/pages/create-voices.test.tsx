@@ -186,7 +186,7 @@ async function submitWithScript() {
   });
   fireEvent.click(button);
   await waitFor(() => expect(createProject).toHaveBeenCalledTimes(1));
-  return vi.mocked(createProject).mock.calls[0][0] as {
+  return vi.mocked(createProject).mock.calls[0][0] as unknown as {
     options: {
       language: string;
       voice_id: string;
