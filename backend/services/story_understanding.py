@@ -3430,6 +3430,24 @@ def verify_candidate(candidate, scenario, bible):
     # VA-04 already forbids; the overlap fraction and every
     # threshold are unchanged whenever at least one content token
     # (hotel, atrium, walkway, skyline, ...) matches.
+    #
+    # Scope correction (2026-11-26, full-suite find): the B2
+    # masquerade was a candidate whose EVERY axis of evidence was
+    # place/date — its subject credit itself came from the place
+    # (the escalation scenario's subject WAS the city). As first
+    # written, the rule also rejected a candidate that genuinely
+    # names a non-place subject — the required person of an
+    # exact-person beat (DM-12) — whenever its topical overlap
+    # happened to be place-only: "Bryan Kohberger in Moscow,
+    # Idaho, 2022" fell to no_topical_evidence for the arrest
+    # beat, breaking the standing DM-12 ranking (correct entity
+    # beats keyword-only topical strength) that
+    # test_degraded_acceptance pins. A genuine hit on a non-place
+    # subject is subject evidence INDEPENDENT of any place/date
+    # token — nothing is double-counted — so the rule below
+    # disqualifies only when there is no such independent subject
+    # hit. The B2 shape is unchanged: a place subject's own hit
+    # is place evidence, and the trains photo still falls.
     _place_tokens = set()
     for _entity in bible.get("entities", []) or []:
         if _entity.get("type") in ("place", "location"):
@@ -3449,7 +3467,12 @@ def verify_candidate(candidate, scenario, bible):
             token for token in wanted & _candidate_tokens
             if not _is_place_or_date_token(token)
         }
-        place_date_only = not _content_match
+        _independent_subject_hit = bool(
+            subject_hit
+            and subject is not None
+            and subject.get("type") not in ("place", "location")
+        )
+        place_date_only = not _content_match and not _independent_subject_hit
         if place_date_only and overlap:
             reasons.append("topical evidence is place/date only")
 
