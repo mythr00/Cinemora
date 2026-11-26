@@ -250,11 +250,11 @@ def test_13_provider_failure_records_are_complete_and_typed():
     response = requests.Response()
     response.status_code = 500
     error = requests.HTTPError("Server Error", response=response)
-    mp._record_discovery_failure("serper-videos", "some query", error)
+    mp._record_discovery_failure("searxng-videos", "some query", error)
     records = mp.drain_discovery_failures()
     assert len(records) == 1
     record = records[0]
-    assert record["provider"] == "serper-videos"
+    assert record["provider"] == "searxng-videos"
     assert record["query"] == "some query"
     assert record["attempt"] == 1
     assert record["error_class"] == "http_500"

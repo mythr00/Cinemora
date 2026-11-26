@@ -26,7 +26,7 @@ from services.assistant import tools as _tools  # noqa: F401  (registers tools)
 
 
 LEAK_TERMS = (
-    "serper",
+    "searxng",
     "brewkeg",
     "yt-dlp",
     "wikimedia",
@@ -58,7 +58,7 @@ def _principal(role):
 
 def test_sanitize_text_rewrites_internal_terms():
     raw = (
-        "Discovery uses Serper and Wikimedia Commons plus "
+        "Discovery uses SearXNG and Wikimedia Commons plus "
         "Archive.org; the voice_actor stage failed; see "
         "/projects/abc-123/assets for the ledger."
     )
@@ -83,8 +83,8 @@ def test_sanitize_text_preserves_real_urls_and_product_language():
 
 def test_sanitize_value_renames_provider_keys_recursively():
     value = {
-        "serper": {"enabled": True, "role": "discovery via yt-dlp"},
-        "provider": "Serper web index",
+        "searxng": {"enabled": True, "role": "discovery via yt-dlp"},
+        "provider": "SearXNG web index",
         "stages": ["voice_actor", "video_editor"],
     }
     out = boundary.sanitize_value(value)
@@ -92,15 +92,15 @@ def test_sanitize_value_renames_provider_keys_recursively():
     assert out["provider"] == "the web search service web index"
     assert out["stages"] == ["narration", "final assembly"]
     blob = json.dumps(out).lower()
-    for term in ("serper", "yt-dlp", "voice_actor", "video_editor"):
+    for term in ("searxng", "yt-dlp", "voice_actor", "video_editor"):
         assert term not in blob
 
 
 def test_staff_see_internal_detail_unchanged():
     admin = _principal("super_admin")
-    value = {"serper": {"enabled": True}}
+    value = {"searxng": {"enabled": True}}
     assert boundary.sanitize_for(admin, value) is value
-    assert boundary.sanitize_text_for(admin, "Serper") == "Serper"
+    assert boundary.sanitize_text_for(admin, "SearXNG") == "SearXNG"
     customer = _principal("user")
     assert boundary.sanitize_for(customer, value) != value
 
@@ -121,7 +121,7 @@ def test_knowledge_files_carry_no_internal_terms():
     for path in sorted(knowledge_dir.glob("*.md")):
         text = path.read_text(encoding="utf-8").lower()
         for term in (
-            "serper",
+            "searxng",
             "brewkeg",
             "yt-dlp",
             "wikimedia",
@@ -150,21 +150,21 @@ def test_system_rules_carry_the_confidentiality_rule():
 
 
 def test_cap_result_scrubs_for_customer_keeps_for_staff():
-    raw = {"provider": "Serper web index", "stage": "asset_manager"}
+    raw = {"provider": "SearXNG web index", "stage": "asset_manager"}
     customer = _principal("user")
     admin = _principal("super_admin")
     capped_customer = orchestrator._cap_result(raw, customer)
-    assert "serper" not in json.dumps(capped_customer).lower()
+    assert "searxng" not in json.dumps(capped_customer).lower()
     assert capped_customer["stage"] == "visual research"
     capped_admin = orchestrator._cap_result(raw, admin)
-    assert capped_admin["provider"] == "Serper web index"
+    assert capped_admin["provider"] == "SearXNG web index"
 
 
 def test_catalogue_summaries_scrubbed_but_protocol_intact():
     customer = _principal("user")
     catalogue = orchestrator._catalogue_for(customer)
     blob = json.dumps(catalogue).lower()
-    assert "serper" not in blob
+    assert "searxng" not in blob
     assert "brewkeg" not in blob
     # Argument schemas pass through untouched: the research tool's
     # source_kind enum values are protocol, not prose.
@@ -222,7 +222,7 @@ def test_account_profile_providers_generic_for_customer():
     customer = _principal("user")
     profile = spec.handler(customer, spec.input_model())
     blob = json.dumps(profile).lower()
-    assert "serper" not in blob
+    assert "searxng" not in blob
     assert "brewkeg" not in blob
     assert profile["providers"]["web_search"]["enabled"] in (True, False)
 
@@ -335,7 +335,7 @@ def test_extraction_turn_logged_answer_and_payloads_scrubbed(
             {"tool": "get_account_profile", "arguments": {}},
             {
                 "final": (
-                    "We use Serper for discovery and BrewKeg for "
+                    "We use SearXNG for discovery and BrewKeg for "
                     "narration; details at /projects/x/assets."
                 )
             },
@@ -357,7 +357,7 @@ def test_extraction_turn_logged_answer_and_payloads_scrubbed(
     for term in LEAK_TERMS:
         assert term not in answer, (term, body["message"]["content"])
     payloads = json.dumps(body["tool_results"]).lower()
-    assert "serper" not in payloads
+    assert "searxng" not in payloads
     assert "brewkeg" not in payloads
     assert "web_search" in payloads
 

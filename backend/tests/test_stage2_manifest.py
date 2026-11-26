@@ -37,12 +37,12 @@ def test_initial_manifest_shape_and_hash():
     # that could be credentials.
     providers = manifest["providers"]
     assert set(providers) == {
-        "serper",
+        "searxng",
         "archive_org",
         "wikimedia_commons",
         "youtube",
     }
-    assert isinstance(providers["serper"]["enabled"], bool)
+    assert isinstance(providers["searxng"]["enabled"], bool)
 
     # The REAL verifier thresholds and LLM model name, read from the
     # modules that own them.
@@ -84,7 +84,7 @@ def test_validate_manifest_flags_planted_secrets():
 
     planted_hex = dict(manifest)
     planted_hex["options"] = {
-        # A Serper-style 40-char hex key.
+        # An API-key-style 40-char hex key.
         "api": "0123456789abcdef0123456789abcdef01234567"
     }
     problems = run_ledger.validate_manifest(planted_hex)

@@ -14,12 +14,13 @@ Asset Manager code path itself is the production code):
   * Script analysis runs with llm=None (the codebase's own degraded mode):
     no BrewKeg key exists in this environment.
   * search_provider.search_videos is backed by yt-dlp's ytsearch: no
-    Serper key exists in this environment. The substitute performs a REAL
-    YouTube search and returns the provider's dict shape; gating,
-    verification, segment selection, download and probing are untouched
-    production code. Serper web/image search run for real and return
-    nothing without a key — Wikimedia Commons (keyless, real) carries
-    image retrieval alongside.
+    SearXNG instance is configured in this environment. The substitute
+    performs a REAL YouTube search and returns the provider's dict
+    shape; gating, verification, segment selection, download and
+    probing are untouched production code. SearXNG web/image search
+    are unconfigured and raise the typed not_configured error, which
+    the pipeline records fail-soft — Wikimedia Commons (keyless,
+    real) carries image retrieval alongside.
   * Whisper re-transcription is skipped; narration's own proportional
     captions provide timing (a caption-quality step, not an Asset
     Manager step).
@@ -41,7 +42,6 @@ PROJECT_DIR = MEDIA_ROOT / PROJECT_ID
 
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/cinemora-e2e.db")
 os.environ.setdefault("BREWKEG_API_KEY", "e2e-no-key")
-os.environ.setdefault("SERPER_API_KEY", "e2e-no-key")
 os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:6379/0")
 os.environ["SOURCE_INTEL_DB"] = str(OUT_ROOT / "source_intel.sqlite3")
 

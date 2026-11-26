@@ -40,7 +40,6 @@ PROJECT_DIR = MEDIA_ROOT / PROJECT_ID
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///" + str(OUT_ROOT / "e2e_ms.sqlite3"))
 os.environ.setdefault("BREWKEG_API_KEY", "e2e-no-key")
-os.environ.setdefault("SERPER_API_KEY", "e2e-no-key")
 os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:6379/0")
 os.environ.setdefault("CINEMORA_MEDIA_ROOT", str(OUT_ROOT))
 os.environ["SOURCE_INTEL_DB"] = str(OUT_ROOT / "source_intel.sqlite3")

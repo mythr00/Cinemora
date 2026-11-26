@@ -479,7 +479,7 @@ def test_account_tools_describe_the_caller(client, seeded):
     assert profile["plan"]["name"] == "free"
     # Item 2 boundary: an ordinary account's profile carries
     # generic capability entries, never provider names/keys.
-    assert "serper" not in profile["providers"]
+    assert "searxng" not in profile["providers"]
     assert profile["providers"]["web_search"]["enabled"] is True
     usage = _call(principal, "get_account_usage", days=30)
     assert usage["runs_total"] == 0

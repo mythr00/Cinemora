@@ -210,7 +210,7 @@ def _sample_bible():
 def _stub_search(monkeypatch, results_by_query=None, fail=False):
     def _search(query):
         if fail:
-            raise RuntimeError("SERPER_API_KEY is missing")
+            raise RuntimeError("search is not configured")
         return list((results_by_query or {}).get(query, []))
 
     monkeypatch.setattr(research, "search_web", _search)
@@ -242,14 +242,14 @@ _KB_NOTHING = {
 @pytest.mark.parametrize(
     "url,provider,expected",
     [
-        ("https://www.nps.gov/history.htm", "google_serper", "primary_source"),
+        ("https://www.nps.gov/history.htm", "searxng", "primary_source"),
         ("https://archive.org/details/x", "archive_org", "primary_source"),
-        ("https://en.wikipedia.org/wiki/Ideal_X", "google_serper", "institutional"),
-        ("https://www.wikidata.org/wiki/Q1", "google_serper", "institutional"),
-        ("https://www.mit.edu/news", "google_serper", "institutional"),
-        ("https://www.bbc.com/news/x", "google_serper", "established_press"),
-        ("https://randomblog.example/post", "google_serper", "web"),
-        ("", "google_serper", "unknown"),
+        ("https://en.wikipedia.org/wiki/Ideal_X", "searxng", "institutional"),
+        ("https://www.wikidata.org/wiki/Q1", "searxng", "institutional"),
+        ("https://www.mit.edu/news", "searxng", "institutional"),
+        ("https://www.bbc.com/news/x", "searxng", "established_press"),
+        ("https://randomblog.example/post", "searxng", "web"),
+        ("", "searxng", "unknown"),
         (None, None, "unknown"),
     ],
 )
@@ -266,9 +266,9 @@ def test_session_persists_sources_and_dedupes(project_id, monkeypatch):
     results = {
         "Harbour cranes": [
             {"title": "Port history", "url": "https://example.com/port",
-             "snippet": "Cranes.", "source": "google_serper"},
+             "snippet": "Cranes.", "source": "searxng"},
             {"title": "NPS record", "url": "https://www.nps.gov/port",
-             "snippet": "Official.", "source": "google_serper"},
+             "snippet": "Official.", "source": "searxng"},
         ],
     }
     _stub_search(monkeypatch, results)
@@ -305,7 +305,7 @@ def test_session_search_unavailable_is_honest(project_id, monkeypatch):
 
 def test_source_state_transitions(project_id, monkeypatch):
     _stub_search(monkeypatch, {"T": [{"title": "A", "url": "https://a.example/1",
-                                      "snippet": "", "source": "google_serper"}]})
+                                      "snippet": "", "source": "searxng"}]})
     _stub_kb(monkeypatch, _KB_NOTHING)
     session = rs.run_session(project_id, "T")
     source_id = session["sources"][0]["id"]
@@ -487,7 +487,7 @@ def test_citations_and_bibliography(project_id, monkeypatch):
     _write_bible(project_id, _sample_bible())
     _stub_search(monkeypatch, {"T": [{"title": "Port history",
                                       "url": "https://example.com/port",
-                                      "snippet": "", "source": "google_serper"}]})
+                                      "snippet": "", "source": "searxng"}]})
     _stub_kb(monkeypatch, _KB_NOTHING)
     session = rs.run_session(project_id, "T")
     source_id = session["sources"][0]["id"]
@@ -551,7 +551,7 @@ def _kept_source(project_id, monkeypatch):
     _stub_search(monkeypatch, {"T": [{"title": "Port history",
                                       "url": "https://example.com/port",
                                       "snippet": "Container history.",
-                                      "source": "google_serper"}]})
+                                      "source": "searxng"}]})
     _stub_kb(monkeypatch, _KB_NOTHING)
     session = rs.run_session(project_id, "T")
     source_id = session["sources"][0]["id"]
@@ -634,7 +634,7 @@ def test_api_cross_tenant_404_and_owner_flow(client, users, project_id, monkeypa
 
     _stub_search(monkeypatch, {"Cranes": [{"title": "Port history",
                                            "url": "https://example.com/port",
-                                           "snippet": "", "source": "google_serper"}]})
+                                           "snippet": "", "source": "searxng"}]})
     _stub_kb(monkeypatch, _KB_NOTHING)
     created = client.post(f"{base}/sessions", headers=_bearer(a),
                           json={"topic": "Cranes"})

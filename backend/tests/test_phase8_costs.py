@@ -100,7 +100,7 @@ def test_no_rules_means_unknown_costs(db):
 
 def test_token_pricing_and_coverage(db):
     provider = _uniq("brewkeg")
-    other = _uniq("serper")
+    other = _uniq("search")
     _rule(db, provider=provider, rate_microusd=3000)
     _event(db, provider=provider, total_tokens=2000)  # -> 6000
     _event(db, provider=provider, total_tokens=None)  # unpriced
@@ -135,7 +135,7 @@ def test_effective_window_excludes_old_events(db):
 
 
 def test_per_call_rule(db):
-    provider = _uniq("serper")
+    provider = _uniq("search")
     _rule(db, provider=provider, unit="per_call", rate_microusd=800)
     _event(db, provider=provider)
     _event(db, provider=provider)

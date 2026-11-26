@@ -172,30 +172,30 @@ def _subscribe(user_id, plan_id):
 
 def test_run_metrics_two_runs_do_not_corrupt_each_other():
     run_metrics.begin_run("run-a")
-    run_metrics.serper_call("search")
-    run_metrics.serper_call("images")
+    run_metrics.search_call("searxng", "search")
+    run_metrics.search_call("searxng", "images")
     run_metrics.llm_call(100)
     run_metrics.begin_run("run-b")
-    run_metrics.serper_call("search")
+    run_metrics.search_call("searxng", "search")
     run_metrics.llm_call(5)
 
     snap_a = run_metrics.snapshot("run-a")
     snap_b = run_metrics.snapshot("run-b")
-    assert snap_a["serper_calls"]["total"] == 2
+    assert snap_a["search_calls"]["searxng"]["total"] == 2
     assert snap_a["llm_calls"] == {"total": 1, "total_tokens": 100}
-    assert snap_b["serper_calls"]["total"] == 1
+    assert snap_b["search_calls"]["searxng"]["total"] == 1
     assert snap_b["llm_calls"] == {"total": 1, "total_tokens": 5}
     # The bound snapshot is the most recent run's.
-    assert run_metrics.snapshot()["serper_calls"]["total"] == 1
+    assert run_metrics.snapshot()["search_calls"]["searxng"]["total"] == 1
 
 
 def test_run_metrics_rebind_moves_the_provisional_state():
     key = run_metrics.begin_run()
-    run_metrics.serper_call("search")
+    run_metrics.search_call("searxng", "search")
     run_metrics.rebind_run("real-run-id")
-    assert run_metrics.snapshot("real-run-id")["serper_calls"]["total"] == 1
-    run_metrics.serper_call("search")
-    assert run_metrics.snapshot("real-run-id")["serper_calls"]["total"] == 2
+    assert run_metrics.snapshot("real-run-id")["search_calls"]["searxng"]["total"] == 1
+    run_metrics.search_call("searxng", "search")
+    assert run_metrics.snapshot("real-run-id")["search_calls"]["searxng"]["total"] == 2
     assert key != "real-run-id"
 
 
@@ -237,11 +237,11 @@ def test_provider_backoff_is_shared_and_time_bounded(fake_redis):
 
 
 def test_rate_bucket_enforces_the_platform_rate(fake_redis, monkeypatch):
-    monkeypatch.setenv("CINEMORA_SERPER_RPS", "3")
-    assert rate_bucket.acquire("serper", timeout=0) is True
-    assert rate_bucket.acquire("serper", timeout=0) is True
-    assert rate_bucket.acquire("serper", timeout=0) is True
-    assert rate_bucket.acquire("serper", timeout=0) is False
+    monkeypatch.setenv("CINEMORA_SEARXNG_RPS", "3")
+    assert rate_bucket.acquire("searxng", timeout=0) is True
+    assert rate_bucket.acquire("searxng", timeout=0) is True
+    assert rate_bucket.acquire("searxng", timeout=0) is True
+    assert rate_bucket.acquire("searxng", timeout=0) is False
 
 
 # ---------------------------------------------------------------------

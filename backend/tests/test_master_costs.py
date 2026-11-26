@@ -1,8 +1,8 @@
 """Master Implementation Part 4 — real cost recording.
 
 The pricing_rules table no longer ships empty for search: the
-two search rules whose prices are actually known are seeded
-(Serper at its verified Scale rate; SearXNG at $0 marginal), one
+sole search provider's rule is seeded (SearXNG at $0 marginal —
+self-hosted, verified in the 2026-11-26 pricing audit), one
 usage-ledger event prices as one search call, and everything
 without a verified rate (the LLM provider) stays honestly
 unknown.
@@ -21,7 +21,7 @@ from services.billing import costs
 
 Base.metadata.create_all(bind=engine)
 
-_PROVIDERS = ("serper", "searxng", "brewkeg")
+_PROVIDERS = ("searxng", "brewkeg")
 
 
 @pytest.fixture()
@@ -33,7 +33,7 @@ def db():
         models.ProviderUsageEvent.provider.in_(_PROVIDERS)
     ).delete(synchronize_session=False)
     session.query(models.PricingRule).filter(
-        models.PricingRule.provider.in_(("serper", "searxng")),
+        models.PricingRule.provider == "searxng",
         models.PricingRule.unit == "per_search",
     ).delete(synchronize_session=False)
     session.commit()
@@ -56,41 +56,46 @@ def _event(db, provider, **kwargs):
     return event
 
 
-def test_seed_creates_the_two_search_rules_idempotently(db):
+def test_seed_creates_the_search_rule_idempotently(db):
     first = costs.ensure_pricing_rules(db)
-    assert first["pricing_rules_created"] == ["serper", "searxng"]
+    assert first["pricing_rules_created"] == ["searxng"]
     second = costs.ensure_pricing_rules(db)
     assert second["pricing_rules_created"] == []
     rules = {
         (r.provider, r.unit): r.rate_microusd
         for r in db.query(models.PricingRule).all()
-        if r.provider in ("serper", "searxng")
+        if r.provider == "searxng"
     }
-    assert rules[("serper", "per_search")] == 500
     assert rules[("searxng", "per_search")] == 0
 
 
 def test_seed_never_overwrites_an_admin_rate(db):
     db.add(models.PricingRule(
-        id=str(uuid.uuid4()), provider="serper", model=None,
+        id=str(uuid.uuid4()), provider="searxng", model=None,
         unit="per_search", rate_microusd=700,
         effective_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
     ))
     db.flush()
     report = costs.ensure_pricing_rules(db)
-    assert report["pricing_rules_created"] == ["searxng"]
+    assert report["pricing_rules_created"] == []
     rule = (
         db.query(models.PricingRule)
-        .filter_by(provider="serper", unit="per_search")
+        .filter_by(provider="searxng", unit="per_search")
         .one()
     )
     assert rule.rate_microusd == 700
 
 
 def test_rollup_prices_search_events_and_keeps_llm_unknown(db):
+    # An admin-configured rate prices the search events (the seed
+    # alone would price them at exactly 0 — priced, not unknown).
+    db.add(models.PricingRule(
+        id=str(uuid.uuid4()), provider="searxng", model=None,
+        unit="per_search", rate_microusd=500,
+        effective_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    ))
+    db.flush()
     costs.ensure_pricing_rules(db)
-    for _ in range(4):
-        _event(db, "serper")
     for _ in range(3):
         _event(db, "searxng")
     _event(db, "brewkeg", context="chat",
@@ -99,12 +104,8 @@ def test_rollup_prices_search_events_and_keeps_llm_unknown(db):
     db.commit()
     report = costs.rollup(db)
     providers = report["by_provider"]
-    assert providers["serper"] == {
-        "events": 4, "priced_events": 4, "cost_microusd": 2000,
-    }
-    # SearXNG prices at exactly 0 — priced, not unknown.
     assert providers["searxng"] == {
-        "events": 3, "priced_events": 3, "cost_microusd": 0,
+        "events": 3, "priced_events": 3, "cost_microusd": 1500,
     }
     # No verified LLM rate is configured: the event counts toward
     # coverage but stays UNPRICED (priced_events 0 — the engine's

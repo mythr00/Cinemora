@@ -202,7 +202,7 @@ def _stub_search_env(monkeypatch, *, videos=None, web=None, images=None, wikimed
 
 def test_provider_failure_is_isolated_and_recorded(monkeypatch):
     def boom(query, limit=8):
-        raise RuntimeError("serper down")
+        raise RuntimeError("search down")
 
     _stub_search_env(
         monkeypatch,
@@ -221,7 +221,7 @@ def test_provider_failure_is_isolated_and_recorded(monkeypatch):
     assert videos == []
     assert len(web) == 1 and len(images) == 1  # other providers unaffected
     failures = media_pipeline.drain_discovery_failures()
-    assert any(f["provider"] == "serper-videos" for f in failures)
+    assert any(f["provider"] == "searxng-videos" for f in failures)
     assert all("error" in f for f in failures)
 
 

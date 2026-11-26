@@ -1,7 +1,7 @@
 """Multi-source retrieval correction tests (MS-1..MS-7).
 
 MS-1: YouTube discovery lock-in removed.
-- Non-YouTube Serper video results survive discovery with real provider
+- Non-YouTube search video results survive discovery with real provider
   tags (nothing is stamped "youtube" that isn't).
 - Any provider, including YouTube, can be disabled without affecting
   the others.

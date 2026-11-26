@@ -1,20 +1,22 @@
-"""SearXNG primary + Serper fallback (Master Implementation
-2026-11-26).
+"""SearXNG — the sole search provider (Master Implementation
+2026-11-26; founder decision 2026-11-26 removing the former
+paid provider completely).
 
-Hermetic: HTTP is stubbed at requests.get (SearXNG) and
-requests.post (Serper), exactly as the Phase 4c suite stubs it;
-no network, no real instance. Real-instance behaviour is covered
-by the validation evidence in the master-implementation audit
-directory, not here.
+Hermetic: HTTP is stubbed at requests.get; no network, no real
+instance. Real-instance behaviour is covered by the validation
+evidence in the master-implementation audit directory, not here.
 
 Pins:
 - SearXNG normalisation into the established result shapes,
   with duplicate-URL removal and retained source metadata.
-- Routing: SearXNG primary when configured; Serper fallback on
-  failure AND on an unusable (empty) result; fallback events
-  recorded; circuit breaker stops hammering a down instance.
-- CINEMORA_SEARCH_PROVIDER=serper restores the exact pre-2026
-  behaviour even when a SearXNG URL exists.
+- SearXNG is the ONLY provider: every consumer-facing search
+  routes to the configured instance; no fallback exists — the
+  removed provider's key and the old routing env vars have no
+  effect, and the module exposes no fallback machinery.
+- Failure surfaces as the typed SearchProviderError (never a
+  silent switch, never fabricated results); an empty result set
+  from a healthy instance is an honest empty answer; an
+  unconfigured deployment raises kind=not_configured.
 - Provider attribution is recorded in the usage ledger.
 """
 
@@ -47,33 +49,18 @@ def _clean_breaker():
 @pytest.fixture()
 def searxng_env(monkeypatch):
     monkeypatch.setenv("SEARXNG_URL", "http://searxng.test:8888")
-    monkeypatch.setenv("SERPER_API_KEY", "fallback-key")
-    monkeypatch.setattr(search_provider, "SERPER_API_KEY", "fallback-key")
     monkeypatch.setenv("SEARXNG_MAX_ATTEMPTS", "1")
-    calls = {"get": 0, "post": 0}
-    return calls
+    return {"get": 0, "hosts": []}
 
 
 def _unique():
     return f"searxng-probe-{uuid.uuid4()}"
 
 
-def _stub_serper(monkeypatch, calls, payload=None):
-    def _post(*a, **k):
-        calls["post"] += 1
-        return _Response(200, payload if payload is not None else {
-            "organic": [{"title": "ST", "link": "https://s.example/1",
-                         "snippet": "SS"}],
-            "images": [],
-            "videos": [],
-        })
-
-    monkeypatch.setattr(search_provider.requests, "post", _post)
-
-
 def _stub_searxng(monkeypatch, calls, payload=None, status=200):
     def _get(url, params=None, headers=None, timeout=None):
         calls["get"] += 1
+        calls["hosts"].append(url)
         if url.endswith("/healthz"):
             return _Response(200, {})
         return _Response(status, payload or {})
@@ -94,10 +81,12 @@ def test_searxng_web_success_normalises_and_dedupes(
          "content": "beta", "engine": "brave"},
         {"title": "NoUrl", "content": "skipped", "engine": "brave"},
     ]})
-    _stub_serper(monkeypatch, calls)
     results = search_provider.search_web(_unique())
     assert calls["get"] == 1
-    assert calls["post"] == 0  # Serper never called on success
+    # The only host ever contacted is the configured instance.
+    assert all(
+        h.startswith("http://searxng.test:8888") for h in calls["hosts"]
+    )
     assert [r["title"] for r in results] == ["A", "B"]
     first = results[0]
     assert first["url"] == "https://a.example/1"
@@ -116,7 +105,6 @@ def test_searxng_images_mapping_and_skip_rule(monkeypatch, searxng_env):
         {"title": "NoImg", "url": "https://page.example/y",
          "engine": "bing"},
     ]})
-    _stub_serper(monkeypatch, calls)
     results = search_provider.search_images(_unique())
     assert len(results) == 1
     assert results[0]["image_url"] == "https://img.example/x.jpg"
@@ -132,7 +120,6 @@ def test_searxng_videos_mapping(monkeypatch, searxng_env):
          "content": "s", "engine": "youtube",
          "publishedDate": "2026-01-01", "length": "3:12"},
     ]})
-    _stub_serper(monkeypatch, calls)
     results = search_provider.search_videos(_unique())
     assert len(results) == 1
     assert results[0]["video_url"] == "https://v.example/1"
@@ -140,65 +127,61 @@ def test_searxng_videos_mapping(monkeypatch, searxng_env):
     assert results[0]["date"] == "2026-01-01"
 
 
-def test_fallback_on_transport_error(monkeypatch, searxng_env):
-    calls = searxng_env
-
-    def _get(*a, **k):
-        calls["get"] += 1
-        raise requests.ConnectionError("instance down")
-
-    monkeypatch.setattr(search_provider.requests, "get", _get)
-    _stub_serper(monkeypatch, calls)
-    run_metrics.begin_run(f"fb-{uuid.uuid4()}")
-    results = search_provider.search_web(_unique())
-    assert results == [{
-        "title": "ST", "url": "https://s.example/1",
-        "snippet": "SS", "source": "google_serper",
-    }]
-    snap = run_metrics.snapshot()
-    assert snap["search_calls"]["fallback_events"] == 1
-    assert snap["search_calls"]["searxng_failures"] == 1
-    assert snap["serper_calls"]["total"] == 1
-
-
-def test_fallback_on_empty_results(monkeypatch, searxng_env):
-    calls = searxng_env
-    _stub_searxng(monkeypatch, calls, payload={"results": []})
-    _stub_serper(monkeypatch, calls)
-    run_metrics.begin_run(f"fb-{uuid.uuid4()}")
-    results = search_provider.search_web(_unique())
-    assert len(results) == 1
-    assert results[0]["source"] == "google_serper"
-    snap = run_metrics.snapshot()
-    assert snap["search_calls"]["fallback_events"] == 1
-    # An empty result is unusable, not a provider failure.
-    assert snap["search_calls"]["searxng_failures"] == 0
-
-
-def test_fallback_on_malformed_body(monkeypatch, searxng_env):
-    calls = searxng_env
-    _stub_searxng(monkeypatch, calls, payload={"unexpected": True})
-    _stub_serper(monkeypatch, calls)
-    results = search_provider.search_web(_unique())
-    assert results[0]["source"] == "google_serper"
-
-
-def test_fallback_disabled_raises_primary_error(
+def test_failure_surfaces_as_typed_error_no_fallback(
     monkeypatch, searxng_env
 ):
     calls = searxng_env
-    monkeypatch.setenv("CINEMORA_SEARCH_FALLBACK", "0")
 
     def _get(*a, **k):
         calls["get"] += 1
         raise requests.ConnectionError("instance down")
 
     monkeypatch.setattr(search_provider.requests, "get", _get)
-    _stub_serper(monkeypatch, calls)
+    run_metrics.begin_run(f"fail-{uuid.uuid4()}")
     with pytest.raises(search_provider.SearchProviderError) as exc:
         search_provider.search_web(_unique())
     assert exc.value.kind == "upstream"
-    assert calls["post"] == 0
+    snap = run_metrics.snapshot()
+    assert snap["search_calls"]["searxng_failures"] == 1
+    # No other provider exists to record calls against.
+    assert set(snap["search_calls"]) == {"searxng", "searxng_failures"}
+
+
+def test_empty_results_are_an_honest_empty_answer(
+    monkeypatch, searxng_env
+):
+    calls = searxng_env
+    _stub_searxng(monkeypatch, calls, payload={"results": []})
+    run_metrics.begin_run(f"empty-{uuid.uuid4()}")
+    assert search_provider.search_web(_unique()) == []
+    snap = run_metrics.snapshot()
+    # An empty result is a legitimate answer, not a failure.
+    assert snap["search_calls"]["searxng_failures"] == 0
+
+
+def test_rate_limit_status_types_as_rate_limit(monkeypatch, searxng_env):
+    calls = searxng_env
+    _stub_searxng(monkeypatch, calls, payload={}, status=429)
+    with pytest.raises(search_provider.SearchProviderError) as exc:
+        search_provider.search_web(_unique())
+    assert exc.value.kind == "rate_limit"
+    assert exc.value.status_code == 429
+
+
+def test_malformed_body_raises(monkeypatch, searxng_env):
+    calls = searxng_env
+    _stub_searxng(monkeypatch, calls, payload={"unexpected": True})
+    with pytest.raises(search_provider.SearchProviderError) as exc:
+        search_provider.search_web(_unique())
+    assert exc.value.kind == "upstream"
+
+
+def test_unconfigured_raises_not_configured(monkeypatch):
+    monkeypatch.delenv("SEARXNG_URL", raising=False)
+    assert search_provider.searxng_configured() is False
+    with pytest.raises(search_provider.SearchProviderError) as exc:
+        search_provider.search_web(_unique())
+    assert exc.value.kind == "not_configured"
 
 
 def test_circuit_breaker_stops_hammering(monkeypatch, searxng_env):
@@ -209,30 +192,43 @@ def test_circuit_breaker_stops_hammering(monkeypatch, searxng_env):
         raise requests.ConnectionError("instance down")
 
     monkeypatch.setattr(search_provider.requests, "get", _get)
-    _stub_serper(monkeypatch, calls)
-    search_provider.search_web(_unique())
+    with pytest.raises(search_provider.SearchProviderError):
+        search_provider.search_web(_unique())
     assert calls["get"] == 1
     # Breaker is now open: the second query must not touch the
-    # instance at all, but still be served by the fallback.
-    search_provider.search_web(_unique())
+    # instance at all — and still fails honestly (no fallback).
+    with pytest.raises(search_provider.SearchProviderError):
+        search_provider.search_web(_unique())
     assert calls["get"] == 1
-    assert calls["post"] == 2
 
 
-def test_serper_mode_ignores_searxng(monkeypatch, searxng_env):
+def test_removed_provider_configuration_has_no_effect(
+    monkeypatch, searxng_env
+):
+    # The removed provider's key and the old routing switches are
+    # inert: even with all of them set, search routes only to
+    # SearXNG, and the module exposes no fallback machinery.
     calls = searxng_env
+    monkeypatch.setenv("SERPER_API_KEY", "should-be-ignored")
     monkeypatch.setenv("CINEMORA_SEARCH_PROVIDER", "serper")
+    monkeypatch.setenv("CINEMORA_SEARCH_FALLBACK", "1")
+    assert not hasattr(search_provider, "_record_fallback")
+    assert not hasattr(search_provider, "_serper_search")
+    assert not hasattr(search_provider, "_post_with_retry")
     _stub_searxng(monkeypatch, calls, payload={"results": [
         {"title": "X", "url": "https://x.example", "content": "x",
          "engine": "bing"},
     ]})
-    _stub_serper(monkeypatch, calls)
     results = search_provider.search_web(_unique())
-    assert calls["get"] == 0
-    assert results[0]["source"] == "google_serper"
+    assert results[0]["title"] == "X"
+    assert all(
+        h.startswith("http://searxng.test:8888") for h in calls["hosts"]
+    )
 
 
-def test_usage_ledger_records_each_provider(monkeypatch, searxng_env):
+def test_usage_ledger_records_the_sole_provider(
+    monkeypatch, searxng_env
+):
     calls = searxng_env
     recorded = []
     monkeypatch.setattr(
@@ -243,27 +239,25 @@ def test_usage_ledger_records_each_provider(monkeypatch, searxng_env):
         {"title": "A", "url": "https://a.example/1",
          "content": "alpha", "engine": "duckduckgo"},
     ]})
-    _stub_serper(monkeypatch, calls)
     search_provider.search_web(_unique())
     providers = [row["provider"] for row in recorded]
     assert providers == ["searxng"]
     assert recorded[0]["context"]["context"] == "search:web"
 
 
-def test_health_reports_configuration(monkeypatch, searxng_env):
+def test_health_reports_the_sole_provider(monkeypatch, searxng_env):
     calls = searxng_env
     _stub_searxng(monkeypatch, calls, payload={"results": []})
     health = search_provider.search_health()
     assert health["primary"] == "searxng"
-    assert health["fallback_enabled"] is True
+    assert set(health) == {"primary", "searxng"}
     assert health["searxng"]["configured"] is True
     assert health["searxng"]["ok"] is True
-    assert health["serper"]["configured"] is True
 
 
 def test_health_without_searxng_url(monkeypatch):
     monkeypatch.delenv("SEARXNG_URL", raising=False)
     health = search_provider.search_health()
-    assert health["primary"] == "serper"
+    assert health["primary"] == "searxng"
     assert health["searxng"]["configured"] is False
     assert health["searxng"]["ok"] is False

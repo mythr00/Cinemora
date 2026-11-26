@@ -199,7 +199,7 @@ def _fixture_run(tmp_path):
                     {
                         "candidate_id": "cand-rej-2",
                         "url": "https://example.com/rejected2",
-                        "provider": "serper_web",
+                        "provider": "searxng_web",
                         "outcome": "rejected",
                         "stage": "selection",
                         "reason": "below_threshold",

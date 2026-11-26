@@ -5,7 +5,7 @@ Sets a safe, fully local environment BEFORE any backend module is imported:
 - dummy provider keys so import-time config checks pass without real secrets,
 - a dummy Redis URL (RQ connects lazily; no server is contacted by imports).
 
-External providers (Serper, yt-dlp, BrewKeg LLM, Piper, Whisper) are mocked in
+External providers (SearXNG, yt-dlp, BrewKeg LLM, Piper, Whisper) are mocked in
 the individual test modules that exercise them — the suite never performs
 real network retrieval.
 """
@@ -23,7 +23,7 @@ _TMP = tempfile.mkdtemp(prefix="cinemora-tests-")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{os.path.join(_TMP, 'test.db')}")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/15")
 os.environ.setdefault("BREWKEG_API_KEY", "test-dummy-key")
-os.environ.setdefault("SERPER_API_KEY", "test-dummy-key")
+os.environ.setdefault("SEARXNG_URL", "http://searxng.test")
 os.environ.setdefault("SOURCE_INTEL_DB", os.path.join(_TMP, "source_intel.sqlite3"))
 
 import pytest  # noqa: E402

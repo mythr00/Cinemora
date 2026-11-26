@@ -282,10 +282,10 @@ def test_status_endpoint_shapes(tmp_path, monkeypatch):
 
 def test_metrics_accumulate_and_snapshot():
     run_metrics.begin_run()
-    run_metrics.serper_call("videos")
-    run_metrics.serper_call("videos")
-    run_metrics.serper_call("search")
-    run_metrics.serper_call("images")
+    run_metrics.search_call("searxng", "videos")
+    run_metrics.search_call("searxng", "videos")
+    run_metrics.search_call("searxng", "search")
+    run_metrics.search_call("searxng", "images")
     run_metrics.archive_org_search()
     run_metrics.wikimedia_search()
     run_metrics.wikimedia_search()
@@ -301,7 +301,7 @@ def test_metrics_accumulate_and_snapshot():
     run_metrics.stage_finished("voice_actor")
 
     snap = run_metrics.snapshot()
-    assert snap["serper_calls"] == {"total": 4, "web": 1, "images": 1, "video": 2}
+    assert snap["search_calls"]["searxng"] == {"total": 4, "web": 1, "images": 1, "video": 2}
     assert snap["archive_org_searches"] == 1
     assert snap["wikimedia_searches"] == 2
     assert snap["candidates_discovered"] == 10
@@ -320,32 +320,31 @@ def test_metrics_accumulate_and_snapshot():
     assert "unknown" in snap["monetary_cost_note"]
 
 
-def test_serper_choke_point_counts_real_calls_by_type(monkeypatch):
+def test_searxng_choke_point_counts_real_calls_by_type(monkeypatch):
     class FakeResponse:
         status_code = 200
         headers = {}
-
-        def raise_for_status(self):
-            pass
+        text = ""
 
         def json(self):
             return {
-                "videos": [{"link": "https://example.com/v", "title": "t"}],
-                "organic": [],
-                "images": [],
+                "results": [
+                    {"url": "https://example.com/v", "title": "t",
+                     "engine": "youtube"}
+                ]
             }
 
     monkeypatch.setattr(
-        search_provider.requests, "post", lambda *a, **k: FakeResponse()
+        search_provider.requests, "get", lambda *a, **k: FakeResponse()
     )
     run_metrics.begin_run()
-    # A unique query guarantees a cache miss, so the call reaches the
-    # HTTP choke point in _post_with_retry.
+    # A unique query guarantees a cache miss, so the call reaches
+    # the HTTP choke point in _searxng_search.
     results = search_provider.search_videos(f"metrics-probe-{uuid.uuid4()}")
     assert results and results[0]["video_url"] == "https://example.com/v"
     snap = run_metrics.snapshot()
-    assert snap["serper_calls"]["video"] == 1
-    assert snap["serper_calls"]["total"] == 1
+    assert snap["search_calls"]["searxng"]["video"] == 1
+    assert snap["search_calls"]["searxng"]["total"] == 1
 
 
 def test_fetch_first_counts_downloads_and_bytes(tmp_path):
@@ -391,9 +390,9 @@ def test_fetch_first_counts_downloads_and_bytes(tmp_path):
 
 def test_execution_block_in_built_report():
     run_metrics.begin_run()
-    run_metrics.serper_call("search")
+    run_metrics.search_call("searxng", "search")
     report = build_asset_report([], execution=run_metrics.snapshot())
-    assert report["execution"]["serper_calls"]["web"] == 1
+    assert report["execution"]["search_calls"]["searxng"]["web"] == 1
     assert report["execution"]["monetary_cost_usd"] is None
     assert "unknown" in report["execution"]["monetary_cost_note"]
 

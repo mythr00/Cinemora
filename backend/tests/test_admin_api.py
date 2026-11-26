@@ -290,8 +290,8 @@ def _seed_project_run(owner_id, status="failed"):
             status=status, stage="asset_manager", error="boom",
             script_hash=run_ledger.script_sha256("Seeded script."),
             execution={
-                "serper_calls": {"total": 3, "web": 3, "images": 0,
-                                 "video": 0},
+                "search_calls": {"searxng": {"total": 3, "web": 3,
+                                             "images": 0, "video": 0}},
                 "llm_calls": {"total": 1, "total_tokens": 10},
                 "downloads": {"attempted": 0, "succeeded": 0,
                               "failed": 0, "bytes_downloaded": 0},
@@ -316,7 +316,7 @@ def test_overview_and_usage_endpoints(client, admin_headers):
     usage = client.get(
         "/api/v1/admin/providers/usage", headers=admin_headers
     ).json()
-    assert usage["totals"]["serper_calls"]["total"] >= 3
+    assert usage["totals"]["search_calls"]["total"] >= 3
     assert usage["monetary_cost_usd"] is None
 
     runs = client.get("/api/v1/admin/runs", headers=admin_headers).json()
@@ -333,16 +333,18 @@ def test_health_endpoint_components(client, admin_headers):
 
 
 def test_settings_never_leak_secret_values(client, admin_headers, monkeypatch):
-    monkeypatch.setenv("SERPER_API_KEY", "serper-sentinel-secret")
+    monkeypatch.setenv("SEARXNG_URL", "http://searxng.internal:8888")
     monkeypatch.setenv("BREWKEG_API_KEY", "brewkeg-sentinel-secret")
     response = client.get("/api/v1/admin/settings", headers=admin_headers)
     assert response.status_code == 200
-    assert "serper-sentinel-secret" not in response.text
     assert "brewkeg-sentinel-secret" not in response.text
     credentials = response.json()["groups"]["credentials"]
-    serper = [e for e in credentials if e["name"] == "SERPER_API_KEY"][0]
-    assert serper["configured"] is True and serper["secret"] is True
-    assert "value" not in serper
+    brewkeg = [e for e in credentials if e["name"] == "BREWKEG_API_KEY"][0]
+    assert brewkeg["configured"] is True and brewkeg["secret"] is True
+    assert "value" not in brewkeg
+    providers = response.json()["groups"]["providers"]
+    searxng = [e for e in providers if e["name"] == "SEARXNG_URL"][0]
+    assert searxng["configured"] is True
 
 
 # ---------------------------------------------------------------------

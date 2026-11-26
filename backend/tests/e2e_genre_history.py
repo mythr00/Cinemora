@@ -4,10 +4,10 @@ the HISTORY genre pack selected via run options.
 
 This is the ready-to-run acceptance production for the Stage 5
 "proven genre" gate on the history side. It is NOT run as part of
-the test suite: it needs the founder-supplied BrewKeg + Serper keys
+the test suite: it needs the founder-supplied BrewKeg key + a SearXNG instance
 in the environment (they are run-only and never stored). Run:
 
-    BREWKEG_API_KEY=... SERPER_API_KEY=... \
+    BREWKEG_API_KEY=... SEARXNG_URL=... \
         python tests/e2e_genre_history.py
 
 ``--checks-only`` re-runs the artefact checks against an existing
@@ -34,7 +34,6 @@ os.environ.setdefault("RIGHTS_POLICY", "allow_all")
 # a live run supplies the real founder keys via the environment,
 # which setdefault never overrides.
 os.environ.setdefault("BREWKEG_API_KEY", "dummy")
-os.environ.setdefault("SERPER_API_KEY", "dummy")
 os.environ.setdefault("CINEMORA_REQUIRE_MEDIA_PROBE", "1")
 os.environ.setdefault("CINEMORA_MEDIA_ROOT",
                       str(Path.home() / "workspace" / "cinemora-audit" / "e2e-media"))

@@ -368,39 +368,39 @@ def test_query_diagnostics_end_to_end(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# AM-022: discovery degraded — exactly when the key is absent
+# AM-022: discovery degraded — exactly when search is unconfigured
 # ---------------------------------------------------------------------------
 
-_EXEC_ZERO = {"serper_calls": {"total": 0, "by_purpose": {}, "failures": 0}}
-_EXEC_FIVE = {"serper_calls": {"total": 5, "by_purpose": {}, "failures": 0}}
+_EXEC_ZERO = {"search_calls": {"searxng": {"total": 0, "by_purpose": {}, "failures": 0}}}
+_EXEC_FIVE = {"search_calls": {"searxng": {"total": 5, "by_purpose": {}, "failures": 0}}}
 
 
-def test_discovery_degraded_exactly_when_key_absent(monkeypatch):
-    monkeypatch.delenv("SERPER_API_KEY", raising=False)
+def test_discovery_degraded_exactly_when_search_unconfigured(monkeypatch):
+    monkeypatch.delenv("SEARXNG_URL", raising=False)
     report = build_asset_report([], execution=_EXEC_ZERO)
     discovery = report["discovery"]
-    assert discovery["state"] == "degraded_no_search_key"
+    assert discovery["state"] == "degraded_search_unconfigured"
     assert discovery["degraded"] is True
-    assert discovery["reason"] == "no_search_key"
-    assert discovery["fact"] == "discovery degraded: no search key"
-    assert discovery["serper_calls"] == 0
-    assert discovery["search_key_configured"] is False
+    assert discovery["reason"] == "search_not_configured"
+    assert discovery["fact"] == "discovery degraded: search not configured"
+    assert discovery["search_calls"] == 0
+    assert discovery["search_configured"] is False
 
-    # Zero calls WITH a key configured: a different fact — the run
-    # simply never needed Serper. NOT degraded.
-    monkeypatch.setenv("SERPER_API_KEY", "test-key")
+    # Zero calls WITH search configured: a different fact — the run
+    # simply never needed search. NOT degraded.
+    monkeypatch.setenv("SEARXNG_URL", "http://searxng.test")
     report = build_asset_report([], execution=_EXEC_ZERO)
     discovery = report["discovery"]
     assert discovery["state"] == "recorded"
     assert discovery["degraded"] is False
-    assert discovery["reason"] == "no_serper_calls"
+    assert discovery["reason"] == "no_search_calls"
     assert discovery["fact"] is None
 
-    # Calls happened: not degraded, whatever the key state.
-    monkeypatch.delenv("SERPER_API_KEY", raising=False)
+    # Calls happened: not degraded, whatever the configuration.
+    monkeypatch.delenv("SEARXNG_URL", raising=False)
     report = build_asset_report([], execution=_EXEC_FIVE)
     assert report["discovery"]["degraded"] is False
-    assert report["discovery"]["serper_calls"] == 5
+    assert report["discovery"]["search_calls"] == 5
 
     # No execution record at all: unknown, never a fabricated fact.
     report = build_asset_report([])
@@ -410,7 +410,7 @@ def test_discovery_degraded_exactly_when_key_absent(monkeypatch):
 
 
 def test_production_report_q28_carries_the_discovery_fact(monkeypatch):
-    monkeypatch.delenv("SERPER_API_KEY", raising=False)
+    monkeypatch.delenv("SEARXNG_URL", raising=False)
     asset_report = build_asset_report([], execution=_EXEC_ZERO)
     report = build_production_report(
         measurement={}, asset_report=asset_report,
@@ -418,8 +418,8 @@ def test_production_report_q28_carries_the_discovery_fact(monkeypatch):
     )
     q28 = report["questions"]["q28"]
     assert q28["state"] == "answered"
-    assert q28["answer"]["state"] == "degraded_no_search_key"
-    assert q28["answer"]["fact"] == "discovery degraded: no search key"
+    assert q28["answer"]["state"] == "degraded_search_unconfigured"
+    assert q28["answer"]["fact"] == "discovery degraded: search not configured"
 
     bare = build_production_report(
         measurement={}, asset_report={}, timeline={},

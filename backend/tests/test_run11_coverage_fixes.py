@@ -5,7 +5,7 @@ editor's coverage gate — 20/23 sentences, with scene 3's
 sentences 9, 10 and 12 uncovered. The run's own records showed
 five distinct machinery defects, one per fix pinned here:
 
-1. URL HYGIENE. Serper video results arrived as
+1. URL HYGIENE. Search video results arrived as
    google.com/goto?url=<opaque token> redirect wrappers and were
    handed verbatim to yt-dlp / segment evidence: 69 of the run's
    download failures were segment_evidence/no_segment_evidence

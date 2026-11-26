@@ -246,7 +246,7 @@ _THIN_SOURCE = {
     "title": "A barrier divided the city",
     "url": "https://example.org/wall-overview",
     "snippet": "A barrier divided the city for decades afterwards.",
-    "source": "google_serper",
+    "source": "searxng",
 }
 
 
@@ -313,11 +313,11 @@ def test_duplicate_titles_stamped_not_merged(monkeypatch):
             {"title": "Berlin Wall erected in 1961",
              "url": "https://a.example/wall",
              "snippet": "The Berlin Wall was erected in 1961.",
-             "source": "google_serper"},
+             "source": "searxng"},
             {"title": "Berlin Wall erected in 1961",
              "url": "https://b.example/wall-mirror",
              "snippet": "The Berlin Wall was erected in 1961.",
-             "source": "google_serper"},
+             "source": "searxng"},
         ]
 
     monkeypatch.setattr(story, "search_web", search)

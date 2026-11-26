@@ -362,7 +362,7 @@ def test_usage_summary_matches_ledger(client):
         run_id,
         "completed",
         execution={
-            "serper_calls": {"total": 7, "web": 5, "images": 2, "video": 0},
+            "search_calls": {"searxng": {"total": 7, "web": 5, "images": 2, "video": 0}},
             "llm_calls": {"total": 3, "total_tokens": 1234},
         },
     )
@@ -372,7 +372,7 @@ def test_usage_summary_matches_ledger(client):
     assert body["plan"]["name"] == "free"
     assert body["runs_in_period"] == 1
     assert body["concurrent_runs"] == 0
-    assert body["provider"]["serper_calls"] == 7
+    assert body["provider"]["search_calls"] == 7
     assert body["provider"]["llm_calls"] == 3
     assert body["provider"]["llm_tokens"] == 1234
     assert body["provider"]["llm_counted_runs"] == 1

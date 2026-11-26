@@ -91,7 +91,7 @@ def test_stock_agency_url_not_rejected_for_watermark():
         {
             "title": "Police van driving away at night",
             "url": "https://www.shutterstock.com/image-photo/police-van-12345",
-            "provider": "serper",
+            "provider": "searxng",
         },
         _scenario(), _petito_bible(),
     )
@@ -105,7 +105,7 @@ def test_stock_agency_url_not_rejected_for_watermark():
             "snippet": "Officers in Moab, Utah separated the couple; "
                        "the van drove away",
             "url": "https://www.shutterstock.com/image-photo/police-van-6789",
-            "provider": "serper",
+            "provider": "searxng",
         },
         _scenario(), _petito_bible(),
     )

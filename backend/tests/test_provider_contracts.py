@@ -4,11 +4,12 @@ The Phase 4c / llm_provider suites pin failure typing and the
 thinking-disabled rule. What they do NOT pin — and what silently
 breaks productions when a provider changes its wire format — is
 the exact request shape and the response field mapping. These
-tests pin that surface hermetically (requests.post stubbed, no
+tests pin that surface hermetically (requests stubbed, no
 network, no keys: sentinel values only):
 
-* Serper: per-endpoint URL, {"q": query} payload, and the
-  organic/images/videos field mappings incl. skip rules.
+* SearXNG: the instance /search URL, the q/format/categories
+  query parameters per kind, and the results field mappings
+  incl. skip rules and duplicate removal.
 * BrewKeg: {base}/messages URL, Bearer header, payload shape,
   and content-block text extraction (thinking blocks skipped,
   text blocks joined, usage/stop_reason passthrough).
@@ -36,18 +37,19 @@ class _Response:
         return self._payload
 
 
-# --- Serper ------------------------------------------------------------
+# --- SearXNG -----------------------------------------------------------
 
 @pytest.fixture()
-def serper_env(monkeypatch):
-    monkeypatch.setenv("SERPER_API_KEY", "contract-key")
+def searxng_env(monkeypatch):
+    monkeypatch.setenv("SEARXNG_URL", "http://searxng.test:8888")
     seen = {}
 
     def _capture(response):
-        def _post(url, headers=None, json=None, timeout=None):
-            seen.update(url=url, headers=headers, json=json, timeout=timeout)
+        def _get(url, params=None, headers=None, timeout=None):
+            seen.update(url=url, params=params, headers=headers,
+                        timeout=timeout)
             return response
-        return _post
+        return _get
 
     return seen, _capture
 
@@ -56,41 +58,53 @@ def _unique():
     return f"contract-{uuid.uuid4()}"
 
 
-def test_serper_web_request_shape_and_parse(monkeypatch, serper_env):
-    seen, capture = serper_env
-    payload = {"organic": [
-        {"title": "T1", "link": "https://a.example/1", "snippet": "S1"},
-        {"title": "T2", "link": "https://a.example/2", "snippet": "S2"},
+def test_searxng_web_request_shape_and_parse(monkeypatch, searxng_env):
+    seen, capture = searxng_env
+    payload = {"results": [
+        {"title": "T1", "url": "https://a.example/1", "content": "S1",
+         "engine": "google"},
+        {"title": "T2", "url": "https://a.example/2", "content": "S2",
+         "engine": "bing"},
     ]}
     monkeypatch.setattr(
-        search_provider.requests, "post", capture(_Response(200, payload)))
+        search_provider.requests, "get", capture(_Response(200, payload)))
     query = _unique()
     results = search_provider.search_web(query)
-    assert seen["url"] == "https://google.serper.dev/search"
-    assert seen["json"] == {"q": query}
-    assert seen["headers"]["X-API-KEY"] == "contract-key"
-    assert seen["headers"]["Content-Type"] == "application/json"
-    assert results == [
+    assert seen["url"] == "http://searxng.test:8888/search"
+    assert seen["params"]["q"] == query
+    assert seen["params"]["format"] == "json"
+    assert seen["params"]["categories"] == "general"
+    # No API key exists for SearXNG: no credential header is sent.
+    assert "X-API-KEY" not in (seen["headers"] or {})
+    assert [
+        {k: r[k] for k in ("title", "url", "snippet", "source")}
+        for r in results
+    ] == [
         {"title": "T1", "url": "https://a.example/1", "snippet": "S1",
-         "source": "google_serper"},
+         "source": "google"},
         {"title": "T2", "url": "https://a.example/2", "snippet": "S2",
-         "source": "google_serper"},
+         "source": "bing"},
     ]
+    assert results[0]["domain"] == "a.example"
+    assert results[0]["category"] == "web"
+    assert results[0]["retrieved_at"]
 
 
-def test_serper_images_mapping_and_skip_rule(monkeypatch, serper_env):
-    seen, capture = serper_env
-    payload = {"images": [
-        {"title": "Img", "imageUrl": "https://img.example/x.jpg",
-         "link": "https://page.example/x", "source": "cdn.example"},
-        {"title": "NoUrl", "link": "https://page.example/y"},
+def test_searxng_images_mapping_and_skip_rule(monkeypatch, searxng_env):
+    seen, capture = searxng_env
+    payload = {"results": [
+        {"title": "Img", "img_src": "https://img.example/x.jpg",
+         "url": "https://page.example/x", "source": "cdn.example",
+         "engine": "bing"},
+        {"title": "NoImg", "url": "https://page.example/y",
+         "engine": "bing"},
     ]}
     monkeypatch.setattr(
-        search_provider.requests, "post", capture(_Response(200, payload)))
+        search_provider.requests, "get", capture(_Response(200, payload)))
     results = search_provider.search_images(_unique())
-    assert seen["url"] == "https://google.serper.dev/images"
-    # The entry without imageUrl is skipped; imageUrl maps to both
-    # image_url and url, link maps to source_url.
+    assert seen["params"]["categories"] == "images"
+    # The entry without img_src is skipped; img_src maps to both
+    # image_url and url, url maps to source_url.
     assert len(results) == 1
     assert results[0]["image_url"] == "https://img.example/x.jpg"
     assert results[0]["url"] == "https://img.example/x.jpg"
@@ -98,17 +112,18 @@ def test_serper_images_mapping_and_skip_rule(monkeypatch, serper_env):
     assert results[0]["source"] == "cdn.example"
 
 
-def test_serper_videos_mapping_and_skip_rule(monkeypatch, serper_env):
-    seen, capture = serper_env
-    payload = {"videos": [
-        {"title": "Vid", "link": "https://v.example/1", "snippet": "s",
-         "date": "2026-01-01", "duration": "3:12", "source": "YouTube"},
-        {"title": "NoLink", "snippet": "skipped"},
+def test_searxng_videos_mapping_and_skip_rule(monkeypatch, searxng_env):
+    seen, capture = searxng_env
+    payload = {"results": [
+        {"title": "Vid", "url": "https://v.example/1", "content": "s",
+         "publishedDate": "2026-01-01", "length": "3:12",
+         "engine": "youtube"},
+        {"title": "NoUrl", "content": "skipped"},
     ]}
     monkeypatch.setattr(
-        search_provider.requests, "post", capture(_Response(200, payload)))
+        search_provider.requests, "get", capture(_Response(200, payload)))
     results = search_provider.search_videos(_unique())
-    assert seen["url"] == "https://google.serper.dev/videos"
+    assert seen["params"]["categories"] == "videos"
     assert len(results) == 1
     assert results[0]["video_url"] == "https://v.example/1"
     assert results[0]["url"] == "https://v.example/1"

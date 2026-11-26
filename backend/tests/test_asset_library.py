@@ -330,7 +330,7 @@ def library(client, users):
     # Records with no resolvable file and no hash: unkeyed.
     _seed_decision(
         p1, run1, asset_key="candidate-123", content_hash=None,
-        provider="serper", verification={"accepted": False},
+        provider="searxng", verification={"accepted": False},
         decision_type="rejected",
     )
     _seed_decision(p1, run1, asset_key=None, content_hash=None,

@@ -263,8 +263,9 @@ def test_m9_disable_takes_effect_and_is_audited(client, monkeypatch):
         ],
         capture=captured2,
     )
-    # Serper is unconfigured in tests: the tool now RUNS and reports
-    # its honest unavailable state instead of the disabled refusal.
+    # Search cannot succeed in tests (dummy instance URL): the
+    # tool now RUNS and reports its honest unavailable state
+    # instead of the disabled refusal.
     body = _post(client, user, conversation2["id"]).json()
     assert body["pending_action"] is None
     feedback2 = json.dumps(captured2[-1])
@@ -412,7 +413,7 @@ def test_secrets_never_reach_the_model_or_the_transcript(
     user = _register(client)
     script = (
         "Notes for the film. The operator token is test-token and "
-        "the key reads SERPER_API_KEY=supersecretvalue123 in the "
+        "the key reads BREWKEG_API_KEY=supersecretvalue123 in the "
         "margin. The harbour opens at dawn."
     )
     created = client.post(

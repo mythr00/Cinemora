@@ -29,7 +29,6 @@ IDENTIFIER = "Aldeadle-60SECMichaelTheurerOnTheFallOfTheBerlinWall951-2"
 
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/cinemora-e2e.db")
 os.environ.setdefault("BREWKEG_API_KEY", "e2e-no-key")
-os.environ.setdefault("SERPER_API_KEY", "e2e-no-key")
 os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:6379/0")
 os.environ["SOURCE_INTEL_DB"] = str(OUT_DIR / "source_intel.sqlite3")
 

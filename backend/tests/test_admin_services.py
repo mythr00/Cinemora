@@ -57,8 +57,8 @@ def _seed(monkeypatch, tmp_path):
                 finished_at=now - timedelta(days=1) + timedelta(seconds=120),
                 execution={
                     "wall_time_seconds": 120,
-                    "serper_calls": {"total": 10, "web": 4, "images": 3,
-                                     "video": 3},
+                    "search_calls": {"searxng": {"total": 10, "web": 4,
+                                                 "images": 3, "video": 3}},
                     "llm_calls": {"total": 5, "total_tokens": 900},
                     "archive_org_searches": 2,
                     "wikimedia_searches": 1,
@@ -74,8 +74,8 @@ def _seed(monkeypatch, tmp_path):
                 error="boom", created_at=now - timedelta(hours=2),
                 execution={
                     "wall_time_seconds": 60,
-                    "serper_calls": {"total": 5, "web": 5, "images": 0,
-                                     "video": 0},
+                    "search_calls": {"searxng": {"total": 5, "web": 5,
+                                                 "images": 0, "video": 0}},
                     "llm_calls": {"total": 2, "total_tokens": 100},
                     "downloads": {"attempted": 1, "succeeded": 0,
                                   "failed": 1, "bytes_downloaded": 0},
@@ -109,7 +109,7 @@ def test_overview_counts_match_seeded_rows(_seed):
         }
         assert out["completion_rate_window"] == 0.5
         assert out["median_wall_seconds"] == 90.0
-        assert out["serper_calls_window"] == 15
+        assert out["search_calls_window"] == 15
         assert out["llm_calls_window"] == 7
         assert out["active_runs"] == 1
         assert out["latest_failures"][0]["error"] == "boom"
@@ -122,7 +122,7 @@ def test_provider_usage_totals_reconcile_and_cost_stays_none(_seed):
     try:
         out = admin_stats.provider_usage(db)
         totals = out["totals"]
-        assert totals["serper_calls"] == {
+        assert totals["search_calls"] == {
             "total": 15, "web": 9, "images": 3, "video": 3,
         }
         assert totals["llm_calls"] == {"total": 7, "total_tokens": 1000}
@@ -146,7 +146,7 @@ def test_list_runs_and_detail(_seed):
         assert completed["presence"] is None
         detail = admin_stats.run_detail(db, completed["run_id"])
         assert detail["project_title"] == "Seeded Project"
-        assert detail["execution"]["serper_calls"]["total"] == 10
+        assert detail["execution"]["search_calls"]["searxng"]["total"] == 10
         assert admin_stats.run_detail(db, "no-such-run") is None
     finally:
         db.close()

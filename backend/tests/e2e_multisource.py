@@ -8,7 +8,7 @@ any kind:
   narration (Piper) -> story analysis (the configured LLM when a
   BrewKeg key is present in the environment, degraded heuristic
   mode otherwise) -> production scenes -> media engine
-  (multi-source discovery: Serper [fails closed without a key],
+  (multi-source discovery: SearXNG [fails closed when unconfigured],
   archive.org, Wikimedia Commons images + video, targeted
   institutional search -> gate -> verify -> unified format selection
   -> segment evidence -> download -> probe) -> motion graphics ->
@@ -40,7 +40,6 @@ PROJECT_DIR = MEDIA_ROOT / PROJECT_ID
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///" + str(OUT_ROOT / "e2e_ms.sqlite3"))
 os.environ.setdefault("BREWKEG_API_KEY", "e2e-no-key")
-os.environ.setdefault("SERPER_API_KEY", "e2e-no-key")
 os.environ.setdefault("REDIS_URL", "redis://127.0.0.1:6379/0")
 os.environ["SOURCE_INTEL_DB"] = str(OUT_ROOT / "source_intel.sqlite3")
 os.environ["CINEMORA_DISABLED_PROVIDERS"] = "youtube"

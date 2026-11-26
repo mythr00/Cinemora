@@ -2,7 +2,7 @@
 the code reads.
 
 If you add a new ``os.environ``/``os.getenv`` read (or a new
-``CINEMORA_*`` / ``SERPER_*`` / ``BREWKEG_*`` literal passed to a
+``CINEMORA_*`` / ``BREWKEG_*`` literal passed to a
 config helper) without documenting the variable in
 ``backend/.env.example``, this test fails and names the variable.
 Document it there — purpose, actual code default, required/optional,
@@ -29,10 +29,10 @@ _READ_PATTERNS = [
     re.compile(r"os\.environ\[['\"]([A-Z][A-Z0-9_]*)['\"]\]"),
     # NAME_ENV = "X" constants (DEFAULT_RATE_LIMIT_ENV, WEB_ONLY_ENV)
     re.compile(r"_ENV\s*=\s*['\"]([A-Z][A-Z0-9_]*)['\"]"),
-    # Any CINEMORA_*/SERPER_*/BREWKEG_* string literal in backend code
+    # Any CINEMORA_*/BREWKEG_* string literal in backend code
     # (catches indirect reads: the music mix env map, admin-settings
     # display names, the assistant redaction denylist).
-    re.compile(r"['\"]((?:CINEMORA|SERPER|BREWKEG)_[A-Z0-9_]+)['\"]"),
+    re.compile(r"['\"]((?:CINEMORA|BREWKEG)_[A-Z0-9_]+)['\"]"),
 ]
 
 _DYNAMIC_RPS = re.compile(r"CINEMORA_\{[^}]*\}_RPS")

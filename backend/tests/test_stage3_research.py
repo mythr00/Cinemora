@@ -3,7 +3,7 @@
 plan_script now runs a fail-soft research pass after the bible is
 built: the most-mentioned subjects are searched through
 services.search_provider.search_web (mocked here — never the real
-Serper), retrieved sources are attached to bible entities with
+SearXNG), retrieved sources are attached to bible entities with
 timestamps, bible facts (timeline entries + entity descriptions)
 are labelled "externally_supported" / "script_asserted", source
 disagreements are recorded as conflicts without being resolved,
@@ -106,13 +106,13 @@ def _fake_search(query):
                 "title": "Berlin Wall erected in 1961",
                 "url": "https://example.org/wall-history",
                 "snippet": "The Berlin Wall was erected in 1961 around the city of Berlin, dividing families overnight.",
-                "source": "google_serper",
+                "source": "searxng",
             },
             {
                 "title": "The night the wall fell",
                 "url": "https://example.org/wall-fall",
                 "snippet": "On 9 November 1989 the Berlin Wall fell and crowds crossed freely into the west.",
-                "source": "google_serper",
+                "source": "searxng",
             },
         ]
     if "berlin" in q:
@@ -121,7 +121,7 @@ def _fake_search(query):
                 "title": "Berlin profile",
                 "url": "https://example.org/berlin",
                 "snippet": "Berlin, the capital city, was divided by the wall for decades.",
-                "source": "google_serper",
+                "source": "searxng",
             }
         ]
     return []
@@ -163,7 +163,7 @@ def test_bible_gains_timestamped_sources_and_meta(monkeypatch):
 def test_search_is_routed_through_search_provider(monkeypatch):
     # Patching the provider module itself (not story_understanding)
     # must also work: story_understanding resolves search_web lazily
-    # from services.search_provider and never calls Serper directly.
+    # from services.search_provider and never calls a provider directly.
     monkeypatch.setattr(search_provider, "search_web", _fake_search)
     bible, _, _ = story.plan_script(_SCRIPT, _SENTENCES, _fake_llm())
     assert bible["research_meta"]["sources_attached"] == 3
@@ -195,7 +195,7 @@ def test_fact_without_matching_snippet_evidence_stays_script_asserted(monkeypatc
                     "title": "Wall tourism",
                     "url": "https://example.org/tours",
                     "snippet": "Guided bicycle tours along the former barrier route run daily in summer.",
-                    "source": "google_serper",
+                    "source": "searxng",
                 }
             ]
         return []
@@ -231,13 +231,13 @@ def test_conflicting_years_produce_one_conflict_with_both_values(monkeypatch):
                     "title": "Wall fell in 1989",
                     "url": "https://example.org/a",
                     "snippet": "Historians record that the Berlin Wall fell in 1989 as crowds gathered at the checkpoint.",
-                    "source": "google_serper",
+                    "source": "searxng",
                 },
                 {
                     "title": "Wall fell in 1990?",
                     "url": "https://example.org/b",
                     "snippet": "Some accounts claim the Berlin Wall fell in 1990 as crowds gathered at the checkpoint.",
-                    "source": "google_serper",
+                    "source": "searxng",
                 },
             ]
         return []
@@ -292,7 +292,7 @@ def test_heuristic_path_also_gets_research_coverage(monkeypatch):
 
 def test_search_failure_never_crashes_plan_script(monkeypatch):
     def boom(query):
-        raise RuntimeError("serper down")
+        raise RuntimeError("search down")
 
     bible, plans, mode = _run(monkeypatch, search=boom)
     assert mode == "llm"  # planning itself unaffected

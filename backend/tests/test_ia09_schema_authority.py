@@ -290,7 +290,7 @@ def test_importing_main_creates_no_tables(tmp_path):
         DATABASE_URL=f"sqlite:///{db_path}",
         REDIS_URL="redis://localhost:6379/15",
         BREWKEG_API_KEY="test-dummy-key",
-        SERPER_API_KEY="test-dummy-key",
+        SEARXNG_URL="http://searxng.test",
         SOURCE_INTEL_DB=str(tmp_path / "source_intel.sqlite3"),
         PYTHONPATH=str(BACKEND),
     )

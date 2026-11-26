@@ -266,7 +266,7 @@ def test_aggregate_math_and_cost_honesty():
         assert group["pricing_status"] == "not_configured"
 
     # Search counters are in-process only — and say so.
-    assert result["search"]["provider"] == "serper"
+    assert result["search"]["provider"] == "searxng"
     assert result["search"]["scope"] == "process_local"
     assert isinstance(result["search"]["calls"], dict)
 

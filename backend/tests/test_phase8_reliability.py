@@ -45,7 +45,7 @@ def test_provider_error_mid_search_is_recorded_and_search_continues(
     mp.drain_discovery_failures()
 
     def exploding_videos(query, limit=8):
-        raise RuntimeError("serper exploded")
+        raise RuntimeError("search exploded")
 
     def exploding_web(query, limit=5):
         raise ConnectionError("web search unreachable")
@@ -61,8 +61,8 @@ def test_provider_error_mid_search_is_recorded_and_search_continues(
     mp._uve_scenario_search(scenario, {}, "p8-reliability")
     failures = mp.drain_discovery_failures()
     providers = {f["provider"] for f in failures}
-    assert "serper-videos" in providers
-    assert "serper-web" in providers
+    assert "searxng-videos" in providers
+    assert "searxng-web" in providers
     for failure in failures:
         assert failure["query"] == "berlin wall 1961"
         assert failure["error_class"]
