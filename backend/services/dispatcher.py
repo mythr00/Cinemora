@@ -276,41 +276,94 @@ def _dispatch_pass() -> list[tuple[str, str | None]]:
         db.close()
 
 
+def _job_failure_detail(job) -> str:
+    """The terminal error line of a failed RQ job: the last
+    non-empty line of its exception info (the exception class +
+    message), bounded. Falls back to a generic label — a failed
+    job must never read as a detail-less failure."""
+    exc_info = getattr(job, "exc_info", None)
+    if exc_info:
+        lines = [line.strip() for line in str(exc_info).splitlines() if line.strip()]
+        if lines:
+            return lines[-1][:500]
+    return "RQ job failed without recorded exception info"
+
+
+def _job_is_failed(job) -> bool:
+    failed = getattr(job, "is_failed", None)
+    if failed is not None:
+        return bool(failed)
+    try:
+        return job.get_status() == "failed"
+    except Exception:
+        return False
+
+
 def _clear_stale_dispatches(db) -> None:
-    """A queued run whose dispatched RQ job no longer exists (Redis
-    restart, job expired) gets its stamp cleared so it can be
-    promoted again — the ledger, not RQ, is the queue of record."""
+    """Reconcile queued runs against their dispatched RQ jobs.
+
+    - Job no longer exists (Redis restart, job expired): the stamp
+      is cleared so the run can be promoted again — the ledger,
+      not RQ, is the queue of record.
+    - Job FAILED terminally (Gate 2 field fix, 2026-11-26): the
+      run is marked FAILED with the job's error recorded on it.
+      Before this, Job.fetch succeeded for failed jobs (RQ keeps
+      them), so the sweep treated them as "a worker will take it"
+      forever, _dispatch_pass skipped the run for its stamp, and
+      the run sat "queued" indefinitely with the error nowhere —
+      reproduced live when run_full_pipeline died instantly on a
+      PermissionError before it could claim/fail its own run.
+      finish_run owns the terminal write (first-finisher-wins,
+      billing settlement included); the failure is conclusive, so
+      no freshness grace applies to it."""
     from models import ProductionRun
+    from services import run_ledger
 
     rows = (
         db.query(ProductionRun)
         .filter(ProductionRun.status == "queued")
         .all()
     )
+    failed_runs: list[tuple[str, str]] = []
     for row in rows:
         options = row.options or {}
         job_id = options.get("dispatched_job_id")
         if not job_id:
             continue
-        dispatched_at = _parse_iso(options.get("dispatched_at"))
-        if dispatched_at and (
-            datetime.now(timezone.utc) - dispatched_at
-        ) < timedelta(minutes=2):
-            continue  # too fresh to judge
+        job = None
         try:
             from rq.job import Job
 
             import jobs
 
-            Job.fetch(job_id, connection=jobs.redis_connection)
-            continue  # job exists; a worker will take it
+            job = Job.fetch(job_id, connection=jobs.redis_connection)
         except Exception:
-            pass
+            job = None
+        if job is not None:
+            if _job_is_failed(job):
+                failed_runs.append((row.id, _job_failure_detail(job)))
+            continue  # job exists and is not failed; a worker will take it
+        dispatched_at = _parse_iso(options.get("dispatched_at"))
+        if dispatched_at and (
+            datetime.now(timezone.utc) - dispatched_at
+        ) < timedelta(minutes=2):
+            continue  # too fresh to judge a missing job
         options = dict(options)
         options.pop("dispatched_job_id", None)
         options.pop("dispatched_at", None)
         row.options = options
         db.commit()
+    for run_id, detail in failed_runs:
+        if run_ledger.finish_run(
+            run_id, "failed", error=f"dispatched job failed: {detail}"
+        ):
+            logging_setup.log_event(
+                logger,
+                logging.WARNING,
+                "run_failed_dispatched_job",
+                run_id=run_id,
+                error=detail,
+            )
 
 
 # ---------------------------------------------------------------------

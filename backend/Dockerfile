@@ -39,6 +39,7 @@ RUN apt-get update \
         libcairo2-dev \
         libpango1.0-dev \
         fonts-dejavu-core \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root runtime user (Altare requires non-root images).
@@ -86,9 +87,19 @@ ENV PYTHONUNBUFFERED=1 \
     CINEMORA_RUN_MIGRATIONS=1
 
 RUN mkdir -p /data/media /data/tmp /data/hf-cache /data/source-intel \
-    && chown -R cinemora:cinemora /data /app
+    && chown -R cinemora:cinemora /data /app \
+    && chmod +x /app/entrypoint.sh
 
-USER cinemora
+# Gate 2 field fix (2026-11-26): NO `USER cinemora` here any more.
+# A mounted /data volume replaces the image's ownership (the
+# codespace deployment's volume arrived owned by uid 1000), and a
+# non-root image cannot repair that at runtime — the app died
+# with PermissionError on its first media write. The container
+# therefore starts as root ONLY long enough for entrypoint.sh to
+# create/chown the /data-steered writable paths, after which it
+# drops to the cinemora user via gosu and execs the command: the
+# web/worker processes run as uid 10001 exactly as before.
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Default process = the deployment supervisor (B-03/B-04): it runs
 # migrations once (CINEMORA_RUN_MIGRATIONS=1), then starts uvicorn
