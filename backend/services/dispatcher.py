@@ -299,6 +299,43 @@ def _job_is_failed(job) -> bool:
         return False
 
 
+def _job_is_finished(job) -> bool:
+    finished = getattr(job, "is_finished", None)
+    if finished is not None:
+        return bool(finished)
+    try:
+        return job.get_status() == "finished"
+    except Exception:
+        return False
+
+
+def _run_shows_execution_started(row) -> bool:
+    """True when the ledger records that this run's execution
+    actually began. The atomic claim (run_ledger._claim_row)
+    stamps started_at AND the presence payload (progress
+    worker_id / claimed_at) in the same UPDATE that moves the
+    run out of "queued", and finish_run records the execution
+    snapshot — so any of those present means the run's own
+    lifecycle owns its state and the stale-dispatch sweep must
+    leave it alone."""
+    if getattr(row, "started_at", None) is not None:
+        return True
+    if getattr(row, "execution", None) is not None:
+        return True
+    progress = getattr(row, "progress", None) or {}
+    return bool(progress.get("claimed_at") or progress.get("worker_id"))
+
+
+def _clear_dispatch_stamp(db, row) -> None:
+    """Drop a queued run's dispatched_job_id / dispatched_at
+    stamp so the promotion pass treats it as waiting again."""
+    options = dict(row.options or {})
+    options.pop("dispatched_job_id", None)
+    options.pop("dispatched_at", None)
+    row.options = options
+    db.commit()
+
+
 def _clear_stale_dispatches(db) -> None:
     """Reconcile queued runs against their dispatched RQ jobs.
 
@@ -315,7 +352,27 @@ def _clear_stale_dispatches(db) -> None:
       PermissionError before it could claim/fail its own run.
       finish_run owns the terminal write (first-finisher-wins,
       billing settlement included); the failure is conclusive, so
-      no freshness grace applies to it."""
+      no freshness grace applies to it.
+    - Job FINISHED but the run was never claimed (F-4 field fix,
+      2026-11-26): the B-02 unclaimed-execution refusal working
+      as designed — the job's claim lost (there: a SQLite
+      "database is locked" burst) and the job returned
+      deduplicated_execution without ever executing the run.
+      The run itself did not fail, so it is NOT marked failed:
+      the stamp is cleared exactly like the missing-job case and
+      the run is re-promoted (the dispatcher's bounded retry
+      sweep governs repeated failures). Before this, a finished
+      job was neither missing nor failed, so the run sat
+      invisibly "queued" until the job's 500-second RQ result
+      record expired and the job became "missing" (8m27s in the
+      field). No freshness grace applies: a finished job is
+      terminal in RQ, its claim attempts are over, and the claim
+      itself is atomic on the run's status, so clearing the
+      stamp cannot race a live claim by that job. The unwedge
+      fires ONLY when the run shows no execution ever started
+      (_run_shows_execution_started); a finished job whose run
+      WAS claimed/executing is left alone — that run's own
+      finish path owns its state."""
     from models import ProductionRun
     from services import run_ledger
 
@@ -342,17 +399,28 @@ def _clear_stale_dispatches(db) -> None:
         if job is not None:
             if _job_is_failed(job):
                 failed_runs.append((row.id, _job_failure_detail(job)))
-            continue  # job exists and is not failed; a worker will take it
+                continue
+            if _job_is_finished(job) and not _run_shows_execution_started(
+                row
+            ):
+                # F-4: finished without ever claiming this run —
+                # clear the stamp so the pass below re-promotes
+                # it, exactly like the missing-job case.
+                _clear_dispatch_stamp(db, row)
+                logging_setup.log_event(
+                    logger,
+                    logging.WARNING,
+                    "run_unwedged_finished_job",
+                    run_id=row.id,
+                    job_id=job_id,
+                )
+            continue  # job exists and is live, or owns the run's state
         dispatched_at = _parse_iso(options.get("dispatched_at"))
         if dispatched_at and (
             datetime.now(timezone.utc) - dispatched_at
         ) < timedelta(minutes=2):
             continue  # too fresh to judge a missing job
-        options = dict(options)
-        options.pop("dispatched_job_id", None)
-        options.pop("dispatched_at", None)
-        row.options = options
-        db.commit()
+        _clear_dispatch_stamp(db, row)
     for run_id, detail in failed_runs:
         if run_ledger.finish_run(
             run_id, "failed", error=f"dispatched job failed: {detail}"

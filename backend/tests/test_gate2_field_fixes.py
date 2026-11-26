@@ -192,6 +192,144 @@ def test_stale_marker_from_dead_job_does_not_skip_run_forever(
 
 
 # ---------------------------------------------------------------------
+# F-4 (2026-11-26): dispatched job FINISHED without ever claiming
+# the run (its claim lost to a SQLite "database is locked" burst;
+# the job returned deduplicated_execution — the B-02 refusal
+# working as designed). The run is not failed and must not sit
+# invisibly "queued" until the job's RQ result record expires:
+# the stale-dispatch sweep clears the stamp so the run is
+# re-promoted, exactly like the missing-job case.
+# ---------------------------------------------------------------------
+
+
+class _FakeFinishedJob:
+    def __init__(self, finished=True, failed=False):
+        self.is_finished = finished
+        self.is_failed = failed
+        self.exc_info = None
+
+
+def _queued_run_with_execution_markers(project_id, **fields):
+    db = SessionLocal()
+    try:
+        run = ProductionRun(
+            id=str(uuid.uuid4()),
+            project_id=project_id,
+            owner_id=None,
+            script_hash=run_ledger.script_sha256("One. Two."),
+            status="queued",
+            created_at=datetime.now(timezone.utc),
+            **fields,
+        )
+        db.add(run)
+        db.commit()
+        return run.id
+    finally:
+        db.close()
+
+
+def test_finished_dispatched_job_without_claim_unwedges_the_run(
+    monkeypatch,
+):
+    project_id = _project()
+    run_id = _queued_run(
+        project_id,
+        dispatched_job_id="job-finished-unclaimed",
+        dispatched_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _patch_job_fetch(monkeypatch, _FakeFinishedJob(finished=True))
+    db = SessionLocal()
+    try:
+        dispatcher._clear_stale_dispatches(db)
+    finally:
+        db.close()
+    run = run_ledger.get_run(run_id)
+    # Not failed — nothing about the run itself failed.
+    assert run["status"] == "queued"
+    assert run["error"] is None
+    options = run["options"] or {}
+    assert "dispatched_job_id" not in options
+    assert "dispatched_at" not in options
+
+
+def test_finished_dispatched_job_run_is_repromoted_next_pass(
+    monkeypatch, fake_redis
+):
+    """The full F-4 sequence: stamp cleared by the sweep inside
+    dispatch_once, and the same pass promotes the run again."""
+    project_id = _project()
+    run_id = _queued_run(
+        project_id,
+        dispatched_job_id="job-finished-unclaimed",
+        dispatched_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _patch_job_fetch(monkeypatch, _FakeFinishedJob(finished=True))
+
+    promoted = []
+
+    def fake_enqueue(run, project, is_priority):
+        promoted.append(run.id)
+        return "job-new"
+
+    monkeypatch.setattr(jobs, "enqueue_promoted_run", fake_enqueue)
+    result = dispatcher.dispatch_once()
+    assert (run_id, "job-new") in result
+    assert promoted == [run_id]
+    run = run_ledger.get_run(run_id)
+    assert (run["options"] or {}).get("dispatched_job_id") == "job-new"
+
+
+def test_live_dispatched_job_still_left_alone(monkeypatch):
+    project_id = _project()
+    run_id = _queued_run(
+        project_id,
+        dispatched_job_id="job-live",
+        dispatched_at=datetime.now(timezone.utc).isoformat(),
+    )
+    _patch_job_fetch(
+        monkeypatch, _FakeFinishedJob(finished=False, failed=False)
+    )
+    db = SessionLocal()
+    try:
+        dispatcher._clear_stale_dispatches(db)
+    finally:
+        db.close()
+    run = run_ledger.get_run(run_id)
+    assert run["status"] == "queued"
+    assert (run["options"] or {}).get("dispatched_job_id") == "job-live"
+
+
+def test_finished_job_with_execution_started_is_left_alone(monkeypatch):
+    """A finished job whose run WAS claimed (the claim stamps
+    started_at + presence atomically) is not unwedged: the run's
+    own finish path owns that state."""
+    project_id = _project()
+    run_id = _queued_run_with_execution_markers(
+        project_id,
+        options={
+            "dispatched_job_id": "job-finished-claimed",
+            "dispatched_at": datetime.now(timezone.utc).isoformat(),
+        },
+        started_at=datetime.now(timezone.utc),
+        progress={
+            "worker_id": "worker-1",
+            "claimed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    _patch_job_fetch(monkeypatch, _FakeFinishedJob(finished=True))
+    db = SessionLocal()
+    try:
+        dispatcher._clear_stale_dispatches(db)
+    finally:
+        db.close()
+    run = run_ledger.get_run(run_id)
+    assert run["status"] == "queued"
+    assert (run["options"] or {}).get(
+        "dispatched_job_id"
+    ) == "job-finished-claimed"
+
+
+# ---------------------------------------------------------------------
 # Defect 1: image/entrypoint guarantees a writable media root
 # ---------------------------------------------------------------------
 
