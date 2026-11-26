@@ -867,14 +867,10 @@ def generate_variants(project_id, headline=None, project_title=None) -> dict:
 # ---------------------------------------------------------------------
 
 
-def analyse_image(project_id, base_id) -> dict:
-    """Deterministic signals for one base image (an uploaded
-    reference thumbnail is an upload base): OCR text + the engine
-    that read it, the dominant palette with shares, mean luminance
-    and its spread. Labelled measured properties — this is NOT an
-    AI reading of composition, hierarchy or emotion; no such
-    capability exists in this stack."""
-    path, base_record = resolve_base(project_id, base_id)
+def measure_image_file(path) -> dict:
+    """The deterministic measurement core: OCR text + the engine
+    that read it, the dominant palette with shares, mean
+    luminance and its spread, for any image file on disk."""
     with Image.open(path) as img:
         rgb = img.convert("RGB")
         width, height = rgb.size
@@ -902,14 +898,6 @@ def analyse_image(project_id, base_id) -> dict:
     ocr_text, ocr_engine = frame_verification._ocr_for_frames(None, [str(path)])
     ocr_lines = [line for line in (ocr_text or "").splitlines() if line.strip()]
     return {
-        "base": base_record,
-        "base_id": base_id,
-        "label": (
-            "Measured properties of this image (OCR text, colour "
-            "palette, luminance). This is not an AI analysis of "
-            "composition or emotion — no vision model exists in "
-            "this stack."
-        ),
         "dimensions": [width, height],
         "ocr": {
             "engine": ocr_engine,
@@ -919,6 +907,26 @@ def analyse_image(project_id, base_id) -> dict:
         },
         "palette": palette,
         "luminance": {"mean": luminance_mean, "spread": luminance_spread},
+    }
+
+
+def analyse_image(project_id, base_id) -> dict:
+    """Deterministic signals for one base image (an uploaded
+    reference thumbnail is an upload base). Labelled measured
+    properties — this is NOT an AI reading of composition,
+    hierarchy or emotion; no such capability exists in this
+    stack."""
+    path, base_record = resolve_base(project_id, base_id)
+    return {
+        "base": base_record,
+        "base_id": base_id,
+        "label": (
+            "Measured properties of this image (OCR text, colour "
+            "palette, luminance). This is not an AI analysis of "
+            "composition or emotion — no vision model exists in "
+            "this stack."
+        ),
+        **measure_image_file(path),
     }
 
 

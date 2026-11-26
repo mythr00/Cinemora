@@ -9,7 +9,10 @@ import {
   createScriptDraft,
   deleteScriptDraft,
   expandScriptSections,
+  analyseChannelResearch,
   generateScriptDraft,
+  listChannelResearch,
+  resolveChannelResearch,
   getLanguageCatalogue,
   getScriptDraft,
   listProjects,
@@ -22,6 +25,7 @@ import {
   tightenScriptPassage,
   translateScriptDraft,
   updateScriptDraft,
+  type ChannelResearchRecord,
   type LanguageCatalogueEntry,
   type ProjectSummary,
   type ScriptDraft,
@@ -89,6 +93,15 @@ export default function ScriptStudioPage() {
   const [languages, setLanguages] = useState<LanguageCatalogueEntry[]>([]);
   const [scriptLanguage, setScriptLanguage] = useState("en");
   const [translateTarget, setTranslateTarget] = useState("es");
+  // Channel research (directive 2026-11-26): real channel data,
+  // select up to 3 videos, pattern analysis labelled by basis,
+  // original ideas that fill the brief above.
+  const [researchUrl, setResearchUrl] = useState("");
+  const [research, setResearch] = useState<ChannelResearchRecord | null>(null);
+  const [researchHistory, setResearchHistory] = useState<ChannelResearchRecord[]>([]);
+  const [selectedVideos, setSelectedVideos] = useState<string[]>([]);
+  const [researchId, setResearchId] = useState("");
+  const [researchError, setResearchError] = useState<string | null>(null);
 
   const loadDrafts = useCallback(async () => {
     const data = await listScriptDrafts();
@@ -116,6 +129,9 @@ export default function ScriptStudioPage() {
       getLanguageCatalogue()
         .then((data) => setLanguages(data.languages || []))
         .catch(() => undefined);
+      listChannelResearch()
+        .then((data) => setResearchHistory(data.records || []))
+        .catch(() => undefined);
       setProjects(projectList.projects || []);
       if (list.length > 0) await openDraft(list[0].id);
     } catch (caught) {
@@ -142,6 +158,43 @@ export default function ScriptStudioPage() {
       setWorking("");
     }
   };
+
+  const resolveResearch = () =>
+    run("research", async () => {
+      setResearchError(null);
+      try {
+        const record = await resolveChannelResearch(researchUrl.trim());
+        setResearch(record);
+        setSelectedVideos([]);
+        setResearchHistory((current) => [
+          record,
+          ...current.filter((r) => r.id !== record.id),
+        ]);
+      } catch (caught) {
+        setResearchError(
+          caught instanceof Error ? caught.message : "Could not read that channel.",
+        );
+        throw caught;
+      }
+    });
+
+  const analyseResearch = () =>
+    run("analyse", async () => {
+      if (!research) return;
+      setResearchError(null);
+      try {
+        const updated = await analyseChannelResearch(research.id, selectedVideos);
+        setResearch(updated);
+        setResearchHistory((current) =>
+          current.map((r) => (r.id === updated.id ? updated : r)),
+        );
+      } catch (caught) {
+        setResearchError(
+          caught instanceof Error ? caught.message : "Analysis failed.",
+        );
+        throw caught;
+      }
+    });
 
   const createBlank = () =>
     run("create", async () => {
@@ -192,6 +245,7 @@ export default function ScriptStudioPage() {
         category: brief.category || undefined,
         target_minutes: brief.target ? Number(brief.target) : undefined,
         language: scriptLanguage,
+        research_id: researchId || undefined,
       });
       await loadDrafts();
       await openDraft(created.id);
@@ -462,6 +516,171 @@ export default function ScriptStudioPage() {
                 >
                   {working === "generate" ? "Generating…" : "Generate draft"}
                 </button>
+              </div>
+            </div>
+            <div className="panel script-panel">
+              <h2>Research a channel</h2>
+              <p className="script-note">
+                Paste a YouTube channel URL. Cinemora reads the
+                channel&apos;s real recent videos and their reported
+                statistics — nothing is estimated or invented. Pick
+                up to three videos and the analysis studies what
+                they actually contain: transcripts where captions
+                exist, titles and metadata otherwise, always
+                labelled. The ideas it proposes are original —
+                written for your channel, never copies.
+              </p>
+              <div className="script-form script-form-stack">
+                <label className="script-field">
+                  Channel URL
+                  <input
+                    value={researchUrl}
+                    onChange={(e) => setResearchUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/@SomeChannel"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="button"
+                  disabled={working === "research" || !researchUrl.trim()}
+                  onClick={() => void resolveResearch()}
+                >
+                  {working === "research" ? "Reading channel…" : "Read channel"}
+                </button>
+                {researchHistory.length > 0 && (
+                  <label className="script-field">
+                    Earlier research
+                    <select
+                      value=""
+                      onChange={(e) => {
+                        const record = researchHistory.find((r) => r.id === e.target.value);
+                        if (record) {
+                          setResearch(record);
+                          setSelectedVideos([]);
+                          setResearchError(null);
+                        }
+                      }}
+                    >
+                      <option value="">Reopen a saved record…</option>
+                      {researchHistory.map((record) => (
+                        <option key={record.id} value={record.id}>
+                          {record.channel.title || record.channel.url} · {record.videos.length} videos
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {researchError && (
+                  <p className="script-note" role="alert">{researchError}</p>
+                )}
+                {research && (
+                  <>
+                    <p className="script-note">
+                      <strong>{research.channel.title || "Channel"}</strong>
+                      {research.channel.subscriber_count != null
+                        ? ` · ${research.channel.subscriber_count.toLocaleString()} subscribers (as reported)`
+                        : ""}
+                      {` · ordered by ${research.ordering_basis === "view_count_desc" ? "reported views" : "channel order (view counts unavailable)"}`}
+                    </p>
+                    <ul className="script-research-videos">
+                      {research.videos.map((video) => (
+                        <li key={video.id}>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={selectedVideos.includes(video.id)}
+                              disabled={
+                                !selectedVideos.includes(video.id) &&
+                                selectedVideos.length >= 3
+                              }
+                              onChange={(e) => {
+                                setSelectedVideos((current) =>
+                                  e.target.checked
+                                    ? [...current, video.id]
+                                    : current.filter((id) => id !== video.id),
+                                );
+                              }}
+                            />{" "}
+                            {video.title}
+                          </label>
+                          <span className="script-note">
+                            {video.view_count != null
+                              ? `${video.view_count.toLocaleString()} views`
+                              : "views not reported"}
+                            {video.duration_seconds != null
+                              ? ` · ${Math.round(video.duration_seconds / 60)} min`
+                              : ""}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={working === "analyse" || selectedVideos.length === 0}
+                      onClick={() => void analyseResearch()}
+                    >
+                      {working === "analyse"
+                        ? "Analysing…"
+                        : `Analyse ${selectedVideos.length || ""} selected (max 3)`}
+                    </button>
+                    {research.analysis && (
+                      <>
+                        <p className="script-note">
+                          Analysis basis:{" "}
+                          {Object.entries(research.analysis.basis)
+                            .map(([id, basis]) => `${id}: ${basis}`)
+                            .join(" · ")}
+                        </p>
+                        <ul className="script-research-videos">
+                          {research.analysis.patterns.map((pattern, index) => (
+                            <li key={index}>
+                              <strong>{pattern.pattern}</strong>
+                              <span className="script-note">
+                                {" "}({pattern.basis}) — {pattern.evidence}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                        <p className="script-note">
+                          Original ideas for your channel:
+                        </p>
+                        <ul className="script-research-videos">
+                          {research.analysis.ideas.map((idea) => (
+                            <li key={idea.id}>
+                              <strong>{idea.title}</strong>
+                              <span className="script-note"> — {idea.angle}</span>
+                              <br />
+                              <button
+                                type="button"
+                                className="button"
+                                onClick={() => {
+                                  setBrief({
+                                    ...brief,
+                                    topic: idea.title,
+                                    angle: idea.angle,
+                                  });
+                                  setResearchId(research.id);
+                                  setNotice(
+                                    "Idea loaded into the brief above. Generate the draft when ready — the research record is saved as its reference.",
+                                  );
+                                }}
+                              >
+                                Use this idea
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {researchId === research.id && (
+                      <p className="script-note">
+                        This research record will be saved as the
+                        reference of the next draft you generate.
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           </aside>

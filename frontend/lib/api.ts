@@ -1458,6 +1458,93 @@ export function thumbnailImagePath(projectId: string, thumbId: string) {
   return `/api/v1/projects/${projectId}/thumbnails/${thumbId}/image`;
 }
 
+// ---------------------------------------------------------------------
+// Channel research (directive 2026-11-26): real channel data via
+// the backend's yt-dlp extraction — statistics exactly as
+// reported, analysis labelled by basis. Plus the Thumbnail
+// Studio's channel style measurement.
+// ---------------------------------------------------------------------
+
+export type ChannelVideo = {
+  id: string;
+  title?: string | null;
+  url?: string | null;
+  view_count?: number | null;
+  like_count?: number | null;
+  duration_seconds?: number | null;
+  upload_date?: string | null;
+  thumbnail?: string | null;
+};
+
+export type ChannelResearchRecord = {
+  id: string;
+  channel: {
+    id?: string | null;
+    title?: string | null;
+    url?: string | null;
+    subscriber_count?: number | null;
+  };
+  videos: ChannelVideo[];
+  ordering_basis: string;
+  analysis: null | {
+    at: string;
+    basis: Record<string, string>;
+    videos: Array<{
+      id: string;
+      title?: string | null;
+      basis: string;
+      view_count?: number | null;
+      duration_seconds?: number | null;
+    }>;
+    patterns: Array<{ pattern: string; basis: string; evidence: string }>;
+    ideas: Array<{ id: string; title: string; angle: string; why_it_fits: string }>;
+  };
+  created_at: string;
+};
+
+export function resolveChannelResearch(channelUrl: string) {
+  return apiRequest<ChannelResearchRecord>(
+    "/api/v1/script-studio/channel-research",
+    { method: "POST", body: JSON.stringify({ channel_url: channelUrl }) },
+  );
+}
+
+export function listChannelResearch(signal?: AbortSignal) {
+  return apiRequest<{ records: ChannelResearchRecord[] }>(
+    "/api/v1/script-studio/channel-research",
+    { signal },
+  );
+}
+
+export function analyseChannelResearch(researchId: string, videoIds: string[]) {
+  return apiRequest<ChannelResearchRecord>(
+    `/api/v1/script-studio/channel-research/${researchId}/analyse`,
+    { method: "POST", body: JSON.stringify({ video_ids: videoIds }) },
+  );
+}
+
+export type ChannelStyleVideo = ChannelVideo & {
+  measurement: null | {
+    dimensions: [number, number];
+    ocr: { engine?: string | null; state: string; lines: string[]; word_count: number };
+    palette: Array<{ hex: string; share: number }>;
+    luminance: { mean: number; spread: number };
+  };
+  measurement_error?: string | null;
+};
+
+export function analyseChannelThumbnails(channelUrl: string) {
+  return apiRequest<{
+    channel: ChannelResearchRecord["channel"];
+    ordering_basis: string;
+    videos: ChannelStyleVideo[];
+    label: string;
+  }>("/api/v1/thumbnails/channel-analysis", {
+    method: "POST",
+    body: JSON.stringify({ channel_url: channelUrl }),
+  });
+}
+
 export function thumbnailDownloadPath(projectId: string, thumbId: string) {
   return `/api/v1/projects/${projectId}/thumbnails/${thumbId}/download`;
 }

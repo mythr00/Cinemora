@@ -3584,7 +3584,9 @@ def _billed_script_call(operation, fn, user_id, *args, **kwargs):
     """Phase 8 (§7): a Script Studio AI operation consumes one
     script allowance unit or debits its credit price BEFORE it
     runs; any failure refunds in full (services.billing
-    .operations). Legacy-plan users are unmetered."""
+    .operations). Item 8: non-metered ordinary accounts pay the
+    listed credit price; only staff/operator accounts are
+    unmetered."""
     from services.billing import operations
 
     receipt = operations.begin_operation(user_id, "scripts", operation)
@@ -3739,6 +3741,88 @@ def run_script_fact_check(script_id: str, principal=Depends(post_guard)):
     return _billed_script_call(
         "fact_check", script_studio.run_fact_check,
         principal.user_id, script_id,
+    )
+
+
+# ---------------------------------------------------------------------
+# Channel research (directive 2026-11-26): real channel data via
+# yt-dlp, integrated into Script Generation. Resolution is data
+# fetching (no AI, unbilled); the pattern analysis is a priced
+# AI operation. Errors surface honestly — nothing is fabricated.
+# ---------------------------------------------------------------------
+
+
+class ChannelResearchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    channel_url: str = Field(min_length=8, max_length=500)
+
+
+class ChannelAnalyseIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    video_ids: list[str] = Field(min_length=1, max_length=3)
+
+
+def _channel_call(fn, *args, **kwargs):
+    from services import channel_research
+
+    try:
+        return fn(*args, **kwargs)
+    except channel_research.ChannelResearchError as error:
+        raise ApiError(
+            error.status_code, error.code, error.message
+        ) from error
+
+
+@router.post("/script-studio/channel-research", status_code=201)
+def create_channel_research(
+    body: ChannelResearchIn, principal=Depends(post_guard)
+):
+    from services import channel_research
+
+    return _channel_call(
+        channel_research.resolve_channel,
+        principal.user_id,
+        body.channel_url,
+    )
+
+
+@router.get("/script-studio/channel-research")
+def list_channel_research(principal=Depends(require_user)):
+    from services import channel_research
+
+    return channel_research.list_research(principal.user_id)
+
+
+@router.get("/script-studio/channel-research/{research_id}")
+def get_channel_research(
+    research_id: str, principal=Depends(require_user)
+):
+    from services import channel_research
+
+    return _channel_call(
+        channel_research.get_research, principal.user_id, research_id
+    )
+
+
+@router.post("/script-studio/channel-research/{research_id}/analyse")
+def analyse_channel_research(
+    research_id: str,
+    body: ChannelAnalyseIn,
+    principal=Depends(post_guard),
+):
+    from services import channel_research
+
+    return _billed_script_call(
+        "channel_research",
+        lambda user_id: _channel_call(
+            channel_research.analyse_research,
+            user_id,
+            research_id,
+            body.video_ids,
+        ),
+        principal.user_id,
     )
 
 
@@ -4190,6 +4274,26 @@ class ThumbnailAnalyseIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     base_id: str = Field(min_length=1, max_length=300)
+
+
+class ChannelStyleIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    channel_url: str = Field(min_length=8, max_length=500)
+
+
+@router.post("/thumbnails/channel-analysis")
+def channel_thumbnail_analysis(
+    body: ChannelStyleIn, principal=Depends(post_guard)
+):
+    """Item 5: real channel data + measured thumbnail properties
+    as STYLE REFERENCE for the standalone Thumbnail Studio. The
+    channel's images are never returned as usable bases."""
+    from services import channel_research
+
+    return _channel_call(
+        channel_research.channel_thumbnail_styles, body.channel_url
+    )
 
 
 @router.get("/projects/{project_id}/thumbnails")
