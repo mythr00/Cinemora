@@ -127,7 +127,8 @@ def test_removed_templates_absent_from_every_registry():
     # register under NEW names (chronology / route / locator /
     # relationship_network) — every REMOVED name above stays
     # absent, which is the pin this test exists for.
-    assert len(engine_templates.TEMPLATES) == 46
+    # Phase 6-7 (D1): +1 labelled_diagram -> 47.
+    assert len(engine_templates.TEMPLATES) == 47
     for survivor in (
         "archival_title", "document_presentation", "classified_file",
         "text_overlay", "text_highlight", "profile_reveal",

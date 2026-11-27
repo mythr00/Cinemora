@@ -31,6 +31,14 @@ standard the removed ones failed:
     relations ONLY. Refuses with fewer than 2 entities or 0
     recorded edges; an edge naming an unrecorded entity refuses
     — no invented edges, ever.
+  * ``labelled_diagram`` — the scientific explanatory treatment
+    (audit D1, Phase 6–7). Fed ONLY by the recorded ``diagram``
+    contract (parts: name + short description + relative
+    position/order). The ``molecular_diagram`` contract was
+    assessed as its feed first: it is chemistry-specific
+    (element symbols, bond orders) and carries no part names or
+    descriptions, so this general treatment is a parallel
+    template rather than an extension of it.
 
 Every template renders ONLY caller-supplied recorded data and
 returns (None, {"reason": ...}) when its contract is unmet —
@@ -647,9 +655,236 @@ def relationship_network(data, style, out_path, duration=5.0,
          "title": bool(title)})
 
 
+# ---------------------------------------------------------------------------
+# D1. Labelled diagram — a scenario-fed scientific explanatory
+# treatment (Phase 6–7). Fed ONLY by the recorded ``diagram``
+# contract: parts carrying a name, a short description, and a
+# relative position or an order. Renders node markers at the
+# parts' positions with leader lines to measured label boxes.
+#
+# Decision (recorded): the existing ``molecular_diagram``
+# scenario contract was assessed first, per the work item. Its
+# contract is chemistry-specific — atoms keyed by ELEMENT symbol
+# with element radii/colours and bond orders; it carries no part
+# name, no description, and no general position/order semantics.
+# Extending it would have corrupted a working chemistry
+# treatment's contract, so the general explanatory treatment is
+# a parallel template on the same scenario-contract precedent.
+# ---------------------------------------------------------------------------
+
+def labelled_diagram(data, style, out_path, duration=5.0,
+                     sentence_index=None, scene_number=None):
+    style_name, tokens = resolve_style(style)
+    data = data or {}
+    parts = []
+    for entry in data.get("parts") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = _clean(entry.get("name"))
+        if not name:
+            continue
+        at = entry.get("at")
+        position = None
+        if isinstance(at, (list, tuple)) and len(at) >= 2:
+            try:
+                position = (
+                    min(0.97, max(0.03, float(at[0]))),
+                    min(0.97, max(0.03, float(at[1]))),
+                )
+            except (TypeError, ValueError):
+                position = None
+        parts.append({
+            "name": name,
+            "description": _clean(entry.get("description") or ""),
+            "at": position,
+        })
+    if len(parts) < 2:
+        # A diagram of one part explains nothing — and a part
+        # without a recorded name can never be labelled.
+        return None, {"reason": "insufficient_parts"}
+    parts = parts[:8]
+    title = _clean(data.get("title"))
+    fonts = {
+        "title": load_font(tokens["font_bold"], 40),
+        "name": load_font(tokens["font_bold"], 27),
+        "desc": load_font(tokens["font"], 22),
+    }
+    probe = _probe_draw()
+    area = (130, 190, WIDTH - 130, HEIGHT - 150)
+    # Positions: the recorded relative positions when EVERY part
+    # records one; otherwise the recorded ORDER laid out on a
+    # grid — positions are presentation, the parts and their
+    # order are the record.
+    recorded_positions = all(p["at"] is not None for p in parts)
+    if recorded_positions:
+        centres = [
+            (area[0] + p["at"][0] * (area[2] - area[0]),
+             area[1] + p["at"][1] * (area[3] - area[1]))
+            for p in parts
+        ]
+    else:
+        cols = math.ceil(math.sqrt(len(parts)))
+        rows = math.ceil(len(parts) / cols)
+        cell_w = (area[2] - area[0]) / cols
+        cell_h = (area[3] - area[1]) / rows
+        centres = [
+            (area[0] + cell_w * (i % cols + 0.5),
+             area[1] + cell_h * (i // cols + 0.5))
+            for i in range(len(parts))
+        ]
+    # Label boxes: beside each node, leader line from node to
+    # box. Placement searches the node's free side first, then
+    # the other side, then vertical offsets — the first
+    # non-colliding placement wins. Name + description are
+    # measured with label_fit BEFORE any frame is drawn; a part
+    # whose label fits nowhere refuses the graphic.
+    from services.motion_engine.label_fit import boxes_overlap
+
+    box_w = 400
+    layout = []
+    label_specs = []
+    placed_boxes = []
+    for i, part in enumerate(parts):
+        cx, cy = centres[i]
+        name_lines = fit_lines(
+            probe, part["name"], fonts["name"], box_w - 30,
+            max_lines=2)
+        if name_lines is None:
+            return None, {
+                "reason": LABEL_FIT_REASON,
+                "detail": f"diagram part name {part['name']!r} "
+                          f"does not fit its label box",
+            }
+        desc_lines = []
+        if part["description"]:
+            desc_lines = fit_lines(
+                probe, part["description"], fonts["desc"],
+                box_w - 30, max_lines=2)
+            if desc_lines is None:
+                return None, {
+                    "reason": LABEL_FIT_REASON,
+                    "detail": f"diagram description for "
+                              f"{part['name']!r} does not fit "
+                              f"its label box",
+                }
+        box_h = 26 + len(name_lines) * 34 + len(desc_lines) * 28
+        sides = (1, -1) if cx <= WIDTH / 2 else (-1, 1)
+        box = None
+        for side in sides:
+            for dy in (0, box_h + 18, -(box_h + 18)):
+                cand_x = cx + 44 if side > 0 else cx - 44 - box_w
+                if cand_x < area[0] or cand_x + box_w > area[2]:
+                    continue
+                cand_y = min(
+                    max(cy - box_h / 2 + dy, area[1]),
+                    area[3] - box_h)
+                candidate = (
+                    cand_x, cand_y, cand_x + box_w, cand_y + box_h)
+                if any(
+                    boxes_overlap(candidate, other)
+                    for other in placed_boxes
+                ):
+                    continue
+                box = candidate
+                break
+            if box is not None:
+                break
+        if box is None:
+            return None, {
+                "reason": LABEL_FIT_REASON,
+                "detail": f"diagram label for {part['name']!r} "
+                          f"collides at every placement",
+            }
+        placed_boxes.append(box)
+        layout.append({
+            "cx": cx, "cy": cy, "box": box,
+            "name_lines": name_lines, "desc_lines": desc_lines,
+        })
+        label_specs.append({
+            "key": f"part_{i}", "text": part["name"],
+            "font": fonts["name"], "max_width": box_w - 30,
+            "max_lines": 2, "box": box,
+        })
+    refusal = _fit_or_refuse(probe, label_specs)
+    if refusal is not None:
+        return refusal
+    if title and fit_lines(probe, title.upper(), fonts["title"],
+                           1500, max_lines=1) is None:
+        return None, {"reason": LABEL_FIT_REASON,
+                      "detail": "diagram title does not fit"}
+    bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=97)
+
+    def draw_frame(t, progress):
+        canvas = core.Canvas(
+            bg=tokens["bg"],
+            pattern=tokens.get("background_pattern"),
+            pattern_color=tokens.get("pattern_color"))
+        base = canvas.new_layer("bg")
+        base.image = bg.convert("RGBA")
+        layer = canvas.new_layer("diagram")
+        d = ImageDraw.Draw(layer.image, "RGBA")
+        if title:
+            tw = d.textlength(title.upper(), font=fonts["title"])
+            d.text(((WIDTH - tw) / 2, 84), title.upper(),
+                   font=fonts["title"], fill=tokens["text"] + (255,))
+        # Reading-order connectors between consecutive parts
+        # (the contract records the order; the line is that
+        # order drawn, nothing more).
+        for i in range(len(layout) - 1):
+            local = ease_in_out(clamp01(progress * 1.6 - i * 0.15))
+            if local <= 0:
+                continue
+            a = layout[i]
+            b = layout[i + 1]
+            progressive_polyline(
+                d, [(a["cx"], a["cy"]), (b["cx"], b["cy"])], local,
+                fill=tokens["muted"] + (160,), width=3)
+        for i, item in enumerate(layout):
+            local = ease_out(clamp01(progress * 2.0 - i * 0.12))
+            if local <= 0:
+                continue
+            cx, cy = item["cx"], item["cy"]
+            radius = 17 * local
+            d.ellipse(
+                [cx - radius, cy - radius, cx + radius, cy + radius],
+                fill=tokens["accent"] + (255,),
+                outline=(255, 255, 255, 220), width=2)
+            box = item["box"]
+            # Leader line from the node to its label box.
+            anchor_x = box[0] if box[0] >= cx else box[2]
+            d.line([cx, cy, anchor_x, (box[1] + box[3]) / 2],
+                   fill=tokens["accent2"] + (200,), width=2)
+            d.rounded_rectangle(
+                box, radius=12, fill=tokens["surface"] + (255,),
+                outline=tokens["accent2"] + (255,), width=2)
+            ly = box[1] + 13
+            for line in item["name_lines"]:
+                lw = d.textlength(line, font=fonts["name"])
+                d.text((box[0] + (box[2] - box[0] - lw) / 2, ly),
+                       line, font=fonts["name"],
+                       fill=tokens["text"] + (255,))
+                ly += 34
+            for line in item["desc_lines"]:
+                lw = d.textlength(line, font=fonts["desc"])
+                d.text((box[0] + (box[2] - box[0] - lw) / 2, ly),
+                       line, font=fonts["desc"],
+                       fill=tokens["muted"] + (255,))
+                ly += 28
+        _footer(d, tokens)
+        return canvas.composite()
+
+    path = core.render_template(draw_frame, out_path, duration=duration)
+    return path, _meta(
+        "labelled_diagram", style_name, duration,
+        sentence_index, scene_number,
+        {"parts": len(parts), "title": bool(title),
+         "positions": "recorded" if recorded_positions else "ordered_grid"})
+
+
 TEMPLATES.update({
     "chronology": chronology,
     "route": route,
     "locator": locator,
     "relationship_network": relationship_network,
+    "labelled_diagram": labelled_diagram,
 })

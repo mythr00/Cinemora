@@ -14,9 +14,10 @@ section below).
 
 import json
 
-from services import graphics_pipeline
+from services import graphics_pipeline, visual_director
 from services.motion_engine import templates_v4
 from services.motion_engine.templates_v3 import line_chart
+from services.motion_engine.templates_v5 import labelled_diagram
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +217,116 @@ def test_uncertainty_rides_the_recorded_chart_contract(tmp_path):
     assert points[0]["low"] == 8 and points[0]["high"] == 12
     assert record["engine_metadata"]["inputs"]["uncertainty"] is True
     assert record["engine_metadata"]["inputs"]["estimated"] is True
+
+
+# ---------------------------------------------------------------------------
+# D1 — labelled_diagram from the recorded diagram contract
+# ---------------------------------------------------------------------------
+
+_PARTS = [
+    {"name": "Piston", "description": "Drives the shaft",
+     "at": [0.25, 0.4]},
+    {"name": "Valve", "description": "Admits steam",
+     "at": [0.6, 0.4]},
+    {"name": "Flywheel", "description": "Smooths the stroke",
+     "at": [0.8, 0.65]},
+]
+
+
+def test_labelled_diagram_renders_recorded_parts(tmp_path):
+    path, meta = labelled_diagram(
+        {"parts": _PARTS, "title": "Steam Engine"},
+        "editorial", tmp_path / "diagram.mp4", duration=1.0)
+    assert path is not None
+    assert meta["inputs"]["parts"] == 3
+    assert meta["inputs"]["positions"] == "recorded"
+
+
+def test_labelled_diagram_grid_layout_without_positions(tmp_path):
+    parts = [{"name": n} for n in ("Leaf", "Stem", "Root", "Flower")]
+    path, meta = labelled_diagram(
+        {"parts": parts}, "editorial",
+        tmp_path / "diagram.mp4", duration=1.0)
+    assert path is not None
+    assert meta["inputs"]["positions"] == "ordered_grid"
+
+
+def test_labelled_diagram_refuses_fewer_than_two_named_parts(tmp_path):
+    path, meta = labelled_diagram(
+        {"parts": [{"name": "Piston"}, {"description": "unnamed"}]},
+        "editorial", tmp_path / "diagram.mp4", duration=1.0)
+    assert path is None
+    assert meta["reason"] == "insufficient_parts"
+
+
+def test_labelled_diagram_refuses_overflowing_description(tmp_path):
+    parts = [
+        {"name": "Piston",
+         "description": " ".join(["word"] * 60)},
+        {"name": "Valve"},
+    ]
+    path, meta = labelled_diagram(
+        {"parts": parts}, "editorial",
+        tmp_path / "diagram.mp4", duration=1.0)
+    assert path is None
+    assert meta["reason"] == "label_does_not_fit"
+
+
+def test_labelled_diagram_renders_through_chain(tmp_path):
+    entries = [_entry(
+        "gm_0001", 1, 0, 1, "The engine works in stages.",
+        ["labelled_diagram"],
+        scenario={"diagram": {"parts": _PARTS}},
+    )]
+    assets = _build(tmp_path, entries)
+    assert len(assets) == 1
+    record = assets[0]
+    assert record["template"] == "labelled_diagram"
+    names = [p["name"] for p in record["engine_inputs"]["parts"]]
+    assert names == ["Piston", "Valve", "Flywheel"]
+
+
+def test_labelled_diagram_chain_refuses_without_contract(tmp_path):
+    entries = [_entry(
+        "gm_0001", 1, 0, 1, "The engine works in stages.",
+        ["labelled_diagram"], scenario={},
+    )]
+    assert _build(tmp_path, entries) == []
+
+
+def test_director_labelled_diagram_candidacy_from_contract():
+    plan = {
+        "version": 1, "project_id": "p67", "analysis_mode": "llm",
+        "scene_governor": None,
+        "sentences": [{
+            "sentence_number": 1, "scene_number": 1,
+            "role": "statement",
+            "primary_visual_intent": "exact",
+            "secondary_visual_intents": [], "intent_queries": {},
+            "graphic_fallback": {"allowed": True, "kind": None},
+            "preferred_media_type": "video",
+            "specificity_requirement": "exact",
+            "visual_misrepresentation_risk": "low",
+            "intents_source": "llm_plan", "fallback_concepts": None,
+            "concepts_source": None, "entry_tier": "direct",
+        }],
+    }
+    outcomes = {
+        1: {
+            "sentence_number": 1, "scene_number": 1,
+            "sentence_index": 0, "text": "The pump has two parts.",
+            "scenario": {"diagram": {"parts": _PARTS}},
+            "covered": False, "starved": True, "tier": None,
+            "asset_title": None, "asset_file": None,
+            "scene_photo_count": 0, "secondary_video": None,
+            "scene_has_identity_photo": False,
+        },
+    }
+    _plan_v2, manifest = visual_director.reconcile_visual_plan(
+        plan, outcomes)
+    entry = manifest["entries"][0]
+    assert entry["story_problem"] == "explanation"
+    assert entry["template"] == "labelled_diagram"
 
 
 def test_estimated_flag_without_ranges_rides_the_contract(tmp_path):

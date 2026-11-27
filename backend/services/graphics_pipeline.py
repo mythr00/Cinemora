@@ -3202,6 +3202,40 @@ def build_motion_graphics_assets(
         return {"stages": stages,
                 "title": short_title_for(target)}
 
+    def _assemble_labelled_diagram(target):
+        """Phase 6–7 (D1): the labelled diagram is fed ONLY by
+        the scenario's recorded ``diagram`` contract — parts
+        with a recorded name (a part without a name cannot be
+        labelled and is excluded); fewer than 2 named parts
+        declines. No part is ever invented."""
+        scenario = target.get("scenario") or {}
+        contract = scenario.get("diagram")
+        if not isinstance(contract, dict):
+            return None
+        parts = []
+        for entry in contract.get("parts") or []:
+            if not isinstance(entry, dict):
+                continue
+            name = clean_text(entry.get("name") or "")
+            if not name:
+                continue
+            part = {
+                "name": name,
+                "description": clean_text(
+                    entry.get("description") or ""),
+            }
+            at = entry.get("at")
+            if isinstance(at, (list, tuple)) and len(at) >= 2:
+                part["at"] = at
+            parts.append(part)
+        if len(parts) < 2:
+            return None
+        return {
+            "parts": parts,
+            "title": clean_text(contract.get("title") or "")
+            or short_title_for(target),
+        }
+
     def _assemble_molecular_diagram(target):
         scenario = target.get("scenario") or {}
         molecule = scenario.get("molecule")
@@ -3395,6 +3429,10 @@ def build_motion_graphics_assets(
         # they are reachable only through a Director manifest
         # entry whose candidacy is their recorded-evidence gate.
         "chronology", "route", "locator", "relationship_network",
+        # Phase 6–7 (D1): the labelled diagram is fed by the
+        # scenario's recorded diagram contract — Director-only
+        # for the same recorded-evidence reason.
+        "labelled_diagram",
         # GitHub Skills Programme (2026-11-25): the Manim engine's
         # templates are Director-only for the same reason, plus a
         # cost discipline the others do not need — a Manim render
@@ -3453,6 +3491,8 @@ def build_motion_graphics_assets(
         "route": _assemble_route,
         "locator": _assemble_locator,
         "relationship_network": _assemble_relationship_network,
+        # Phase 6–7 (D1).
+        "labelled_diagram": _assemble_labelled_diagram,
     }
 
     def _engine_duration_for(target):

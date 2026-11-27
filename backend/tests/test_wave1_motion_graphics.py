@@ -148,8 +148,9 @@ def test_registry_covers_all_wave1_templates():
     # minus the eleven P0 removals: 42 registered templates.
     # Phase 5 core treatments (2026-11-27): +4 rebuilt treatments
     # under new names (chronology / route / locator /
-    # relationship_network): 46.
-    assert len(engine_templates.TEMPLATES) == 46
+    # relationship_network): 46. Phase 6-7 (D1): +1
+    # labelled_diagram: 47.
+    assert len(engine_templates.TEMPLATES) == 47
 
 
 def test_wave1_templates_refuse_with_typed_reasons(tmp_path):

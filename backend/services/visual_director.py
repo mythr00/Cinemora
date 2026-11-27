@@ -720,6 +720,11 @@ def _template_candidates(row, outcome, pack, bible=None, problem=None):
     molecule = scenario.get("molecule")
     if isinstance(molecule, dict) and molecule.get("atoms"):
         candidates.append("molecular_diagram")
+    # Phase 6–7 (D1): the labelled diagram is proposed ONLY when
+    # the scenario records its diagram contract (>= 2 named
+    # parts) — the same recorded-contract discipline.
+    if _recorded_diagram_parts(scenario):
+        candidates.append("labelled_diagram")
     if isinstance(scenario.get("density_points"), list) \
             and len(scenario["density_points"]) >= 3:
         candidates.append("heatmap")
