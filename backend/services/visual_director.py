@@ -477,19 +477,13 @@ def _template_candidates(row, outcome, pack):
 
 def _family_candidates(row, outcome, production_context):
     """Non-engine graphic families the pipeline may attempt for
-    this beat, in order. process is included ONLY on a plan-level
-    signal (D1: no unconditional renders). (P0 removal,
-    2026-11-27: the chronology/"timeline" family and the native
-    stat family were removed completely and are never candidates
-    again — statistics are served by the engine chart templates
-    above, fed by recorded data.)"""
-    features = _text_features(outcome.get("text") or "")
-    families = []
-    if features["has_sequence"] and (
-        (production_context or {}).get("timeline_event_count") or 0
-    ) >= 3:
-        families.append("process")
-    families.append("event_schematic")
+    this beat, in order. (P0 removal, 2026-11-27: the
+    chronology/"timeline" family, the native stat family and the
+    native process family were removed completely and are never
+    candidates again — statistics are served by the engine chart
+    templates above, fed by recorded data. Only the event
+    schematic remains.)"""
+    families = ["event_schematic"]
     return families
 
 

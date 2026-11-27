@@ -1150,178 +1150,6 @@ def _graphic_background():
     ]
 
 
-def _render_process_graphic(
-    output_file,
-    steps,
-    duration=5.0,
-):
-    duration = _graphic_duration(0, duration, 3.5, 9.0)
-
-    filters = _graphic_background()
-
-    filters += [
-        _ffmpeg_text_filter(
-            "PROCESS / TRANSFORMATION",
-            "120",
-            "145",
-            27,
-            GRAPHIC_TEXT,
-            0.65,
-        )
-    ]
-
-    # Founder defect ruling 2026-11-23: no fabricated placeholder
-    # steps (the historical START / CHANGE / RESULT fallback
-    # invented a process the script never described). No real
-    # steps — no graphic.
-    usable = [
-        step for step in (steps or [])[:5]
-        if (isinstance(step, str) and clean_text(step))
-        or (isinstance(step, dict)
-            and clean_text(
-                step.get("label") or step.get("what") or ""))
-    ]
-    if not usable:
-        raise ValueError(
-            "process graphic has no usable steps to present"
-        )
-
-    spacing = 1500 / max(len(usable), 1)
-
-    for index, step in enumerate(usable):
-        x = int(170 + index * spacing)
-
-        if isinstance(step, str):
-            label = shorten(step, 25)
-            sublabel = ""
-        else:
-            # MA-01: the step itself is the event's "what"/action
-            # text; "when" is only a sublabel underneath it.
-            label = shorten(
-                step.get("label") or step.get("what") or "", 25
-            )
-            sublabel = shorten(
-                step.get("sublabel") or step.get("when") or "", 25
-            )
-
-        # Stage B: steps reveal one at a time, in narration order,
-        # instead of all being visible from frame 0.
-        reveal = duration * 0.55 * index / max(len(usable) - 1, 1)
-        enable = f"gte(t,{reveal:.3f})"
-
-        # Outer card.
-        filters += [
-            f"drawbox="
-            f"x={x}:"
-            f"y=405:"
-            f"w=250:"
-            f"h=170:"
-            f"color={GRAPHIC_PANEL_PROCESS}@0.94:"
-            f"t=fill:"
-            f"enable='{enable}'",
-
-            f"drawbox="
-            f"x={x}:"
-            f"y=405:"
-            f"w=250:"
-            f"h=4:"
-            f"color=white@0.8:"
-            f"t=fill:"
-            f"enable='{enable}'",
-
-            _ffmpeg_text_filter(
-                f"{index + 1:02d}",
-                str(x + 20),
-                "430",
-                23,
-                GRAPHIC_TEXT,
-                0.45,
-                enable=enable,
-            ),
-
-            _ffmpeg_text_filter(
-                label,
-                str(x + 20),
-                "490",
-                25,
-                GRAPHIC_TEXT,
-                0.92,
-                bold=True,
-                enable=enable,
-            ),
-        ]
-
-        if sublabel:
-            filters += [
-                _ffmpeg_text_filter(
-                    sublabel,
-                    str(x + 20),
-                    "532",
-                    18,
-                    GRAPHIC_TEXT,
-                    0.58,
-                    enable=enable,
-                )
-            ]
-
-        if index < len(usable) - 1:
-            arrow_x = x + 265
-            # Stage B: the connector is a drawn chevron in the
-            # bundled font (the old code rendered a literal "?"
-            # because no arrow glyph was available). It appears
-            # together with the step it points FROM.
-            filters += [
-                _ffmpeg_text_filter(
-                    ">",
-                    str(arrow_x),
-                    "460",
-                    48,
-                    GRAPHIC_TEXT,
-                    0.8,
-                    bold=True,
-                    enable=enable,
-                )
-            ]
-
-    # Animated horizontal sweep.
-    filters += [
-        "drawbox="
-        f"x='120+1500*t/{duration:.3f}':"
-        "y=620:"
-        "w=220:"
-        "h=3:"
-        "color=white@0.65:"
-        "t=fill"
-    ]
-
-    command = [
-        "ffmpeg",
-        "-y",
-        "-f", "lavfi",
-        "-i",
-        f"color=c={GRAPHIC_BG_PROCESS}:s=1920x1080:r={FPS}",
-        "-t", f"{duration:.3f}",
-        "-vf", ",".join(filters),
-        "-an",
-        "-c:v", "libx264",
-        "-preset", PRESET,
-        "-crf", str(CRF),
-        "-pix_fmt", "yuv420p",
-        str(output_file),
-    ]
-
-    run_ffmpeg(command)
-
-
-# =========================================================
-# SHARED TEXT-EXTRACTION HELPERS
-# (The MA-05 stat extraction that headed this section was
-# removed with the native stat family, P0 2026-11-27. What
-# remains is shared by the surviving engine chart family:
-# extract_comparison / _series_from_text / _percent_value —
-# all of which exclude bare years from statistic candidacy.)
-# =========================================================
-
 _STAT_STOP_NOUNS = {
     "in", "on", "at", "by", "for", "from", "was", "were", "is", "are",
     "had", "has", "have", "after", "before", "during", "when", "while",
@@ -1816,8 +1644,7 @@ def build_motion_graphics_assets(
         }
 
     # -----------------------------------------------------
-    # STAGE A: normalise targets and choose anchors for the
-    # process graphic. Every generated graphic must
+    # STAGE A: normalise targets. Every generated graphic must
     # carry a scene/sentence anchor so the jobs.py attach loop
     # can place it — unanchored graphics never reach a film.
     # -----------------------------------------------------
@@ -1879,46 +1706,14 @@ def build_motion_graphics_assets(
                 }
         return None
 
-    # MA-06 anchor preference: the process graphic prefers a
-    # sentence with sequence markers; with exactly ONE target it
-    # anchors to that target (MA-03); with zero targets it stays
-    # unanchored and is recorded as undelivered in the manifest
-    # instead of being silently counted as delivered.
-    # (P0 removal, 2026-11-27: the chronology/"timeline" graphic
-    # and its MA-06 anchor were removed completely — renderer,
-    # anchor and every selection path. A beat that would have
-    # received it falls back to footage or a typed decline.)
-    if target_list:
-        process_anchor = None
-        process_anchor_reason = "chapter_graphic"
-        for _candidate in target_list:
-            if _has_sequence_marker(_candidate["text"]):
-                process_anchor = _candidate
-                process_anchor_reason = "sequence_sentence"
-                break
-        if process_anchor is None:
-            if len(target_list) > 1:
-                process_anchor = target_list[1]
-            else:
-                process_anchor = target_list[0]
-                process_anchor_reason = "single_target"
-    else:
-        # Phase 6 (AM-001/D1): no targets — NO process anchor.
-        # A graphic exists only for a targeted requirement, so
-        # with no targets the process graphic is not rendered
-        # at all.
-        process_anchor = None
-        process_anchor_reason = "no_targets"
-
-    def _stamp_anchor(record, anchor):
-        if anchor:
-            record["scene_number"] = anchor.get("scene_number")
-            record["sentence_index"] = anchor.get("sentence_index")
-            record["sentence_number"] = anchor.get("sentence_number")
-
-    # -----------------------------------------------------
-    # NUMERICAL / SCALE GRAPHICS
-    # -----------------------------------------------------
+    # (P0 removal, 2026-11-27: the MA-06 anchor selection that
+    # lived here — chronology anchor in R1, process anchor in
+    # R6 — was removed completely with both native families,
+    # renderers included. Every remaining graphic is produced
+    # per-target by the targeted chain below and carries its
+    # target's anchor directly. A beat that would have received
+    # a removed graphic falls back to footage or a typed
+    # decline.)
 
 
     # -----------------------------------------------------
@@ -3324,18 +3119,14 @@ def build_motion_graphics_assets(
         ]
 
     # Stage 3D targeted fallback chain. Each target is routed, in
-    # order: stat -> process -> event schematic -> Motion Engine
-    # templates -> recorded skip. (P0 removal, 2026-11-27: the
-    # chronology/timeline stage was removed completely.)
+    # order: event schematic -> Motion Engine templates ->
+    # recorded skip. (P0 removal, 2026-11-27: the stat, process
+    # and chronology/timeline stages were removed completely.)
     # Every outcome (produced or skipped) is recorded in the
     # manifest with family + reason (target_outcomes). Variety:
     # the same family is not chosen for two consecutive targets
     # when an alternative family fits — an alternative that fits
     # is tried first, and the primary family remains the fallback.
-    _process_claimed = False
-    _process_available = bool(timeline_events) and len(
-        [e for e in timeline_events if clean_text(e.get("what", ""))]
-    ) >= 3
     _last_family = None
     # Wave 1 (§D.3): the no-same-family-twice rule extended to
     # template level within the engine family — the last engine
@@ -3674,22 +3465,9 @@ def build_motion_graphics_assets(
         # the surviving engine chart family from recorded data,
         # with years/dates excluded from statistic candidacy.)
 
-        # 3) Process: sequence markers + process graphic unused.
-        # The claim rebinds process_anchor (this loop runs in the
-        # enclosing function scope), which the process render
-        # stage below stamps onto the process asset.
-        if (
-            produced_family is None
-            and has_sequence
-            and not _process_claimed
-            and _family_permitted(target, "process")
-        ):
-            if _process_available:
-                process_anchor = target
-                process_anchor_reason = "sequence_sentence"
-                _process_claimed = True
-                produced_family = "process"
-                produced_reason = "sequence_sentence"
+        # (P0 removal, 2026-11-27: chain stage 3 — the native
+        # process family — was removed completely: renderer,
+        # anchor logic and recipe dispatch.)
 
         # 4) Event schematic (conservative trigger, motif-gated).
         _schematic_reason = None
@@ -3841,30 +3619,7 @@ def build_motion_graphics_assets(
         # entry naming it); it is never attempted here as a
         # floor. The Director's candidate lists remain a
         # preference order for the content families, not a veto.
-        #
-        # One route is NOT pre-empted: the process graphic is a
-        # chapter-level render anchored to a pre-chosen target
-        # and rendered AFTER this loop (below). When this target
-        # is that anchor and the process stage is positioned to
-        # render for it, the beat is already served by a designed
-        # graphic — no decline is recorded and the anchor's
-        # recorded outcome remains the chain's own (MG-08), as
-        # before. (If that render then fails, the failure is
-        # recorded in graphic_failures — data, not silence.)
-        _served_by_process_anchor = (
-            process_anchor is target
-            and mode in {"balanced", "heavy"}
-            and (
-                target.get("family_candidates") is None
-                or "process" in target["family_candidates"]
-            )
-            and sum(
-                1
-                for _event in timeline_events[:5]
-                if clean_text(_event.get("what", ""))
-            ) >= 3
-        )
-        if produced_family is None and not _served_by_process_anchor:
+        if produced_family is None:
             _facts = _terminal_facts(target, text)
             _attempted = []
             for _stage_family, _stage_reason in (
@@ -4084,121 +3839,6 @@ def build_motion_graphics_assets(
     # requirement (a manifest entry, or a legacy target). Sentences
     # nobody targeted get no graphic, however stat-shaped they are.
 
-    # -----------------------------------------------------
-    # PROCESS / TRANSFORMATION GRAPHIC
-    # -----------------------------------------------------
-
-    # Phase 6 (AM-001/D1): the process graphic — a chapter-level
-    # summary, like the chronology — renders ONLY when a target
-    # anchors it: the MA-06 anchor selection above assigns
-    # process_anchor whenever at least one target exists (a
-    # sequence target by claim, else the next/single target), and
-    # with NO targets there is no anchor and no render (the pre-D1
-    # code rendered it whenever the bible held >= 3 events and
-    # recorded the unanchored render as "undelivered"). In
-    # manifest mode the anchor target's recorded family candidates
-    # must additionally include the process family — the Director
-    # is authoritative there.
-    _process_family_ok = True
-    if (
-        isinstance(process_anchor, dict)
-        and process_anchor.get("family_candidates") is not None
-    ):
-        _process_family_ok = (
-            "process" in process_anchor["family_candidates"]
-        )
-    if (
-        mode in {"balanced", "heavy"}
-        and process_anchor is not None
-        and _process_family_ok
-    ):
-        steps = []
-
-        # MA-01: steps are the events' "what"/action text
-        # (shortened); "when" is only a sublabel.
-        for event in timeline_events[:5]:
-            what = clean_text(event.get("what", ""))
-            if what:
-                steps.append({
-                    "label": shorten(what, 28),
-                    "what": what,
-                    "sublabel": clean_text(event.get("when", "")),
-                    "when": clean_text(event.get("when", "")),
-                })
-
-        if len(steps) >= 3:
-            path = (
-                output_dir
-                / "motion_graphic_process_001.mp4"
-            )
-
-            try:
-                _render_process_graphic(
-                    path,
-                    steps,
-                    duration=5.0,
-                )
-
-                record = register_asset(
-                    path,
-                    "process",
-                    "process_or_transformation",
-                    5.0,
-                    "PROCESS",
-                    recipe=_recipe(
-                        "process", "ffmpeg_process",
-                        {"steps": copy.deepcopy(steps)},
-                        5.0, "process_or_transformation",
-                        scene_number=(
-                            process_anchor or {}
-                        ).get("scene_number"),
-                        sentence_index=(
-                            process_anchor or {}
-                        ).get("sentence_index"),
-                        sentence_number=(
-                            process_anchor or {}
-                        ).get("sentence_number"),
-                        source_references=[{
-                            "type": "case_bible_timeline",
-                        }],
-                    ),
-                )
-                if record is not None:
-                    _stamp_anchor(record, process_anchor)
-                    record["anchor_reason"] = process_anchor_reason
-                    record["family"] = "process"
-                    record["process_steps"] = [
-                        s["label"] for s in steps
-                    ]
-                    if (
-                        isinstance(process_anchor, dict)
-                        and process_anchor.get("manifest_id")
-                    ):
-                        record["manifest_id"] = process_anchor[
-                            "manifest_id"
-                        ]
-                    if process_anchor is None:
-                        # MA-03: rendered but undeliverable — recorded
-                        # as undelivered, not silently counted.
-                        record["delivered"] = False
-                        undelivered.append({
-                            "graphic_type": "process",
-                            "reason": "no_anchor_no_targets",
-                        })
-                    else:
-                        record["delivered"] = True
-            except Exception as error:
-                # AUD-21: skip this graphic; never fail the whole job.
-                print(f"MOTION GRAPHIC SKIPPED (process): {error}")
-                graphic_failures.append({
-                    "graphic_type": "process",
-                    "purpose": "process_or_transformation",
-                    "stage": "render",
-                    "file_path": str(path),
-                    "reason": "rendering_failure",
-                    "detail": str(error),
-                })
-
     # Phase 6: every asset record carries the production theme
     # when one was selected (engine records already carry their
     # entry theme; setdefault keeps theirs).
@@ -4311,14 +3951,6 @@ def render_graphic_from_recipe(recipe, out_path, duration=None):
         if not rendered:
             return None, metadata or {"reason": "template_refused"}
         return str(out_path), metadata or {}
-
-    if family == "process":
-        _render_process_graphic(
-            out_path,
-            inputs.get("steps") or [],
-            duration=effective_duration,
-        )
-        return str(out_path), {}
 
     if family == "event_schematic":
         from services.vector_graphics import render_event_schematic
