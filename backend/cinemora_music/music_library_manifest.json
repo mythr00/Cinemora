@@ -1,0 +1,38 @@
+{
+  "library": "cinemora_music",
+  "generated_at": "2026-11-27",
+  "distinct_tracks": 1,
+  "missing_track_ids": [
+    "the-war",
+    "epic-war-background-music",
+    "epic-military-army-war",
+    "the-battle-rages-on",
+    "greenskin-warrior",
+    "countdown-to-destruction",
+    "epic-battle-133925",
+    "epic-battle-cinematic-soul",
+    "epic-fight-alec-koff",
+    "war-drums",
+    "battle-drums",
+    "epic-drums",
+    "epic-orchestral",
+    "epic-battle-music-tunetank",
+    "battle-esvisionaria",
+    "epic-battle-yevhen-astafiev"
+  ],
+  "tracks": [
+    {
+      "track_id": "epic-battle-speech-wayne-jones",
+      "title": "Epic Battle Speech",
+      "artist": "Wayne Jones",
+      "source_url": "https://www.youtube.com/watch?v=emEmVbrLlQs",
+      "local_location": "epic_battles/epic-battle-speech-wayne-jones.mp3",
+      "preview_location": "previews/epic-battle-speech-wayne-jones.mp3",
+      "duration_seconds": 111.502,
+      "format": "mp3",
+      "file_size_bytes": 2361663,
+      "category": "epic_battles",
+      "content_sha256": "6b0df4ec36245a3a6548bf9c71014e3784dffe41d5dbf54f6913dcf8e62a652d"
+    }
+  ]
+}

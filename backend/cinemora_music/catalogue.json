@@ -1,0 +1,33 @@
+{
+  "catalogue_version": 1,
+  "tracks": [
+    {
+      "track_id": "epic-battle-speech-wayne-jones",
+      "content_sha256": "6b0df4ec36245a3a6548bf9c71014e3784dffe41d5dbf54f6913dcf8e62a652d",
+      "title": "Epic Battle Speech",
+      "composer": null,
+      "performer": "Wayne Jones",
+      "source_class": "bundled",
+      "moods": [
+        "epic",
+        "battle",
+        "speech"
+      ],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 111.502,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/epic-battle-speech-wayne-jones.mp3",
+        "preview": "previews/epic-battle-speech-wayne-jones.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://www.youtube.com/watch?v=emEmVbrLlQs"
+    }
+  ]
+}
