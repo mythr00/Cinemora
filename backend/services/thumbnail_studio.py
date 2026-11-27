@@ -982,7 +982,39 @@ def generate_variants(project_id, headline=None, project_title=None) -> dict:
                         "message": error.message,
                     }
                 )
+    if not created and skipped:
+        # Redesign programme (2026-11-27): a variant set that
+        # composed NOTHING is a failed generation, not a 201 —
+        # raising here makes the billed wrapper refund the unit
+        # and puts the real reasons in front of the user instead
+        # of a success-shaped response with zero files.
+        reasons = "; ".join(
+            item["message"] for item in skipped[:3]
+        )
+        raise ThumbnailError(
+            422, "variants_none_created",
+            f"No variation could be composed: {reasons}",
+        )
     return {"created": created, "skipped": skipped}
+
+
+def regenerate_variant(project_id, thumb_id, project_title=None) -> dict:
+    """Re-compose a recorded variant from its stored composition
+    (base, headline, layout, accent); the new variant replaces
+    the old record. This is the action variant_path's own
+    missing-file error has always pointed at — until now it did
+    not exist anywhere."""
+    variant = _find_variant(project_id, thumb_id)
+    created = compose_thumbnail(
+        project_id,
+        variant.get("base_id"),
+        variant.get("headline"),
+        layout=variant.get("layout") or "bottom_band",
+        accent=variant.get("accent") or "amber",
+        project_title=project_title,
+    )
+    delete_variant(project_id, thumb_id)
+    return created
 
 
 # ---------------------------------------------------------------------

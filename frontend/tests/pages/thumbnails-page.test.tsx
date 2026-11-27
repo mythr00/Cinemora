@@ -9,8 +9,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import ThumbnailStudioPage from "@/app/thumbnails/page";
 import {
   analyseChannelThumbnails,
+  generateThumbnailVariants,
   getThumbnails,
   listProjects,
+  regenerateThumbnail,
 } from "@/lib/api";
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -28,6 +30,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     getThumbnails: vi.fn(),
     composeThumbnail: vi.fn(),
     generateThumbnailVariants: vi.fn(),
+    deleteThumbnail: vi.fn(),
+    regenerateThumbnail: vi.fn(),
+    suggestThumbnailHeadlines: vi.fn(),
     uploadAsset: vi.fn(),
     analyseChannelThumbnails: vi.fn(),
     fetchAuthenticatedMediaObjectUrl: vi
@@ -44,6 +49,8 @@ vi.mock("next/navigation", () => ({
 const mockProjects = vi.mocked(listProjects);
 const mockView = vi.mocked(getThumbnails);
 const mockChannel = vi.mocked(analyseChannelThumbnails);
+const mockVariants = vi.mocked(generateThumbnailVariants);
+const mockRegenerate = vi.mocked(regenerateThumbnail);
 
 const VIEW = {
   schema: "thumbnail_studio.v1",
@@ -67,7 +74,7 @@ const VIEW = {
     headline_suggestions: ["THE NIGHT THE CRANES FELL"],
   },
   bases: {
-    film: { state: "no_completed_run", timestamps_source: "none", frames: [] },
+    film: { state: "not_recorded", timestamps_source: "none", frames: [] },
     stills: [],
     uploads: [
       {
@@ -151,5 +158,100 @@ describe("Thumbnail Studio page (item 5)", () => {
     expect(screen.getByText(/42,000 subscribers/)).toBeInTheDocument();
     expect(screen.getByText(/#c82828/)).toBeInTheDocument();
     expect(screen.getAllByText(/style reference only/).length).toBeGreaterThan(0);
+  });
+
+  it("hides the film-frames hint when frames are recorded", async () => {
+    mockView.mockResolvedValue({
+      ...VIEW,
+      bases: {
+        ...VIEW.bases,
+        film: {
+          state: "recorded",
+          timestamps_source: "timeline",
+          frames: [
+            {
+              base_id: "frame:run1:60",
+              kind: "film_frame",
+              label: "Film frame at 60s",
+              timestamp_seconds: 60,
+            },
+          ],
+        },
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    render(<ThumbnailStudioPage />);
+    expect(await screen.findByText("Thumbnail Studio")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/1 film frame\(s\)/)).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByText(/Film frames appear once a production completes/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows variant skip reasons instead of hiding them", async () => {
+    mockVariants.mockResolvedValue({
+      created: [],
+      skipped: [
+        {
+          base_id: "upload:up1",
+          layout: "bottom_band",
+          code: "base_unreadable",
+          message: "The base image could not be read.",
+        },
+      ],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    render(<ThumbnailStudioPage />);
+    expect(await screen.findByText("Thumbnail Studio")).toBeInTheDocument();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Generate variations" }),
+    );
+    expect(
+      await screen.findByText(/The base image could not be read\./),
+    ).toBeInTheDocument();
+  });
+
+  it("renders a missing-file variant honestly, with regenerate", async () => {
+    mockView.mockResolvedValue({
+      ...VIEW,
+      variants: [
+        {
+          id: "t1",
+          created_at: "2026-11-01T00:00:00Z",
+          file_name: "gone.png",
+          base: { kind: "upload", upload_id: "up1", file_name: "crane.jpg" },
+          base_id: "upload:up1",
+          headline: "THE NIGHT THE CRANES FELL",
+          layout: "bottom_band",
+          accent: "amber",
+          checks: {
+            dimensions: [1280, 720],
+            format: "PNG",
+            file_size_bytes: 900000,
+            under_youtube_size_limit: true,
+            headline_word_count: 5,
+            headline_character_count: 24,
+            headline_contrast_ratio: 4.5,
+            headline_font_height_px_at_10_percent_scale: 9.6,
+          },
+          available: false,
+        },
+      ],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+    mockRegenerate.mockResolvedValue({} as never);
+    render(<ThumbnailStudioPage />);
+    expect(await screen.findByText("Thumbnail Studio")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/no longer on disk/),
+    ).toBeInTheDocument();
+    // No download is offered for a file that does not exist.
+    expect(screen.queryByText("Download")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Regenerate/ }));
+    await waitFor(() =>
+      expect(mockRegenerate).toHaveBeenCalledWith("p1", "t1"),
+    );
   });
 });

@@ -4518,6 +4518,26 @@ def delete_thumbnail(project_id: str, thumb_id: str,
     return _thumb_call(thumbnail_studio.delete_variant, project_id, thumb_id)
 
 
+@router.post(
+    "/projects/{project_id}/thumbnails/{thumb_id}/regenerate",
+    status_code=201,
+)
+def regenerate_thumbnail(project_id: str, thumb_id: str,
+                         principal=Depends(post_guard)):
+    """Re-compose a variant from its stored composition — the
+    recovery the missing-file error message promises. Billed as
+    a compose, refunded on failure like every thumbnail call."""
+    project = _thumb_project(project_id, principal, write=True)
+    return _billed_thumb_call(
+        "compose",
+        principal.user_id,
+        thumbnail_studio.regenerate_variant,
+        project_id,
+        thumb_id,
+        project_title=project.title,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Localization Studio (founder priority #14) — sub-phase 1 of the
 # audit's phasing (services/localization.py): the project's

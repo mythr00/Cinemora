@@ -1540,6 +1540,13 @@ export function deleteThumbnail(projectId: string, thumbId: string) {
   });
 }
 
+export function regenerateThumbnail(projectId: string, thumbId: string) {
+  return apiRequest<ThumbnailVariant>(
+    `/api/v1/projects/${projectId}/thumbnails/${thumbId}/regenerate`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
 export function thumbnailImagePath(projectId: string, thumbId: string) {
   return `/api/v1/projects/${projectId}/thumbnails/${thumbId}/image`;
 }

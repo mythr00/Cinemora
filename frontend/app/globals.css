@@ -1966,8 +1966,11 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
    same tokens as the rest of the studio; no presence indicators
    (presence is not recorded, so it is never implied). */
 .team-error { color: #b3261e; font-size: 14px; margin: 12px 0; }
-.team-page .panel, .affiliate-page .panel { margin-bottom: 24px; }
-.team-page .panel h2, .affiliate-page .panel h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; color: var(--ink-strong); font-size: var(--type-h3); font-weight: 650; }
+.team-page .panel, .affiliate-page .panel, .thumbs-page .panel { margin-bottom: 24px; }
+.team-page .panel h2, .affiliate-page .panel h2, .thumbs-page .panel h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; color: var(--ink-strong); font-size: var(--type-h3); font-weight: 650; }
+.thumb-proposals { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.thumb-proposals .team-chip { cursor: pointer; font: inherit; }
+.thumb-proposals .team-chip:hover { border-color: var(--accent); color: var(--accent-deep); }
 .team-person { display: inline-flex; align-items: center; gap: 12px; min-width: 0; }
 .team-avatar {
   width: 36px; height: 36px; border-radius: 50%; flex: none;

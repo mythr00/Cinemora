@@ -12,6 +12,7 @@ import {
   Download,
   ImageOff,
   Loader2,
+  RefreshCw,
   Sparkles,
   Trash2,
   Upload,
@@ -25,6 +26,7 @@ import {
   fetchAuthenticatedMediaObjectUrl,
   generateThumbnailVariants,
   getThumbnails,
+  regenerateThumbnail,
   suggestThumbnailHeadlines,
   thumbnailDownloadPath,
   thumbnailImagePath,
@@ -107,10 +109,11 @@ function baseKindLabel(base: ThumbnailBase | ThumbnailVariant["base"]): string {
   return `Upload${base.file_name ? ` · ${base.file_name}` : ""}`;
 }
 
-function VariantCard({ projectId, variant, onDelete }: {
+function VariantCard({ projectId, variant, onDelete, onRegenerate }: {
   projectId: string;
   variant: ThumbnailVariant;
   onDelete: (id: string) => void;
+  onRegenerate: (id: string) => void;
 }) {
   const checks = variant.checks;
   return (
@@ -150,6 +153,11 @@ function VariantCard({ projectId, variant, onDelete }: {
               <Download size={14} strokeWidth={2} aria-hidden /> Download
             </AuthenticatedDownloadLink>
           )}
+          {!variant.available && (
+            <button type="button" className="button button-secondary" onClick={() => onRegenerate(variant.id)}>
+              <RefreshCw size={14} strokeWidth={2} aria-hidden /> Regenerate
+            </button>
+          )}
           <button type="button" className="button button-quiet" onClick={() => onDelete(variant.id)}>
             <Trash2 size={14} strokeWidth={2} aria-hidden /> Delete
           </button>
@@ -166,6 +174,7 @@ export default function ThumbnailsPage() {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
   const [acting, setActing] = useState(false);
 
   const [baseId, setBaseId] = useState<string>("");
@@ -232,7 +241,21 @@ export default function ThumbnailsPage() {
 
   async function onGenerateSet() {
     await runAction(async () => {
-      await generateThumbnailVariants(projectId, headline || undefined);
+      const result = await generateThumbnailVariants(projectId, headline || undefined);
+      setNotice(
+        `${result.created.length} variation(s) created.` +
+          (result.skipped.length
+            ? ` ${result.skipped.length} skipped: ${result.skipped.map((s) => s.message).join(" ")}`
+            : ""),
+      );
+      await load();
+    });
+  }
+
+  async function onRegenerate(id: string) {
+    await runAction(async () => {
+      await regenerateThumbnail(projectId, id);
+      setNotice("Thumbnail regenerated from its recorded composition.");
       await load();
     });
   }
@@ -499,6 +522,7 @@ export default function ThumbnailsPage() {
             )}
 
             {actionError && <p className="thumb-error" role="alert">{actionError}</p>}
+            {notice && <p className="plan-meta" role="status">{notice}</p>}
 
             <section aria-label="Variants">
               <h2 className="thumb-variants-title">Variants ({view.variants.length})</h2>
@@ -510,7 +534,7 @@ export default function ThumbnailsPage() {
               ) : (
                 <div className="thumb-grid">
                   {view.variants.map((variant) => (
-                    <VariantCard key={variant.id} projectId={projectId} variant={variant} onDelete={(id) => void onDelete(id)} />
+                    <VariantCard key={variant.id} projectId={projectId} variant={variant} onDelete={(id) => void onDelete(id)} onRegenerate={(id) => void onRegenerate(id)} />
                   ))}
                 </div>
               )}

@@ -4,14 +4,17 @@ import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { AuthenticatedDownloadLink } from "@/components/authenticated-media";
 import { ErrorState, LoadingState } from "@/components/states";
-import { ImageOff, Loader2, Palette, Search, Upload } from "lucide-react";
+import { ImageOff, Loader2, Palette, RefreshCw, Search, Trash2, Upload, Wand2 } from "lucide-react";
 import {
   analyseChannelThumbnails,
   composeThumbnail,
+  deleteThumbnail,
   fetchAuthenticatedMediaObjectUrl,
   generateThumbnailVariants,
   getThumbnails,
   listProjects,
+  regenerateThumbnail,
+  suggestThumbnailHeadlines,
   thumbnailDownloadPath,
   thumbnailImagePath,
   uploadThumbnailBase,
@@ -105,6 +108,8 @@ export default function ThumbnailStudioPage() {
   const [layout, setLayout] = useState("bottom_band");
   const [accent, setAccent] = useState("amber");
 
+  const [proposals, setProposals] = useState<string[] | null>(null);
+
   const [channelUrl, setChannelUrl] = useState("");
   const [channelStyles, setChannelStyles] = useState<{
     channel: { title?: string | null; subscriber_count?: number | null };
@@ -179,10 +184,18 @@ export default function ThumbnailStudioPage() {
         layout,
         accent,
       });
-      setNotice("Thumbnail composed and saved below.");
-      await loadView(projectId);
     } catch (caught) {
       setActionError(caught instanceof Error ? caught.message : "Composition failed.");
+      setWorking("");
+      return;
+    }
+    // The thumbnail exists from here — a refresh failure must
+    // not report the composition itself as failed.
+    try {
+      await loadView(projectId);
+      setNotice("Thumbnail composed and saved below.");
+    } catch {
+      setNotice("Thumbnail composed, but the list could not be refreshed — reload the page to see it.");
     } finally {
       setWorking("");
     }
@@ -195,7 +208,10 @@ export default function ThumbnailStudioPage() {
     try {
       const result = await generateThumbnailVariants(projectId, headline || undefined);
       setNotice(
-        `${result.created.length} variation(s) created${result.skipped.length ? `; ${result.skipped.length} skipped (see the project studio for reasons)` : ""}.`,
+        `${result.created.length} variation(s) created.` +
+          (result.skipped.length
+            ? ` ${result.skipped.length} skipped: ${result.skipped.map((s) => s.message).join(" ")}`
+            : ""),
       );
       await loadView(projectId);
     } catch (caught) {
@@ -205,8 +221,62 @@ export default function ThumbnailStudioPage() {
     }
   };
 
+  const removeVariant = async (thumbId: string) => {
+    if (!projectId) return;
+    setWorking("delete");
+    setActionError(null);
+    try {
+      await deleteThumbnail(projectId, thumbId);
+      setNotice("Thumbnail deleted.");
+      await loadView(projectId);
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "Delete failed.");
+    } finally {
+      setWorking("");
+    }
+  };
+
+  const regenerateVariant = async (thumbId: string) => {
+    if (!projectId) return;
+    setWorking("regenerate");
+    setActionError(null);
+    try {
+      await regenerateThumbnail(projectId, thumbId);
+      setNotice("Thumbnail regenerated from its recorded composition.");
+      await loadView(projectId);
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "Regeneration failed.");
+    } finally {
+      setWorking("");
+    }
+  };
+
+  const suggestHeadlines = async () => {
+    if (!projectId) return;
+    setWorking("suggest");
+    setActionError(null);
+    try {
+      const result = await suggestThumbnailHeadlines(projectId);
+      setProposals(result.proposals);
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : "Headline suggestions failed.");
+    } finally {
+      setWorking("");
+    }
+  };
+
   const upload = async (file: File | null) => {
     if (!file || !projectId) return;
+    // The server's own limits, enforced before the upload so
+    // the refusal is instant and explained (25 MB studio cap).
+    if (!file.type.startsWith("image/")) {
+      setActionError("That file is not an image — thumbnail bases must be image files.");
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setActionError("That image is over the 25 MB upload limit.");
+      return;
+    }
     setWorking("upload");
     setActionError(null);
     try {
@@ -235,7 +305,7 @@ export default function ThumbnailStudioPage() {
   };
 
   return (
-    <main className="app-page">
+    <main className="app-page thumbs-page">
       <AppNavigation />
       <section className="plan-content">
         <p className="eyebrow">STUDIO</p>
@@ -265,7 +335,7 @@ export default function ThumbnailStudioPage() {
 
         {!busy && !error && (
           <>
-            <section>
+            <section className="panel">
               <h2>Project material</h2>
               {projects.length === 0 ? (
                 <p className="plan-intro">
@@ -287,7 +357,7 @@ export default function ThumbnailStudioPage() {
                       </select>
                     </label>
                     <label>
-                      <Upload size={14} /> Upload a base or reference image
+                      <Upload size={14} /> Upload a base or reference image (image file, up to 25 MB)
                       <input
                         type="file"
                         accept="image/*"
@@ -301,7 +371,7 @@ export default function ThumbnailStudioPage() {
                       Bases available: {view.bases.film.frames.length} film frame(s) ·{" "}
                       {view.bases.stills.length} verified still(s) ·{" "}
                       {view.bases.uploads.length} upload(s).
-                      {view.bases.film.state !== "available"
+                      {view.bases.film.state === "not_recorded"
                         ? " Film frames appear once a production completes; stills and uploads work now."
                         : ""}
                     </p>
@@ -311,7 +381,7 @@ export default function ThumbnailStudioPage() {
             </section>
 
             {view && (
-              <section>
+              <section className="panel">
                 <h2>Compose</h2>
                 <div className="team-invite">
                   <label>
@@ -352,10 +422,14 @@ export default function ThumbnailStudioPage() {
                   </label>
                   <span className="team-actions">
                     <button type="button" disabled={!baseId || working === "compose"} onClick={() => void compose()}>
-                      Compose thumbnail
+                      {working === "compose" ? "Composing…" : "Compose thumbnail"}
                     </button>
                     <button type="button" disabled={allBases.length === 0 || working === "variants"} onClick={() => void variants()}>
-                      Generate variations
+                      {working === "variants" ? "Generating…" : "Generate variations"}
+                    </button>
+                    <button type="button" disabled={working === "suggest"} onClick={() => void suggestHeadlines()}>
+                      <Wand2 size={14} aria-hidden />{" "}
+                      {working === "suggest" ? "Drafting…" : "Draft headline ideas"}
                     </button>
                   </span>
                 </div>
@@ -364,40 +438,76 @@ export default function ThumbnailStudioPage() {
                     Recorded headline suggestions: {view.brief.headline_suggestions.join(" · ")}
                   </p>
                 )}
-              </section>
-            )}
-
-            {view && (
-              <section>
-                <h2>Saved thumbnails</h2>
-                {view.variants.length === 0 ? (
-                  <p className="plan-intro">Nothing composed yet for this project.</p>
-                ) : (
-                  <ul className="team-people">
-                    {view.variants.map((variant) => (
-                      <li key={variant.id}>
-                        <span>
-                          <ThumbImage projectId={projectId} thumbId={variant.id} alt={variant.headline || "Thumbnail"} />
-                          <strong>{variant.headline || "(no headline)"}</strong>
-                          <span className="plan-meta">
-                            {" "}· {LAYOUT_LABELS[variant.layout] || variant.layout} · {variant.accent}
-                            {" "}· {variant.checks.dimensions[0]}×{variant.checks.dimensions[1]}
-                            {" "}· contrast {variant.checks.headline_contrast_ratio}
-                          </span>
-                        </span>
-                        <span className="team-actions">
-                          <AuthenticatedDownloadLink path={thumbnailDownloadPath(projectId, variant.id)} filename={variant.file_name}>
-                            Download
-                          </AuthenticatedDownloadLink>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                {proposals && (
+                  proposals.length === 0 ? (
+                    <p className="plan-meta">The AI returned no headline proposals for this project.</p>
+                  ) : (
+                    <div className="thumb-proposals">
+                      <span className="plan-meta">AI headline proposals — click to use one:</span>
+                      {proposals.map((proposal) => (
+                        <button
+                          key={proposal}
+                          type="button"
+                          className="team-chip"
+                          onClick={() => setHeadline(proposal)}
+                        >
+                          {proposal}
+                        </button>
+                      ))}
+                    </div>
+                  )
                 )}
               </section>
             )}
 
-            <section>
+            {view && (
+              <section className="panel">
+                <h2>Saved thumbnails</h2>
+                {view.variants.length === 0 ? (
+                  <p className="plan-intro">Nothing composed yet for this project.</p>
+                ) : (
+                  <div className="thumb-grid">
+                    {view.variants.map((variant) => (
+                      <article className="thumb-card" key={variant.id}>
+                        {variant.available ? (
+                          <ThumbImage projectId={projectId} thumbId={variant.id} alt={variant.headline || "Thumbnail"} />
+                        ) : (
+                          <span className="thumb-preview thumb-preview-failed" role="img" aria-label="Image file missing">
+                            <ImageOff size={16} strokeWidth={1.8} aria-hidden />
+                            Recorded, but the image file is no longer on disk — regenerate it from its composition.
+                          </span>
+                        )}
+                        <div className="thumb-card-body">
+                          <h3>{variant.headline || "(no headline)"}</h3>
+                          <p className="plan-meta">
+                            {LAYOUT_LABELS[variant.layout] || variant.layout} · accent {variant.accent}
+                            {" "}· {variant.checks.dimensions[0]}×{variant.checks.dimensions[1]}
+                            {" "}· contrast {variant.checks.headline_contrast_ratio}
+                          </p>
+                          <div className="thumb-card-actions">
+                            {variant.available && (
+                              <AuthenticatedDownloadLink path={thumbnailDownloadPath(projectId, variant.id)} filename={variant.file_name}>
+                                Download
+                              </AuthenticatedDownloadLink>
+                            )}
+                            {!variant.available && (
+                              <button type="button" className="button button-secondary" disabled={working === "regenerate"} onClick={() => void regenerateVariant(variant.id)}>
+                                <RefreshCw size={14} aria-hidden /> Regenerate
+                              </button>
+                            )}
+                            <button type="button" className="button button-quiet" disabled={working === "delete"} onClick={() => void removeVariant(variant.id)}>
+                              <Trash2 size={14} aria-hidden /> Delete
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
+            <section className="panel">
               <h2>
                 <Search size={16} /> Channel style analysis
               </h2>

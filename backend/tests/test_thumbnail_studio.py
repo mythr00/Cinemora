@@ -577,3 +577,75 @@ def test_studio_upload_is_a_base_on_a_fresh_project(client, tmp_path):
         )
     assert refused.status_code == 422
     assert refused.json()["error"]["code"] == "not_an_image"
+
+
+# ---------------------------------------------------------------------
+# Redesign programme (2026-11-27): variant-set honesty and the
+# regenerate action the missing-file error always promised.
+# ---------------------------------------------------------------------
+
+
+def test_variants_that_create_nothing_fail_honestly(client, monkeypatch):
+    project = _build_production(client)
+    from services import thumbnail_studio
+
+    def failing_compose(*args, **kwargs):
+        raise thumbnail_studio.ThumbnailError(
+            422, "base_unreadable", "The base image could not be read."
+        )
+
+    monkeypatch.setattr(
+        thumbnail_studio, "compose_thumbnail", failing_compose
+    )
+    response = client.post(
+        f"/api/v1/projects/{project['id']}/thumbnails/variants",
+        headers=HEADERS, json={"headline": "Raised From The Deep"},
+    )
+    # Not a 201 with zero files: a failure, with the reasons.
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert body["error"]["code"] == "variants_none_created"
+    assert "could not be read" in body["error"]["message"]
+    assert _get(client, project["id"]).json()["variants"] == []
+
+
+def test_regenerate_replaces_a_variant_whose_file_is_missing(client):
+    project = _build_production(client)
+    view = _get(client, project["id"]).json()
+    still_base = view["bases"]["stills"][0]["base_id"]
+    created = client.post(
+        f"/api/v1/projects/{project['id']}/thumbnails",
+        headers=HEADERS,
+        json={"base_id": still_base, "headline": "Raised From The Deep"},
+    )
+    assert created.status_code == 201, created.text
+    variant = created.json()
+
+    # Remove the file: the record stays, honestly unavailable.
+    from services import thumbnail_studio
+
+    store_dir = thumbnail_studio._store_dir(project["id"])
+    (store_dir / variant["file_name"]).unlink()
+    listed = _get(client, project["id"]).json()["variants"]
+    assert listed[0]["available"] is False
+    missing = client.get(
+        f"/api/v1/projects/{project['id']}/thumbnails/{variant['id']}/image",
+        headers=HEADERS,
+    )
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "thumbnail_file_missing"
+
+    response = client.post(
+        f"/api/v1/projects/{project['id']}/thumbnails/{variant['id']}/regenerate",
+        headers=HEADERS,
+    )
+    assert response.status_code == 201, response.text
+    regenerated = response.json()
+    assert regenerated["id"] != variant["id"]
+    assert regenerated["headline"] == variant["headline"]
+    assert regenerated["layout"] == variant["layout"]
+    # The old record is replaced, and the new file really exists.
+    listed = _get(client, project["id"]).json()["variants"]
+    assert [v["id"] for v in listed] == [regenerated["id"]]
+    assert listed[0]["available"] is True
+    assert (store_dir / regenerated["file_name"]).is_file()
