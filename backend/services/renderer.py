@@ -1,9 +1,11 @@
 ﻿import json
 import os
+import shutil
 import subprocess
 import uuid
 from pathlib import Path
 
+from services import render_cache
 from services.atomic_write import write_json_atomic, write_text_atomic
 
 
@@ -611,6 +613,75 @@ def create_video_clip(video_path, duration, output_path, frame_count=None, start
     return True
 
 
+def _render_settings_fingerprint():
+    """The render settings that determine every encoded artefact
+    (Phase 5 cache keys). The code fingerprint in
+    ``render_cache`` covers the filter builders themselves; this
+    carries their current values."""
+    return {
+        "fps": FPS,
+        "width": WIDTH,
+        "height": HEIGHT,
+        "codec": VIDEO_CODEC,
+        "preset": PRESET,
+        "crf": CRF,
+        "video_filter": build_video_filter(),
+    }
+
+
+def _create_clip_cached(store, kind, source_path, duration, output_path,
+                        frame_count, motion=None, start_offset=0.0,
+                        retime_factor=None):
+    """``create_image_clip`` / ``create_video_clip`` through the
+    Phase 5 clip cache.
+
+    On a cache hit the stored encode is placed at ``output_path``
+    and no encode runs — a render resumed after a kill re-uses
+    every completed clip (acceptance #2). On a miss the ordinary
+    create runs and its result is stored. The key covers the
+    source's content hash and every encode parameter, so a changed
+    input always misses. All cache behaviour is fail-soft: any
+    cache problem degrades to the ordinary create.
+    """
+    key = None
+    if store is not None:
+        source_hash = render_cache.hash_file(source_path)
+        if source_hash:
+            key = render_cache.clip_key({
+                "kind": kind,
+                "source_sha256": source_hash,
+                "frame_count": int(frame_count),
+                "duration": float(duration),
+                "motion": motion,
+                "start_offset": float(start_offset or 0.0),
+                "retime_factor": (
+                    None if not retime_factor else float(retime_factor)
+                ),
+                "settings": _render_settings_fingerprint(),
+            })
+            if store.place("clip", key, output_path):
+                store.stats["clip_hits"] += 1
+                print(f"CLIP CACHE HIT: {output_path}")
+                return True
+            store.stats["clip_misses"] += 1
+    if kind == "video":
+        success = create_video_clip(
+            source_path, duration, output_path,
+            frame_count=frame_count,
+            start_offset=start_offset,
+            retime_factor=retime_factor,
+        )
+    else:
+        success = create_image_clip(
+            source_path, duration, output_path,
+            frame_count=frame_count,
+            motion=motion,
+        )
+    if success and store is not None and key is not None:
+        store.put("clip", key, output_path)
+    return success
+
+
 def audit_clip(clip_path, expected_frames, expected_duration, scene_number, item_index):
     info = probe_media(clip_path)
     result = {
@@ -680,9 +751,17 @@ def flatten_timeline_items(scenes):
     return items
 
 
-def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_start_frame=None):
+def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_start_frame=None, cache_store=None):
     scene_number = scene.get("scene_number", 1)
     items = scene_items(scene)
+    # Phase 5: clip encodes go through the deterministic clip
+    # cache (see _create_clip_cached). Callers that track cache
+    # statistics pass their store; otherwise a store bound to this
+    # project dir is used.
+    store = (
+        cache_store if cache_store is not None
+        else render_cache.CacheStore(project_dir)
+    )
 
     if not items:
         print(f"Scene {scene_number}: no timeline items.")
@@ -784,7 +863,9 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                             "Motion graphic retimed to fit slot: "
                             f"factor={_retime:.3f}"
                         )
-                success = create_video_clip(
+                success = _create_clip_cached(
+                    store,
+                    "video",
                     media_path,
                     duration,
                     output_path,
@@ -793,7 +874,9 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                     retime_factor=_retime,
                 )
             else:
-                success = create_image_clip(
+                success = _create_clip_cached(
+                    store,
+                    "image",
                     media_path,
                     duration,
                     output_path,
@@ -819,7 +902,9 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                 )
             holdover_type, holdover_path = holdover
             if holdover_type == "video":
-                success = create_video_clip(
+                success = _create_clip_cached(
+                    store,
+                    "video",
                     holdover_path,
                     duration,
                     output_path,
@@ -827,7 +912,9 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
                     start_offset=item_clip_start,
                 )
             else:
-                success = create_image_clip(
+                success = _create_clip_cached(
+                    store,
+                    "image",
                     holdover_path,
                     duration,
                     output_path,
@@ -870,14 +957,44 @@ def render_scene(scene, project_dir, starting_frame=0, final_frame=None, next_st
             from services import composition as _composition_module
 
             _composed_path = clips_dir / f"clip_{index + 1:04d}.composed.mp4"
-            _comp_ok, _comp_record = (
-                _composition_module.apply_composition(
-                    output_path,
-                    item["composition"],
-                    _composed_path,
-                    clips_dir / f"composition_{index + 1:04d}",
+            # Phase 5: composed-clip cache — keyed by the base
+            # clip's content hash + the canonical composition plan.
+            # The build record is stored in the entry's sidecar, so
+            # a hit reproduces the record verbatim (the record is
+            # part of the scene audit and the item's render stamp).
+            _comp_ok = False
+            _comp_record = None
+            _comp_key = None
+            _base_hash = render_cache.hash_file(output_path)
+            if _base_hash:
+                _comp_key = render_cache.composed_key({
+                    "base_sha256": _base_hash,
+                    "plan": render_cache.canonicalise(
+                        item["composition"], _depth=1
+                    ),
+                })
+                if store.place("clip", _comp_key, _composed_path):
+                    _cached_meta = store.metadata("clip", _comp_key) or {}
+                    if isinstance(_cached_meta.get("record"), dict):
+                        _comp_ok = True
+                        _comp_record = _cached_meta["record"]
+                        print(
+                            f"COMPOSED CLIP CACHE HIT: {_composed_path}"
+                        )
+            if _comp_record is None:
+                _comp_ok, _comp_record = (
+                    _composition_module.apply_composition(
+                        output_path,
+                        item["composition"],
+                        _composed_path,
+                        clips_dir / f"composition_{index + 1:04d}",
+                    )
                 )
-            )
+                if _comp_ok and _comp_key is not None:
+                    store.put(
+                        "clip", _comp_key, _composed_path,
+                        metadata={"record": _comp_record},
+                    )
             if _comp_ok:
                 _composed_path.replace(output_path)
             _comp_record = {
@@ -1065,20 +1182,21 @@ def concatenate_clips(clips, output_path, expected_frames=None):
     return True
 
 
-def _build_transition_join(all_clips, clip_frames, plan, project_dir):
-    """Build the frame-exact join sequence for honoured transitions.
+def _plan_transition_windows(plan, clip_frames):
+    """Compute the honoured transitions and their effective windows.
 
-    For each honoured transition into clip i (window W): clip i-1's
-    main part keeps its first (frames - W) frames, a 2W-frame
-    transition segment replaces clip i-1's last W frames + clip i's
-    first W frames, and clip i's main part starts at frame W. The
-    sequence therefore sums to exactly the original total.
-
-    Returns (join_clips, info) on success, or (None, info) when the
-    caller must fall back to the untouched concat path.
+    Extracted verbatim from ``_build_transition_join`` (Phase 5) so
+    the chapter renderer and the monolithic join share ONE window
+    computation: ``effective`` maps a clip index to the window
+    (frames) of the honoured transition INTO that clip, shrunk
+    where a short clip carries both an incoming and an outgoing
+    transition whose windows would together exceed its frame
+    count. ``info`` is the audit record skeleton — downgrades from
+    the plan and from the shrink are recorded; segment results are
+    added by the caller. ``effective`` is empty when nothing is
+    honoured or every honoured window shrank away (``info`` status
+    is then ``all_cut``).
     """
-    from services import transitions as _transitions
-
     honoured = {
         int(record["index"]): record
         for record in plan
@@ -1102,7 +1220,7 @@ def _build_transition_join(all_clips, clip_frames, plan, project_dir):
     }
     if not honoured:
         info["status"] = "all_cut"
-        return None, info
+        return {}, honoured, info
 
     # Effective windows, shrunk where a short clip carries both an
     # incoming and an outgoing transition whose windows would
@@ -1141,6 +1259,25 @@ def _build_transition_join(all_clips, clip_frames, plan, project_dir):
             record["transition"] = "cut"
     if not effective:
         info["status"] = "all_cut"
+    return effective, honoured, info
+
+
+def _build_transition_join(all_clips, clip_frames, plan, project_dir):
+    """Build the frame-exact join sequence for honoured transitions.
+
+    For each honoured transition into clip i (window W): clip i-1's
+    main part keeps its first (frames - W) frames, a 2W-frame
+    transition segment replaces clip i-1's last W frames + clip i's
+    first W frames, and clip i's main part starts at frame W. The
+    sequence therefore sums to exactly the original total.
+
+    Returns (join_clips, info) on success, or (None, info) when the
+    caller must fall back to the untouched concat path.
+    """
+    from services import transitions as _transitions
+
+    effective, honoured, info = _plan_transition_windows(plan, clip_frames)
+    if not effective:
         return None, info
 
     workdir = Path(project_dir) / "transitions"
@@ -1232,9 +1369,741 @@ def render_timeline(scenes, project_dir, expected_duration=None):
         )
 
 
+class _ChapterPathFallback(Exception):
+    """The chapter render path found an inconsistency (a segment
+    that would not build, a chapter whose frames drifted, an
+    assembly that failed its audit). The render restarts on the
+    monolithic legacy path, whose own verdicts then decide —
+    the chapter path may only ever make a render faster, never
+    change its outcome."""
+
+
 def _render_timeline_impl(scenes, project_dir, expected_duration=None):
+    if render_cache.chapter_rendering_enabled():
+        try:
+            return _render_timeline_chaptered(
+                scenes, project_dir, expected_duration=expected_duration
+            )
+        except _ChapterPathFallback as error:
+            print(
+                f"CHAPTER RENDERING FALLBACK: {error} — "
+                "re-rendering on the monolithic path."
+            )
+    return _render_timeline_legacy(
+        scenes, project_dir, expected_duration=expected_duration
+    )
+
+
+def _scene_render_is_clean(scene_audit):
+    """True when a scene's render was a deterministic function of
+    its inputs: no holdovers (their source choice depends on
+    encode success) and no composition step that failed inside
+    ffmpeg (a transient suspect). Only clean scenes are stored
+    under their input-derived chapter key; an unclean scene simply
+    re-renders next time — a missed cache entry, never a stale
+    one. Deterministic composition outcomes (a plan with no valid
+    layers, a non-renderable layer kind) stay clean: they are
+    functions of the plan, which is in the key."""
+    if int(scene_audit.get("holdover_count") or 0) > 0:
+        return False
+    for record in scene_audit.get("composition_records") or []:
+        for failure in record.get("failed") or []:
+            if isinstance(failure, dict) and failure.get("reason") in (
+                "overlay_render_failed", "composition_exception",
+            ):
+                return False
+    return True
+
+
+def _probe_frame_count_exactish(path):
+    """Frame count for cache validation: the container count, or
+    an exact packet count when the container count is only an
+    estimate (AUD-22 discipline)."""
+    info = probe_media(path)
+    if not info:
+        return None
+    frames = info.get("frame_count")
+    if frames is not None and info.get("frame_count_estimated"):
+        exact = count_frames_exact(path)
+        if exact is not None:
+            return exact
+    return frames
+
+
+def _cached_trim(store, clip_path, start_frame, frame_count, work_path):
+    """``transitions.trim_clip_frames`` through the segment cache,
+    keyed by the clip's content hash + the exact frame window."""
+    from services import transitions as _transitions
+
+    clip_hash = render_cache.hash_file(clip_path)
+    key = None
+    if clip_hash:
+        key = render_cache.segment_key({
+            "op": "trim",
+            "clip_sha256": clip_hash,
+            "start_frame": int(start_frame),
+            "frame_count": int(frame_count),
+        })
+        if store.place("seg", key, work_path):
+            store.stats["segment_hits"] += 1
+            return str(work_path)
+        store.stats["segment_misses"] += 1
+    result = _transitions.trim_clip_frames(
+        clip_path, start_frame, frame_count, work_path
+    )
+    if result is None:
+        return None
+    if key is not None:
+        store.put("seg", key, work_path)
+    return result
+
+
+def _cached_transition_segment(store, clip_a, clip_b, kind, window,
+                               work_path, clip_a_frames, clip_b_frames,
+                               expected_hashes=None):
+    """``transitions.build_transition_segment`` through the segment
+    cache, keyed by both clips' content hashes + kind + window.
+
+    ``expected_hashes`` pins the clips' identities (chapter
+    metadata): a cached segment is served without touching the
+    clip files at all, and a build happens only when the files on
+    disk hash to exactly the expected content — a replaced clip
+    can therefore never leak into a segment under a stale key.
+    Returns the segment record (same shape as
+    ``build_transition_segment``) or None."""
+    from services import transitions as _transitions
+
+    if expected_hashes is not None:
+        hash_a, hash_b = expected_hashes
+    else:
+        hash_a = render_cache.hash_file(clip_a)
+        hash_b = render_cache.hash_file(clip_b)
+    key = None
+    if hash_a and hash_b:
+        key = render_cache.segment_key({
+            "op": "transition",
+            "clip_a_sha256": hash_a,
+            "clip_b_sha256": hash_b,
+            "kind": str(kind),
+            "window_frames": int(window),
+            "clip_a_frames": int(clip_a_frames),
+            "clip_b_frames": int(clip_b_frames),
+        })
+        if store.place("seg", key, work_path):
+            store.stats["segment_hits"] += 1
+            record = dict(store.metadata("seg", key) or {})
+            record["path"] = str(work_path)
+            record["kind"] = str(kind)
+            return record
+        store.stats["segment_misses"] += 1
+    if expected_hashes is not None:
+        if render_cache.hash_file(clip_a) != hash_a:
+            return None
+        if render_cache.hash_file(clip_b) != hash_b:
+            return None
+    segment = _transitions.build_transition_segment(
+        clip_a, clip_b, kind, window, work_path
+    )
+    if segment is None:
+        return None
+    if key is not None:
+        metadata = {
+            name: value for name, value in segment.items()
+            if name != "path"
+        }
+        store.put("seg", key, work_path, metadata=metadata)
+    return segment
+
+
+def _applied_record(record, segment):
+    """The transitions-audit "applied" entry for one built segment
+    (same shape the monolithic join records)."""
+    return {
+        "index": int(record["index"]),
+        "transition": record["transition"],
+        "transition_reason": record.get("transition_reason"),
+        "window_frames": segment["window_frames"],
+        "requested_window_frames": segment["requested_window_frames"],
+        "window_clamped": segment["window_clamped"],
+        "segment_frames": segment["frames"],
+        "segment": segment["path"],
+        "filtergraph": segment["filtergraph"],
+    }
+
+
+def _build_chapter_segments(store, plan, scene_clips, clip_frames,
+                            effective, honoured, project_dir):
+    """Build one chapter's join segments (internal transition
+    segments + trimmed/full mains, in order) through the segment
+    cache. The chapter's incoming boundary segment is NOT part of
+    its body — it is assembled between chapters. Returns
+    (segment_paths, applied_records); raises _ChapterPathFallback
+    on any build failure (the monolithic path then decides)."""
+    first = plan["first_clip_index"]
+    last = plan["last_clip_index"]
+    # The workdir is created lazily by the segment builders
+    # themselves — a chapter with nothing to build must not create
+    # it (the all-cut film has no transitions/ directory at all).
+    workdir = Path(project_dir) / "transitions"
+    segment_paths = []
+    applied_records = []
+    for clip_index in range(first, last + 1):
+        clip = scene_clips[clip_index - first]
+        incoming = effective.get(clip_index, 0)
+        outgoing = effective.get(clip_index + 1, 0)
+        if clip_index > first and clip_index in effective:
+            record = honoured[clip_index]
+            segment = _cached_transition_segment(
+                store,
+                scene_clips[clip_index - first - 1],
+                clip,
+                record["transition"],
+                effective[clip_index],
+                workdir / f"transition_{clip_index:04d}.mp4",
+                clip_frames[clip_index - 1],
+                clip_frames[clip_index],
+            )
+            if segment is None or int(segment["window_frames"]) != int(
+                effective[clip_index]
+            ):
+                raise _ChapterPathFallback(
+                    f"transition_build_failed:index={clip_index}:"
+                    f"kind={record['transition']}"
+                )
+            applied_records.append(_applied_record(record, segment))
+            segment_paths.append(segment["path"])
+        main_frames = int(clip_frames[clip_index]) - incoming - outgoing
+        if main_frames < 0:
+            raise _ChapterPathFallback(
+                f"negative_main_part:clip={clip_index}"
+            )
+        if main_frames == 0:
+            continue
+        if incoming == 0 and outgoing == 0:
+            segment_paths.append(clip)
+            continue
+        main_path = _cached_trim(
+            store, clip, incoming, main_frames,
+            workdir / f"main_{clip_index:04d}.mp4",
+        )
+        if main_path is None:
+            raise _ChapterPathFallback(
+                f"main_trim_failed:clip={clip_index}"
+            )
+        segment_paths.append(main_path)
+    return segment_paths, applied_records
+
+
+def _join_chapter_body(segment_paths, chapter_path, expected_frames):
+    """Join a chapter's segments into its body file.
+
+    Stream-copy first: every segment shares the canonical encode
+    parameters and starts on a keyframe (trims and transition
+    segments are fresh encodes; item clips are single encodes), so
+    a copy join is frame-exact — and it is only believed after an
+    exact frame count plus resolution/fps probes pass. Any doubt
+    falls back to the repair-filter re-encode the monolithic
+    assembly uses (``concatenate_clips``)."""
+    chapter_path = Path(chapter_path)
+    chapter_path.parent.mkdir(parents=True, exist_ok=True)
+    if not segment_paths:
+        return False
+    if len(segment_paths) == 1:
+        partial = _partial_path(chapter_path)
+        try:
+            shutil.copyfile(segment_paths[0], partial)
+        except OSError:
+            _discard_partial(partial)
+            return False
+        if _probe_frame_count_exactish(partial) == expected_frames:
+            try:
+                _publish_partial(partial, chapter_path)
+                return True
+            except OSError:
+                _discard_partial(partial)
+                return False
+        _discard_partial(partial)
+        return False
+    partial = _partial_path(chapter_path)
+    write_concat_file(segment_paths, partial)
+    command = [
+        "ffmpeg", "-y",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", str(partial.parent / "concat.txt"),
+        "-c", "copy",
+        "-movflags", "+faststart",
+        str(partial),
+    ]
+    if (
+        run_ffmpeg(command, timeout=max(FFMPEG_TIMEOUT, 900))
+        and valid_media(partial)
+        and _probe_frame_count_exactish(partial) == expected_frames
+    ):
+        info = probe_media(partial)
+        if (
+            info
+            and info.get("width") == WIDTH
+            and info.get("height") == HEIGHT
+            and info.get("avg_fps") is not None
+            and abs(float(info["avg_fps"]) - FPS) <= 0.01
+        ):
+            try:
+                _publish_partial(partial, chapter_path)
+                return True
+            except OSError:
+                _discard_partial(partial)
+                return False
+    _discard_partial(partial)
+    try:
+        return bool(concatenate_clips(
+            segment_paths, chapter_path, expected_frames=expected_frames
+        ))
+    except RuntimeError:
+        return False
+
+
+def _chapter_body_frames(plan, clip_frames, effective):
+    """The exact frame count of a chapter's body: its clips' mains
+    (edge clips trimmed by the boundary windows) plus its internal
+    transition segments. Mirrors ``_build_chapter_segments``'
+    arithmetic by construction."""
+    first = plan["first_clip_index"]
+    last = plan["last_clip_index"]
+    total = 0
+    for clip_index in range(first, last + 1):
+        total += (
+            int(clip_frames[clip_index])
+            - effective.get(clip_index, 0)
+            - effective.get(clip_index + 1, 0)
+        )
+        if clip_index > first and clip_index in effective:
+            total += 2 * effective[clip_index]
+    return total
+
+
+def _render_timeline_chaptered(scenes, project_dir, expected_duration=None):
+    """Phase 5 chapter renderer.
+
+    The film is rendered chapter by chapter — a chapter is one
+    scene, the production's own structural unit. Each chapter's
+    body (its clips joined with its internal transitions, edge
+    clips trimmed by the boundary windows) is produced once and
+    cached under a deterministic key (see services/render_cache);
+    a repeat render, a Phase 1 resume, or a regeneration with an
+    unchanged scene reuses the chapter without re-rendering it.
+    Boundary transition segments sit between chapter bodies in the
+    assembly, which is published through the existing atomic
+    concat path and audited by the same final master audit as the
+    monolithic path. Any inconsistency raises _ChapterPathFallback
+    and the monolithic path decides the render."""
+    from services import transitions as _transitions
+
     project_dir = Path(project_dir)
     project_dir.mkdir(parents=True, exist_ok=True)
+    store = render_cache.CacheStore(project_dir)
+    store.prune()
+
+    print()
+    print("=" * 70)
+    print("DOCUMENTARY FRAME-LOCKED RENDERER (CHAPTERED)")
+    print("=" * 70)
+    print(f"Scenes: {len(scenes)}")
+    print(f"FPS: {FPS}")
+    print(f"Resolution: {WIDTH}x{HEIGHT}")
+
+    supplied_frames = None
+    if expected_duration is not None:
+        supplied_frames = seconds_to_frame(float(expected_duration))
+
+    # Planning pass (pure): frame allocations threaded exactly as
+    # the monolithic scene loop threads them, so planned frames
+    # are the frames render_scene will enforce per clip.
+    scene_plans = []
+    running_frame = 0
+    for scene_index, scene in enumerate(scenes):
+        is_last_scene = scene_index == len(scenes) - 1
+        scene_final = None
+        if is_last_scene and supplied_frames is not None:
+            scene_final = supplied_frames
+        next_start = None
+        if not is_last_scene:
+            next_start = scene_first_start_frame(scenes[scene_index + 1])
+        items = scene_items(scene)
+        if items:
+            allocations, scene_end = allocate_item_frames(
+                items,
+                running_frame,
+                final_frame=scene_final,
+                next_start_frame=next_start,
+            )
+        else:
+            allocations, scene_end = [], running_frame
+        scene_plans.append({
+            "index": scene_index,
+            "scene": scene,
+            "items": items,
+            "allocations": allocations,
+            "start_frame": running_frame,
+            "end_frame": scene_end,
+            "scene_final": scene_final,
+            "next_start": next_start,
+            "first_clip_index": None,
+            "last_clip_index": None,
+        })
+        running_frame = scene_end
+
+    expected_total_frames = running_frame
+    expected_total_duration = exact_duration_from_frames(expected_total_frames)
+
+    if supplied_frames is not None:
+        supplied_expected = float(expected_duration)
+        supplied_frame_delta = expected_total_frames - supplied_frames
+
+        print()
+        print("=" * 70)
+        print("TIMELINE FRAME AUDIT")
+        print("=" * 70)
+        print(f"Timeline frames: {expected_total_frames}")
+        print(f"Expected frames: {supplied_frames}")
+        print(f"Frame delta: {supplied_frame_delta}")
+        print(f"Timeline duration: {expected_total_duration:.6f}s")
+        print(f"Expected duration: {supplied_expected:.6f}s")
+
+        if abs(supplied_frame_delta) > 1:
+            raise RuntimeError(
+                "TIMELINE/NARRATION FRAME MISMATCH: "
+                f"timeline={expected_total_frames} frames "
+                f"({expected_total_duration:.6f}s), "
+                f"expected={supplied_frames} frames "
+                f"({supplied_expected:.6f}s), "
+                f"delta={supplied_frame_delta} frames. "
+                "Renderer stopped before concat because the "
+                "timeline itself does not match narration."
+            )
+
+        expected_total_frames = supplied_frames
+        expected_total_duration = exact_duration_from_frames(expected_total_frames)
+
+    flat_items = flatten_timeline_items(scenes)
+    clip_frames = []
+    clip_cursor = 0
+    for plan in scene_plans:
+        if plan["items"]:
+            plan["first_clip_index"] = clip_cursor
+            for allocation in plan["allocations"]:
+                clip_frames.append(allocation["frame_count"])
+            clip_cursor += len(plan["items"])
+            plan["last_clip_index"] = clip_cursor - 1
+
+    # One transition plan + window computation for the whole film
+    # (shared verbatim with the monolithic join).
+    plan_records = _transitions.plan_transitions(flat_items)
+    if any(record.get("honoured") for record in plan_records):
+        effective, honoured, transitions_info = _plan_transition_windows(
+            plan_records, clip_frames
+        )
+    else:
+        effective, honoured = {}, {}
+        transitions_info = {
+            "status": "all_cut",
+            "applied": [],
+            "downgraded": [
+                {
+                    "index": record["index"],
+                    "requested_transition": record.get("requested_transition"),
+                    "transition_reason": record.get("transition_reason"),
+                    "downgrade_cause": record.get("downgrade_cause"),
+                }
+                for record in plan_records
+                if record.get("downgraded")
+            ],
+            "records": plan_records,
+            "fallback_reason": None,
+        }
+
+    narration_hash = render_cache.hash_file(project_dir / "narration.wav")
+    settings = _render_settings_fingerprint()
+    chapters_dir = project_dir / "chapters"
+    chapters_dir.mkdir(parents=True, exist_ok=True)
+    applied = {}
+    scene_audits = []
+    chapter_records = []
+    resolved = []
+
+    for plan in scene_plans:
+        scene = plan["scene"]
+        items = plan["items"]
+        if not items:
+            _clips, _end, scene_audit = render_scene(
+                scene,
+                str(project_dir),
+                plan["start_frame"],
+                final_frame=plan["scene_final"],
+                next_start_frame=plan["next_start"],
+                cache_store=store,
+            )
+            scene_audits.append(scene_audit)
+            resolved.append({
+                "plan": plan, "audit": scene_audit,
+                "chapter_path": None, "has_clips": False,
+                "first_clip_sha256": None, "last_clip_sha256": None,
+            })
+            chapter_records.append({
+                "position": plan["index"],
+                "scene": scene.get("scene_number"),
+                "status": "empty",
+                "frames": 0,
+            })
+            continue
+
+        first_idx = plan["first_clip_index"]
+        last_idx = plan["last_clip_index"]
+        body_frames = _chapter_body_frames(plan, clip_frames, effective)
+        chapter_path = chapters_dir / f"chapter_{plan['index'] + 1:03d}.mp4"
+        slice_payload = {
+            "scene_number": scene.get("scene_number"),
+            "position": plan["index"],
+            "items": [
+                render_cache.item_fingerprint(item) for item in items
+            ],
+            "allocations": [
+                [a["start_frame"], a["end_frame"]]
+                for a in plan["allocations"]
+            ],
+            "edge_windows": {
+                "incoming": effective.get(first_idx, 0),
+                "outgoing": effective.get(last_idx + 1, 0),
+            },
+            "internal_transitions": [
+                {
+                    "index": i,
+                    "kind": honoured[i]["transition"],
+                    "window": effective[i],
+                }
+                for i in range(first_idx + 1, last_idx + 1)
+                if i in effective
+            ],
+            "settings": settings,
+            "narration_sha256": narration_hash,
+        }
+        key = render_cache.chapter_key(slice_payload)
+
+        meta = None
+        if body_frames > 0 and store.lookup("chapter", key) is not None:
+            candidate = store.metadata("chapter", key)
+            if (
+                candidate is not None
+                and int(candidate.get("frames") or -1) == body_frames
+                and isinstance(candidate.get("scene_audit"), dict)
+            ):
+                meta = candidate
+        if meta is not None and store.place("chapter", key, chapter_path):
+            if _probe_frame_count_exactish(chapter_path) == body_frames:
+                store.stats["chapter_hits"] += 1
+                scene_audit = meta["scene_audit"]
+                scene_audits.append(scene_audit)
+                for record in meta.get("applied") or []:
+                    applied[int(record["index"])] = record
+                resolved.append({
+                    "plan": plan, "audit": scene_audit,
+                    "chapter_path": str(chapter_path), "has_clips": True,
+                    "first_clip_sha256": meta.get("first_clip_sha256"),
+                    "last_clip_sha256": meta.get("last_clip_sha256"),
+                })
+                chapter_records.append({
+                    "position": plan["index"],
+                    "scene": scene.get("scene_number"),
+                    "status": "reused",
+                    "frames": body_frames,
+                    "key": key[:16],
+                })
+                print(
+                    f"CHAPTER CACHE HIT: scene {scene.get('scene_number')} "
+                    f"({body_frames} frames reused)"
+                )
+                continue
+        store.stats["chapter_misses"] += 1
+
+        scene_clips, scene_end, scene_audit = render_scene(
+            scene,
+            str(project_dir),
+            plan["start_frame"],
+            final_frame=plan["scene_final"],
+            next_start_frame=plan["next_start"],
+            cache_store=store,
+        )
+        if scene_end != plan["end_frame"]:
+            raise _ChapterPathFallback(
+                f"scene_frame_drift:scene={plan['index']}"
+            )
+        scene_audits.append(scene_audit)
+        first_hash = render_cache.hash_file(scene_clips[0])
+        last_hash = render_cache.hash_file(scene_clips[-1])
+
+        if body_frames == 0:
+            # A lone clip consumed entirely by its two boundary
+            # transitions: the chapter contributes no body (the
+            # monolithic join likewise emits only the segments).
+            resolved.append({
+                "plan": plan, "audit": scene_audit,
+                "chapter_path": None, "has_clips": True,
+                "first_clip_sha256": first_hash,
+                "last_clip_sha256": last_hash,
+            })
+            chapter_records.append({
+                "position": plan["index"],
+                "scene": scene.get("scene_number"),
+                "status": "absorbed",
+                "frames": 0,
+                "key": key[:16],
+            })
+            continue
+
+        segment_paths, applied_records = _build_chapter_segments(
+            store, plan, scene_clips, clip_frames,
+            effective, honoured, project_dir,
+        )
+        for record in applied_records:
+            applied[int(record["index"])] = record
+        if not _join_chapter_body(segment_paths, chapter_path, body_frames):
+            raise _ChapterPathFallback(
+                f"chapter_join_failed:scene={plan['index']}"
+            )
+        if _scene_render_is_clean(scene_audit):
+            store.put("chapter", key, chapter_path, metadata={
+                "scene_number": scene.get("scene_number"),
+                "position": plan["index"],
+                "frames": body_frames,
+                "scene_audit": scene_audit,
+                "first_clip_sha256": first_hash,
+                "last_clip_sha256": last_hash,
+                "applied": applied_records,
+            })
+        resolved.append({
+            "plan": plan, "audit": scene_audit,
+            "chapter_path": str(chapter_path), "has_clips": True,
+            "first_clip_sha256": first_hash,
+            "last_clip_sha256": last_hash,
+        })
+        chapter_records.append({
+            "position": plan["index"],
+            "scene": scene.get("scene_number"),
+            "status": "rendered",
+            "frames": body_frames,
+            "key": key[:16],
+        })
+
+    # Assembly: chapter bodies interleaved with the boundary
+    # transition segments, in flat clip order — the same frame
+    # sequence the monolithic join produces.
+    assembly = []
+    previous = None
+    for entry in resolved:
+        if not entry["has_clips"]:
+            continue
+        plan = entry["plan"]
+        first_idx = plan["first_clip_index"]
+        if previous is not None and first_idx in effective:
+            record = honoured[first_idx]
+            clip_a = previous["audit"]["items"][-1]["file"]
+            clip_b = entry["audit"]["items"][0]["file"]
+            segment = _cached_transition_segment(
+                store,
+                clip_a,
+                clip_b,
+                record["transition"],
+                effective[first_idx],
+                project_dir / "transitions" / f"transition_{first_idx:04d}.mp4",
+                clip_frames[first_idx - 1],
+                clip_frames[first_idx],
+                expected_hashes=(
+                    previous["last_clip_sha256"],
+                    entry["first_clip_sha256"],
+                ),
+            )
+            if segment is None or int(segment["window_frames"]) != int(
+                effective[first_idx]
+            ):
+                raise _ChapterPathFallback(
+                    f"boundary_segment_failed:index={first_idx}"
+                )
+            applied[first_idx] = _applied_record(record, segment)
+            assembly.append(segment["path"])
+        if entry["chapter_path"] is not None:
+            assembly.append(entry["chapter_path"])
+        previous = entry
+
+    transitions_info["applied"] = [
+        applied[index] for index in sorted(applied)
+    ]
+
+    audit_file = project_dir / "renderer_timing_audit.json"
+    audit_payload = {
+        "fps": FPS,
+        "width": WIDTH,
+        "height": HEIGHT,
+        "expected_frames": expected_total_frames,
+        "expected_duration": expected_total_duration,
+        "scene_count": len(scene_audits),
+        "clip_count": len(flat_items),
+        "scenes": scene_audits,
+        "status": "pre_concat_pass",
+        "placeholder_count": sum(
+            int(audit.get("placeholder_count") or 0) for audit in scene_audits
+        ),
+        "holdover_count": sum(
+            int(audit.get("holdover_count") or 0) for audit in scene_audits
+        ),
+        # F9 (Wave 1): every applied and downgraded transition.
+        "transitions": transitions_info,
+        # Phase 5: per-chapter outcomes + cache behaviour.
+        "chapters": chapter_records,
+        "render_cache": dict(store.stats),
+    }
+    write_json_atomic(audit_file, audit_payload, ensure_ascii=True)
+
+    print()
+    print(f"Renderer timing audit: {audit_file}")
+
+    # Assembly publishes through the existing atomic concat path:
+    # the master is replaced only by a validated encode (Phase 1).
+    raw_video = project_dir / "documentary.mp4"
+    try:
+        success = concatenate_clips(
+            assembly,
+            raw_video,
+            expected_frames=expected_total_frames,
+        )
+    except RuntimeError as error:
+        raise _ChapterPathFallback(f"assembly_concat_raised: {error}")
+    if not success:
+        raise _ChapterPathFallback("assembly_concat_failed")
+
+    try:
+        return _finalise_master_render(
+            raw_video,
+            expected_total_frames,
+            expected_total_duration,
+            audit_payload,
+            audit_file,
+            clip_count=len(flat_items),
+        )
+    except RuntimeError as error:
+        raise _ChapterPathFallback(f"assembly_audit_failed: {error}")
+
+
+def _render_timeline_legacy(scenes, project_dir, expected_duration=None):
+    """The pre-Phase-5 monolithic render: every scene rendered in
+    one pass, the flat join sequence assembled, one concat encode.
+    Kept verbatim as the chapter renderer's fallback — any
+    chapter-path inconsistency lands here, and this path's own
+    fallbacks (transition join → plain concat) apply as before.
+    Clip encodes still go through the Phase 5 clip cache, so a
+    fallback re-render does not redo completed clips."""
+    project_dir = Path(project_dir)
+    project_dir.mkdir(parents=True, exist_ok=True)
+    store = render_cache.CacheStore(project_dir)
 
     all_clips = []
     scene_audits = []
@@ -1271,6 +2140,7 @@ def _render_timeline_impl(scenes, project_dir, expected_duration=None):
             running_frame,
             final_frame=scene_final,
             next_start_frame=next_start,
+            cache_store=store,
         )
         all_clips.extend(scene_clips)
         scene_audits.append(scene_audit)
@@ -1405,6 +2275,25 @@ def _render_timeline_impl(scenes, project_dir, expected_duration=None):
     if not success:
         raise RuntimeError("Could not create documentary.mp4")
 
+    return _finalise_master_render(
+        raw_video,
+        expected_total_frames,
+        expected_total_duration,
+        audit_payload,
+        audit_file,
+        clip_count=len(all_clips),
+    )
+
+
+def _finalise_master_render(raw_video, expected_total_frames,
+                            expected_total_duration, audit_payload,
+                            audit_file, clip_count):
+    """The final master audit shared by the monolithic and chapter
+    render paths (Phase 5): probe the published master, enforce the
+    exact frame count / resolution / fps, complete the timing
+    audit, and return the master path. Any mismatch raises — a
+    technically broken master is a TECHNICAL failure (Phase 4) on
+    every path."""
     final_info = probe_media(raw_video)
     if not final_info:
         raise RuntimeError("Final documentary could not be probed.")
@@ -1463,7 +2352,7 @@ def _render_timeline_impl(scenes, project_dir, expected_duration=None):
     print("=" * 70)
     print("DOCUMENTARY RENDER COMPLETE")
     print("=" * 70)
-    print(f"Clips: {len(all_clips)}")
+    print(f"Clips: {clip_count}")
     print(f"Frames: {actual_frames}")
     print(f"Duration: {float(actual_duration):.6f}s")
     print(f"Output: {raw_video}")
