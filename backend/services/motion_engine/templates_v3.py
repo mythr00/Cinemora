@@ -108,6 +108,22 @@ def line_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_n
     title = _clean(data.get("title"))
     units = _clean(data.get("units"))
     series_label = _clean(data.get("series_label"))
+    # Phase 5 (B5/B7): the recorded-data chart contract. A series
+    # the pipeline assembled from recorded data (case-bible fact
+    # table / manifest verified_data / scenario chart contract —
+    # marked ``recorded``) MUST carry its recorded units and its
+    # recorded source: either missing refuses the chart with a
+    # typed reason, never a unit-less or source-less rendering.
+    # A rendered recorded chart carries a small source line.
+    recorded = bool(data.get("recorded"))
+    source = _clean(data.get("source"))
+    if recorded:
+        if not units:
+            return None, {"reason": "chart_units_missing",
+                          "detail": "recorded series carries no units"}
+        if not source:
+            return None, {"reason": "chart_source_missing",
+                          "detail": "recorded series carries no source"}
     from services.motion_engine.templates_v2 import _nice_max
 
     values = [p["value"] for p in points]
@@ -164,6 +180,12 @@ def line_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_n
             uw = d.textlength(units.upper(), font=fonts["tick"])
             d.text(((x0 + x1) / 2 - uw / 2, y_bot + 64), units.upper()[:48],
                    font=fonts["tick"], fill=tokens["muted"] + (255,))
+        if source:
+            # B7: the small source line — the recorded source of
+            # the data, drawn as data attribution (never a file
+            # name or an asset/provider label).
+            d.text((x0, y_bot + 104), f"Source — {source}"[:72],
+                   font=fonts["tick"], fill=tokens["muted"] + (255,))
         frac = ease_in_out(clamp01(progress * 1.25))
         # Area under the line (revealed with it).
         if frac > 0:
@@ -200,7 +222,8 @@ def line_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_n
     path = core.render_template(draw_frame, out_path, duration=duration)
     return path, _meta("line_chart", style_name, duration, sentence_index, scene_number,
                        {"points": len(points), "title": bool(title),
-                        "units": bool(units)})
+                        "units": bool(units), "source": bool(source),
+                        "recorded": recorded})
 
 
 def _window_points(coords, frac):
@@ -253,6 +276,17 @@ def pie_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_nu
     if total <= 0:
         return None, {"reason": "no_positive_total"}
     title = _clean(data.get("title"))
+    # Phase 5 (B5/B7): same recorded-data contract as line_chart.
+    recorded = bool(data.get("recorded"))
+    units = _clean(data.get("units"))
+    source = _clean(data.get("source"))
+    if recorded:
+        if not units:
+            return None, {"reason": "chart_units_missing",
+                          "detail": "recorded series carries no units"}
+        if not source:
+            return None, {"reason": "chart_source_missing",
+                          "detail": "recorded series carries no source"}
     colours = _series_palette(tokens, len(items))
     bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=61)
     fonts = {
@@ -305,13 +339,18 @@ def pie_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_nu
             d.text((lx + 54, ly + 38), f"{value_text} · {share:.0f}%",
                    font=fonts["value"], fill=tokens["muted"] + (255,))
             ly += 88
+        if source:
+            # B7: the small source line (see line_chart).
+            d.text((110, HEIGHT - 64), f"Source — {source}"[:72],
+                   font=fonts["legend"], fill=tokens["muted"] + (255,))
         _footer(d, tokens)
         return canvas.composite()
 
     path = core.render_template(draw_frame, out_path, duration=duration)
     return path, _meta("pie_chart", style_name, duration, sentence_index, scene_number,
                        {"items": len(items), "title": bool(title),
-                        "total": total})
+                        "total": total, "source": bool(source),
+                        "recorded": recorded})
 
 
 # ---------------------------------------------------------------------------

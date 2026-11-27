@@ -301,7 +301,102 @@ def _graphic_permitted(row):
     return row.get("primary_visual_intent") == "graphic_explanation"
 
 
-def _template_candidates(row, outcome, pack):
+def _recorded_timeline_events(scenario, bible, sentence_number):
+    """Recorded timeline events usable by the rebuilt chronology
+    (Phase 5 B1): the scenario's recorded timeline when it
+    carries one, else the case bible's `timeline` entries —
+    but bible events qualify a beat only when at least one is
+    ANCHORED to it (its recorded sentence_number matches the
+    beat's), never merely because a timeline exists somewhere
+    in the production. An event is usable when it records both
+    `when` and a short-payload `what` (the payload gate the
+    pipeline assembler applies again at build time)."""
+    from services.graphics_pipeline import is_short_payload
+
+    def _usable(entries):
+        usable = []
+        for entry in entries or []:
+            if not isinstance(entry, dict):
+                continue
+            when = str(entry.get("when") or entry.get("date") or "").strip()
+            what = str(entry.get("what") or entry.get("label") or "").strip()
+            if when and what and is_short_payload(what):
+                usable.append(entry)
+        return usable
+
+    scenario = scenario or {}
+    recorded = scenario.get("timeline") or scenario.get("timeline_events")
+    if isinstance(recorded, list) and recorded:
+        return _usable(recorded)
+    bible = bible or {}
+    entries = bible.get("timeline") or []
+    anchored = any(
+        isinstance(entry, dict)
+        and entry.get("sentence_number") is not None
+        and entry.get("sentence_number") == sentence_number
+        for entry in entries
+    )
+    if not anchored:
+        return []
+    return _usable(entries)
+
+
+def _recorded_place_names(scenario):
+    """The beat's recorded place names from its scenario record
+    (the `places` contract, else the single recorded place /
+    location). Recorded data only — no prose extraction."""
+    scenario = scenario or {}
+    names = []
+    raw = scenario.get("places")
+    if isinstance(raw, list):
+        for entry in raw:
+            if isinstance(entry, dict):
+                name = entry.get("name") or entry.get("place")
+            else:
+                name = entry
+            name = str(name or "").strip()
+            if name and name.lower() not in {n.lower() for n in names}:
+                names.append(name)
+    if not names:
+        single = scenario.get("place") or scenario.get("location")
+        if single and str(single).strip():
+            names.append(str(single).strip())
+    return names
+
+
+def _recorded_relations(scenario, bible):
+    """Recorded relations for the relationship network (Phase 5
+    B6): the scenario's `relationships`/`relations` contract,
+    else the case bible's. Returns the relation dicts whose
+    endpoints are both recorded — candidacy requires >= 2
+    distinct entities and >= 1 recorded edge."""
+    scenario = scenario or {}
+    bible = bible or {}
+    relations = (
+        scenario.get("relationships") or scenario.get("relations")
+        or bible.get("relationships") or bible.get("relations")
+    )
+    if not isinstance(relations, list):
+        return []
+    entities = set()
+    edges = []
+    for relation in relations:
+        if not isinstance(relation, dict):
+            continue
+        source = str(relation.get("from")
+                     or relation.get("source") or "").strip()
+        dest = str(relation.get("to")
+                   or relation.get("target") or "").strip()
+        if not source or not dest or source == dest:
+            continue
+        entities.update((source, dest))
+        edges.append(relation)
+    if len(entities) < 2 or not edges:
+        return []
+    return edges
+
+
+def _template_candidates(row, outcome, pack, bible=None):
     """Ordered engine-template candidates for a graphic beat, from
     plan-level features, ordered by the pack's template_affinities
     (AM-008 consumer: higher affinity first; unlisted templates
@@ -439,6 +534,27 @@ def _template_candidates(row, outcome, pack):
         # photos — proposed only when at least three exist (its
         # assembler still refuses below two).
         candidates.append("layered_reveal")
+    # Phase 5 core treatments (2026-11-27): candidacy from
+    # RECORDED data only — never prose keywords (the removed
+    # families' "events or time -> timeline" and place-cue
+    # heuristics are not revived).
+    # B1 chronology: >= 3 usable recorded timeline events (the
+    # scenario's recorded timeline, or bible events anchored to
+    # this beat by recorded sentence number).
+    if len(_recorded_timeline_events(
+            scenario, bible, row.get("sentence_number"))) >= 3:
+        candidates.append("chronology")
+    # C1 editorial maps: >= 2 recorded places -> route; exactly
+    # 1 recorded place -> locator (no route implied).
+    _place_names = _recorded_place_names(scenario)
+    if len(_place_names) >= 2:
+        candidates.append("route")
+    elif len(_place_names) == 1:
+        candidates.append("locator")
+    # B6 relationship network: recorded relations with >= 2
+    # entities and >= 1 recorded edge.
+    if _recorded_relations(scenario, bible):
+        candidates.append("relationship_network")
     if outcome.get("sentence_index") == 0:
         candidates.append("archival_title")
     if '"' in text or "“" in text:
@@ -540,6 +656,82 @@ def _composition_decision(row, outcome, pack, scene_labelled,
         "affinity": weight,
         "reason": "scene_entry_label",
         "label_source": label_source,
+    }
+
+
+def _name_super_decision(row, outcome, pack, bible, person_named):
+    """The NAME SUPER composition decision (Phase 5, A1): a
+    lower-third over a covered beat that INTRODUCES a recorded
+    person — the first covered beat whose scenario records that
+    person as its subject. Payload is recorded entity data only:
+    the label is the person's recorded name (the scenario's
+    `subject_name`, corroborated against the case bible's entity
+    record — the scenario's `subject` id must resolve to a bible
+    entity of type "person" with that canonical name, or, when
+    no bible is supplied, the scenario's own subject record is
+    the recording); the sublabel is the entity's recorded role
+    when one is recorded and short, else the beat's recorded
+    place/era. One super per person per production
+    (`person_named` is the set of persons already supered); the
+    pack gate is the same composition gate the scene-entry
+    lower-third answers to. A beat whose scenario records no
+    person subject gets no super — a name is never extracted
+    from prose."""
+    profile = (pack or {}).get("visual_profile") or {}
+    affinities = profile.get("composition_affinities") or {}
+    weight = affinities.get("lower_third_card")
+    if not isinstance(weight, (int, float)) or weight < 1:
+        return None
+    others = [
+        w for name, w in affinities.items()
+        if name not in {"lower_third_card", "full_frame"}
+        and isinstance(w, (int, float))
+    ]
+    if others and weight < max(others):
+        return None
+    scenario = outcome.get("scenario") or {}
+    name = str(scenario.get("subject_name") or "").strip()
+    if not name:
+        return None
+    role = None
+    bible = bible or {}
+    entities = [
+        e for e in bible.get("entities") or [] if isinstance(e, dict)
+    ]
+    if entities:
+        subject_id = scenario.get("subject")
+        match = None
+        for entity in entities:
+            if subject_id is not None \
+                    and entity.get("id") == subject_id:
+                match = entity
+                break
+            if str(entity.get("canonical") or "").strip() == name:
+                match = entity
+                break
+        if match is None or match.get("type") != "person":
+            return None
+        if str(match.get("canonical") or "").strip():
+            name = str(match["canonical"]).strip()
+        role = str(match.get("role") or "").strip() or None
+    if name in person_named:
+        return None
+    sublabel = None
+    if role and len(role) <= 64 and len(role.split()) <= 8:
+        sublabel = role
+    else:
+        sublabel = (
+            str(scenario.get("place") or scenario.get("era") or "")
+            .strip() or None
+        )
+    return {
+        "pattern": "lower_third_card",
+        "label": name,
+        "sublabel": sublabel,
+        "affinity": weight,
+        "reason": "name_super",
+        "label_source": "recorded_entity",
+        "person": name,
     }
 
 
@@ -692,6 +884,7 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
     labelled_scenes = set()
     split_scenes = set()
     windowed_scenes = set()
+    named_persons = set()
     graphic_index = 0
 
     for row in plan_v1.get("sentences") or []:
@@ -730,6 +923,19 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                 if composition is not None:
                     split_scenes.add(scene_number)
                 if composition is None:
+                    # Phase 5 (A1): the name super — a covered
+                    # beat introducing a recorded person — takes
+                    # precedence over the scene-entry label: the
+                    # person's introduction IS the identification
+                    # moment. One super per person.
+                    composition = _name_super_decision(
+                        row, outcome, pack, bible,
+                        person_named=named_persons,
+                    )
+                    if composition is not None:
+                        named_persons.add(composition["person"])
+                        labelled_scenes.add(scene_number)
+                if composition is None:
                     composition = _composition_decision(
                         row, outcome, pack,
                         scene_labelled=scene_number in labelled_scenes,
@@ -752,7 +958,7 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                 graphic_index += 1
                 manifest_id = f"gm_{graphic_index:04d}"
                 candidates, affinities = _template_candidates(
-                    row, outcome, pack
+                    row, outcome, pack, bible=bible
                 )
                 entry_evidence = evidence.get(number) or {}
                 evidence_ref = entry_evidence.get("evidence_ref")

@@ -447,6 +447,8 @@ GRAPHIC_SKIP_REASONS = frozenset({
     "no_eligible_graphic_purpose",  # chain exhausted / schematic ineligible
     "comparison_not_rendered",   # comparison present, no template rendered it
     "rendering_failure",         # a renderer raised
+    "chart_units_missing",       # Phase 5 (B5/B7): a recorded-data chart without recorded units is refused — never rendered unit-less
+    "chart_source_missing",      # Phase 5 (B5/B7): a recorded-data chart without a recorded source is refused — never rendered source-less
     "label_does_not_fit",        # Phase 5 (X3): a label measured against its box does not fit — the graphic is refused, never rendered clipped
     "visual_validation_failed",  # Phase 5 (X3): the rendered frame failed visual inspection (near-empty / edge-clipped / text overrun)
     "validation_failed",         # probed OK but spec mismatch (dims/fps/duration)
@@ -2178,24 +2180,132 @@ def build_motion_graphics_assets(
                 "sentence_number": fact.get("sentence_number"),
                 "date": clean_text(
                     (fact.get("date") or {}).get("display") or ""),
+                # Phase 5 (B5/B7): the fact's recorded source,
+                # when the fact table carries one — the chart
+                # assemblers cite it as the series source.
+                "source": clean_text(
+                    fact.get("source") or fact.get("provider") or ""),
             })
         for facts in grouped.values():
             facts.sort(key=lambda f: f["sentence_number"] or 0)
         return grouped
 
-    def _assemble_line_chart(target):
+    def _is_bare_year_value(value):
+        """True when a numeric value is a calendar year and
+        nothing else (1000–2099, integral). Years/dates are
+        excluded from statistic candidacy (pinned since the P0
+        removal): a series whose VALUES are all years is a
+        chronology, not a measurement, and no chart may draw it
+        as data."""
+        return (
+            isinstance(value, (int, float))
+            and float(value) == int(float(value))
+            and 1000 <= int(float(value)) <= 2099
+        )
+
+    def _series_points(raw_series):
+        """Normalise a recorded series into chart points, or
+        None when it carries fewer than 2 numeric points or its
+        values are all bare years (see _is_bare_year_value)."""
+        points = []
+        for entry in raw_series or []:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                value = float(entry.get("value"))
+            except (TypeError, ValueError):
+                continue
+            points.append({
+                "label": clean_text(
+                    entry.get("label") or entry.get("date") or ""),
+                "value": value,
+                "display": clean_text(entry.get("display") or ""),
+            })
+        if len(points) < 2:
+            return None
+        if all(_is_bare_year_value(p["value"]) for p in points):
+            return None
+        return points
+
+    def _recorded_chart_series(target):
+        """A chart series from RECORDED data only (Phase 5
+        B5/B7), as (points, units, source) — or None when no
+        recorded series exists for this beat.
+
+        Sources, in order: (1) the manifest entry's
+        ``verified_data`` (the AM-009 seam: the Director's entry
+        carries it onto the target) when it records a series;
+        (2) the scenario's recorded ``chart`` contract; (3) the
+        case bible's fact table, grouped by recorded unit (the
+        series the chart family was starved of: it lives across
+        sentences in the fact table, not inside one sentence).
+
+        ``units``/``source`` are returned exactly as recorded —
+        empty when the recording omits them. The chart contract
+        REQUIRES both: the assemblers pass the emptiness through
+        (marked ``recorded``) and the template refuses with the
+        typed chart_units_missing / chart_source_missing reason
+        rather than rendering a unit-less, source-less chart.
+        For the fact-table path the units ARE the recorded unit
+        and the source is the facts' recorded source when any
+        fact carries one, else the fact table itself — the
+        recorded container the series was read from."""
+        verified = target.get("verified_data")
+        if isinstance(verified, dict):
+            raw = verified.get("series") or verified.get("points")
+            if isinstance(raw, list) and raw:
+                points = _series_points(raw)
+                if points is not None:
+                    return (
+                        points,
+                        clean_text(verified.get("units")
+                                   or verified.get("unit") or ""),
+                        clean_text(verified.get("source") or ""),
+                    )
+        scenario = target.get("scenario") or {}
+        contract = scenario.get("chart")
+        if isinstance(contract, dict):
+            raw = contract.get("series") or contract.get("points")
+            if isinstance(raw, list) and raw:
+                points = _series_points(raw)
+                if points is not None:
+                    return (
+                        points,
+                        clean_text(contract.get("units")
+                                   or contract.get("unit") or ""),
+                        clean_text(contract.get("source") or ""),
+                    )
         grouped = _fact_quantities()
         for unit, facts in grouped.items():
             if len(facts) >= 3:
-                return {
-                    "points": [
-                        {"label": f["date"] or f["display"],
-                         "value": f["value"], "display": f["display"]}
-                        for f in facts[:8]
-                    ],
-                    "title": short_title_for(target),
-                    "unit": unit,
-                }
+                points = _series_points([
+                    {"label": f["date"] or f["display"],
+                     "value": f["value"], "display": f["display"]}
+                    for f in facts[:8]
+                ])
+                if points is None:
+                    continue
+                source = next(
+                    (f["source"] for f in facts if f.get("source")),
+                    "",
+                ) or "Case bible fact table"
+                return points, unit, source
+        return None
+
+    def _assemble_line_chart(target):
+        recorded = _recorded_chart_series(target)
+        if recorded is not None:
+            points, units, source = recorded
+            data = {
+                "points": points,
+                "title": short_title_for(target),
+                "recorded": True,
+            }
+            if units:
+                data["units"] = units
+            if source:
+                data["source"] = source
+            return data
         points = _series_from_text(target["text"])
         if points:
             return {"points": points, "title": short_title_for(target)}
@@ -2213,6 +2323,14 @@ def build_motion_graphics_assets(
         grouped = _fact_quantities()
         for _unit, facts in grouped.items():
             if len(facts) >= 2:
+                # Phase 5 (B5/B7): the fact-table path is a
+                # recorded-data chart — it carries the recorded
+                # unit + source under the same contract as the
+                # line chart (see _recorded_chart_series).
+                source = next(
+                    (f["source"] for f in facts if f.get("source")),
+                    "",
+                ) or "Case bible fact table"
                 return {
                     "items": [
                         {"label": f["date"] or f["display"],
@@ -2220,6 +2338,9 @@ def build_motion_graphics_assets(
                         for f in facts[:6]
                     ],
                     "title": short_title_for(target),
+                    "recorded": True,
+                    "units": _unit,
+                    "source": source,
                 }
         return None
 
@@ -2605,6 +2726,12 @@ def build_motion_graphics_assets(
         grouped = _fact_quantities()
         for _unit, facts in grouped.items():
             if len(facts) >= 3:
+                # Phase 5 (B5/B7): recorded unit + source ride
+                # the fact-table path here too.
+                source = next(
+                    (f["source"] for f in facts if f.get("source")),
+                    "",
+                ) or "Case bible fact table"
                 return {
                     "items": [
                         {"label": f["date"] or f["display"],
@@ -2612,6 +2739,8 @@ def build_motion_graphics_assets(
                         for f in facts[:6]
                     ],
                     "title": short_title_for(target),
+                    "units": _unit,
+                    "source": source,
                 }
         points = _series_from_text(target["text"])
         if points:
@@ -2781,6 +2910,166 @@ def build_motion_graphics_assets(
         data = dict(data)
         data["variant"] = "classified"
         return data
+
+    # -----------------------------------------------------
+    # Phase 5 core treatments (2026-11-27): the rebuilt
+    # chronology, the editorial route/locator and the
+    # relationship network. Same assembler contract as Wave 1/2:
+    # engine data built ONLY from recorded material — the case
+    # bible's recorded timeline, scenario-recorded place /
+    # relation contracts, the sentence record's recorded
+    # locations, the bible's recorded relations — or None, and
+    # the template is not served for the target. Nothing is
+    # extracted from narration prose and nothing is invented.
+    # All four are Director-only (see _DIRECTOR_ONLY_ASSEMBLERS):
+    # they draw on production-global or scenario-contract data,
+    # so the undirected chain never volunteers them.
+    # -----------------------------------------------------
+
+    def _assemble_chronology(target):
+        """Recorded timeline events for the rebuilt chronology:
+        the scenario's recorded timeline when it carries one,
+        else the case bible's `timeline` entries (when/what —
+        the same recorded source the removed graphic used).
+        An event whose `what` is not a short designed payload
+        is EXCLUDED per-event — never printed whole — and fewer
+        than 3 usable recorded events declines the treatment
+        (a 2-event chronology is a date pair, not a timeline)."""
+        scenario = target.get("scenario") or {}
+        recorded = scenario.get("timeline") \
+            or scenario.get("timeline_events")
+        source = recorded if isinstance(recorded, list) and recorded \
+            else timeline_events
+        events = []
+        for entry in source or []:
+            if not isinstance(entry, dict):
+                continue
+            when = clean_text(entry.get("when")
+                              or entry.get("date") or "")
+            what = clean_text(entry.get("what")
+                              or entry.get("label") or "")
+            if not when or not what:
+                continue
+            if not is_short_payload(what):
+                continue
+            events.append({"when": when, "what": what})
+        if len(events) < 3:
+            return None
+        return {"events": events[:8],
+                "title": short_title_for(target)}
+
+    def _recorded_places(target):
+        """The beat's recorded places, in recorded order:
+        the scenario's `places` contract first (entries are
+        names or {name, lon, lat, country} records), then the
+        sentence record's recorded locations, then the
+        scenario's single recorded place/location."""
+        scenario = target.get("scenario") or {}
+        places = []
+        seen = set()
+
+        def _add(raw):
+            if isinstance(raw, dict):
+                name = clean_text(
+                    raw.get("name") or raw.get("place") or "")
+                if not name:
+                    return
+                place = {"name": name}
+                for key in ("lon", "lat", "country"):
+                    if raw.get(key) is not None:
+                        place[key] = raw[key]
+                coords = raw.get("coordinates")
+                if isinstance(coords, (list, tuple)) \
+                        and len(coords) >= 2:
+                    place["coordinates"] = list(coords[:2])
+            elif isinstance(raw, str):
+                name = clean_text(raw)
+                if not name:
+                    return
+                place = {"name": name}
+            else:
+                return
+            key = place["name"].lower()
+            if key in seen:
+                return
+            seen.add(key)
+            places.append(place)
+
+        raw_places = scenario.get("places")
+        if isinstance(raw_places, list):
+            for raw in raw_places:
+                _add(raw)
+        if not places:
+            sentence = _sentences_by_key.get(
+                (target["scene_number"], target["sentence_index"]),
+                {})
+            for location in sentence.get("locations") or []:
+                _add(location)
+        if not places:
+            single = scenario.get("place") or scenario.get("location")
+            if single:
+                _add(single)
+        return places
+
+    def _assemble_route(target):
+        places = _recorded_places(target)
+        if len(places) < 2:
+            return None
+        return {"places": places[:6],
+                "title": short_title_for(target)}
+
+    def _assemble_locator(target):
+        places = _recorded_places(target)
+        if len(places) != 1:
+            # The locator is the ONE-place treatment; a beat
+            # with 2+ recorded places is the route's job.
+            return None
+        return {"places": places,
+                "title": short_title_for(target)}
+
+    def _assemble_relationship_network(target):
+        """Recorded relations only: the scenario's
+        `relationships`/`relations` contract, else the case
+        bible's. Nodes are exactly the entities the recorded
+        relations name; edges are exactly the recorded
+        relations (with their recorded short label when one is
+        recorded). Fewer than 2 entities or 0 recorded edges
+        declines — no edge is ever invented."""
+        scenario = target.get("scenario") or {}
+        relations = scenario.get("relationships") \
+            or scenario.get("relations") \
+            or (case_bible or {}).get("relationships") \
+            or (case_bible or {}).get("relations")
+        if not isinstance(relations, list) or not relations:
+            return None
+        names = []
+        edges = []
+        for relation in relations:
+            if not isinstance(relation, dict):
+                continue
+            source = clean_text(
+                relation.get("from") or relation.get("source") or "")
+            dest = clean_text(
+                relation.get("to") or relation.get("target") or "")
+            if not source or not dest or source == dest:
+                continue
+            for name in (source, dest):
+                if name not in names:
+                    names.append(name)
+            edges.append({
+                "from": source,
+                "to": dest,
+                "label": clean_text(
+                    relation.get("label")
+                    or relation.get("relation") or ""),
+            })
+        if len(names) < 2 or not edges:
+            return None
+        return {
+            "nodes": [{"name": name} for name in names],
+            "edges": edges,
+            "title": short_title_for(target),
+        }
 
     def _assemble_newspaper_wall(target):
         articles = []
@@ -2975,6 +3264,15 @@ def build_motion_graphics_assets(
         # in visual_director are their recorded-evidence gate.
         "bubble_chart", "animated_dashboard",
         "holographic_panel", "classified_file",
+        # Phase 5 core treatments (2026-11-27): the rebuilt
+        # chronology / route / locator / relationship network
+        # draw on the case-bible timeline, scenario place and
+        # relation contracts and bible relations — production-
+        # global or contract data, not material belonging to
+        # the target beat alone — so, like the others above,
+        # they are reachable only through a Director manifest
+        # entry whose candidacy is their recorded-evidence gate.
+        "chronology", "route", "locator", "relationship_network",
         # GitHub Skills Programme (2026-11-25): the Manim engine's
         # templates are Director-only for the same reason, plus a
         # cost discipline the others do not need — a Manim render
@@ -3028,6 +3326,11 @@ def build_motion_graphics_assets(
         "before_after": _assemble_before_after,
         "layered_reveal": _assemble_layered_reveal,
         "object_labels": _assemble_object_labels,
+        # Phase 5 core treatments (2026-11-27).
+        "chronology": _assemble_chronology,
+        "route": _assemble_route,
+        "locator": _assemble_locator,
+        "relationship_network": _assemble_relationship_network,
     }
 
     def _engine_duration_for(target):
@@ -3116,6 +3419,17 @@ def build_motion_graphics_assets(
             return False, "rendering_failure", str(error)
         if not rendered:
             _refusal = (metadata or {}).get("reason", "")
+            if _refusal in (
+                "chart_units_missing", "chart_source_missing",
+            ):
+                # Phase 5 (B5/B7): the chart data contract's
+                # typed refusals ride through with their own
+                # skip reasons, like label_does_not_fit below.
+                return (
+                    False,
+                    _refusal,
+                    (metadata or {}).get("detail", "") or _refusal,
+                )
             if _refusal == "label_does_not_fit":
                 # Phase 5 (X3): a label that does not fit its box
                 # refuses the graphic with its own typed reason —
