@@ -547,8 +547,12 @@ trade_route_map = _map_variant("trade", "trade_route_map")
 military_map = _map_variant("military", "military_map")
 
 
+
 # ---------------------------------------------------------------------------
-# 2. Evidence board
+# 2. Evidence board / red-string board — REMOVED completely by the
+# founder's P0 ruling (2026-11-27): templates + selection paths.
+# The two helpers below survive: templates_v3/templates_v4 import
+# them for the surviving newspaper treatments.
 # ---------------------------------------------------------------------------
 
 def _aged_paper(size, tokens, seed=3):
@@ -576,180 +580,6 @@ def _torn_banner(draw, x, y, w, h, fill, seed=5):
     points_bottom = [(x + w - i * 28, y + h - rng.randint(0, 10)) for i in range(int(w / 28) + 1)]
     draw.polygon(points_top + points_bottom, fill=fill)
 
-
-def evidence_board(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
-    style_name, tokens = resolve_style(style)
-    data = data or {}
-    cards = []
-    for entry in data.get("photos") or []:
-        if not isinstance(entry, dict):
-            continue
-        p = entry.get("path")
-        if not p or not Path(p).exists():
-            continue  # Missing photo file -> skip that card.
-        try:
-            img = Image.open(p).convert("RGB")
-        except Exception:
-            continue
-        caption = _clean(entry.get("caption"))
-        # Founder ruling 2026-11-23 (template-level guard): a
-        # caption that is a raw file title ("File:...", anything
-        # carrying an image-file extension) is provenance, not a
-        # caption — it is dropped whoever supplied it.
-        # MG-06-residual: source-label strings ("SOURCE •
-        # WIKIMEDIA") carry neither marker — they are dropped by
-        # the same rule.
-        if caption.lower().startswith("file:") or re.search(
-            r"\.(jpe?g|png|tiff?|webp|gif|svg)\b", caption.lower()
-        ) or caption.lower().startswith("source") \
-                or "wikimedia" in caption.lower():
-            caption = ""
-        cards.append((img, caption))
-    if not cards:
-        return None, {"reason": "no_valid_photos"}
-    # No placeholder banner: the torn-paper title is drawn only
-    # when the caller supplies a real (short, designed) title.
-    # MG-06-residual: a metadata-shaped or paragraph-length
-    # "title" is caller provenance/prose, not a designed title —
-    # the banner stays undrawn.
-    title = _clean(data.get("title"))
-    if title.lower().startswith("file:") or re.search(
-        r"\.(jpe?g|png|tiff?|webp|gif|svg)\b", title.lower()
-    ) or "wikimedia" in title.lower() or len(title) > 80:
-        title = ""
-    labels = [_clean(x) for x in (data.get("labels") or []) if _clean(x)]
-    paper = _aged_paper((WIDTH, HEIGHT), tokens)
-    fonts = {
-        "title": load_font(tokens["font_bold"], 46),
-        "caption": load_font(tokens["font"], 24),
-        "label": load_font(tokens["font_bold"], 22),
-    }
-    # Pre-build polaroid cards.
-    built = []
-    card_w, card_h = 560, 470
-    for idx, (img, caption) in enumerate(cards[:4]):
-        photo = fit_cover(img, (card_w - 36, card_h - 110))
-        card = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
-        shadow = Image.new("RGBA", (card_w, card_h), (0, 0, 0, 0))
-        ImageDraw.Draw(shadow).rectangle([10, 14, card_w - 4, card_h - 2], fill=(0, 0, 0, 110))
-        shadow = shadow.filter(ImageFilter.GaussianBlur(10))
-        card.alpha_composite(shadow, (0, 0))
-        cd = ImageDraw.Draw(card)
-        cd.rectangle([0, 0, card_w - 14, card_h - 14], fill=(245, 243, 236, 255))
-        card.paste(photo, (18, 18))
-        if caption:
-            cd.text((24, card_h - 82), caption[:44], font=fonts["caption"], fill=(40, 38, 34, 255))
-        angle = (-4, 3, -2, 4)[idx % 4]
-        built.append(card.rotate(angle, expand=True, resample=Image.BICUBIC))
-    positions = [(110, 300), (700, 280), (1290, 300), (420, 560)][:len(built)]
-
-    def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
-        base = canvas.new_layer("paper", parallax=0.3)
-        base.image = paper.convert("RGBA")
-        layer = canvas.new_layer("cards")
-        for idx, card in enumerate(built):
-            local = ease_out(clamp01(progress * 3.0 - idx * 0.55))
-            if local <= 0:
-                continue
-            x, y = positions[idx]
-            y = int(y + (1 - local) * 90)
-            faded = card.copy()
-            if local < 1.0:
-                a = faded.getchannel("A").point(lambda v: int(v * local))
-                faded.putalpha(a)
-            layer.image.alpha_composite(faded, (x, y))
-            # Brass pin.
-            d = ImageDraw.Draw(layer.image, "RGBA")
-            cx, cy = x + card.size[0] // 2, y + 16
-            d.ellipse([cx - 15, cy - 15, cx + 15, cy + 15], fill=tokens["brass"] + (255,), outline=(90, 70, 30, 255), width=3)
-            d.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=(240, 220, 170, 255))
-        # Wave 1 (F4): red-string connectors — caller-supplied
-        # [i, j] index pairs joined pin-to-pin with a sagging
-        # string once the cards have settled. The string colour
-        # is the board's red (the theme accent for investigative
-        # themes; a fixed evidence red otherwise).
-        strings = [
-            s for s in (data.get("strings") or [])
-            if isinstance(s, (list, tuple)) and len(s) >= 2
-        ]
-        if strings and progress > 0.8:
-            sd = ImageDraw.Draw(layer.image, "RGBA")
-            string_fill = (198, 40, 40, 235)
-            pin_points = [
-                (positions[i][0] + built[i].size[0] // 2,
-                 positions[i][1] + 16)
-                for i in range(len(built))
-            ]
-            for pair in strings:
-                try:
-                    i, j = int(pair[0]), int(pair[1])
-                except (TypeError, ValueError):
-                    continue
-                if not (0 <= i < len(pin_points) and 0 <= j < len(pin_points)):
-                    continue
-                (x0, y0), (x1, y1) = pin_points[i], pin_points[j]
-                sag = 26.0
-                pts = []
-                for k in range(17):
-                    f = k / 16
-                    x = x0 + (x1 - x0) * f
-                    y = y0 + (y1 - y0) * f + math.sin(f * math.pi) * sag
-                    pts.append((x, y))
-                sd.line(pts, fill=string_fill, width=3, joint="curve")
-        top = canvas.new_layer("banner")
-        td = ImageDraw.Draw(top.image, "RGBA")
-        if title:
-            _torn_banner(td, 90, 56, 1050, 92, fill=(250, 246, 236, 255))
-            td.text((122, 78), title.upper()[:52], font=fonts["title"], fill=(30, 26, 20, 255))
-        for i, lab in enumerate(labels[:3]):
-            td.text((120, HEIGHT - 120 + i * 30), lab.upper(), font=fonts["label"], fill=(60, 30, 24, 255))
-        return canvas.composite()
-
-    path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta(data.get("_template") or "evidence_board",
-                       style_name, duration, sentence_index, scene_number,
-                       {"photos": len(built), "title": bool(title), "labels": len(labels),
-                        "strings": len(data.get("strings") or [])})
-
-
-def red_string_board(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
-    """Evidence board with red-string connectors (Wave 1, F4).
-
-    Same data contract as evidence_board; when the caller does
-    not name the connections, consecutive pins are strung in
-    board order — a layout choice over the caller's own photos,
-    recorded in the metadata either way."""
-    data = dict(data or {})
-    photos = data.get("photos") or []
-    if not photos:
-        return None, {"reason": "no_valid_photos"}
-    if not data.get("strings"):
-        data["strings"] = [
-            [i, i + 1] for i in range(min(len(photos), 4) - 1)
-        ]
-    # MG-04 (Motion Graphics audit): a string asserts a
-    # relationship between the photos it connects. Every
-    # connected node must carry a real label — an unlabelled
-    # board fabricates relationships between unrelated photos,
-    # so the template refuses rather than drawing the strings.
-    _labels = [_clean(x) for x in (data.get("labels") or []) if _clean(x)]
-    _nodes = set()
-    for _pair in data.get("strings") or []:
-        if isinstance(_pair, (list, tuple)):
-            _nodes.update(_pair)
-    if not _nodes or len(_labels) < len(_nodes):
-        return None, {"reason": "unlabelled_board_nodes"}
-    data["_template"] = "red_string_board"
-    return evidence_board(
-        data, style, out_path, duration=duration,
-        sentence_index=sentence_index, scene_number=scene_number,
-    )
-
-
-# ---------------------------------------------------------------------------
-# 3. Editorial panel
-# ---------------------------------------------------------------------------
 
 def editorial_panel(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
     style_name, tokens = resolve_style(style)
@@ -1255,7 +1085,6 @@ def classified_file(data, style, out_path, duration=5.0,
 
 TEMPLATES = {
     "territory_map": territory_map,
-    "evidence_board": evidence_board,
     "editorial_panel": editorial_panel,
     "data_gauge": data_gauge,
     "outcome_path": outcome_path,
@@ -1269,7 +1098,6 @@ TEMPLATES = {
     "route_map": route_map,
     "trade_route_map": trade_route_map,
     "military_map": military_map,
-    "red_string_board": red_string_board,
 }
 
 # Stage 5B: the v2 template family (reference set 2) registers into

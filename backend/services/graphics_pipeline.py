@@ -2883,62 +2883,6 @@ def build_motion_graphics_assets(
             "title": place,
         }
 
-    def _assemble_evidence_board(target):
-        """evidence_board data from the target scene's VERIFIED
-        image assets (explicit acceptance only, files that exist):
-        polaroid cards of real retrieved photographs, captioned
-        with the assets' own recorded titles. No verified photos —
-        no board."""
-        scene_number = target["scene_number"]
-        photos = []
-        for _ps in data.get("processed_scenes") or []:
-            if not isinstance(_ps, dict):
-                continue
-            if (_ps.get("scene") or {}).get("scene_number") != scene_number:
-                continue
-            for _v in _ps.get("images") or []:
-                if not isinstance(_v, dict):
-                    continue
-                if (_v.get("verification") or {}).get(
-                    "accepted"
-                ) is not True:
-                    continue
-                # Founder ruling 2026-11-23: a board photo whose
-                # title identifies a person the beat is not about
-                # never reaches the board, even when its
-                # verification predates the tightened guard.
-                if photo_person_conflict(
-                    _v, target.get("text") or "", case_bible
-                ):
-                    continue
-                _p = _v.get("file_path") or _v.get("path")
-                if _p and Path(_p).exists():
-                    photos.append(
-                        {
-                            # Scene records carry Path objects in
-                            # production (process_scene_media); the
-                            # assembled data rides into the JSON
-                            # manifest, so it must be text here —
-                            # a raw Path crashed the manifest write
-                            # on the first live evidence-board run
-                            # (Petito production, 2026-11-21).
-                            "path": str(_p),
-                            # Founder ruling 2026-11-23: the
-                            # polaroid caption is NEVER the asset's
-                            # recorded title — that is a raw file
-                            # name ("File:Barrels and cockpit.png")
-                            # burned into the frame. Provenance
-                            # stays in the rights manifest; the
-                            # polaroid chin stays blank.
-                            "caption": "",
-                        }
-                    )
-            break
-        if not photos:
-            return None
-        title = short_title_for(target)
-        return {"photos": photos[:4], "title": title, "labels": []}
-
     def _assemble_outcome_path(target):
         """outcome_path data from the case bible's recorded
         timeline events (their "what" labels, in order). Only for
@@ -3241,34 +3185,6 @@ def build_motion_graphics_assets(
                 "markers": scenario.get("markers") or [],
             }
         return _assemble
-
-    def _assemble_red_string_board(target):
-        data = _assemble_evidence_board(target)
-        if data is None:
-            return None
-        data = dict(data)
-        count = len(data.get("photos") or [])
-        if count < 2:
-            return None
-        # MG-04 (Motion Graphics audit; founder fabrication
-        # ruling): strings between photos assert relationships.
-        # The board assembler records NO labels for its photos
-        # (labels stay empty by the no-metadata-caption rule), so
-        # every string would connect unlabelled, unrelated photos
-        # — the audited defect. The family declines until a
-        # recorded label source covers EVERY connected node; the
-        # template enforces the same rule for direct callers.
-        labels = [
-            clean_text(label) for label in (data.get("labels") or [])
-        ]
-        labels = [label for label in labels if label]
-        if len(labels) < count:
-            return None
-        data["strings"] = [[i, i + 1] for i in range(count - 1)]
-        return data
-
-    def _verified_scene_assets(target):
-        return _verified_by_scene_assets.get(target["scene_number"]) or []
 
     def _assemble_newspaper_montage(target):
         articles = []
@@ -3881,7 +3797,6 @@ def build_motion_graphics_assets(
     #: table for the per-template disposition).
     _ASSEMBLERS = {
         "territory_map": _assemble_territory_map,
-        "evidence_board": _assemble_evidence_board,
         "outcome_path": _assemble_outcome_path,
         # Wave 1 (Motion Graphics Engine plan §C).
         "line_chart": _assemble_line_chart,
@@ -3902,7 +3817,6 @@ def build_motion_graphics_assets(
         "exploded_view": _section_variant("exploded"),
         "mechanical_cutaway": _section_variant("cutaway"),
         "blueprint_section": _section_variant("blueprint"),
-        "red_string_board": _assemble_red_string_board,
         "newspaper_montage": _assemble_newspaper_montage,
         "profile_reveal": _assemble_profile_reveal,
         "photo_parallax": _assemble_photo_parallax,

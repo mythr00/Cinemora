@@ -406,12 +406,8 @@ def _template_candidates(row, outcome, pack):
     if scenario.get("before_image") and scenario.get("after_image"):
         candidates.append("before_after")
     photo_count = outcome.get("scene_photo_count") or 0
-    if photo_count > 0:
-        candidates.append("evidence_board")
-    if photo_count >= 2:
-        # F4: the red-string board is the evidence board's
-        # connected variant — proposed after it, never instead.
-        candidates.append("red_string_board")
+    # (P0 removal, 2026-11-27: evidence_board and red_string_board
+    # candidacy removed with the templates — completely.)
     # F4 investigation variants on their recorded material.
     if outcome.get("document_asset"):
         candidates.append("document_presentation")

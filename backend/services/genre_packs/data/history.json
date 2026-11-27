@@ -3,7 +3,7 @@
   "entity_handling": [
     "Prefer primary and archival sources over secondary summaries when both are retrieved.",
     "Period place names and spellings from the script are kept; modern equivalents are never substituted silently.",
-    "A date stays script_asserted until a retrieved source supports it \u2014 period sources routinely disagree, and disagreements are recorded as conflicts, never resolved silently."
+    "A date stays script_asserted until a retrieved source supports it — period sources routinely disagree, and disagreements are recorded as conflicts, never resolved silently."
   ],
   "expectations": {
     "document_share": {
@@ -43,10 +43,7 @@
     "photograph": 3
   },
   "graphics_motifs": [
-    "territory_map",
     "document_presentation",
-    "evidence_board",
-    "outcome_path",
     "bar_chart",
     "data_gauge",
     "ring_badges",
@@ -59,17 +56,11 @@
     "editorial_panel",
     "line_chart",
     "pie_chart",
-    "border_map",
-    "route_map",
-    "trade_route_map",
-    "military_map",
     "exploded_view",
     "mechanical_cutaway",
     "blueprint_section",
-    "red_string_board",
     "newspaper_montage",
     "profile_reveal",
-    "photo_parallax",
     "text_overlay",
     "text_highlight",
     "archival_title",
@@ -77,7 +68,6 @@
     "population_pyramid",
     "animated_dashboard",
     "checklist_graphic",
-    "milestone_waveform",
     "territory_expansion",
     "satellite_zoom",
     "heatmap",
@@ -100,9 +90,9 @@
     "fade_out_seconds": 3.0,
     "music_volume": 0.1
   },
-  "music_mood": "Somber orchestral / period instrumentation (metadata only \u2014 no music library is integrated; the soundtrack remains user-supplied or absent).",
+  "music_mood": "Somber orchestral / period instrumentation (metadata only — no music library is integrated; the soundtrack remains user-supplied or absent).",
   "pacing": {
-    "notes": "Informational only \u2014 narration is not retimed to pacing targets.",
+    "notes": "Informational only — narration is not retimed to pacing targets.",
     "target_seconds_per_sentence": 4.5
   },
   "research_query_templates": [
@@ -187,24 +177,17 @@
       "stat_comparison": 2,
       "archival_title": 3,
       "newspaper_montage": 2,
-      "border_map": 2,
-      "route_map": 2,
-      "military_map": 2,
-      "photo_parallax": 2,
       "document_presentation": 2,
       "line_chart": 1,
       "pie_chart": 1,
       "text_highlight": 1,
       "text_overlay": 1,
       "profile_reveal": 1,
-      "red_string_board": 1,
-      "trade_route_map": 1,
       "exploded_view": 1,
       "mechanical_cutaway": 1,
       "blueprint_section": 1,
       "territory_expansion": 3,
       "newspaper_wall": 2,
-      "milestone_waveform": 2,
       "population_pyramid": 2,
       "classified_file": 2,
       "layered_reveal": 2,
