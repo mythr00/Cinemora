@@ -18,9 +18,11 @@ Families:
                    (red_string_board and the document unlock live
                    with their base templates in v1).
   F6/F7 text     — archival_title, text_overlay, text_highlight.
-  F8 photo       — photo_parallax (2.5D depth layers on the core
-                   compositor's camera/parallax — a photo
-                   treatment, never labelled 3D).
+  F8 photo       — photo_parallax lived here; REMOVED completely
+                   by the founder's P0 ruling (2026-11-27). A beat
+                   with a photo is served by the photo itself as a
+                   normal still visual, never by the smeared fake
+                   layer separation this template produced.
 """
 
 import math
@@ -759,70 +761,6 @@ def _designed_text(value, max_len=64):
     return text
 
 
-def photo_parallax(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
-    style_name, tokens = resolve_style(style)
-    data = data or {}
-    photo = _load_image(data.get("photo"))
-    if photo is None:
-        return None, {"reason": "no_photo"}
-    title = _designed_text(data.get("title"))
-    caption = _designed_text(data.get("caption"))
-    cover = fit_cover(photo, (WIDTH, HEIGHT))
-    # Far layer: softened, darkened, slightly larger — reads as
-    # depth behind the subject plane. Foreground: the photo's
-    # own lower band, heavily blurred and darkened, composited
-    # at full parallax so it slides fastest.
-    far = cover.filter(ImageFilter.GaussianBlur(14))
-    black = Image.new("RGB", (WIDTH, HEIGHT), (0, 0, 0))
-    far = Image.blend(far, black, 0.35)
-    fore_band = cover.crop((0, int(HEIGHT * 0.78), WIDTH, HEIGHT))
-    fore_band = fore_band.filter(ImageFilter.GaussianBlur(10))
-    fore_band = Image.blend(
-        fore_band, Image.new("RGB", fore_band.size, (0, 0, 0)), 0.45)
-    fore = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-    fore.alpha_composite(fore_band.convert("RGBA"), (0, int(HEIGHT * 0.78)))
-    fonts = {
-        "title": load_font(tokens["font_bold"], 44),
-        "caption": load_font(tokens["font"], 27),
-    }
-
-    def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
-        far_layer = canvas.new_layer("far", parallax=0.25)
-        far_layer.image = far.convert("RGBA")
-        mid_layer = canvas.new_layer("mid", parallax=0.6)
-        mid_layer.image = cover.convert("RGBA")
-        fore_layer = canvas.new_layer("fore", parallax=1.0)
-        fore_layer.image = fore.copy()
-        camera = {
-            "scale": 1.07 + 0.05 * ease_in_out(progress),
-            "x": -38 + 76 * ease_in_out(progress),
-            "y": -10 + 20 * ease_in_out(progress),
-        }
-        frame = canvas.composite(camera=camera)
-        if title or caption:
-            overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
-            od = ImageDraw.Draw(overlay)
-            fade = ease_out(clamp01(progress * 2.2))
-            alpha = int(255 * fade)
-            y = HEIGHT - 190
-            if title:
-                od.rectangle([86, y, 94, y + 96], fill=tokens["accent"] + (alpha,))
-                od.text((118, y), title.upper()[:52], font=fonts["title"],
-                        fill=tokens["text"] + (alpha,))
-                y += 62
-            if caption:
-                od.text((118, y), caption[:72], font=fonts["caption"],
-                        fill=tokens["muted"] + (alpha,))
-            frame = Image.alpha_composite(frame.convert("RGBA"), overlay).convert("RGB")
-        return frame
-
-    path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta("photo_parallax", style_name, duration, sentence_index, scene_number,
-                       {"photo": True, "title": bool(title),
-                        "caption": bool(caption), "depth_layers": 3})
-
-
 V3_TEMPLATES = {
     "line_chart": line_chart,
     "pie_chart": pie_chart,
@@ -831,7 +769,6 @@ V3_TEMPLATES = {
     "archival_title": archival_title,
     "text_overlay": text_overlay,
     "text_highlight": text_highlight,
-    "photo_parallax": photo_parallax,
 }
 
 # Self-registration into the v1 registry, as with v2.

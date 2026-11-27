@@ -196,7 +196,7 @@ ASSEMBLED_TEMPLATES = frozenset({
     "exploded_view", "mechanical_cutaway", "blueprint_section",
     "newspaper_montage", "profile_reveal",
     "document_presentation",
-    "photo_parallax", "text_overlay", "text_highlight",
+    "text_overlay", "text_highlight",
     "archival_title",
     # Wave 2 (Motion Graphics Engine plan §C Wave 2): the breadth
     # families — every one has a production assembler in the

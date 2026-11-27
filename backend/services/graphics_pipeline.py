@@ -3269,24 +3269,6 @@ def build_motion_graphics_assets(
                 return asset, path
         return None, None
 
-    def _assemble_photo_parallax(target):
-        asset, path = _first_scene_photo(target)
-        if path is None:
-            return None
-        sentence = _sentences_by_key.get(
-            (target["scene_number"], target["sentence_index"]), {})
-        locations = sentence.get("locations") or []
-        # Founder ruling 2026-11-23: the parallax lower third
-        # carries at most a short PLACE label from the sentence's
-        # own analysis. The historical fallbacks — the asset's
-        # recorded title ("File:Eleanor Roosevelt at ...") and a
-        # "SOURCE • WIKIMEDIA" caption — are provenance burned
-        # into pixels and are removed entirely.
-        return {
-            "photo": path,
-            "title": clean_text(locations[0] if locations else ""),
-        }
-
     def _assemble_text_overlay(target):
         # Photo-backed only: a text overlay with no photo behind
         # it is a text card, and text cards are not a visual
@@ -3819,7 +3801,6 @@ def build_motion_graphics_assets(
         "blueprint_section": _section_variant("blueprint"),
         "newspaper_montage": _assemble_newspaper_montage,
         "profile_reveal": _assemble_profile_reveal,
-        "photo_parallax": _assemble_photo_parallax,
         "text_overlay": _assemble_text_overlay,
         "text_highlight": _assemble_text_highlight,
         "archival_title": _assemble_archival_title,

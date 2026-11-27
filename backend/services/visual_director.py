@@ -428,7 +428,10 @@ def _template_candidates(row, outcome, pack):
         candidates.append("profile_reveal")
     # F8/F6 photo & text treatments on recorded photos / quotes.
     if photo_count >= 1:
-        candidates += ["photo_parallax", "text_overlay"]
+        # (P0 removal, 2026-11-27: photo_parallax removed from
+        # this pair — template deleted completely. text_overlay
+        # stays.)
+        candidates += ["text_overlay"]
         # Wave 2 photo-backed breadth: the HUD needs recorded
         # numbers to read out; object labels need the scenario's
         # recorded anchors; the satellite zoom needs a recorded
