@@ -1,12 +1,16 @@
 /**
  * Landing pricing (pricing restructure, founder directive
- * 2026-11-26 ~10:25 WAT): Creator $28 / Studio $63 / Agency
- * $111; video credits 990 / 2,325 / 3,660; 11 / 31 / 61 standard
- * 15-min videos; per-minute rates 6 / 5 / 4; Agency badged Best
- * value; the annual −20% toggle — and the pricing-integrity
- * rule: no strikethrough reference price renders while no
- * genuine reference price is configured. The figures mirror the
- * backend billing catalogue (services/billing/catalogue.py).
+ * 2026-11-26 ~10:25 WAT; presentation per the pricing page
+ * correction, founder directive 2026-11-26 21:48 WAT):
+ * Creator $28 / Studio $63 / Agency $111; video credits
+ * 990 / 2,325 / 3,660 covering 11 / 31 / 61 standard 15-min
+ * videos; Agency badged Best value; the annual −20% toggle.
+ * The correction requires: clean cards only — NO plan
+ * comparison table anywhere, no per-minute rates or credit
+ * mathematics — and a crossed-out GENUINE previous price
+ * ($29 / $79 / $179, the pre-restructure prices) beside each
+ * current price. The figures mirror the backend billing
+ * catalogue (services/billing/catalogue.py).
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
@@ -18,40 +22,36 @@ describe("LandingPricing", () => {
     expect(screen.getByText("$28")).toBeTruthy();
     expect(screen.getByText("$63")).toBeTruthy();
     expect(screen.getByText("$111")).toBeTruthy();
-    expect(screen.getByText("990 video credits / month")).toBeTruthy();
-    expect(screen.getByText("2,325 video credits / month")).toBeTruthy();
-    expect(screen.getByText("3,660 video credits / month")).toBeTruthy();
-    expect(screen.getByText("11 standard 15-min documentaries / month")).toBeTruthy();
-    expect(screen.getByText("31 standard 15-min documentaries / month")).toBeTruthy();
-    expect(screen.getByText("61 standard 15-min documentaries / month")).toBeTruthy();
-  });
-
-  it("shows per-minute rates, the 15-min cost and price per video", () => {
-    render(<LandingPricing />);
-    expect(screen.getByText("6 credits per finished minute")).toBeTruthy();
-    expect(screen.getByText("5 credits per finished minute")).toBeTruthy();
-    expect(screen.getByText("4 credits per finished minute")).toBeTruthy();
-    expect(screen.getByText(/90 credits · ≈\$2\.55 per video/)).toBeTruthy();
-    expect(screen.getByText(/75 credits · ≈\$2\.03 per video/)).toBeTruthy();
-    expect(screen.getByText(/60 credits · ≈\$1\.82 per video/)).toBeTruthy();
+    expect(
+      screen.getByText("990 video credits / month — 11 documentaries at 15 minutes each"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("2,325 video credits / month — 31 documentaries at 15 minutes each"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("3,660 video credits / month — 61 documentaries at 15 minutes each"),
+    ).toBeTruthy();
     expect(screen.getByText("11 AI scripts & 11 AI thumbnails included")).toBeTruthy();
     expect(screen.getByText("31 AI scripts & 31 AI thumbnails included")).toBeTruthy();
     expect(screen.getByText("61 AI scripts & 61 AI thumbnails included")).toBeTruthy();
   });
 
-  it("comparison table carries every required row", () => {
-    render(<LandingPricing />);
-    for (const label of [
-      "Price",
-      "Video credits",
-      "Standard 15-min videos",
-      "Price per video",
-      "AI scripts included",
-      "AI thumbnails included",
-      "Credits per finished minute",
-    ]) {
-      expect(screen.getByText(label)).toBeTruthy();
-    }
+  it("shows the approximate price per finished video and nothing more mathematical", () => {
+    const { container } = render(<LandingPricing />);
+    expect(screen.getByText("≈ $2.55 per finished video")).toBeTruthy();
+    expect(screen.getByText("≈ $2.03 per finished video")).toBeTruthy();
+    expect(screen.getByText("≈ $1.82 per finished video")).toBeTruthy();
+    // No credit-conversion mathematics on the page.
+    expect(container.textContent).not.toMatch(/credits per finished minute/);
+    expect(container.textContent).not.toMatch(/15-min documentary: \d+ credits/);
+  });
+
+  it("has no plan comparison table or duplicate comparison block", () => {
+    const { container } = render(<LandingPricing />);
+    expect(container.querySelectorAll("table").length).toBe(0);
+    expect(screen.queryByText("Plan comparison")).toBeNull();
+    expect(screen.queryByText("Standard 15-min videos")).toBeNull();
+    expect(screen.queryByText("Credits per finished minute")).toBeNull();
   });
 
   it("badges Agency as best value only", () => {
@@ -63,17 +63,31 @@ describe("LandingPricing", () => {
     expect(highlighted[0].textContent).toContain("Agency");
   });
 
-  it("renders no strikethrough reference price while unconfigured", () => {
+  it("crosses out the genuine previous prices beside the current ones", () => {
     const { container } = render(<LandingPricing />);
-    expect(container.querySelectorAll(".price-reference").length).toBe(0);
-    expect(container.querySelectorAll("s").length).toBe(0);
+    const struck = Array.from(container.querySelectorAll("s.price-reference")).map(
+      (node) => node.textContent,
+    );
+    expect(struck).toEqual(["$29", "$79", "$179"]);
+    // Real line-through styling, no tilde characters anywhere.
+    expect(container.textContent).not.toContain("~");
   });
 
-  it("annual toggle shows the −20% per-month prices", () => {
-    render(<LandingPricing />);
+  it("annual toggle shows the −20% prices with the previous annual prices struck", () => {
+    const { container } = render(<LandingPricing />);
     fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
     expect(screen.getByText("$22.40")).toBeTruthy();
     expect(screen.getByText("$50.40")).toBeTruthy();
     expect(screen.getByText("$88.80")).toBeTruthy();
+    const struck = Array.from(container.querySelectorAll("s.price-reference")).map(
+      (node) => node.textContent,
+    );
+    expect(struck).toEqual(["$23.20", "$63.20", "$143.20"]);
+  });
+
+  it("carries the Everything-in lines for the upgrade path", () => {
+    render(<LandingPricing />);
+    expect(screen.getByText("Everything in Creator")).toBeTruthy();
+    expect(screen.getByText("Everything in Studio")).toBeTruthy();
   });
 });

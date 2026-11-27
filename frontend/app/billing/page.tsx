@@ -1,15 +1,17 @@
 "use client";
 
 /**
- * Billing & credits (Phase 8 MON, directive §14).
- *
- * Everything on this page is the server's own record: plan,
- * subscription state, period allowances, the three credit
- * buckets, the immutable ledger and verified payments. Checkout
- * runs through the configured payment provider (Paddle); when
- * the provider is not configured the page says so plainly and
- * offers no purchase buttons — benefits are only ever granted
- * by the provider's verified webhook, never by this page.
+ * Billing & credits (founder structure, Master Product
+ * Redesign directive §3, 2026-11-26). This page shows the
+ * account's own record only — current plan, the credit
+ * buckets, plan allowances, the ledger and verified
+ * payments — in the founder's dictated section order. It
+ * displays NO prices: plan prices live on the pricing page,
+ * and checkout runs through the configured payment provider
+ * (Paddle); when the provider is not configured the page
+ * says so plainly and offers no purchase actions. Benefits
+ * are only ever granted by the provider's verified webhook,
+ * never by this page.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -21,16 +23,13 @@ import {
   getBillingPayments,
   getBillingSummary,
   getBillingTransactions,
-  getNotifications,
-  markNotificationRead,
   startSubscriptionCheckout,
   startTopupCheckout,
   type BillingPayment,
   type BillingSummary,
   type LedgerEntry,
-  type UserNotification,
 } from "@/lib/api";
-import { Bell, Check, CreditCard, Wallet } from "lucide-react";
+import { Check, CreditCard, Wallet } from "lucide-react";
 
 type PaddleWindow = Window & {
   Paddle?: {
@@ -57,7 +56,6 @@ export default function BillingPage() {
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [payments, setPayments] = useState<BillingPayment[]>([]);
-  const [notifications, setNotifications] = useState<UserNotification[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -66,19 +64,14 @@ export default function BillingPage() {
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [sum, tx, pay, notes] = await Promise.all([
+      const [sum, tx, pay] = await Promise.all([
         getBillingSummary(signal),
         getBillingTransactions(signal).catch(() => ({ entries: [] })),
         getBillingPayments(signal).catch(() => ({ payments: [] })),
-        getNotifications(signal).catch(() => ({
-          notifications: [],
-          unread_count: 0,
-        })),
       ]);
       setSummary(sum);
       setEntries(tx.entries);
       setPayments(pay.payments);
-      setNotifications(notes.notifications);
     } catch (cause) {
       if (!signal?.aborted) setError(cause);
     }
@@ -181,13 +174,6 @@ export default function BillingPage() {
     }
   };
 
-  const readNotification = async (id: string) => {
-    await markNotificationRead(id).catch(() => undefined);
-    setNotifications((current) =>
-      current.map((n) => (n.id === id ? { ...n, read_at: new Date().toISOString() } : n)),
-    );
-  };
-
   if (error) {
     return (
       <main className="app-page">
@@ -210,6 +196,10 @@ export default function BillingPage() {
   const sub = summary.subscription;
   const period = summary.period;
   const wallet = summary.wallet;
+  const reservedTotal =
+    wallet.subscription.reserved +
+    wallet.purchased.reserved +
+    wallet.promo.reserved;
 
   return (
     <main className="app-page billing-page">
@@ -284,6 +274,20 @@ export default function BillingPage() {
               </div>
             </div>
           )}
+          {sub && !sub.cancel_at_period_end && (
+            <button
+              type="button"
+              className="button button-quiet"
+              onClick={() => void cancel()}
+              disabled={busy !== null}
+            >
+              {busy === "cancel" ? "Scheduling…" : "Cancel subscription"}
+            </button>
+          )}
+        </div>
+
+        <div className="panel">
+          <h2 className="admin-section-title">Credits</h2>
           <div className="billing-allowances">
             <div>
               <span>Subscription credits</span>
@@ -304,21 +308,9 @@ export default function BillingPage() {
             </div>
             <div>
               <span>Reserved for running generations</span>
-              <strong>
-                {wallet.subscription.reserved + wallet.purchased.reserved + wallet.promo.reserved}
-              </strong>
+              <strong>{reservedTotal}</strong>
             </div>
           </div>
-          {sub && !sub.cancel_at_period_end && (
-            <button
-              type="button"
-              className="button button-quiet"
-              onClick={() => void cancel()}
-              disabled={busy !== null}
-            >
-              {busy === "cancel" ? "Scheduling…" : "Cancel subscription"}
-            </button>
-          )}
         </div>
 
         <div className="panel">
@@ -341,55 +333,17 @@ export default function BillingPage() {
           </div>
           <div className="billing-plans">
             {summary.available_plans.map((candidate) => {
-              const cents =
-                interval === "annual"
-                  ? candidate.price_annual_cents
-                  : candidate.price_monthly_cents;
               const isCurrent = plan?.id === candidate.id;
-              // Reference (strikethrough) price: rendered only when
-              // a genuine reference price is configured on the plan
-              // record by a super-admin (Admin → Subscriptions →
-              // Monetization) and exceeds the selling price. Unset
-              // by default — nothing is pre-filled.
-              const referenceRaw =
-                interval === "annual"
-                  ? candidate.features?.reference_price_annual_cents
-                  : candidate.features?.reference_price_monthly_cents;
-              const referenceCents =
-                typeof referenceRaw === "number" &&
-                cents !== null &&
-                referenceRaw > cents
-                  ? referenceRaw
-                  : null;
               return (
                 <article key={candidate.id} className="billing-plan-card">
                   <h3>{candidate.display_name || candidate.name}</h3>
-                  <p className="billing-price">
-                    {referenceCents !== null && (
-                      <s className="price-reference">
-                        {money(referenceCents, candidate.currency)}
-                      </s>
-                    )}
-                    {money(cents, candidate.currency)}
-                    <span>{interval === "annual" ? " / year" : " / month"}</span>
-                  </p>
                   <ul>
                     <li>
                       <Check size={13} aria-hidden /> {candidate.monthly_credits} video credits monthly
                     </li>
-                    {candidate.generation_credits_per_minute !== null && (
-                      <li>
-                        <Check size={13} aria-hidden /> {candidate.generation_credits_per_minute} credits
-                        per finished minute · 15-min documentary{" "}
-                        {candidate.standard_generation_credits} credits
-                      </li>
-                    )}
                     <li>
                       <Check size={13} aria-hidden /> {candidate.included_generations} standard
                       15-minute documentaries / month
-                      {candidate.effective_cost_per_standard_video_cents !== null
-                        ? ` (≈${money(candidate.effective_cost_per_standard_video_cents, candidate.currency)} per video)`
-                        : ""}
                     </li>
                     <li>
                       <Check size={13} aria-hidden /> {candidate.script_allowance} AI scripts ·{" "}
@@ -417,21 +371,30 @@ export default function BillingPage() {
               );
             })}
           </div>
-          <p className="billing-footnote">
-            Generations are charged for the finished minutes you
-            actually receive, at your plan&apos;s per-minute rate —
-            never for internal steps, and never for undelivered
-            duration. Each delivered video also counts as one
-            toward your plan&apos;s monthly documentary count,
-            whatever its length. Script and thumbnail allowances
-            are tracked separately and never use video credits;
-            beyond them, a script costs{" "}
-            {summary.credit_pricing.script_operations.draft ?? 3} credits
-            and a thumbnail{" "}
-            {summary.credit_pricing.thumbnail_operations.compose ?? 5} credits.
-            Failed generations are always fully restored — credits
-            and the monthly count.
-          </p>
+          <div className="billing-footnote">
+            <p>
+              Generations are charged for the finished minutes you
+              actually receive, at your plan&apos;s per-minute rate —
+              never for internal steps, and never for undelivered
+              duration.
+            </p>
+            <p>
+              Each delivered video also counts as one toward your
+              plan&apos;s monthly documentary count, whatever its
+              length.
+            </p>
+            <p>
+              Script and thumbnail allowances are tracked separately
+              and never use video credits; beyond them, a script costs{" "}
+              {summary.credit_pricing.script_operations.draft ?? 3} credits
+              and a thumbnail{" "}
+              {summary.credit_pricing.thumbnail_operations.compose ?? 5} credits.
+            </p>
+            <p>
+              Failed generations are always fully restored — credits
+              and the monthly count.
+            </p>
+          </div>
         </div>
 
         <div className="panel">
@@ -440,9 +403,6 @@ export default function BillingPage() {
             {summary.topup_packages.map((pack) => (
               <article key={pack.id} className="billing-plan-card">
                 <h3>{pack.name}</h3>
-                <p className="billing-price">
-                  {money(pack.price_cents, pack.currency)}
-                </p>
                 <p>{pack.credits} credits · valid 12 months</p>
                 <button
                   type="button"
@@ -456,34 +416,6 @@ export default function BillingPage() {
             ))}
           </div>
         </div>
-
-        {notifications.length > 0 && (
-          <div className="panel">
-            <h2 className="admin-section-title">
-              <Bell size={16} strokeWidth={2} aria-hidden /> Notifications
-            </h2>
-            <ul className="billing-notifications">
-              {notifications.map((note) => (
-                <li key={note.id} className={note.read_at ? "" : "unread"}>
-                  <div>
-                    <strong>{note.title}</strong>
-                    {note.body && <p>{note.body}</p>}
-                    <span>{dateTime(note.created_at)}</span>
-                  </div>
-                  {!note.read_at && (
-                    <button
-                      type="button"
-                      className="button button-quiet"
-                      onClick={() => void readNotification(note.id)}
-                    >
-                      Mark read
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
 
         <div className="panel">
           <h2 className="admin-section-title">Credit history</h2>

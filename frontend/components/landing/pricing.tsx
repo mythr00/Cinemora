@@ -6,44 +6,45 @@ import { ArrowUpRight, Check } from "lucide-react";
 
 /**
  * Landing pricing (pricing restructure, founder directive
- * 2026-11-26 ~10:25 WAT — supersedes the same morning's earlier
- * figures). Creator $28, Studio $63, Agency $111 per month;
- * video credits 990 / 2,325 / 3,660; per-finished-minute rates
- * 6 / 5 / 4 credits, so a standard 15-minute documentary costs
- * 90 / 75 / 60 credits and each plan's credits exactly cover
- * its included 11 / 31 / 61 standard documentaries. Script and
- * thumbnail allowances (11 / 31 / 61 each) are tracked
- * separately from the video credits. Annual billing is 20%
- * less, charged upfront, with credits still distributed
- * monthly. There is no free plan. Every plan runs the same
- * production engine and quality — plans differ in allowances,
- * rates, concurrency, priority and collaboration only. These
- * figures mirror the backend billing catalogue
- * (services/billing/catalogue.py) and are pinned against it by
- * tests/components/landing-pricing.test.tsx.
+ * 2026-11-26 ~10:25 WAT; presentation per the pricing page
+ * correction, founder directive 2026-11-26 21:48 WAT).
+ * Creator $28, Studio $63, Agency $111 per month; video
+ * credits 990 / 2,325 / 3,660; each plan's credits cover its
+ * included 11 / 31 / 61 standard 15-minute documentaries, and
+ * script and thumbnail allowances (11 / 31 / 61 each) are
+ * tracked separately from the video credits. Annual billing
+ * is 20% less, charged upfront, with credits still
+ * distributed monthly. There is no free plan. Every plan runs
+ * the same production engine and quality — plans differ in
+ * allowances, concurrency, priority and collaboration only.
+ * These figures mirror the backend billing catalogue
+ * (services/billing/catalogue.py) and are pinned against it
+ * by tests/components/landing-pricing.test.tsx.
  *
- * Reference (strikethrough) prices: `referenceMonthly` /
- * `referenceAnnualPerMonth` render only when set, and they are
- * deliberately UNSET. A value may be entered here only when it
- * mirrors a genuine reference price approved by the founder and
- * recorded in the admin plan configuration (the billing page
- * reads the same convention from the plan record's
- * features.reference_price_*_cents).
+ * Crossed-out prices are the genuine previous plan prices —
+ * $29 / $79 / $179 per month before the 2026-11-26
+ * restructure (annual equivalents at the same −20% annual
+ * structure) — never invented reference figures.
+ *
+ * There is deliberately NO plan comparison table and no
+ * per-minute rate or credit-conversion mathematics on this
+ * page (founder correction, 2026-11-26): customers see what a
+ * plan costs, what they receive each month, and what they
+ * can create.
  */
 
 type Plan = {
   name: string;
   monthly: number;
   annualPerMonth: string;
-  referenceMonthly?: number;
-  referenceAnnualPerMonth?: string;
+  referenceMonthly: number;
+  referenceAnnualPerMonth: string;
   bestValue?: boolean;
   blurb: string;
   credits: string;
-  documentaries: string;
-  rate: string;
-  standardCost: string;
+  perVideo: string;
   operations: string;
+  everythingIn?: string;
   extras: string[];
 };
 
@@ -52,11 +53,11 @@ const PLANS: Plan[] = [
     name: "Creator",
     monthly: 28,
     annualPerMonth: "22.40",
+    referenceMonthly: 29,
+    referenceAnnualPerMonth: "23.20",
     blurb: "For a channel getting moving — a few documentaries a month, produced properly.",
-    credits: "990 video credits / month",
-    documentaries: "11 standard 15-min documentaries / month",
-    rate: "6 credits per finished minute",
-    standardCost: "15-min documentary: 90 credits · ≈$2.55 per video",
+    credits: "990 video credits / month — 11 documentaries at 15 minutes each",
+    perVideo: "≈ $2.55 per finished video",
     operations: "11 AI scripts & 11 AI thumbnails included",
     extras: ["1 production at a time"],
   },
@@ -64,37 +65,29 @@ const PLANS: Plan[] = [
     name: "Studio",
     monthly: 63,
     annualPerMonth: "50.40",
-    blurb: "For regular publishers who need a steady rhythm of finished films.",
-    credits: "2,325 video credits / month",
-    documentaries: "31 standard 15-min documentaries / month",
-    rate: "5 credits per finished minute",
-    standardCost: "15-min documentary: 75 credits · ≈$2.03 per video",
+    referenceMonthly: 79,
+    referenceAnnualPerMonth: "63.20",
+    blurb: "A steady upload rhythm — the pace that grows channels.",
+    credits: "2,325 video credits / month — 31 documentaries at 15 minutes each",
+    perVideo: "≈ $2.03 per finished video",
     operations: "31 AI scripts & 31 AI thumbnails included",
+    everythingIn: "Creator",
     extras: ["Higher concurrency", "Priority rendering queue"],
   },
   {
     name: "Agency",
     monthly: 111,
     annualPerMonth: "88.80",
+    referenceMonthly: 179,
+    referenceAnnualPerMonth: "143.20",
     bestValue: true,
     blurb: "For teams and networks producing across several channels at once.",
-    credits: "3,660 video credits / month",
-    documentaries: "61 standard 15-min documentaries / month",
-    rate: "4 credits per finished minute",
-    standardCost: "15-min documentary: 60 credits · ≈$1.82 per video",
+    credits: "3,660 video credits / month — 61 documentaries at 15 minutes each",
+    perVideo: "≈ $1.82 per finished video",
     operations: "61 AI scripts & 61 AI thumbnails included",
+    everythingIn: "Studio",
     extras: ["Highest concurrency & priority", "Team workspace & collaboration"],
   },
-];
-
-const COMPARE_ROWS: { label: string; values: string[] }[] = [
-  { label: "Price", values: ["$28 / month", "$63 / month", "$111 / month"] },
-  { label: "Video credits", values: ["990 / month", "2,325 / month", "3,660 / month"] },
-  { label: "Standard 15-min videos", values: ["11 / month", "31 / month", "61 / month"] },
-  { label: "Price per video", values: ["≈$2.55", "≈$2.03", "≈$1.82"] },
-  { label: "AI scripts included", values: ["11 / month", "31 / month", "61 / month"] },
-  { label: "AI thumbnails included", values: ["11 / month", "31 / month", "61 / month"] },
-  { label: "Credits per finished minute", values: ["6", "5", "4"] },
 ];
 
 const SHARED = [
@@ -119,52 +112,26 @@ export function LandingPricing() {
             {plan.bestValue && <span className="price-badge">Best value</span>}
             <h3>{plan.name}</h3>
             <p className="price-value">
-              {annual
-                ? plan.referenceAnnualPerMonth
-                  ? <s className="price-reference">${plan.referenceAnnualPerMonth}</s>
-                  : null
-                : plan.referenceMonthly
-                  ? <s className="price-reference">${plan.referenceMonthly}</s>
-                  : null}
+              <s className="price-reference">${annual ? plan.referenceAnnualPerMonth : plan.referenceMonthly}</s>
               <strong>${annual ? plan.annualPerMonth : plan.monthly}</strong>
               <span> / month{annual ? ", billed annually" : ""}</span>
             </p>
+            <p className="price-per-video">{plan.perVideo}</p>
             <p className="price-blurb">{plan.blurb}</p>
             <ul className="price-list">
               <li><Check size={14} strokeWidth={2.4} aria-hidden /> {plan.credits}</li>
-              <li><Check size={14} strokeWidth={2.4} aria-hidden /> {plan.documentaries}</li>
-              <li><Check size={14} strokeWidth={2.4} aria-hidden /> {plan.rate}</li>
-              <li><Check size={14} strokeWidth={2.4} aria-hidden /> {plan.standardCost}</li>
               <li><Check size={14} strokeWidth={2.4} aria-hidden /> {plan.operations}</li>
               {plan.extras.map((extra) => (
                 <li key={extra}><Check size={14} strokeWidth={2.4} aria-hidden /> {extra}</li>
               ))}
             </ul>
+            {plan.everythingIn && (
+              <p className="price-everything">Everything in {plan.everythingIn}</p>
+            )}
             <Link className="button button-primary price-cta" href="/register">Create account <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link>
           </article>
         ))}
       </div>
-      <table className="pricing-compare">
-        <caption>Plan comparison</caption>
-        <thead>
-          <tr>
-            <th scope="col" aria-label="Feature"></th>
-            {PLANS.map((plan) => (
-              <th scope="col" key={plan.name}>{plan.name}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {COMPARE_ROWS.map((row) => (
-            <tr key={row.label}>
-              <th scope="row">{row.label}</th>
-              {row.values.map((value, i) => (
-                <td key={i}>{value}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
       <ul className="pricing-shared">
         {SHARED.map((item) => (
           <li key={item}><Check size={14} strokeWidth={2.4} aria-hidden /> {item}</li>
@@ -172,11 +139,11 @@ export function LandingPricing() {
       </ul>
       <p className="pricing-footnote">
         Prices in USD. You are charged for the minutes of finished video you actually
-        receive, at your plan&apos;s per-minute rate — failed generations are always fully
-        refunded. Script and thumbnail allowances are separate from video credits.
-        Annual plans are charged upfront for the year; credits are still distributed
-        monthly. Need more mid-month? Top-up credits are available in the app and stay
-        valid for 12 months. No free plan — every plan is the full studio.
+        receive — failed generations are always fully refunded. Script and thumbnail
+        allowances are separate from video credits. Annual plans are charged upfront
+        for the year; credits are still distributed monthly. Need more mid-month?
+        Top-up credits are available in the app and stay valid for 12 months.
+        No free plan — every plan is the full studio.
       </p>
     </div>
   );

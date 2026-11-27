@@ -2687,17 +2687,12 @@ body { min-height: 100dvh; }
 .billing-plan-card h3 { margin: 0; }
 .billing-plan-card ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; flex: 1; }
 .billing-plan-card li { display: flex; gap: 6px; align-items: baseline; font-size: 13.5px; }
-.billing-price { font-size: 30px; font-weight: 700; margin: 0; }
-.billing-price span { font-size: 13px; font-weight: 400; color: var(--ink-muted); }
-.billing-price .price-reference, .price-value .price-reference {
+.price-value .price-reference {
   font-size: 17px; font-weight: 600; color: var(--muted);
   text-decoration: line-through; margin-right: 10px;
 }
-.billing-footnote { color: var(--ink-muted); font-size: 13px; margin-top: 16px; }
-.billing-notifications { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.billing-notifications li { display: flex; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: var(--card-radius-sm); padding: 14px 18px; }
-.billing-notifications li.unread { border-color: var(--accent); }
-.billing-notifications p { margin: 2px 0; }
+.billing-footnote { color: var(--ink-muted); font-size: 13px; margin-top: 16px; display: grid; gap: 8px; }
+.billing-footnote p { margin: 0; }
 .billing-notifications span { color: var(--ink-muted); font-size: 12px; }
 .retention-warning { border: 2px solid var(--danger); border-radius: var(--card-radius-sm); padding: 22px; margin: 18px 0; }
 .retention-warning h3 { margin: 0 0 6px; color: var(--danger-deep); font-size: 17px; letter-spacing: 0.01em; }
@@ -2985,7 +2980,7 @@ body { min-height: 100dvh; }
 .price-value strong { font-size: 44px; font-weight: 650; letter-spacing: -0.03em; }
 .price-value span { color: var(--muted); font-size: 13px; }
 .price-blurb { margin: 12px 0 0; color: var(--muted); font-size: 14px; line-height: 1.65; }
-.price-list { display: grid; gap: 12px; margin: 22px 0 26px; padding: 0; list-style: none; }
+.price-list { display: grid; gap: 12px; margin: 22px 0 26px; padding: 0; list-style: none; flex: 1; align-content: start; }
 .price-list li { display: flex; align-items: flex-start; gap: 8px; color: var(--ink-soft); font-size: 13.5px; line-height: 1.5; }
 .price-list svg { flex: 0 0 auto; margin-top: 2px; color: var(--positive); }
 .price-cta { margin-top: auto; }
@@ -2997,12 +2992,8 @@ body { min-height: 100dvh; }
 .pricing-shared li { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: 13px; }
 .pricing-shared svg { color: var(--positive); }
 .pricing-footnote { max-width: 760px; margin: 16px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
-.pricing-compare { width: 100%; margin: 40px 0 0; border-collapse: collapse; font-size: 14px; }
-.pricing-compare caption { text-align: left; color: var(--ink-strong); font-size: 16px; font-weight: 650; padding: 0 0 12px; }
-.pricing-compare th, .pricing-compare td { padding: 10px 14px; border-top: 1px solid var(--line-soft); text-align: left; }
-.pricing-compare thead th { border-top: 0; color: var(--ink-strong); font-weight: 650; }
-.pricing-compare tbody th { color: var(--muted); font-weight: 550; }
-.pricing-compare td { color: var(--ink-soft); }
+.price-per-video { margin: 6px 0 0; color: var(--ink-soft); font-size: 14px; font-weight: 600; }
+.price-everything { margin: 0 0 16px; color: var(--muted); font-size: 13px; font-weight: 600; }
 
 /* ---------- Landing redesign responsive steps ---------- */
 @media (max-width: 1020px) {
