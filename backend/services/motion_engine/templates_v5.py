@@ -662,6 +662,17 @@ def relationship_network(data, style, out_path, duration=5.0,
 # relative position or an order. Renders node markers at the
 # parts' positions with leader lines to measured label boxes.
 #
+# Phase 9 final fix (2026-11-27): the item-13 inspection found
+# the callouts floating over an empty themed background — the
+# anchors labelled no visible subject. Each recorded part is
+# now DRAWN as a schematic block (a tinted plate) at its
+# recorded position / order slot, and the callout anchors to
+# that visible block. The block is presentation only — the
+# same discipline the position comment below already states:
+# the parts, their positions and their order are the record;
+# no part, geometry or scale is invented, and no new contract
+# field was needed (positions/order were already recorded).
+#
 # Decision (recorded): the existing ``molecular_diagram``
 # scenario contract was assessed first, per the work item. Its
 # contract is chemistry-specific — atoms keyed by ELEMENT symbol
@@ -732,15 +743,28 @@ def labelled_diagram(data, style, out_path, duration=5.0,
              area[1] + cell_h * (i // cols + 0.5))
             for i in range(len(parts))
         ]
-    # Label boxes: beside each node, leader line from node to
-    # box. Placement searches the node's free side first, then
-    # the other side, then vertical offsets — the first
-    # non-colliding placement wins. Name + description are
-    # measured with label_fit BEFORE any frame is drawn; a part
-    # whose label fits nowhere refuses the graphic.
+    # Subject blocks (Phase 9 final fix): one drawn schematic
+    # plate per recorded part, centred on the part's position
+    # and clamped into the diagram area. Label placement below
+    # treats the blocks as obstacles, so a callout never covers
+    # the part it — or another callout — labels.
+    block_w, block_h = 168, 92
+    blocks = []
+    for cx, cy in centres:
+        bx0 = min(max(cx - block_w / 2, area[0]), area[2] - block_w)
+        by0 = min(max(cy - block_h / 2, area[1]), area[3] - block_h)
+        blocks.append((bx0, by0, bx0 + block_w, by0 + block_h))
+    # Label boxes: beside each part's block, leader line from
+    # the anchor to box. Placement searches the part's free
+    # side first, then the other side, then vertical offsets —
+    # the first placement colliding with no label box and no
+    # subject block wins. Name + description are measured with
+    # label_fit BEFORE any frame is drawn; a part whose label
+    # fits nowhere refuses the graphic.
     from services.motion_engine.label_fit import boxes_overlap
 
     box_w = 400
+    label_gap = block_w / 2 + 16
     layout = []
     label_specs = []
     placed_boxes = []
@@ -772,7 +796,8 @@ def labelled_diagram(data, style, out_path, duration=5.0,
         box = None
         for side in sides:
             for dy in (0, box_h + 18, -(box_h + 18)):
-                cand_x = cx + 44 if side > 0 else cx - 44 - box_w
+                cand_x = (cx + label_gap if side > 0
+                          else cx - label_gap - box_w)
                 if cand_x < area[0] or cand_x + box_w > area[2]:
                     continue
                 cand_y = min(
@@ -783,6 +808,11 @@ def labelled_diagram(data, style, out_path, duration=5.0,
                 if any(
                     boxes_overlap(candidate, other)
                     for other in placed_boxes
+                ):
+                    continue
+                if any(
+                    boxes_overlap(candidate, block)
+                    for block in blocks
                 ):
                     continue
                 box = candidate
@@ -797,7 +827,7 @@ def labelled_diagram(data, style, out_path, duration=5.0,
             }
         placed_boxes.append(box)
         layout.append({
-            "cx": cx, "cy": cy, "box": box,
+            "cx": cx, "cy": cy, "box": box, "block": blocks[i],
             "name_lines": name_lines, "desc_lines": desc_lines,
         })
         label_specs.append({
@@ -827,6 +857,32 @@ def labelled_diagram(data, style, out_path, duration=5.0,
             tw = d.textlength(title.upper(), font=fonts["title"])
             d.text(((WIDTH - tw) / 2, 84), title.upper(),
                    font=fonts["title"], fill=tokens["text"] + (255,))
+        # The subject (Phase 9 final fix): every recorded part
+        # drawn as a schematic block at its recorded position,
+        # revealed with its anchor. The callouts below label
+        # THESE blocks — a label with no visible part under its
+        # anchor is the item-13 defect this fixes.
+        for i, item in enumerate(layout):
+            local = ease_out(clamp01(progress * 2.0 - i * 0.12))
+            if local <= 0:
+                continue
+            bx0, by0, bx1, by1 = item["block"]
+            bcx, bcy = (bx0 + bx1) / 2, (by0 + by1) / 2
+            hw = (bx1 - bx0) / 2 * local
+            hh = (by1 - by0) / 2 * local
+            d.rounded_rectangle(
+                [bcx - hw, bcy - hh, bcx + hw, bcy + hh],
+                radius=14, fill=tokens["accent"] + (44,),
+                outline=tokens["accent"] + (255,), width=3)
+            # An inner plate line so the block reads as a drawn
+            # part of a schematic, not a plain card.
+            if local > 0.6:
+                inset = 10
+                d.rounded_rectangle(
+                    [bx0 + inset, by0 + inset,
+                     bx1 - inset, by1 - inset],
+                    radius=9,
+                    outline=tokens["accent2"] + (170,), width=2)
         # Reading-order connectors between consecutive parts
         # (the contract records the order; the line is that
         # order drawn, nothing more).
@@ -844,13 +900,8 @@ def labelled_diagram(data, style, out_path, duration=5.0,
             if local <= 0:
                 continue
             cx, cy = item["cx"], item["cy"]
-            radius = 17 * local
-            d.ellipse(
-                [cx - radius, cy - radius, cx + radius, cy + radius],
-                fill=tokens["accent"] + (255,),
-                outline=(255, 255, 255, 220), width=2)
             box = item["box"]
-            # Leader line from the node to its label box.
+            # Leader line from the part's anchor to its label box.
             anchor_x = box[0] if box[0] >= cx else box[2]
             d.line([cx, cy, anchor_x, (box[1] + box[3]) / 2],
                    fill=tokens["accent2"] + (200,), width=2)
@@ -870,6 +921,13 @@ def labelled_diagram(data, style, out_path, duration=5.0,
                        line, font=fonts["desc"],
                        fill=tokens["muted"] + (255,))
                 ly += 28
+            # The anchor dot sits ON the part's block, drawn last
+            # so it stays visible at the block's centre.
+            radius = 17 * local
+            d.ellipse(
+                [cx - radius, cy - radius, cx + radius, cy + radius],
+                fill=tokens["accent"] + (255,),
+                outline=(255, 255, 255, 220), width=2)
         _footer(d, tokens)
         return canvas.composite()
 
@@ -878,6 +936,7 @@ def labelled_diagram(data, style, out_path, duration=5.0,
         "labelled_diagram", style_name, duration,
         sentence_index, scene_number,
         {"parts": len(parts), "title": bool(title),
+         "subject_blocks": True,
          "positions": "recorded" if recorded_positions else "ordered_grid"})
 
 
