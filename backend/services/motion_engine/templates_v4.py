@@ -699,7 +699,7 @@ def heatmap(data, style, out_path, duration=5.0, sentence_index=None, scene_numb
     title = _clean(data.get("title"))
     weight_label = _clean(data.get("weight_label"))
     # Optional recorded region outlines for geographic context —
-    # the same dataset contract as territory_map.
+    # the geography dataset's contract.
     outlines = []
     region_names = [
         r.get("country") or r.get("name")

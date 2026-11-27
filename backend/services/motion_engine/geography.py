@@ -11,7 +11,10 @@ offers:
 - a Projection that fits one or more countries' lon/lat bounding
   box into a normalised canvas rect, preserving aspect ratio with
   a cos(mean-latitude) correction so shapes are not stretched,
-- normalised outline rings for the territory_map template,
+- normalised outline rings for map-style templates (the
+  territory_map renderer was removed by the P0 ruling,
+  2026-11-27; this dataset survives for the surviving
+  territory_expansion / heatmap templates and the rebuild),
 - IA-14 regional framing: when a map's labelled places cluster in
   a small fraction of the country bbox, regional_projection frames
   on the places' (padded) bbox instead of the whole country.
@@ -28,9 +31,9 @@ from pathlib import Path
 _DATA_PATH = Path(__file__).resolve().parent / "data" / "countries.geojson"
 
 # Default normalised canvas rect (x0, y0, x1, y1) a fitted outline
-# occupies — margins keep labels and glow off the frame edges. The
-# territory_map template and any caller projecting routes/markers
-# for the same map MUST share this rect to stay consistent.
+# occupies — margins keep labels and glow off the frame edges. Any
+# caller projecting routes/markers for a map MUST share this rect
+# to stay consistent.
 DEFAULT_RECT = (0.05, 0.07, 0.95, 0.96)
 
 # Display-name aliases -> dataset names. Geography lookup only;

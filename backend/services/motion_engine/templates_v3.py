@@ -15,8 +15,9 @@ Families:
                    the graphics pipeline; the templates refuse
                    without numeric data.
   F4 investigation — newspaper_montage, profile_reveal
-                   (red_string_board and the document unlock live
-                   with their base templates in v1).
+                   (the document unlock lives with its base
+                   template in v1; red_string_board was removed
+                   by the P0 ruling, 2026-11-27).
   F6/F7 text     — archival_title, text_overlay, text_highlight.
   F8 photo       — photo_parallax lived here; REMOVED completely
                    by the founder's P0 ruling (2026-11-27). A beat
