@@ -1000,7 +1000,41 @@ export type VoiceCatalogueEntry = {
   language?: string;
   region?: string;
   gender?: string;
+  /** The voice's given name (e.g. "George") — user-facing
+   * labels are composed from region + name + gender, never
+   * from the internal id. */
+  name?: string;
 };
+
+/**
+ * The user-facing name of a narration voice, composed from
+ * its catalogue facts: "English (UK) — George (male)".
+ * Internal voice ids and engine names are never display
+ * names (founder directive, 2026-11-26 §G). When a catalogue
+ * row predates the name field, the given name is derived
+ * from the id's name segment so the label stays natural.
+ */
+export function voiceDisplayName(voice: {
+  id?: string;
+  name?: string;
+  region?: string;
+  gender?: string;
+}): string {
+  const given =
+    voice.name ||
+    (voice.id ? voice.id.slice(3).replace(/_/g, " ") : "");
+  const givenName = given
+    ? given.charAt(0).toUpperCase() + given.slice(1)
+    : "";
+  const parts: string[] = [];
+  if (voice.region) parts.push(voice.region);
+  if (givenName) {
+    parts.push(
+      voice.gender ? `${givenName} (${voice.gender})` : givenName,
+    );
+  }
+  return parts.join(" — ") || voice.id || "Voice";
+}
 
 export function getGenreCatalogue(signal?: AbortSignal) {
   return apiRequest<{ genres: GenreCatalogueEntry[] }>("/api/v1/catalogues/genres", { signal });
@@ -5299,6 +5333,7 @@ export type ConfigCatalogue = {
       language?: string;
       region?: string;
       gender?: string;
+      name?: string;
     }>;
     note: string;
   };

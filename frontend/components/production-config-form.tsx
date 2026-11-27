@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { ChevronDown, Music, Plus, Trash2, Upload } from "lucide-react";
-import type {
-  ConfigCatalogue,
-  ProductionConfig,
+import {
+  voiceDisplayName,
+  type ConfigCatalogue,
+  type ProductionConfig,
 } from "@/lib/api";
 
 /**
@@ -161,19 +162,9 @@ export function ProductionConfigForm({
           />
           <span>
             <strong>Motion graphics</strong>
-            <small>
-              Designed graphics for beats that need them. When off, the
-              pipeline inserts no graphics at all — including as a coverage
-              fallback — and beats footage cannot cover are reported
-              uncovered.
-            </small>
+            <small>Designed graphics for scenes that need them.</small>
           </span>
         </label>
-        <p className="p9-hint">
-          How much graphics treatment a production gets is decided
-          automatically from the film itself — its narration, scenes
-          and subject — so there is no intensity setting to pick.
-        </p>
       </fieldset>
 
       <fieldset className="p9-group">
@@ -651,9 +642,8 @@ export function ProductionConfigForm({
                     value={voice.id}
                     disabled={!voice.installed}
                   >
-                    {voice.id}
-                    {voice.region ? ` — ${voice.region}` : ""}
-                    {voice.is_default ? " (default)" : ""}
+                    {voiceDisplayName(voice)}
+                    {voice.is_default ? " · Default" : ""}
                     {voice.installed ? "" : " — not installed"}
                   </option>
                 ))}

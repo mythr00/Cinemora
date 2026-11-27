@@ -1404,6 +1404,7 @@ def catalogue() -> dict:
             "language": meta["language"],
             "region": meta["region"],
             "gender": meta["gender"],
+            "name": meta["name"],
         })
     return {
         "themes": themes,
@@ -1428,11 +1429,9 @@ def catalogue() -> dict:
             "provider": "kokoro",
             "voices": voices,
             "note": (
-                "The pipeline talks to the narration adapter's "
-                "stable interface (text + voice id); the provider "
-                "behind it is Kokoro-82M, self-hosted. Narration "
-                "runs at the provider's native rate — there is "
-                "no speed setting."
+                "Choose the voice your documentary is narrated "
+                "in — every voice listed speaks the language "
+                "shown beside it."
             ),
         },
     }

@@ -13,6 +13,7 @@ import {
   getLanguageCatalogue,
   getVoiceCatalogue,
   submitRun,
+  voiceDisplayName,
   type ApiConnectionStatus,
   type BillingSummary,
   type ConfigCatalogue,
@@ -61,6 +62,7 @@ const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
     language: "en",
     region: "English (US)",
     gender: "female",
+    name: "Heart",
   },
   {
     id: "default",
@@ -73,6 +75,7 @@ const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
     language: "en",
     region: "English (US)",
     gender: "female",
+    name: "Heart",
   },
 ];
 
@@ -338,7 +341,6 @@ export default function Home() {
         aliasOf: entry?.alias_of ?? null,
         isDefault: entry?.is_default ?? languageVoice.id === "default",
         installed: entry?.installed ?? true,
-        model: entry?.model ?? null,
       };
     },
   );
@@ -347,13 +349,10 @@ export default function Home() {
       if (voice.language !== language) continue;
       languageVoiceRows.push({
         id: voice.id,
-        label: [voice.region, voice.gender ? `(${voice.gender})` : ""]
-          .filter(Boolean)
-          .join(" "),
+        label: voiceDisplayName(voice),
         aliasOf: voice.alias_of ?? null,
         isDefault: voice.is_default,
         installed: voice.installed,
-        model: voice.model ?? null,
       });
     }
   }
@@ -369,14 +368,10 @@ export default function Home() {
   // the selected language's primary.
   const submittedVoiceId =
     productionConfig.narration.voice_id || primaryVoiceId || narrationVoiceId;
-  // The engine label for a voice row, from the configuration
-  // catalogue's provider or the voice's own model file — the
-  // retired engine's name is never printed.
-  const engineLabel = (model: string | null) =>
-    configCatalogue?.narration.provider === "kokoro" ||
-    (model ?? "").includes("kokoro")
-      ? "Kokoro-82M"
-      : "Built-in";
+  // Voice rows are labelled with natural names only
+  // ("English (UK) — George (male)") — internal voice ids and
+  // engine names are never display copy (founder directive,
+  // 2026-11-26 §G).
   // The languages with installed voices, from the catalogue
   // data — the blocked-language notice below is composed from
   // this, never from a hardcoded coverage claim.
@@ -631,7 +626,7 @@ export default function Home() {
                 Narration is not available in {selectedLanguage?.name} yet: no installed voice speaks {selectedLanguage?.name}. Cinemora&apos;s installed voices cover {supportedLanguageNames}, and a {selectedLanguage?.name} production would otherwise be another language&apos;s audio under a false label — so generation cannot start in this language. You can generate in one of the supported languages and add translated {selectedLanguage?.name} captions and script afterwards in Localization, or choose a supported language here.
               </p>
             ) : (
-              <div className="voice-catalog-list">{languageVoiceRows.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.id}</strong><small>{voice.aliasOf ? `Default alias of ${voice.aliasOf} · Same installed ${engineLabel(voice.model)} model` : `${voice.label} · ${engineLabel(voice.model)} voice`} · {voice.installed ? "Model installed" : "Model not installed"}</small></div>{voice.id === submittedVoiceId && <span>In use</span>}{voice.isDefault && <span>Default</span>}</div>)}</div>
+              <div className="voice-catalog-list">{languageVoiceRows.map((voice) => <div className="voice-catalog-row" key={voice.id}><div><strong>{voice.label}</strong>{!voice.installed && <small>Not installed</small>}</div>{voice.id === submittedVoiceId && <span>In use</span>}{voice.isDefault && <span>Default</span>}</div>)}</div>
             )}
             {catalogueState === "fallback" && <p className="voice-note catalogue-note" role="status">The voice catalogue could not be reached, so this form is showing the fallback facts — the one installed voice listed above — labelled as a fallback. Nothing else has been added.</p>}
             {catalogueState === "loading" && <p className="voice-note catalogue-note" role="status">Loading the voice catalogue from the studio API…</p>}

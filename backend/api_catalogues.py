@@ -113,6 +113,7 @@ def build_router(require_user) -> APIRouter:
             "language": meta["language"],
             "region": meta["region"],
             "gender": meta["gender"],
+            "name": meta["name"],
         }
 
 

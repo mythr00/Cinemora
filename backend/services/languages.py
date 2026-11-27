@@ -83,13 +83,10 @@ def narration_voices(code) -> list[dict]:
         meta = narration.KOKORO_VOICE_META[canonical]
         if meta["language"] != code:
             continue
-        if voice_id == narration.DEFAULT_VOICE_ID:
-            label = f"{meta['region']} — default voice"
-        else:
-            label = (
-                f"{meta['region']} — {meta['name']} "
-                f"({meta['gender']})"
-            )
+        label = (
+            f"{meta['region']} — {meta['name']} "
+            f"({meta['gender']})"
+        )
         voices.append(
             {"id": voice_id, "language": code, "label": label}
         )

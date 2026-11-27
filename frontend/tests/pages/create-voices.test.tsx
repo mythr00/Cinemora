@@ -2,9 +2,10 @@
  * Create page narration voice/language behaviour (Kokoro
  * readiness audit D1–D4):
  * - D1: the Step-2 voice list shows only the selected language's
- *   voices, labelled with their true language and the Kokoro
- *   engine, and "In use" marks only the voice that will actually
- *   be submitted.
+ *   voices, labelled with natural names ("English (US) — Heart
+ *   (female)") — never internal voice ids or engine names
+ *   (founder directive 2026-11-26 §G) — and "In use" marks only
+ *   the voice that will actually be submitted.
  * - D2: the blocked-language notice is composed from the
  *   catalogue's real coverage — never a hardcoded "English only"
  *   claim.
@@ -54,13 +55,22 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 const VOICES = [
-  { id: "af_heart", language: "en", region: "English (US)", gender: "female" },
-  { id: "am_michael", language: "en", region: "English (US)", gender: "male" },
-  { id: "bf_emma", language: "en", region: "English (UK)", gender: "female" },
-  { id: "ef_dora", language: "es", region: "Spanish", gender: "female" },
-  { id: "em_alex", language: "es", region: "Spanish", gender: "male" },
-  { id: "ff_siwis", language: "fr", region: "French", gender: "female" },
+  { id: "af_heart", language: "en", region: "English (US)", gender: "female", name: "Heart" },
+  { id: "am_michael", language: "en", region: "English (US)", gender: "male", name: "Michael" },
+  { id: "bf_emma", language: "en", region: "English (UK)", gender: "female", name: "Emma" },
+  { id: "ef_dora", language: "es", region: "Spanish", gender: "female", name: "Dora" },
+  { id: "em_alex", language: "es", region: "Spanish", gender: "male", name: "Alex" },
+  { id: "ff_siwis", language: "fr", region: "French", gender: "female", name: "Siwis" },
 ];
+
+const LABELS: Record<string, string> = {
+  af_heart: "English (US) — Heart (female)",
+  am_michael: "English (US) — Michael (male)",
+  bf_emma: "English (UK) — Emma (female)",
+  ef_dora: "Spanish — Dora (female)",
+  em_alex: "Spanish — Alex (male)",
+  ff_siwis: "French — Siwis (female)",
+};
 
 function voiceCatalogue() {
   return {
@@ -76,6 +86,7 @@ function voiceCatalogue() {
         language: voice.language,
         region: voice.region,
         gender: voice.gender,
+        name: voice.name,
       })),
       {
         id: "default",
@@ -88,6 +99,7 @@ function voiceCatalogue() {
         language: "en",
         region: "English (US)",
         gender: "female",
+        name: "Heart",
       },
     ],
     default_voice_id: "default",
@@ -117,7 +129,7 @@ function languageCatalogue() {
         { id: "af_heart", label: "English (US) — Heart (female)" },
         { id: "am_michael", label: "English (US) — Michael (male)" },
         { id: "bf_emma", label: "English (UK) — Emma (female)" },
-        { id: "default", label: "English (US) — default voice" },
+        { id: "default", label: "English (US) — Heart (female)" },
       ]),
       entry("es", "Spanish", [
         { id: "ef_dora", label: "Spanish — Dora (female)" },
@@ -150,6 +162,7 @@ function configCatalogue() {
           language: voice.language,
           region: voice.region,
           gender: voice.gender,
+          name: voice.name,
         })),
         {
           id: "default",
@@ -158,16 +171,27 @@ function configCatalogue() {
           language: "en",
           region: "English (US)",
           gender: "female",
+          name: "Heart",
         },
       ],
-      note: "Narration runs at the provider's native rate — there is no speed setting.",
+      note: "Choose the voice your documentary is narrated in — every voice listed speaks the language shown beside it.",
     },
   };
 }
 
-function voiceRow(voiceId: string) {
-  const name = screen.getByText(voiceId, { selector: "strong" });
+function voiceRow(label: string) {
+  const name = screen.getAllByText(label, { selector: "strong" })[0];
   return name.closest(".voice-catalog-row") as HTMLElement;
+}
+
+function inUseRow() {
+  return screen
+    .getByText("In use")
+    .closest(".voice-catalog-row") as HTMLElement;
+}
+
+async function awaitVoice(label: string) {
+  return screen.findAllByText(label, { selector: "strong" });
 }
 
 async function selectLanguage(code: string) {
@@ -221,36 +245,36 @@ beforeEach(() => {
 });
 
 describe("Create page voice list (D1)", () => {
-  it("shows only the selected language's voices with true labels and one In use", async () => {
+  it("shows only the selected language's voices with natural names and one In use", async () => {
     render(<CreatePage />);
-    expect(await screen.findByText("af_heart")).toBeInTheDocument();
+    expect((await awaitVoice(LABELS.af_heart)).length).toBeGreaterThan(0);
     // The full English list arrives with the language catalogue
-    // (af_heart alone can appear earlier via the fallback rows).
-    expect(await screen.findByText("am_michael")).toBeInTheDocument();
-    expect(await screen.findByText("bf_emma")).toBeInTheDocument();
+    // (the primary alone can appear earlier via the fallback rows).
+    expect((await awaitVoice(LABELS.am_michael)).length).toBe(1);
+    expect((await awaitVoice(LABELS.bf_emma)).length).toBe(1);
     // Other languages' voices are not listed for English.
-    expect(screen.queryByText("ef_dora")).toBeNull();
-    expect(screen.queryByText("ff_siwis")).toBeNull();
-    // True engine, never the retired one.
-    expect(voiceRow("af_heart").textContent).toContain("Kokoro-82M");
-    expect(voiceRow("af_heart").textContent).toContain("English (US)");
+    expect(screen.queryByText(LABELS.ef_dora)).toBeNull();
+    expect(screen.queryByText(LABELS.ff_siwis)).toBeNull();
+    // Internal voice ids and engine names are never display copy.
+    expect(screen.queryByText("af_heart")).toBeNull();
+    expect(screen.queryByText("am_michael")).toBeNull();
+    expect(document.body.textContent).not.toContain("Kokoro-82M");
     expect(document.body.textContent).not.toContain("Piper");
     // Exactly one voice is in use: the English primary.
     const inUse = screen.getAllByText("In use");
     expect(inUse).toHaveLength(1);
-    expect(voiceRow("af_heart").textContent).toContain("In use");
-    expect(voiceRow("am_michael").textContent).not.toContain("In use");
+    expect(inUseRow().textContent).toContain(LABELS.af_heart);
+    expect(voiceRow(LABELS.am_michael).textContent).not.toContain("In use");
   });
 
   it("filters the list when the language changes to French", async () => {
     render(<CreatePage />);
-    await screen.findByText("af_heart");
+    await awaitVoice(LABELS.af_heart);
     await selectLanguage("fr");
-    expect(await screen.findByText("ff_siwis")).toBeInTheDocument();
-    expect(screen.queryByText("af_heart")).toBeNull();
-    expect(screen.queryByText("ef_dora")).toBeNull();
-    expect(voiceRow("ff_siwis").textContent).toContain("French");
-    expect(voiceRow("ff_siwis").textContent).toContain("In use");
+    expect((await awaitVoice(LABELS.ff_siwis)).length).toBe(1);
+    expect(screen.queryByText(LABELS.af_heart)).toBeNull();
+    expect(screen.queryByText(LABELS.ef_dora)).toBeNull();
+    expect(voiceRow(LABELS.ff_siwis).textContent).toContain("In use");
     expect(screen.getAllByText("In use")).toHaveLength(1);
   });
 });
@@ -258,9 +282,9 @@ describe("Create page voice list (D1)", () => {
 describe("Create page voice re-seeding (D3)", () => {
   it("submits ff_siwis for a French production through the default path", async () => {
     render(<CreatePage />);
-    await screen.findByText("af_heart");
+    await awaitVoice(LABELS.af_heart);
     await selectLanguage("fr");
-    await screen.findByText("ff_siwis");
+    await awaitVoice(LABELS.ff_siwis);
     const submitted = await submitWithScript();
     expect(submitted.options.language).toBe("fr");
     expect(submitted.options.voice_id).toBe("ff_siwis");
@@ -268,10 +292,10 @@ describe("Create page voice re-seeding (D3)", () => {
 
   it("submits ef_dora for a Spanish production through the default path", async () => {
     render(<CreatePage />);
-    await screen.findByText("af_heart");
+    await awaitVoice(LABELS.af_heart);
     await selectLanguage("es");
-    expect(await screen.findByText("ef_dora")).toBeInTheDocument();
-    expect(voiceRow("ef_dora").textContent).toContain("In use");
+    expect((await awaitVoice(LABELS.ef_dora)).length).toBe(1);
+    expect(voiceRow(LABELS.ef_dora).textContent).toContain("In use");
     const submitted = await submitWithScript();
     expect(submitted.options.language).toBe("es");
     expect(submitted.options.voice_id).toBe("ef_dora");
@@ -285,9 +309,9 @@ describe("Create page voice re-seeding (D3)", () => {
       defaults: null,
     } as never);
     render(<CreatePage />);
-    await screen.findByText("af_heart");
+    await awaitVoice(LABELS.af_heart);
     await selectLanguage("fr");
-    await screen.findByText("ff_siwis");
+    await awaitVoice(LABELS.ff_siwis);
     const submitted = await submitWithScript();
     expect(submitted.options.production_config).toBeDefined();
     expect(submitted.options.production_config!.narration.voice_id).toBe(
@@ -303,7 +327,7 @@ describe("Create page voice re-seeding (D3)", () => {
 describe("Create page blocked-language notice (D2)", () => {
   it("derives the coverage from the catalogue instead of claiming English only", async () => {
     render(<CreatePage />);
-    await screen.findByText("af_heart");
+    await awaitVoice(LABELS.af_heart);
     await selectLanguage("de");
     const notice = await screen.findByText(
       /no installed voice speaks German/,
@@ -328,9 +352,9 @@ describe("Configuration voice picker (D4)", () => {
       defaults: null,
     } as never);
     render(<CreatePage />);
-    await screen.findByText("af_heart");
+    await awaitVoice(LABELS.af_heart);
     await selectLanguage("fr");
-    await screen.findByText("ff_siwis");
+    await awaitVoice(LABELS.ff_siwis);
     const picker = (await screen.findByLabelText(
       /VOICE/,
     )) as HTMLSelectElement;

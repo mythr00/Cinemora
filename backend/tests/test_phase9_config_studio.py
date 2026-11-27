@@ -650,7 +650,22 @@ def test_catalogue_is_generated_from_the_live_systems(client, users):
     assert "default" in voice_ids
     assert catalogue["music_library"]["configured"] is False
     assert catalogue["narration"]["provider"] == "kokoro"
-    assert "no speed setting" in catalogue["narration"]["note"]
+    # The catalogue note is user-facing copy (founder directive
+    # 2026-11-26 §I): it tells the user how to choose a voice and
+    # carries no engineering description. The no-speed-setting
+    # invariant itself is pinned by the rejection tests (a config
+    # carrying narration_speed is refused — see the validation
+    # tests in this file).
+    note = catalogue["narration"]["note"]
+    assert "voice" in note
+    assert "adapter" not in note and "speed" not in note
+    # Every voice carries its natural-name facts, so the UI can
+    # label voices "English (UK) — George (male)" and never has
+    # to display an internal voice id (directive §G).
+    assert all(
+        v["name"] and v["region"] and v["gender"]
+        for v in catalogue["narration"]["voices"]
+    )
 
 
 def test_create_with_config_projects_flat_keys_and_stores_document(
