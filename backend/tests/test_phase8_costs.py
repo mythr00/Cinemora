@@ -171,9 +171,10 @@ def test_financial_report_honesty(db):
     report = costs.financial_report(db)
     assert report["revenue"]["total_cents"] >= 2900
     # Contracted MRR prices the ACTIVE subscription at the
-    # catalogue's current Creator price ($28, restructure
-    # 2026-11-26) — the 2900 above is the historical payment.
-    assert report["mrr_contracted_cents"] >= 2800
+    # catalogue's current Creator price ($29 — restructure
+    # 2026-11-26 set $28; founder raised it to $29 on
+    # 2026-11-27) — matching the 2900 payment above.
+    assert report["mrr_contracted_cents"] >= 2900
     assert report["subscriptions_by_plan"]["creator"] >= 1
     # No pricing rules configured anywhere in this test DB state
     # for these runs: margins stay honestly unknown/partial.

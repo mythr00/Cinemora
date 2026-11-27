@@ -74,12 +74,12 @@ def test_founder_price_table(db):
     plans = {
         p.name: p for p in db.query(models.Plan).all()
     }
-    assert plans["creator"].price_monthly_cents == 2800
+    assert plans["creator"].price_monthly_cents == 2900
     assert plans["studio"].price_monthly_cents == 6300
     assert plans["agency"].price_monthly_cents == 11100
     # Annual = 20% discount on 12 monthly payments, exactly (the
     # pre-existing -20% structure; only the bases moved).
-    for name, monthly in (("creator", 2800), ("studio", 6300),
+    for name, monthly in (("creator", 2900), ("studio", 6300),
                           ("agency", 11100)):
         assert plans[name].price_annual_cents == monthly * 12 * 4 // 5
         assert plans[name].billing_mode == "metered"
@@ -122,7 +122,7 @@ def test_catalogue_sync_is_idempotent_and_preserves_limits(db):
     assert updated == {"creator": ["price_monthly_cents"]}
     creator = db.query(models.Plan).filter_by(name="creator").one()
     assert creator.max_concurrent_runs == 7
-    assert creator.price_monthly_cents == 2800
+    assert creator.price_monthly_cents == 2900
 
     third = catalogue.ensure_billing_catalogue(db)
     assert third["plans_updated"] == []

@@ -8,7 +8,7 @@ import { ArrowUpRight, Check } from "lucide-react";
  * Landing pricing (pricing restructure, founder directive
  * 2026-11-26 ~10:25 WAT; presentation per the pricing page
  * correction, founder directive 2026-11-26 21:48 WAT).
- * Creator $28, Studio $63, Agency $111 per month; video
+ * Creator $29, Studio $63, Agency $111 per month; video
  * credits 990 / 2,325 / 3,660; each plan's credits cover its
  * included 11 / 31 / 61 standard 15-minute documentaries, and
  * script and thumbnail allowances (11 / 31 / 61 each) are
@@ -21,10 +21,12 @@ import { ArrowUpRight, Check } from "lucide-react";
  * (services/billing/catalogue.py) and are pinned against it
  * by tests/components/landing-pricing.test.tsx.
  *
- * Crossed-out prices are the genuine previous plan prices —
- * $29 / $79 / $179 per month before the 2026-11-26
- * restructure (annual equivalents at the same −20% annual
- * structure) — never invented reference figures.
+ * Crossed-out prices: Studio $79 / Agency $179 are the
+ * genuine previous plan prices before the 2026-11-26
+ * restructure. Creator's crossed-out $39 and its current
+ * $29 were set directly by the founder on 2026-11-27
+ * (superseding the $28 restructure price and its $29
+ * reference). Annual figures are the same −20% structure.
  *
  * There is deliberately NO plan comparison table and no
  * per-minute rate or credit-conversion mathematics on this
@@ -51,13 +53,13 @@ type Plan = {
 const PLANS: Plan[] = [
   {
     name: "Creator",
-    monthly: 28,
-    annualPerMonth: "22.40",
-    referenceMonthly: 29,
-    referenceAnnualPerMonth: "23.20",
+    monthly: 29,
+    annualPerMonth: "23.20",
+    referenceMonthly: 39,
+    referenceAnnualPerMonth: "31.20",
     blurb: "For a channel getting moving — a few documentaries a month, produced properly.",
     credits: "990 video credits / month — 11 documentaries at 15 minutes each",
-    perVideo: "≈ $2.55 per finished video",
+    perVideo: "≈ $2.64 per finished video",
     operations: "11 AI scripts & 11 AI thumbnails included",
     extras: ["1 production at a time"],
   },

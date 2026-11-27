@@ -173,10 +173,10 @@ def test_subscription_webhook_activates_and_allocates(db, configured):
                 "kind": "subscription",
                 "plan_id": plan.id,
                 "billing_interval": "month",
-                "amount_cents": 2800,
+                "amount_cents": 2900,
                 "currency": "USD",
             },
-            "details": {"totals": {"grand_total": "2800"}},
+            "details": {"totals": {"grand_total": "2900"}},
         },
         event_id="evt_sub_1",
     )

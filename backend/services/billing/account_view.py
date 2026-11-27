@@ -61,7 +61,7 @@ def plan_view(plan) -> dict | None:
             plan.included_generations
         )
         if plan.price_monthly_cents and plan.included_generations:
-            # Rounded to the nearest cent: 2800/11 -> 255 ($2.55),
+            # Rounded to the nearest cent: 2900/11 -> 264 ($2.64),
             # 6300/31 -> 203 ($2.03), 11100/61 -> 182 ($1.82).
             view["effective_cost_per_standard_video_cents"] = round(
                 plan.price_monthly_cents / plan.included_generations

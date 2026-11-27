@@ -178,19 +178,21 @@ def duration_cost_table(
 
 
 # ---------------------------------------------------------------------
-# Founder-priced catalogue (restructure directive 2026-11-26).
+# Founder-priced catalogue (restructure directive 2026-11-26;
+# Creator raised $28 -> $29 by founder instruction 2026-11-27,
+# Studio/Agency unchanged).
 # Annual = monthly x 12 x 0.8 (the pre-existing -20% structure,
 # unchanged; only the base prices moved), charged upfront;
 # benefit periods stay monthly. Effective price per standard
-# video: Creator 2800/11 = $2.55, Studio 6300/31 = $2.03,
+# video: Creator 2900/11 = $2.64, Studio 6300/31 = $2.03,
 # Agency 11100/61 = $1.82 (best value).
 # ---------------------------------------------------------------------
 
 METERED_PLANS: list[dict] = [
     {
         "name": "creator",
-        "price_monthly_cents": 2800,
-        "price_annual_cents": 26880,
+        "price_monthly_cents": 2900,
+        "price_annual_cents": 27840,
         "monthly_credits": 990,
         "included_generations": 11,
         "script_allowance": 11,
