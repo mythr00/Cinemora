@@ -1402,342 +1402,6 @@ def _render_stat_graphic(
     run_ffmpeg(command)
 
 
-_MONTH_NUMBERS = {
-    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5,
-    "june": 6, "july": 7, "august": 8, "september": 9, "october": 10,
-    "november": 11, "december": 12,
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
-    "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
-}
-
-
-def _parse_event_date(when):
-    """Parse a fractional year (year + month/12) from an event's
-    `when` string ('November 1989', '9 November 1989', '1989').
-    Returns None when no year can be found."""
-    text = clean_text(when).lower()
-    year_match = re.search(r"\b(1[5-9]\d{2}|20\d{2})\b", text)
-    if not year_match:
-        return None
-    value = float(year_match.group(1))
-    for name, number in _MONTH_NUMBERS.items():
-        if re.search(rf"\b{name}\b", text):
-            value += (number - 1) / 12.0
-            break
-    return value
-
-
-# Stage 5 (Motion Graphics V2): the scan sweep completes in this
-# fraction of the graphic's duration and then rests at the line's
-# end. At 1.0 the final node (x=1730) only appeared at t=95.8% of
-# the duration — the v1 benchmark's "final node missing at 90%"
-# defect. At 0.85 the last reveal lands at ~81%.
-TIMELINE_SCAN_FRACTION = 0.85
-
-
-def _timeline_node_positions(usable, duration):
-    """Stage B: node x positions PROPORTIONAL to the events' actual
-    dates when at least two distinct dates parse; otherwise the
-    historical even spacing. Returns (positions, spacing_mode) where
-    spacing_mode is 'proportional' or 'even_fallback'. The reveal
-    time of node i is when the scan line reaches its x position;
-    the scan sweeps on the compressed TIMELINE_SCAN_FRACTION clock
-    so the final node is revealed well before the graphic ends."""
-    line_start = 120.0
-    line_span = 1680.0
-    dates = [_parse_event_date(event.get("when", "")) for event in usable]
-    parsed = [d for d in dates if d is not None]
-
-    if len(usable) > 1 and len(parsed) >= 2 and (max(parsed) - min(parsed)) > 0:
-        low, high = min(parsed), max(parsed)
-        positions = []
-        for index, date in enumerate(dates):
-            if date is None:
-                # Unparseable events keep their ordinal slot.
-                fraction = index / max(len(usable) - 1, 1)
-            else:
-                fraction = (date - low) / (high - low)
-            # Nodes are 70px wide starting at x; keep the fraction
-            # inside the line span with the original 70px inset.
-            positions.append(190 + fraction * 1540)
-        mode = "proportional"
-    else:
-        spacing = 1540 / max(len(usable) - 1, 1)
-        positions = [190 + index * spacing for index in range(len(usable))]
-        mode = "even_fallback"
-
-    # MA-02: enforce a minimum gap between nodes so clustered
-    # dates (the 1961 Berlin cluster is the canonical case) do not
-    # draw their nodes — and labels — on top of each other. Order
-    # is preserved; positions are only spread, never reordered.
-    min_gap = 170.0
-    for i in range(1, len(positions)):
-        if positions[i] < positions[i - 1] + min_gap:
-            positions[i] = positions[i - 1] + min_gap
-    if positions and positions[-1] > 1730.0:
-        positions[-1] = 1730.0
-        for i in range(len(positions) - 2, -1, -1):
-            if positions[i] > positions[i + 1] - min_gap:
-                positions[i] = positions[i + 1] - min_gap
-    if positions and positions[0] < 190.0:
-        positions[0] = 190.0
-        for i in range(1, len(positions)):
-            if positions[i] < positions[i - 1] + min_gap:
-                positions[i] = positions[i - 1] + min_gap
-
-    reveals = [
-        duration * TIMELINE_SCAN_FRACTION * ((x - line_start) / line_span)
-        for x in positions
-    ]
-    return positions, mode, reveals
-
-
-def _timeline_label_rows(positions, close_distance=220.0):
-    """MA-02: assign each node a label row. Nodes whose x positions
-    are close get DIFFERENT rows so their when/what labels stack
-    vertically instead of colliding; distant nodes reuse row 0."""
-    rows = []
-    last_x_by_row = {}
-    for x in positions:
-        chosen = None
-        for row in sorted(last_x_by_row):
-            if x - last_x_by_row[row] >= close_distance:
-                chosen = row
-                break
-        if chosen is None:
-            if not last_x_by_row or 0 not in last_x_by_row:
-                chosen = 0
-            elif all(x - v < close_distance for v in last_x_by_row.values()):
-                chosen = max(last_x_by_row) + 1
-            else:
-                chosen = 0
-        rows.append(chosen)
-        last_x_by_row[chosen] = x
-    return rows
-
-
-# Gate 4 (B4): timeline labels must fit their boxes. The
-# historical renderer shortened labels to 20/34 characters with
-# shorten() — mid-word truncation ("July 17, 1981, 7:…",
-# "tore f…") — and estimated label x from character counts, so
-# labels ran off the frame edges. Labels now wrap at word
-# boundaries and shrink-to-fit; nothing is ever cut mid-word and
-# every label box is clamped inside the frame safe area (the
-# outer 2% border: 38px at 1920 wide).
-TIMELINE_SAFE_MARGIN = 38
-
-
-def _wrap_words(text, max_chars):
-    """Greedy word wrap. Words are never split."""
-    words = clean_text(text).split()
-    lines, current = [], ""
-    for word in words:
-        trial = f"{current} {word}".strip()
-        if len(trial) <= max_chars or not current:
-            current = trial
-        else:
-            lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
-    return lines
-
-
-def _fit_label_lines(text, max_width_px, base_fontsize, min_fontsize=15,
-                     max_lines=3):
-    """Fit `text` into a box `max_width_px` wide: wrap at word
-    boundaries, shrinking the font until the wrapped lines fit
-    `max_lines`, and return (lines, fontsize, widest_line_px).
-    Character width is estimated conservatively (0.62 em — wider
-    than DejaVu's average) so estimated boxes over-, never
-    under-state the real text width. The full text is always
-    present across the returned lines: no truncation."""
-    text = clean_text(text)
-    if not text:
-        return [], base_fontsize, 0
-    for size in range(base_fontsize, min_fontsize - 1, -2):
-        chars = max(4, int(max_width_px / (0.62 * size)))
-        lines = _wrap_words(text, chars)
-        widest = max((len(line) for line in lines), default=0)
-        if len(lines) <= max_lines and widest * 0.62 * size <= max_width_px:
-            return lines, size, int(widest * 0.62 * size)
-    size = min_fontsize
-    chars = max(4, int(max_width_px / (0.62 * size)))
-    lines = _wrap_words(text, chars)
-    widest = max((len(line) for line in lines), default=0)
-    return lines, size, int(widest * 0.62 * size)
-
-
-def _label_box(center_x, text, max_width_px, base_fontsize, max_lines=3):
-    """The layout box for one centred label: fitted lines, font
-    size, and an x clamped so the whole box stays inside the
-    frame safe area. This is the layout-data contract the Gate 4
-    render test asserts against."""
-    lines, size, width = _fit_label_lines(
-        text, max_width_px, base_fontsize, max_lines=max_lines)
-    left = min(
-        max(TIMELINE_SAFE_MARGIN, center_x - width / 2),
-        max(TIMELINE_SAFE_MARGIN, 1920 - TIMELINE_SAFE_MARGIN - width),
-    )
-    return {
-        "lines": lines, "fontsize": size, "width": width,
-        "x": int(left), "right": int(left + width),
-    }
-
-
-def _render_timeline_graphic(
-    output_file,
-    events,
-    duration=6.0,
-):
-    """Render the chronology graphic. Returns the spacing mode used
-    ('proportional' or 'even_fallback') so the caller can record it
-    on the asset record."""
-    duration = _graphic_duration(0, duration, 4.0, 10.0)
-
-    filters = _graphic_background()
-
-    filters += [
-        _ffmpeg_text_filter(
-            "CHRONOLOGY",
-            "120",
-            "150",
-            28,
-            GRAPHIC_TEXT,
-            0.65,
-        ),
-        "drawbox="
-        "x=120:"
-        "y=500:"
-        "w=1680:"
-        "h=4:"
-        "color=white@0.35:"
-        "t=fill",
-    ]
-
-    # Founder defect ruling 2026-11-23: no fabricated placeholder
-    # events. The historical fallback drew a NOW / EVENT node when
-    # the event list was empty — a chronology of nothing (the
-    # run-9 Petito near-empty chronology shape). Events with no
-    # readable when/what are dropped, and a graphic with no real
-    # events left is refused loudly instead of rendered empty.
-    usable = [
-        event for event in (events or [])[:6]
-        if isinstance(event, dict)
-        and (clean_text(event.get("when", ""))
-             or clean_text(event.get("what", "")))
-    ]
-    if not usable:
-        raise ValueError(
-            "timeline graphic has no usable events to present"
-        )
-
-    positions, spacing_mode, reveals = _timeline_node_positions(
-        usable, duration
-    )
-    # Run-9 fix 4 (label legibility): the historical 220px close
-    # distance let nodes ~340px apart share a label row while their
-    # labels are up to ~400px wide — clustered chronologies rendered
-    # with the event texts overprinting each other, and the final
-    # node's labels ran off the right edge. Rows now separate until
-    # labels have real room, and every label's x is clamped so its
-    # estimated text width stays on screen.
-    label_rows = _timeline_label_rows(positions, close_distance=400.0)
-
-    for index, event in enumerate(usable):
-        x = int(positions[index])
-        row = label_rows[index] if index < len(label_rows) else 0
-        when_y = 405 - row * 78
-        what_y = 585 + row * 78
-
-        # Gate 4 (B4): labels wrap + shrink-to-fit inside a 360px
-        # box clamped to the safe area — never shorten()ed, never
-        # off-frame. `when` gets up to 2 lines stacked upward from
-        # when_y; `what` up to 3 lines stacked downward from
-        # what_y.
-        when_box = _label_box(x - 20, event.get("when", ""), 360, 27,
-                              max_lines=2)
-        what_box = _label_box(x - 45, event.get("what", ""), 360, 22,
-                              max_lines=3)
-
-        # Stage B: the node and its labels appear when the scan line
-        # reaches them, not all from frame 0.
-        enable = f"gte(t,{reveals[index]:.3f})"
-
-        # Timeline node.
-        filters += [
-            f"drawbox="
-            f"x={x}:"
-            f"y=465:"
-            f"w=70:"
-            f"h=70:"
-            f"color=white@0.08:"
-            f"t=fill:"
-            f"enable='{enable}'",
-
-            f"drawbox="
-            f"x={x + 12}:"
-            f"y=477:"
-            f"w=46:"
-            f"h=46:"
-            f"color=white@0.92:"
-            f"t=fill:"
-            f"enable='{enable}'",
-
-        ]
-        # Wrapped label lines: `when` stacks upward ending at
-        # when_y, `what` stacks downward starting at what_y.
-        _when_lines = when_box["lines"]
-        for _li, _line in enumerate(_when_lines):
-            filters.append(_ffmpeg_text_filter(
-                _line, str(when_box["x"]),
-                str(when_y - (len(_when_lines) - 1 - _li) * 34),
-                when_box["fontsize"], GRAPHIC_TEXT, 0.85,
-                enable=enable,
-            ))
-        for _li, _line in enumerate(what_box["lines"]):
-            filters.append(_ffmpeg_text_filter(
-                _line, str(what_box["x"]),
-                str(what_y + _li * 30),
-                what_box["fontsize"], GRAPHIC_TEXT, 0.68,
-                enable=enable,
-            ))
-
-    # Moving scan line gives the timeline actual motion. It sweeps
-    # the line on the compressed TIMELINE_SCAN_FRACTION clock (and
-    # rests at the end) so node reveals stay synchronised with it
-    # and the final node lands well before the graphic ends.
-    sweep = duration * TIMELINE_SCAN_FRACTION
-    filters += [
-        "drawbox="
-        f"x='120+1680*min(1\\,t/{sweep:.3f})':"
-        "y=495:"
-        "w=8:"
-        "h=14:"
-        "color=white@0.95:"
-        "t=fill",
-    ]
-
-    command = [
-        "ffmpeg",
-        "-y",
-        "-f", "lavfi",
-        "-i",
-        f"color=c={GRAPHIC_BG_TIMELINE}:s=1920x1080:r={FPS}",
-        "-t", f"{duration:.3f}",
-        "-vf", ",".join(filters),
-        "-an",
-        "-c:v", "libx264",
-        "-preset", PRESET,
-        "-crf", str(CRF),
-        "-pix_fmt", "yuv420p",
-        str(output_file),
-    ]
-
-    run_ffmpeg(command)
-    return spacing_mode
-
-
 def _render_process_graphic(
     output_file,
     steps,
@@ -2301,8 +1965,8 @@ def build_motion_graphics_assets(
     A targeted sentence whose content fits a graphic family is
     served by that family; a targeted sentence no content family
     can serve is served by the T5 coverage guarantee (stage 6 of
-    the chain: timeline recap / outcome path where the bible
-    supports them, then the Gate 2 terminal sweep — designed
+    the chain: outcome path where the bible
+    supports it, then the Gate 2 terminal sweep — designed
     graphics built from the beat's recorded facts: a statistic,
     a date, a name, a place — never the sentence's own words).
     Only a target no eligible family can render from its recorded
@@ -2596,7 +2260,7 @@ def build_motion_graphics_assets(
 
     # -----------------------------------------------------
     # STAGE A: normalise targets and choose anchors for the
-    # timeline / process graphics. Every generated graphic must
+    # process graphic. Every generated graphic must
     # carry a scene/sentence anchor so the jobs.py attach loop
     # can place it — unanchored graphics never reach a film.
     # -----------------------------------------------------
@@ -2662,32 +2326,20 @@ def build_motion_graphics_assets(
                 }
         return None
 
-    # MA-06 anchor preference: the chronology graphic anchors to a
-    # targeted sentence whose text contains a date when one exists
-    # (anchor_reason="chronology_sentence"); otherwise the first
-    # target, labelled a chapter graphic. The process graphic
-    # prefers a sentence with sequence markers; with exactly ONE
-    # target it anchors to that target (MA-03); with zero targets
-    # it stays unanchored and is recorded as undelivered in the
-    # manifest instead of being silently counted as delivered.
-    timeline_anchor_reason = "chapter_graphic"
+    # MA-06 anchor preference: the process graphic prefers a
+    # sentence with sequence markers; with exactly ONE target it
+    # anchors to that target (MA-03); with zero targets it stays
+    # unanchored and is recorded as undelivered in the manifest
+    # instead of being silently counted as delivered.
+    # (P0 removal, 2026-11-27: the chronology/"timeline" graphic
+    # and its MA-06 anchor were removed completely — renderer,
+    # anchor and every selection path. A beat that would have
+    # received it falls back to footage or a typed decline.)
     if target_list:
-        timeline_anchor = None
-        for _candidate in target_list:
-            if detect_date(_candidate["text"]):
-                timeline_anchor = _candidate
-                timeline_anchor_reason = "chronology_sentence"
-                break
-        if timeline_anchor is None:
-            timeline_anchor = target_list[0]
-
         process_anchor = None
         process_anchor_reason = "chapter_graphic"
         for _candidate in target_list:
-            if _has_sequence_marker(_candidate["text"]) and (
-                _candidate is not timeline_anchor
-                or len(target_list) == 1
-            ):
+            if _has_sequence_marker(_candidate["text"]):
                 process_anchor = _candidate
                 process_anchor_reason = "sequence_sentence"
                 break
@@ -2698,13 +2350,10 @@ def build_motion_graphics_assets(
                 process_anchor = target_list[0]
                 process_anchor_reason = "single_target"
     else:
-        # Phase 6 (AM-001/D1): no targets — NO chronology anchor.
-        # The pre-D1 behaviour anchored the chronology graphic to
-        # the first scene's first sentence so it could reach the
-        # film unasked; D1 removed exactly that: a graphic exists
-        # only for a targeted requirement, so with no targets the
-        # timeline and process graphics are not rendered at all.
-        timeline_anchor = None
+        # Phase 6 (AM-001/D1): no targets — NO process anchor.
+        # A graphic exists only for a targeted requirement, so
+        # with no targets the process graphic is not rendered
+        # at all.
         process_anchor = None
         process_anchor_reason = "no_targets"
 
@@ -2713,111 +2362,6 @@ def build_motion_graphics_assets(
             record["scene_number"] = anchor.get("scene_number")
             record["sentence_index"] = anchor.get("sentence_index")
             record["sentence_number"] = anchor.get("sentence_number")
-
-    # -----------------------------------------------------
-    # STORY TIMELINE
-    # -----------------------------------------------------
-
-    def _chronology_fact_basis(events):
-        """The chronology graphic's recorded fact basis (MG-09 /
-        Phase 2.3): an event's basis is its recorded fact_basis,
-        or — for planner-supplied events that predate the field —
-        research_supported when the bible's research labelling
-        marked it externally_supported, else script_claim. The
-        graphic as a whole is research_supported only when EVERY
-        event is; a chronology is never stamped above its weakest
-        event. Per-event bases ride in the recipe's events."""
-        bases = []
-        for event in events or []:
-            if not isinstance(event, dict):
-                continue
-            basis = event.get("fact_basis")
-            if basis not in (FACT_BASIS_RESEARCH, FACT_BASIS_SCRIPT):
-                basis = (
-                    FACT_BASIS_RESEARCH
-                    if event.get("support") == "externally_supported"
-                    else FACT_BASIS_SCRIPT
-                )
-            bases.append(basis)
-        if bases and all(b == FACT_BASIS_RESEARCH for b in bases):
-            return FACT_BASIS_RESEARCH
-        return FACT_BASIS_SCRIPT
-
-    # Phase 6 (AM-001/D1): the chronology graphic renders ONLY
-    # when a target anchors it (timeline_anchor is a target), and —
-    # in manifest mode — only when that target's recorded family
-    # candidates include the timeline family. The targeted loop
-    # below claims the rendered asset for its anchor target.
-    _timeline_family_ok = True
-    if timeline_anchor is not None and (
-        timeline_anchor.get("family_candidates") is not None
-    ):
-        _timeline_family_ok = (
-            "timeline" in timeline_anchor["family_candidates"]
-        )
-
-    if (
-        timeline_events
-        and mode in {"balanced", "heavy"}
-        and timeline_anchor is not None
-        and _timeline_family_ok
-    ):
-        path = output_dir / "motion_graphic_timeline_001.mp4"
-        try:
-            spacing_mode = _render_timeline_graphic(
-                path,
-                timeline_events,
-                duration=6.0,
-            )
-            record = register_asset(
-                path,
-                "timeline",
-                "chronology",
-                6.0,
-                "STORY TIMELINE",
-                recipe=_recipe(
-                    "timeline", "ffmpeg_timeline",
-                    {"events": copy.deepcopy(timeline_events)},
-                    6.0, "chronology",
-                    scene_number=(
-                        timeline_anchor or {}
-                    ).get("scene_number"),
-                    sentence_index=(
-                        timeline_anchor or {}
-                    ).get("sentence_index"),
-                    sentence_number=(
-                        timeline_anchor or {}
-                    ).get("sentence_number"),
-                    source_references=[{"type": "case_bible_timeline"}],
-                ),
-                fact_basis=_chronology_fact_basis(timeline_events),
-            )
-            if record is not None:
-                _stamp_anchor(record, timeline_anchor)
-                record["timeline_spacing"] = (
-                    spacing_mode or "even_fallback"
-                )
-                record["anchor_reason"] = timeline_anchor_reason
-                record["family"] = "timeline"
-                if timeline_anchor is None:
-                    record["delivered"] = False
-                    undelivered.append({
-                        "graphic_type": "timeline",
-                        "reason": "no_anchor_available",
-                    })
-                else:
-                    record["delivered"] = True
-        except Exception as error:
-            # AUD-21: one failing graphic must not kill the whole job.
-            print(f"MOTION GRAPHIC SKIPPED (timeline): {error}")
-            graphic_failures.append({
-                "graphic_type": "timeline",
-                "purpose": "chronology",
-                "stage": "render",
-                "file_path": str(path),
-                "reason": "rendering_failure",
-                "detail": str(error),
-            })
 
     # -----------------------------------------------------
     # NUMERICAL / SCALE GRAPHICS
@@ -4564,22 +4108,14 @@ def build_motion_graphics_assets(
         ]
 
     # Stage 3D targeted fallback chain. Each target is routed, in
-    # order: stat -> chronology/timeline -> process -> event
-    # schematic -> Motion Engine templates -> recorded skip.
+    # order: stat -> process -> event schematic -> Motion Engine
+    # templates -> recorded skip. (P0 removal, 2026-11-27: the
+    # chronology/timeline stage was removed completely.)
     # Every outcome (produced or skipped) is recorded in the
     # manifest with family + reason (target_outcomes). Variety:
     # the same family is not chosen for two consecutive targets
     # when an alternative family fits — an alternative that fits
     # is tried first, and the primary family remains the fallback.
-    _timeline_asset = next(
-        (a for a in assets if a["graphic_type"] == "timeline"), None
-    )
-    _timeline_anchor_key = (
-        (timeline_anchor.get("scene_number"),
-         timeline_anchor.get("sentence_index"))
-        if timeline_anchor else None
-    )
-    _timeline_claimed = False
     _process_claimed = False
     _process_available = bool(timeline_events) and len(
         [e for e in timeline_events if clean_text(e.get("what", ""))]
@@ -4988,7 +4524,6 @@ def build_motion_graphics_assets(
         text = target["text"]
         comparison = extract_comparison(text)
         percent = _percent_value(text)
-        has_date = detect_date(text) is not None
         has_sequence = _has_sequence_marker(text)
         lowered = text.lower()
         has_document = any(m in lowered for m in _DOCUMENT_MARKERS)
@@ -5102,22 +4637,6 @@ def build_motion_graphics_assets(
                     produced_reason = "stat_value"
                     if not target.get("manifest_id"):
                         _legacy_stats_created += 1
-
-        # 2) Chronology / timeline: this target is the timeline
-        # graphic's MA-06 anchor and the timeline is unclaimed.
-        if (
-            produced_family is None
-            and has_date
-            and not _timeline_claimed
-            and _family_permitted(target, "timeline")
-        ):
-            if _timeline_asset is not None and _timeline_anchor_key == key:
-                _timeline_claimed = True
-                _timeline_asset["targeted"] = True
-                if target.get("manifest_id"):
-                    _timeline_asset["manifest_id"] = target["manifest_id"]
-                produced_family = "timeline"
-                produced_reason = "chronology_sentence"
 
         # 3) Process: sequence markers + process graphic unused.
         # The claim rebinds process_anchor (this loop runs in the
@@ -5323,65 +4842,18 @@ def build_motion_graphics_assets(
         if produced_family is None and not _served_by_process_anchor:
             # Wave 1 widening (§D.4 — exactly one step): where
             # RECORDED facts exist, the guarantee may serve a
-            # content graphic instead of the closing card — a
-            # timeline recap when the bible records >= 3 events
-            # and this beat is dated or fact-backed, else an
+            # content graphic instead of the closing card — an
             # outcome path when the bible records a sequence and
             # this beat is sequential or fact-backed. The honesty
             # contract is unchanged: the asset is stamped
             # coverage_guarantee with its real produced_reason,
-            # and the closing card remains the floor beneath both.
+            # and the closing card remains the floor beneath it.
+            # (P0 removal, 2026-11-27: the timeline-recap route
+            # that preceded this step was removed with the
+            # chronology graphic — completely, renderer included.)
             _fact_backed = target.get("fact_basis") in (
                 FACT_BASIS_ASSET, FACT_BASIS_RESEARCH)
             _guarantee_served_reason = None
-            if (
-                len(timeline_events) >= 3
-                and (has_date or _fact_backed)
-                # The beat that already anchors the pre-loop
-                # chronology graphic never gets a second one from
-                # the guarantee — it falls to outcome_path / the
-                # closing card below instead.
-                and timeline_anchor is not target
-            ):
-                _recap_path = (
-                    output_dir
-                    / f"motion_graphic_timeline_recap_"
-                      f"{target['sentence_number']}.mp4"
-                )
-                try:
-                    _recap_spacing = _render_timeline_graphic(
-                        _recap_path, timeline_events, duration=6.0)
-                    _recap_record = register_asset(
-                        _recap_path, "timeline", "chronology", 6.0,
-                        "STORY TIMELINE",
-                        recipe=_recipe(
-                            "timeline", "ffmpeg_timeline",
-                            {"events": copy.deepcopy(timeline_events)},
-                            6.0, "chronology",
-                            scene_number=target["scene_number"],
-                            sentence_index=target["sentence_index"],
-                            sentence_number=target["sentence_number"],
-                            source_references=[
-                                {"type": "case_bible_timeline"}],
-                        ),
-                        fact_basis=_chronology_fact_basis(
-                            timeline_events),
-                    )
-                except Exception as _recap_error:
-                    print(
-                        "MOTION GRAPHIC SKIPPED "
-                        f"(timeline recap): {_recap_error}")
-                    _recap_record = None
-                if _recap_record is not None:
-                    _stamp_anchor(_recap_record, target)
-                    _recap_record["timeline_spacing"] = (
-                        _recap_spacing or "even_fallback")
-                    _recap_record["family"] = "timeline"
-                    _recap_record["delivered"] = True
-                    _recap_record["coverage_guarantee"] = True
-                    produced_family = "timeline"
-                    produced_reason = "coverage_guarantee:timeline_recap"
-                    _guarantee_served_reason = produced_reason
             if produced_family is None:
                 _path_data = _assemble_outcome_path(target)
                 if _path_data is not None and (
@@ -6080,14 +5552,6 @@ def render_graphic_from_recipe(recipe, out_path, duration=None):
             fact_basis=inputs.get("fact_basis") or FACT_BASIS_SCRIPT,
         )
         return str(out_path), {}
-
-    if family == "timeline":
-        spacing = _render_timeline_graphic(
-            out_path,
-            inputs.get("events") or [],
-            duration=effective_duration,
-        )
-        return str(out_path), {"timeline_spacing": spacing}
 
     if family == "process":
         _render_process_graphic(

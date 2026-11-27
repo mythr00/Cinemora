@@ -1121,7 +1121,7 @@ Return ONLY a JSON list, one object per sentence:
       "contextual": ["search phrases for the surrounding context"],
       "archival": ["search phrases for period/archival material"]
     },
-    "graphic_fallback": {"allowed": true, "kind": "map | timeline | statistic | diagram | null — a graphic that would genuinely explain, if footage fails"},
+    "graphic_fallback": {"allowed": true, "kind": "map | statistic | diagram | null — a graphic that would genuinely explain, if footage fails"},
     "preferred_media_type": "video | image | graphic | any",
     "specificity_requirement": "exact | representative | generic",
     "visual_misrepresentation_risk": "low | medium | high — how misleading a wrong visual would be for this sentence"
@@ -1651,7 +1651,7 @@ INTENT_QUERY_FIELDS = (
     "literal", "activity_broll", "establishing", "contextual", "archival",
 )
 
-_GRAPHIC_FALLBACK_KINDS = ("map", "timeline", "statistic", "diagram")
+_GRAPHIC_FALLBACK_KINDS = ("map", "statistic", "diagram")
 _MEDIA_TYPES = ("video", "image", "graphic", "any")
 _RISK_LEVELS = ("low", "medium", "high")
 _SECONDARY_INTENT_CAP = 4
@@ -1793,11 +1793,15 @@ def _derive_visual_intents(*, role, scenarios, concepts, place, time,
     }
 
     # Graphic fallback: a map when a scene-setting beat names a
-    # place; a timeline when the beat carries events or a time.
+    # place. (P0 removal, 2026-11-27: the "events or time ->
+    # timeline" derivation is removed — the chronology graphic
+    # it named was removed completely, templates + selection
+    # paths, and the derivation must no longer name a removed
+    # kind. A chronology beat's fallback is footage, or the gap
+    # is recorded; a rebuilt treatment may re-serve the need
+    # later, this derivation may not.)
     if named_place and role in ("hook", "setup", "background"):
         graphic_fallback = {"allowed": True, "kind": "map"}
-    elif events or time:
-        graphic_fallback = {"allowed": True, "kind": "timeline"}
     else:
         graphic_fallback = {"allowed": False, "kind": None}
 

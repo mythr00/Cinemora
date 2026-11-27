@@ -479,14 +479,14 @@ def _template_candidates(row, outcome, pack):
 def _family_candidates(row, outcome, production_context):
     """Non-engine graphic families the pipeline may attempt for
     this beat, in order. The stat family rides on the pipeline's
-    own extraction; chronology/process are included ONLY on a
-    plan-level signal (D1: no unconditional renders)."""
+    own extraction; process is included ONLY on a plan-level
+    signal (D1: no unconditional renders). (P0 removal,
+    2026-11-27: the chronology/"timeline" family was removed
+    completely and is never a candidate again.)"""
     features = _text_features(outcome.get("text") or "")
     families = []
     if features["has_number"]:
         families.append("stat")
-    if features["has_date"]:
-        families.append("timeline")
     if features["has_sequence"] and (
         (production_context or {}).get("timeline_event_count") or 0
     ) >= 3:
