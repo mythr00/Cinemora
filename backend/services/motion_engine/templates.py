@@ -1248,90 +1248,10 @@ def classified_file(data, style, out_path, duration=5.0,
     )
 
 
-# ---------------------------------------------------------------------------
-# 8. Closing card (tier-ladder T5 coverage guarantee, run-10 fix)
-# ---------------------------------------------------------------------------
-
-def closing_card(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
-    """A designed closing card presenting ONE short payload — the
-    T5 floor of the tier ladder. It exists for a beat that
-    exhausted every footage tier and every content graphic
-    family.
-
-    Founder ruling 2026-11-23 (superseding the original
-    sentence-quote design): the card must NEVER print a narration
-    sentence — the film's caption already carries the sentence,
-    so a sentence card duplicates it as giant headline text. The
-    payload is a short designed element the CALLER selected from
-    the sentence (a statistic, a date, a name, a place — see
-    graphics_pipeline.short_payload_for), presented under the
-    production's own title as kicker. Sentence-length payloads
-    are refused here, at the template, so no caller — chain,
-    Director manifest or replayed recipe — can reintroduce the
-    defect."""
-    style_name, tokens = resolve_style(style)
-    data = data or {}
-    quote = _clean(data.get("quote") or data.get("text"))
-    if not quote:
-        return None, {"reason": "no_text"}
-    if len(quote) > 64 or len(quote.split()) > 8:
-        return None, {"reason": "payload_not_short"}
-    kicker = _clean(data.get("kicker"))
-    # Never print the same string twice on one frame: when the
-    # kicker duplicates the headline payload it is dropped.
-    if kicker and kicker.upper() == quote.upper():
-        kicker = ""
-    bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=41)
-    fonts = {
-        "quote": load_font(tokens["font_bold"], 56),
-        "kicker": load_font(tokens["font_bold"], 26),
-        "small": load_font(tokens["font"], 22),
-    }
-    probe = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
-    lines = wrap_text(probe, quote, fonts["quote"], 1240)[:5]
-    line_h = 76
-    block_h = line_h * len(lines)
-
-    def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
-        base = canvas.new_layer("bg", parallax=0.2)
-        base.image = bg.convert("RGBA")
-        layer = canvas.new_layer("card")
-        d = ImageDraw.Draw(layer.image, "RGBA")
-        fade = ease_out(clamp01(progress * 1.7))
-        alpha = int(255 * fade)
-        cx = WIDTH // 2
-        y = (HEIGHT - block_h) // 2 + int((1 - fade) * 26)
-        # Accent rule above the quote.
-        rule_w = 120
-        d.rectangle(
-            [cx - rule_w // 2, y - 58, cx + rule_w // 2, y - 50],
-            fill=tokens["accent"] + (alpha,),
-        )
-        if kicker:
-            kicker_text = kicker.upper()[:64]
-            kw = d.textlength(kicker_text, font=fonts["kicker"])
-            d.text(
-                (cx - kw / 2, y - 118), kicker_text,
-                font=fonts["kicker"],
-                fill=tokens["accent"] + (alpha,),
-            )
-        for line in lines:
-            lw = d.textlength(line, font=fonts["quote"])
-            d.text(
-                (cx - lw / 2, y), line,
-                font=fonts["quote"],
-                fill=tokens["text"] + (alpha,),
-            )
-            y += line_h
-        _footer(d, tokens)
-        return canvas.composite()
-
-    path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta("closing_card", style_name, duration, sentence_index, scene_number,
-                       {"quote": True, "kicker": bool(kicker),
-                        "lines": len(lines)})
-
+# (Section 8, the closing card, was removed completely by the
+# founder's P0 ruling, 2026-11-27 — template + every selection
+# path. The T5 coverage guarantee no longer renders a floor
+# graphic; see graphics_pipeline's rewired stage 6.)
 
 TEMPLATES = {
     "territory_map": territory_map,
@@ -1344,7 +1264,6 @@ TEMPLATES = {
     # Wave 2 (F4): the classified-file variant of the document
     # presentation, registered under its own name.
     "classified_file": classified_file,
-    "closing_card": closing_card,
     # Wave 1 (F3/F4): named variants over the base templates.
     "border_map": border_map,
     "route_map": route_map,

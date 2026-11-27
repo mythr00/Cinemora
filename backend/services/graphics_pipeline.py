@@ -453,7 +453,7 @@ GRAPHIC_SKIP_REASONS = frozenset({
     "invalid_graphic_output",    # missing/empty/undecodable/no video stream
     "document_presentation_disabled",  # Phase 6: founder rule — no genuine document source exists
     "stat_cap_reached",          # Phase 6: legacy-mode stat cap (max_stats) reached
-    "terminal_graphics_decline",  # Gate 2: the terminal sweep ran and NO registry family could render from the recorded facts
+    "terminal_graphics_decline",  # P0 rewiring: every content family was attempted and none could render from the recorded facts — the beat falls back to footage
 })
 
 # Fact-basis classes for rendered factual claims (MG-09). The three
@@ -1964,21 +1964,25 @@ def build_motion_graphics_assets(
     typically derived from the Asset Manager's missing-visual records.
     A targeted sentence whose content fits a graphic family is
     served by that family; a targeted sentence no content family
-    can serve is served by the T5 coverage guarantee (stage 6 of
-    the chain: outcome path where the bible
-    supports it, then the Gate 2 terminal sweep — designed
-    graphics built from the beat's recorded facts: a statistic,
-    a date, a name, a place — never the sentence's own words).
-    Only a target no eligible family can render from its recorded
-    facts (or one carrying no text at all) is skipped, and the
-    skip is recorded in the manifest with its typed reason and,
-    for a sweep-exhausted target, an explicit terminal decline.
+    can serve reaches the T5 coverage guarantee (stage 6 of the
+    chain), which — since the P0 rewiring (2026-11-27) — renders
+    NOTHING: the guarantee's terminal outcomes are exactly a
+    footage fallback (the beat stays uncovered here and the
+    jobs/tier ladder serves it with footage) or a typed
+    `terminal_graphics_decline` recorded on the skip and the
+    outcome. The historical floor graphics (closing card,
+    timeline recap, outcome path, archival-title floor) were
+    removed completely and the guarantee is never re-pointed at
+    a surviving template. Only a target no eligible family can
+    render from its recorded facts (or one carrying no text at
+    all) is skipped, and the skip is recorded in the manifest
+    with its typed reason and the explicit terminal decline.
 
     Phase 6 (AM-001/D1 + AM-002 Pass-2): graphics are generated
     ONLY for targeted requirements. The untargeted statistics sweep
-    and the unconditional chronology/process renders are REMOVED:
-    with no targets there are no graphics, and the chronology and
-    process graphics render only when a target claims them through
+    and the unconditional process render are REMOVED:
+    with no targets there are no graphics, and the process
+    graphic renders only when a target claims it through
     the targeted chain. `manifest` (the Visual Director's
     graphics_manifest dict, or its entries list) is the production
     input: when supplied, its entries ARE the targets, each entry
@@ -1988,7 +1992,7 @@ def build_motion_graphics_assets(
     DIRECTED graphic — and since run-11 fix 5a, a caller target
     for an uncovered beat the manifest does not cover is appended
     as an undirected target, so every uncovered beat reaches the
-    chain (and its closing-card floor) instead of vanishing.
+    chain (and its terminal decline) instead of vanishing.
 
     `max_stats` (legacy mode only) caps the number of stat-family
     graphics produced for manifest-less targets — a cap, never a
@@ -4206,13 +4210,15 @@ def build_motion_graphics_assets(
         target sentence, gathered from every recorded source — the
         sentence text itself, its analysis record (entities /
         locations / dates), its scenario, and the case bible
-        (entities, timeline dates, title). The terminal graphics
-        sweep matches registry families against THESE facts by
-        their declared input requirements. Nothing is invented: a
-        fact enters the record only when a source recorded it, and
-        every fact must pass the short-payload bar (a designed
-        element — never sentence text). Sentence-local sources
-        outrank bible-global ones in every list."""
+        (entities, timeline dates, title). Since the P0 rewiring
+        these facts no longer feed a terminal sweep; they are
+        recorded on the beat's terminal_graphics_decline as the
+        evidence of what was available when every content family
+        declined. Nothing is invented: a fact enters the record
+        only when a source recorded it, and every fact must pass
+        the short-payload bar (a designed element — never
+        sentence text). Sentence-local sources outrank
+        bible-global ones in every list."""
         sentence = _sentences_by_key.get(
             (target["scene_number"], target["sentence_index"])
         ) or {}
@@ -4222,10 +4228,8 @@ def build_motion_graphics_assets(
         # value is recorded for THIS sentence (its text, its
         # analysis record, or its scenario), "bible" when it comes
         # only from production-global sources (case-bible entities,
-        # timeline). The terminal sweep's title exclusion is
-        # provenance-based, so the source of every fact must be
-        # known — a beat fact that merely string-matches the
-        # production title is still a beat payload.
+        # timeline). Provenance rides on the decline record so a
+        # reader can tell beat facts from production-global ones.
         sources = {}
 
         def _add(kind, value, source="beat"):
@@ -4308,135 +4312,6 @@ def build_motion_graphics_assets(
         }
         return facts
 
-    def _terminal_candidates(target, text, facts):
-        """Gate 2 (Blocker 2): the terminal fallback sweep — the
-        registry families whose DECLARED input requirements can be
-        met by the minimal recorded facts of one beat, in the
-        order they are attempted when every preferred family has
-        declined:
-
-        - closing_card    requires: one short payload (statistic /
-                          date / name / place). Always attempted
-                          first — with the payload the fact record
-                          produced, empty when it produced none:
-                          the template itself is the payload
-                          enforcer (it refuses an empty or
-                          sentence-length payload), exactly as the
-                          run-10 floor behaved.
-        - archival_title  requires: one headline fact (name /
-                          scenario label / place / designed title),
-                          with an optional date label and place
-                          subtitle from the same fact record;
-                          attempted only when the closing card
-                          failed hard — a soft closing-card refusal
-                          stands
-
-        These are the only always-producible families: every other
-        registry family declares an input a single beat's facts
-        cannot supply — a photo or document asset, a numeric
-        series/comparison (those data contracts are exhausted by
-        the stat and engine stages above with the sentence's full
-        text, so a terminal retry could only repeat their
-        refusal), or a production-global pool (timeline / process,
-        already attempted by the guarantee routes above). Every
-        payload here is a short designed element — never the
-        narration sentence, never a file name or source label,
-        never any branding (the templates enforce the same bars
-        at render). The Director's candidate lists do not gate
-        the sweep: like the run-10 floor before it, the sweep is
-        the coverage guarantee, and a Director preference order
-        is not a veto over it."""
-        candidates = []
-        title = facts.get("title") or ""
-        kicker = clean_text((case_bible or {}).get("title") or "")
-        # Gate 4 (B3), provenance-corrected: one closing-card
-        # candidate per DISTINCT short payload the beat's facts
-        # offer (its own payload, then its names / dates / places
-        # / labels), so the repetition guard in the sweep can move
-        # a beat whose first payload already serves another
-        # sentence onto a different designed element instead of
-        # repeating the identical card. The title exclusion targets
-        # payloads BY PROVENANCE, not by string: a payload whose
-        # ONLY source is production-global (the case bible /
-        # timeline) and which string-matches the production title
-        # / kicker is the production title itself standing in as a
-        # placeholder — it produced the Gate 4 S21 title-only card
-        # (the film's own title under its thesis sentence) — and
-        # is excluded. A payload recorded for THIS beat (its text,
-        # analysis record or scenario) is a designed element (a
-        # name/date/place card) even when its text happens to
-        # string-match the title — e.g. a film titled with its
-        # subject's name, where the closing beat's own name fact
-        # is that name. facts["title"] is a beat title (see
-        # _terminal_facts), never the production title, so it is
-        # not an exclusion at all. With no provenance recorded
-        # (a hand-built fact record), fall back to the original
-        # string exclusion so the S21 behaviour is preserved.
-        _sources = facts.get("_sources") or {}
-
-        def _is_title_placeholder(value):
-            if not kicker or value.lower() != kicker.lower():
-                return False
-            value_sources = _sources.get(value.lower())
-            if value_sources is None:
-                return True
-            return "beat" not in value_sources
-
-        _payload_options = []
-        for _option in (
-            [facts.get("payload") or ""]
-            + list(facts.get("names") or [])
-            + list(facts.get("dates") or [])
-            + list(facts.get("places") or [])
-            + list(facts.get("labels") or [])
-        ):
-            _option = clean_text(_option)
-            if (
-                _option
-                and _option.lower() not in
-                [p.lower() for p in _payload_options]
-                and not _is_title_placeholder(_option)
-            ):
-                _payload_options.append(_option)
-        for _option in _payload_options:
-            data = {"quote": _option}
-            if kicker:
-                data["kicker"] = kicker
-            candidates.append(("closing_card", data))
-        if not candidates:
-            # Keep the historical empty-payload attempt so the
-            # template's own refusal is the recorded outcome when
-            # a beat truly carries no designed payload.
-            data = {"quote": ""}
-            if kicker:
-                data["kicker"] = kicker
-            candidates.append(("closing_card", data))
-        headline = next(
-            (
-                v for v in (
-                    (facts["names"] or [None])[0],
-                    (facts["labels"] or [None])[0],
-                    (facts["places"] or [None])[0],
-                    title,
-                )
-                if v and not _is_title_placeholder(v)
-            ),
-            "",
-        )
-        if headline:
-            data = {"title": headline}
-            if facts["dates"]:
-                data["date_label"] = facts["dates"][0]
-            place = next(
-                (p for p in facts["places"] if p != headline), ""
-            )
-            if place:
-                data["subtitle"] = place
-            if kicker and kicker.upper() != headline.upper():
-                data["kicker"] = kicker
-            candidates.append(("archival_title", data))
-        return candidates
-
     _legacy_stats_created = 0
 
     # Gate 4 (B3): repetition guard + quality-defect record.
@@ -4444,10 +4319,8 @@ def build_motion_graphics_assets(
     # designed payload) must not silently serve multiple
     # sentences — Gate 4 found the identical "steel hanger rods"
     # closing card on five sentences. The guard tracks every
-    # payload assigned in this build; the terminal sweep uses it
-    # to pick a distinct payload, and any duplication that still
-    # occurs (e.g. a bible-global timeline serving as designed)
-    # is stamped on the record and listed in
+    # payload assigned in this build, and any duplication that
+    # still occurs is stamped on the record and listed in
     # graphic_quality_defects — explicit data, never silent.
     _assigned_payloads = {}
     _assigned_payload_texts = set()
@@ -4584,8 +4457,6 @@ def build_motion_graphics_assets(
         _stat_detail = ""
         _engine_reason = None
         _engine_detail = ""
-        _guarantee_reason = None
-        _guarantee_detail = ""
         _terminal_decline = None
 
         # Variety pre-pass: if the previous target used the stat
@@ -4778,34 +4649,40 @@ def build_motion_graphics_assets(
                     _last_engine_template = _name
                     break
 
-        # 6) T5 COVERAGE GUARANTEE (tier ladder T5; run-10 fix):
-        # every target in this chain IS a coverage requirement —
-        # a sentence that exhausted retrieval and the footage
-        # tiers with no visual (legacy targets derive from
-        # missing_visuals; the Director issues manifest entries
-        # only for starved beats it graphic-permitted, and run
-        # 10's closing entries were purposed "coverage_fallback"
-        # with empty template candidates). When every content
-        # family above failed to serve such a target, the ladder's
-        # floor is a DESIGNED closing card from the motion engine:
-        # the sentence's own words under the production's title,
-        # themed, validated and delivered like every other
-        # graphic, stamped tier "graphic" on the timeline — never
-        # a stock photo of a form, never a fabricated document.
-        # The Director's candidate lists order the content
-        # families; they do not gate the floor (its own
-        # _graphic_permitted decision already allowed a graphic
-        # for this beat). A guarantee failure falls through to the
-        # recorded skip below with its reason preserved, and jobs
-        # annotates the beat's missing_visuals record with the
-        # outcome — the failure is data, never silent.
+        # 6) T5 COVERAGE GUARANTEE — REWIRED (P0 removal,
+        # 2026-11-27). Every target in this chain IS a coverage
+        # requirement — a sentence that exhausted retrieval and
+        # the footage tiers with no visual. The historical
+        # guarantee manufactured a floor graphic for every such
+        # beat (timeline recap -> outcome path -> the Gate 2
+        # terminal sweep's closing card, with archival_title as
+        # its soft second). The founder's P0 ruling removed those
+        # graphics completely, and the guarantee must NOT be
+        # re-pointed at any surviving template to recreate a
+        # floor. Its terminal outcomes are now exactly two:
+        #
+        # (a) FOOTAGE FALLBACK — the beat is left unserved by
+        #     graphics here, so the jobs/tier-ladder side serves
+        #     it with footage (B-roll / atmospheric tiers or an
+        #     extended hold) like any other uncovered beat; or
+        # (b) a typed TERMINAL_GRAPHICS_DECLINE, recorded on the
+        #     skip and outcome records below with the families
+        #     the chain attempted and the facts that were
+        #     available — an honest stated absence, never a
+        #     manufactured graphic.
+        #
+        # archival_title survives ONLY as a Director-proposed
+        # title treatment in the engine stage above (a manifest
+        # entry naming it); it is never attempted here as a
+        # floor. The Director's candidate lists remain a
+        # preference order for the content families, not a veto.
         #
         # One route is NOT pre-empted: the process graphic is a
         # chapter-level render anchored to a pre-chosen target
         # and rendered AFTER this loop (below). When this target
         # is that anchor and the process stage is positioned to
         # render for it, the beat is already served by a designed
-        # graphic — the floor stays silent and the anchor's
+        # graphic — no decline is recorded and the anchor's
         # recorded outcome remains the chain's own (MG-08), as
         # before. (If that render then fails, the failure is
         # recorded in graphic_failures — data, not silence.)
@@ -4822,277 +4699,25 @@ def build_motion_graphics_assets(
                 if clean_text(_event.get("what", ""))
             ) >= 3
         )
-        # Run-11 fix 5b: the floor no longer yields to an
-        # affirmative Director direction. Run 11's sentences 9 and
-        # 10 were Director-directed, every directed template
-        # refused (no_schematic_motif), and the run-10 floor —
-        # gated to undirected/coverage_fallback targets only —
-        # left them skipped, so the production failed coverage
-        # with a working floor unused. The Director's direction is
-        # a PREFERENCE ORDER, not a veto: the chain above already
-        # tried the directed templates first, in the Director's
-        # order, and their refusals stand in the target's recorded
-        # stage outcomes. When every one of them refused, the
-        # closing card serves the beat and each directed refusal is
-        # recorded in graphic_failures with superseded_by naming
-        # this guarantee (the same pattern as every earlier stage).
-        # The one exception that remains is a target already
-        # SERVED by a process-anchor graphic — coverage is met
-        # there, so no floor is needed.
         if produced_family is None and not _served_by_process_anchor:
-            # Wave 1 widening (§D.4 — exactly one step): where
-            # RECORDED facts exist, the guarantee may serve a
-            # content graphic instead of the closing card — an
-            # outcome path when the bible records a sequence and
-            # this beat is sequential or fact-backed. The honesty
-            # contract is unchanged: the asset is stamped
-            # coverage_guarantee with its real produced_reason,
-            # and the closing card remains the floor beneath it.
-            # (P0 removal, 2026-11-27: the timeline-recap route
-            # that preceded this step was removed with the
-            # chronology graphic — completely, renderer included.)
-            _fact_backed = target.get("fact_basis") in (
-                FACT_BASIS_ASSET, FACT_BASIS_RESEARCH)
-            _guarantee_served_reason = None
-            if produced_family is None:
-                _path_data = _assemble_outcome_path(target)
-                if _path_data is not None and (
-                    has_sequence or _fact_backed
-                ):
-                    _path_ok, _path_reason, _path_detail = (
-                        _make_engine_graphic(
-                            target, "outcome_path", _path_data,
-                            style=_style_for_target(
-                                target, _style_for("editorial")),
-                        )
-                    )
-                    if _path_ok:
-                        produced_family = "motion_engine"
-                        produced_reason = (
-                            "coverage_guarantee:outcome_path")
-                        _guarantee_served_reason = produced_reason
-                        for _record in reversed(assets):
-                            if (
-                                _record.get("template")
-                                == "outcome_path"
-                                and _record.get("scene_number")
-                                == target["scene_number"]
-                                and _record.get("sentence_index")
-                                == target["sentence_index"]
-                            ):
-                                _record["coverage_guarantee"] = True
-                                break
-                    else:
-                        _guarantee_reason = _path_reason
-                        _guarantee_detail = _path_detail
-            if _guarantee_served_reason is not None:
-                # Same preservation contract as the closing card:
-                # the guarantee covers the beat; it does not erase
-                # why the beat needed it.
-                _prior_reasons = [
-                    ("stat", _stat_reason, _stat_detail),
-                    ("event_schematic", _schematic_reason,
-                     _schematic_detail),
-                    ("motion_engine", _engine_reason, _engine_detail),
-                ]
-                _hard = {
-                    "rendering_failure", "validation_failed",
-                    "invalid_graphic_output",
-                }
-                _prior = next(
-                    (p for p in _prior_reasons if p[1] in _hard),
-                    None,
-                ) or next(
-                    (p for p in _prior_reasons if p[1] is not None),
-                    None,
-                )
-                if _prior is not None:
-                    graphic_failures.append({
-                        "graphic_type": _prior[0],
-                        "purpose": "targeted",
-                        "stage": "chain",
-                        "file_path": None,
-                        "reason": _prior[1],
-                        "detail": _prior[2],
-                        "superseded_by": _guarantee_served_reason,
-                        "scene_number": target["scene_number"],
-                        "sentence_index": target["sentence_index"],
-                        "sentence_number": target["sentence_number"],
-                    })
-        if produced_family is None and not _served_by_process_anchor:
-            # Gate 2 (Blocker 2): TERMINAL GRAPHICS SWEEP. The
-            # run-10 floor tried exactly ONE family (closing_card)
-            # with a payload drawn only from the sentence text —
-            # a beat whose facts live in its analysis record,
-            # scenario or the case bible (a name, a date, a place
-            # the sentence itself does not repeat) still declined
-            # and reached the timeline with no visual of any kind.
-            # The sweep instead iterates the registry families
-            # whose declared input requirements the beat's recorded
-            # facts satisfy (_terminal_candidates), first render
-            # wins. Founder rules hold for every candidate: the
-            # payload is a SHORT DESIGNED element (statistic, date,
-            # name, place) under the production's title — never the
-            # narration sentence itself, never a file name or
-            # source label, never any branding. Only when literally
-            # no family can render from the recorded facts does the
-            # beat decline, and that decline is recorded explicitly
-            # (terminal_graphics_decline, with the families attempted
-            # and the facts that were available) on the skip and
-            # outcome records below.
             _facts = _terminal_facts(target, text)
-            _terminal_attempted = []
-            _soft_floor_refusal = False
-            _dup_candidate = None
-            for _tname, _tdata in _terminal_candidates(
-                target, text, _facts
+            _attempted = []
+            for _stage_family, _stage_reason in (
+                ("stat", _stat_reason),
+                ("event_schematic", _schematic_reason),
+                ("motion_engine", _engine_reason),
             ):
-                if _tname == "archival_title" and _soft_floor_refusal:
-                    # The closing card declined its payload softly
-                    # — the beat's facts are not renderable as
-                    # designed elements, and a title card built
-                    # from the same facts would not change that.
-                    # The title family is the sweep's answer to a
-                    # HARD closing-card failure, not a second
-                    # opinion on a soft refusal.
-                    continue
-                if (
-                    _tname == "closing_card"
-                    and clean_text(_tdata.get("quote") or "").lower()
-                    in _assigned_payload_texts
-                ):
-                    # Gate 4 (B3) repetition guard: this exact
-                    # card already serves another sentence — try
-                    # the beat's next distinct payload instead of
-                    # silently repeating it. If every distinct
-                    # payload is exhausted the produced block below
-                    # still fills the beat (Gate 2 guarantee) and
-                    # records the duplication as a quality defect.
-                    if _dup_candidate is None:
-                        _dup_candidate = (_tname, _tdata)
-                    continue
-                # attempted_families records each FAMILY once
-                # (Gate 2 semantics), however many distinct
-                # payloads of it were tried (Gate 4 B3).
-                if _tname not in _terminal_attempted:
-                    _terminal_attempted.append(_tname)
-                _card_ok, _guarantee_reason, _guarantee_detail = (
-                    _make_engine_graphic(
-                        target, _tname, _tdata,
-                        style=_style_for_target(
-                            target, _style_for("editorial")
-                        ),
-                    )
-                )
-                if _guarantee_reason not in (
-                    "rendering_failure", "validation_failed",
-                    "invalid_graphic_output",
-                ):
-                    _soft_floor_refusal = True
-                if _card_ok:
-                    produced_family = "motion_engine"
-                    produced_reason = (
-                        "coverage_guarantee:closing_card"
-                        if _tname == "closing_card"
-                        else f"coverage_guarantee:terminal:{_tname}"
-                    )
-                    _guarantee_reason = None
-                    _guarantee_detail = ""
-                    for _record in reversed(assets):
-                        if (
-                            _record.get("template") == _tname
-                            and _record.get("scene_number")
-                            == target["scene_number"]
-                            and _record.get("sentence_index")
-                            == target["sentence_index"]
-                        ):
-                            _record["coverage_guarantee"] = True
-                            _record["terminal_guarantee"] = _tname
-                            break
-                    break
-            if produced_family is None and _dup_candidate is not None:
-                # Gate 4 (B3) + Gate 2 guarantee: no distinct
-                # payload exists, but a (duplicate) designed
-                # payload does — the beat is still filled, and
-                # the produced block stamps the duplication as an
-                # explicit quality defect rather than repeating
-                # silently.
-                _tname, _tdata = _dup_candidate
-                if _tname not in _terminal_attempted:
-                    _terminal_attempted.append(_tname)
-                _card_ok, _guarantee_reason, _guarantee_detail = (
-                    _make_engine_graphic(
-                        target, _tname, _tdata,
-                        style=_style_for_target(
-                            target, _style_for("editorial")
-                        ),
-                    )
-                )
-                if _card_ok:
-                    produced_family = "motion_engine"
-                    produced_reason = "coverage_guarantee:closing_card"
-                    _guarantee_reason = None
-                    _guarantee_detail = ""
-                    for _record in reversed(assets):
-                        if (
-                            _record.get("template") == _tname
-                            and _record.get("scene_number")
-                            == target["scene_number"]
-                            and _record.get("sentence_index")
-                            == target["sentence_index"]
-                        ):
-                            _record["coverage_guarantee"] = True
-                            _record["terminal_guarantee"] = _tname
-                            break
-            if produced_family is not None:
-                # The floor covers the beat; it does not erase
-                # why the beat needed it. A stage failure above
-                # (e.g. a stat render that exploded) was previously
-                # carried by the target's skip reason — with the
-                # beat now served, that reason is preserved in
-                # graphic_failures instead, marked superseded.
-                # Hard reasons outrank soft ones; otherwise the
-                # earliest stage's reason stands.
-                _prior_reasons = [
-                    ("stat", _stat_reason, _stat_detail),
-                    ("event_schematic", _schematic_reason,
-                     _schematic_detail),
-                    ("motion_engine", _engine_reason, _engine_detail),
-                ]
-                _hard = {
-                    "rendering_failure", "validation_failed",
-                    "invalid_graphic_output",
-                }
-                _prior = next(
-                    (p for p in _prior_reasons if p[1] in _hard),
-                    None,
-                ) or next(
-                    (p for p in _prior_reasons if p[1] is not None),
-                    None,
-                )
-                if _prior is not None:
-                    graphic_failures.append({
-                        "graphic_type": _prior[0],
-                        "purpose": "targeted",
-                        "stage": "chain",
-                        "file_path": None,
-                        "reason": _prior[1],
-                        "detail": _prior[2],
-                        "superseded_by": produced_reason,
-                        "scene_number": target["scene_number"],
-                        "sentence_index": target["sentence_index"],
-                        "sentence_number": target["sentence_number"],
-                    })
-            else:
-                _terminal_decline = {
-                    "reason": "terminal_graphics_decline",
-                    "attempted_families": _terminal_attempted,
-                    "facts_available": sorted(
-                        kind
-                        for kind, values in _facts.items()
-                        if values and not kind.startswith("_")
-                    ),
-                }
+                if _stage_reason is not None:
+                    _attempted.append(_stage_family)
+            _terminal_decline = {
+                "reason": "terminal_graphics_decline",
+                "attempted_families": _attempted,
+                "facts_available": sorted(
+                    kind
+                    for kind, values in _facts.items()
+                    if values and not kind.startswith("_")
+                ),
+            }
 
         if produced_family is not None:
             covered.add(key)
@@ -5163,26 +4788,13 @@ def build_motion_graphics_assets(
                 "rendering_failure", "validation_failed",
                 "invalid_graphic_output",
             }
-            # T5 guarantee (stage 6): its failure reason joins the
-            # same priority selection — a HARD failure of the
-            # floor outranks softer stage reasons, and when no
-            # stage produced any reason at all the floor's refusal
-            # is the outcome of record. A SOFT floor refusal (the
-            # card declined its input) never overrides a more
-            # specific stage reason: the pinned MG-08 reasons
+            # T5 guarantee (stage 6, rewired by the P0 removal):
+            # the guarantee no longer renders anything, so it
+            # contributes no reason of its own — an unserved beat
+            # keeps the deciding stage's pinned MG-08 reason
             # (no_usable_statistic, missing_document_source, ...)
-            # keep naming the stage that actually decided.
-            if _guarantee_reason is not None and (
-                _guarantee_reason in _hard_reasons
-                or (
-                    _engine_reason is None
-                    and _stat_reason is None
-                    and _schematic_reason is None
-                )
-            ):
-                _engine_reason, _engine_detail = (
-                    _guarantee_reason, _guarantee_detail
-                )
+            # and carries the typed terminal_graphics_decline
+            # alongside it (recorded below).
             _reason = None
             _detail = ""
             for _cand_reason, _cand_detail in (
@@ -5238,9 +4850,9 @@ def build_motion_graphics_assets(
             )
             if _terminal_decline is not None:
                 # Gate 2 (Blocker 2): the explicit terminal
-                # decline — the sweep ran, every eligible family
-                # was attempted against the recorded facts, and
-                # none could render. Recorded on BOTH the skip
+                # decline — every content family was attempted
+                # against the recorded facts, and none could
+                # render. Recorded on BOTH the skip
                 # entry and the outcome so the beat's absence of
                 # any visual is a stated fact with its evidence,
                 # never a silent fall-through.

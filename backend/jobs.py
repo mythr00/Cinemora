@@ -1176,9 +1176,10 @@ def _annotate_missing_visual_graphics_outcomes(
     record of a beat that got no verified visual; the graphics
     stage's per-target outcomes (targets.outcomes in the written
     motion_graphics.json) say what the T5 route then did with the
-    beat — generated (and by which family, e.g. the
-    coverage-guarantee closing card) or skipped (with the typed
-    MG-08 reason). Without this stamp, a beat the graphics path
+    beat — generated (and by which family) or skipped (with the
+    typed MG-08 reason and, since the P0 rewiring, the typed
+    terminal_graphics_decline when every family declined).
+    Without this stamp, a beat the graphics path
     genuinely could not serve reads in the report as merely
     "uncovered", with the reason stranded in the graphics
     manifest. Data propagation only: the entries are the same
