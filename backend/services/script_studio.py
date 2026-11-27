@@ -586,8 +586,52 @@ _WRITER_SYSTEM = (
 )
 
 
+def _research_context_block(record: dict) -> str:
+    """The channel-research evidence a draft is developed from,
+    shaped for the generation prompts: the analysed videos (with
+    the basis each rests on), the patterns the analysis found,
+    and the original ideas it proposed. Patterns and structure
+    lessons only — the studied channel's subjects and expression
+    are never material to copy."""
+    analysis = record.get("analysis") or {}
+    channel = record.get("channel") or {}
+    lines = [
+        "Channel research the user gathered and chose to develop "
+        f"from — channel: {channel.get('title') or 'unknown'}.",
+    ]
+    videos = analysis.get("videos") or []
+    if videos:
+        lines.append("Analysed videos (basis = what was actually accessible):")
+        for video in videos[:3]:
+            lines.append(
+                f"- {video.get('title') or 'Untitled'} "
+                f"(basis: {video.get('basis') or 'metadata'})"
+            )
+    patterns = analysis.get("patterns") or []
+    if patterns:
+        lines.append("Patterns found in those videos:")
+        for item in patterns[:6]:
+            if isinstance(item, dict) and item.get("pattern"):
+                lines.append(f"- {item['pattern']}")
+    ideas = analysis.get("ideas") or []
+    if ideas:
+        lines.append("Original ideas the analysis proposed:")
+        for idea in ideas[:6]:
+            if isinstance(idea, dict) and idea.get("title"):
+                lines.append(
+                    f"- {idea['title']}: {idea.get('angle') or ''}"
+                )
+    lines.append(
+        "Apply the patterns and structural lessons where they "
+        "genuinely fit this topic; do not copy the studied "
+        "channel's subjects, scripts or distinctive expression."
+    )
+    return "\n".join(lines)
+
+
 def _outline_prompt(topic: str, angle: str, target_minutes: float,
-                    category: str, language: str = "en") -> str:
+                    category: str, language: str = "en",
+                    research_context: str = "") -> str:
     target_words = int(round(target_minutes * WORDS_PER_MINUTE))
     return (
         f"Topic: {topic}\n"
@@ -602,6 +646,7 @@ def _outline_prompt(topic: str, angle: str, target_minutes: float,
             if language != "en"
             else ""
         )
+        + (f"{research_context}\n\n" if research_context else "")
         + "Design the structure of an ORIGINAL documentary script on "
         "this topic: an opening hook section, the story sections in "
         "order, and a closing section. Give each section a short "
@@ -664,6 +709,22 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
             f"{MAX_TARGET_MINUTES} minutes (audit doc 02 §3).",
         )
     category = str(category or "").strip() or DEFAULT_CATEGORY
+    # Channel research: a supplied research_id must name a real
+    # record belonging to this user, and its analysis genuinely
+    # informs the outline — the link is not metadata-only.
+    research_context = ""
+    research_channel = None
+    if research_id:
+        from services import channel_research
+
+        try:
+            record = channel_research.get_research(user_id, research_id)
+        except channel_research.ChannelResearchError as error:
+            raise ScriptError(
+                error.status_code, error.code, error.message
+            ) from error
+        research_context = _research_context_block(record)
+        research_channel = (record.get("channel") or {}).get("title")
     outline = _ai_call(
         llm_provider.complete_json,
         "You design documentary script structures. Techniques and "
@@ -672,6 +733,7 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
         _outline_prompt(
             topic, str(angle or "").strip(), minutes, category,
             language,
+            research_context=research_context,
         ),
         max_tokens=3000,
         usage_context={
@@ -753,6 +815,7 @@ def generate_draft(user_id, *, topic: str, angle: str = "",
         # developed from, so its references stay attached to the
         # draft (and visible beside it) permanently.
         "research_id": research_id,
+        "research_channel": research_channel,
         "outline": plan,
         "basis": "llm_generated_from_user_brief",
         "at": _now_iso(),
@@ -1165,11 +1228,23 @@ def send_to_production(user_id, script_id: str) -> dict:
             category=draft.get("category") or DEFAULT_CATEGORY,
             # Item 6: the draft's language becomes the project's
             # authoritative language (flat key; the run gate
-            # enforces narration support before charging).
+            # enforces narration support before charging). The
+            # duration the user chose for the script is carried
+            # into the project too, so the handoff keeps it.
             options=(
-                {"language": draft["language"]}
-                if draft.get("language")
-                else None
+                {
+                    **(
+                        {"language": draft["language"]}
+                        if draft.get("language")
+                        else {}
+                    ),
+                    **(
+                        {"target_minutes": draft["target_minutes"]}
+                        if draft.get("target_minutes")
+                        else {}
+                    ),
+                }
+                or None
             ),
             status="created",
         )

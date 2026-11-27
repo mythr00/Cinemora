@@ -46,6 +46,48 @@ _CHANNEL_URL = re.compile(
     re.IGNORECASE,
 )
 
+# Trailing channel-page tabs users copy from YouTube's own UI —
+# stripped during normalisation so the /videos listing is read.
+_CHANNEL_TABS = {
+    "videos", "shorts", "streams", "featured", "about",
+    "community", "playlists", "live",
+}
+
+
+def normalise_channel_url(raw: str) -> str:
+    """Canonicalise the channel addresses users actually paste:
+    a bare @handle, a scheme-less host, the mobile host, tracking
+    query strings, and URLs that already carry a channel tab
+    (…/@Handle/videos is the address YouTube itself shows).
+    Returns the canonical channel root; raises nothing — the
+    caller validates the result against _CHANNEL_URL."""
+    url = str(raw or "").strip()
+    if not url:
+        return url
+    if url.startswith("@"):
+        url = f"https://www.youtube.com/{url}"
+    elif "://" not in url:
+        url = f"https://{url}"
+    # Drop query/fragment (share trackers, ?si=…, tab params).
+    url = url.split("?", 1)[0].split("#", 1)[0]
+    url = re.sub(
+        r"^(https?)://m\.youtube\.com", r"\1://www.youtube.com",
+        url, flags=re.IGNORECASE,
+    )
+    url = re.sub(
+        r"^(https?)://youtube\.com", r"\1://www.youtube.com",
+        url, flags=re.IGNORECASE,
+    )
+    url = url.rstrip("/")
+    # Strip trailing channel tabs (possibly repeated).
+    while True:
+        head, _, last = url.rpartition("/")
+        if last.lower() in _CHANNEL_TABS and _CHANNEL_URL.match(head):
+            url = head
+        else:
+            break
+    return url
+
 
 class ChannelResearchError(Exception):
     def __init__(self, status_code: int, code: str, message: str):
@@ -129,8 +171,25 @@ def _run_ytdlp(args: list[str]) -> dict:
             f"yt-dlp could not run: {error}",
         ) from error
     if completed.returncode != 0:
-        detail = (completed.stderr or "").strip().splitlines()
+        stderr = completed.stderr or ""
+        detail = stderr.strip().splitlines()
         tail = detail[-1] if detail else "unknown error"
+        # Known environment failures get an actionable message
+        # instead of a raw yt-dlp stderr tail.
+        if "CERTIFICATE_VERIFY_FAILED" in stderr or "self-signed" in stderr:
+            raise ChannelResearchError(
+                502, "channel_fetch_failed",
+                "The secure connection to YouTube could not be "
+                "verified from this deployment, so the channel "
+                "could not be read. Nothing was recorded.",
+            )
+        if "Sign in to confirm" in stderr or "not a bot" in stderr:
+            raise ChannelResearchError(
+                502, "channel_fetch_failed",
+                "YouTube refused the read — it is treating this "
+                "server as automated traffic. Nothing was "
+                "recorded; trying again later usually works.",
+            )
         raise ChannelResearchError(
             502, "channel_fetch_failed",
             f"YouTube could not be read for that URL ({tail}). "
@@ -174,14 +233,14 @@ def fetch_channel(channel_url: str) -> dict:
     uploads, ordered by view count when the extraction reports
     counts (the "most successful" reading), else in the order
     YouTube returned them — the basis is stated, never hidden."""
-    url = str(channel_url or "").strip()
+    url = normalise_channel_url(channel_url)
     if not _CHANNEL_URL.match(url):
         raise ChannelResearchError(
             422, "channel_url_invalid",
             "That does not look like a YouTube channel URL "
             "(a @handle, /channel/, /c/ or /user/ address).",
         )
-    videos_url = url.rstrip("/") + "/videos"
+    videos_url = url + "/videos"
     data = _run_ytdlp(
         [
             "--flat-playlist",
@@ -338,7 +397,9 @@ def analyse_research(user_id, research_id: str, video_ids) -> dict:
     metadata alone."""
     store = _load_store(user_id)
     record = _find_record(store, research_id)
-    selected_ids = [str(v) for v in (video_ids or []) if str(v).strip()]
+    selected_ids = list(
+        dict.fromkeys(str(v) for v in (video_ids or []) if str(v).strip())
+    )
     if not selected_ids:
         raise ChannelResearchError(
             422, "selection_required",
@@ -356,7 +417,13 @@ def analyse_research(user_id, research_id: str, video_ids) -> dict:
             422, "selection_unknown",
             "A selected video is not part of this research record.",
         )
-    details = [fetch_video_detail(v) for v in selected_ids]
+    # The per-video extractions are independent — run them
+    # concurrently so analysing 3 videos takes roughly one
+    # video's time, not three in sequence inside one request.
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=len(selected_ids)) as pool:
+        details = list(pool.map(fetch_video_detail, selected_ids))
     analysis = _analyse_with_llm(user_id, record, details)
     record["analysis"] = {
         "at": _now_iso(),
@@ -445,7 +512,18 @@ def _analyse_with_llm(user_id, record: dict, details: list[dict]) -> dict:
             "channel data stays recorded.",
         )
     return {
-        "patterns": patterns[:10],
+        # Patterns are coerced to the documented shape (the ideas
+        # below already are): a malformed provider item must never
+        # reach the frontend raw and crash its rendering.
+        "patterns": [
+            {
+                "pattern": str(item.get("pattern") or "")[:500],
+                "basis": str(item.get("basis") or "metadata")[:40],
+                "evidence": str(item.get("evidence") or "")[:1000],
+            }
+            for item in patterns[:10]
+            if isinstance(item, dict) and item.get("pattern")
+        ],
         "ideas": [
             {
                 "id": f"idea-{index}",

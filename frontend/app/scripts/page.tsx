@@ -44,6 +44,7 @@ import {
   Sparkles,
   Trash2,
   Wand2,
+  X,
 } from "lucide-react";
 
 /**
@@ -87,6 +88,14 @@ export default function ScriptStudioPage() {
   const [expandProposal, setExpandProposal] = useState<ScriptExpandProposal | null>(null);
   const [tightenProposal, setTightenProposal] = useState<ScriptTightenProposal | null>(null);
   const [brief, setBrief] = useState({ topic: "", angle: "", category: "", target: "10" });
+  // The custom-duration box keeps its own text: deriving it from
+  // brief.target made the box blank itself whenever the typed
+  // value happened to equal a preset.
+  const [customTarget, setCustomTarget] = useState("");
+  const targetNumber = Number(brief.target);
+  const targetInvalid =
+    brief.target.trim() !== "" &&
+    (!Number.isFinite(targetNumber) || targetNumber < 5 || targetNumber > 60);
   // Item 6: the script language, chosen before generation. The
   // catalogue comes from the backend; the fallback is English
   // plus the translation set the localization engine supports.
@@ -101,6 +110,10 @@ export default function ScriptStudioPage() {
   const [researchHistory, setResearchHistory] = useState<ChannelResearchRecord[]>([]);
   const [selectedVideos, setSelectedVideos] = useState<string[]>([]);
   const [researchId, setResearchId] = useState("");
+  const researchReference = researchId
+    ? researchHistory.find((r) => r.id === researchId) ||
+      (research?.id === researchId ? research : undefined)
+    : undefined;
   const [researchError, setResearchError] = useState<string | null>(null);
 
   const loadDrafts = useCallback(async () => {
@@ -159,6 +172,9 @@ export default function ScriptStudioPage() {
     }
   };
 
+  // Research actions surface their errors inline in the research
+  // panel only — rethrowing into run() would ALSO raise the
+  // page-level banner with an unrelated retry.
   const resolveResearch = () =>
     run("research", async () => {
       setResearchError(null);
@@ -166,6 +182,10 @@ export default function ScriptStudioPage() {
         const record = await resolveChannelResearch(researchUrl.trim());
         setResearch(record);
         setSelectedVideos([]);
+        // A fresh channel read replaces the research context: a
+        // reference chosen from an earlier channel must never
+        // silently attach itself to this one.
+        setResearchId("");
         setResearchHistory((current) => [
           record,
           ...current.filter((r) => r.id !== record.id),
@@ -174,7 +194,6 @@ export default function ScriptStudioPage() {
         setResearchError(
           caught instanceof Error ? caught.message : "Could not read that channel.",
         );
-        throw caught;
       }
     });
 
@@ -192,7 +211,6 @@ export default function ScriptStudioPage() {
         setResearchError(
           caught instanceof Error ? caught.message : "Analysis failed.",
         );
-        throw caught;
       }
     });
 
@@ -249,6 +267,9 @@ export default function ScriptStudioPage() {
       });
       await loadDrafts();
       await openDraft(created.id);
+      // The research reference is consumed by this generation;
+      // it must not leak into the next, unrelated brief.
+      setResearchId("");
       setNotice(
         "Draft generated from your brief — an outline first, then one writing pass per section. Edit freely; nothing here is final until you send it to production.",
       );
@@ -347,7 +368,9 @@ export default function ScriptStudioPage() {
       const result = await sendScriptToProduction(draft.id);
       setDraft(result.draft);
       await loadDrafts();
-      setNotice(`Project created. Open it from the production panel below.`);
+      setNotice(
+        "Project created. Its Open project link is in the Production panel at the end of this draft — the project carries this script and the duration you chose.",
+      );
     });
 
   const attach = () =>
@@ -482,7 +505,10 @@ export default function ScriptStudioPage() {
                             ? "script-duration-chip is-active"
                             : "script-duration-chip"
                         }
-                        onClick={() => setBrief({ ...brief, target: String(minutes) })}
+                        onClick={() => {
+                          setCustomTarget("");
+                          setBrief({ ...brief, target: String(minutes) });
+                        }}
                       >
                         {minutes} min
                       </button>
@@ -494,19 +520,41 @@ export default function ScriptStudioPage() {
                     max={60}
                     aria-label="Custom duration in minutes"
                     placeholder="Custom minutes (5–60)"
-                    value={
-                      DURATION_PRESETS.includes(Number(brief.target))
-                        ? ""
-                        : brief.target
-                    }
-                    onChange={(e) => setBrief({ ...brief, target: e.target.value })}
+                    value={customTarget}
+                    onChange={(e) => {
+                      setCustomTarget(e.target.value);
+                      setBrief({ ...brief, target: e.target.value });
+                    }}
                   />
+                  {targetInvalid && (
+                    <span className="script-note" role="alert">
+                      Generated scripts target 5–60 minutes — adjust the
+                      duration to generate.
+                    </span>
+                  )}
                 </div>
+                {researchReference && (
+                  <p className="script-research-chip">
+                    <span>
+                      Research reference:{" "}
+                      <strong>{researchReference.channel.title || "channel"}</strong>
+                      {" "}— its patterns inform this draft.
+                    </span>
+                    <button
+                      type="button"
+                      className="script-chip-remove"
+                      aria-label="Remove research reference"
+                      onClick={() => setResearchId("")}
+                    >
+                      <X size={13} aria-hidden />
+                    </button>
+                  </p>
+                )}
                 <button
                   type="button"
                   className="button button-primary"
                   onClick={() => void generate()}
-                  disabled={working === "generate" || !brief.topic.trim()}
+                  disabled={working === "generate" || !brief.topic.trim() || targetInvalid}
                 >
                   {working === "generate" ? "Generating…" : "Generate draft"}
                 </button>
@@ -547,6 +595,7 @@ export default function ScriptStudioPage() {
                         if (record) {
                           setResearch(record);
                           setSelectedVideos([]);
+                          setResearchId("");
                           setResearchError(null);
                         }
                       }}
@@ -604,6 +653,12 @@ export default function ScriptStudioPage() {
                         </li>
                       ))}
                     </ul>
+                    {selectedVideos.length >= 3 && (
+                      <p className="script-note">
+                        3 selected — the maximum the analysis takes.
+                        Deselect one to swap in another video.
+                      </p>
+                    )}
                     <button
                       type="button"
                       className="button"
@@ -619,7 +674,12 @@ export default function ScriptStudioPage() {
                         <p className="script-note">
                           Analysis basis:{" "}
                           {Object.entries(research.analysis.basis)
-                            .map(([id, basis]) => `${id}: ${basis}`)
+                            .map(([id, basis]) => {
+                              const known =
+                                research.analysis?.videos.find((v) => v.id === id) ||
+                                research.videos.find((v) => v.id === id);
+                              return `${known?.title || id}: ${basis}`;
+                            })
                             .join(" · ")}
                         </p>
                         <ul className="script-research-videos">
@@ -640,6 +700,12 @@ export default function ScriptStudioPage() {
                             <li key={idea.id}>
                               <strong>{idea.title}</strong>
                               <span className="script-note"> — {idea.angle}</span>
+                              {idea.why_it_fits && (
+                                <span className="script-note">
+                                  <br />
+                                  Why it fits: {idea.why_it_fits}
+                                </span>
+                              )}
                               <br />
                               <button
                                 type="button"
@@ -665,8 +731,10 @@ export default function ScriptStudioPage() {
                     )}
                     {researchId === research.id && (
                       <p className="script-note">
-                        This research record will be saved as the
-                        reference of the next draft you generate.
+                        This record is the research reference on the
+                        brief above — its patterns will inform the
+                        next draft you generate. Remove it there if
+                        that is not what you want.
                       </p>
                     )}
                   </>

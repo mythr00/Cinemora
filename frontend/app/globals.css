@@ -947,6 +947,20 @@ span.authenticated-media-state {
   font-size: 16px; line-height: 1.8; resize: vertical;
 }
 .script-section-body:focus { outline: none; border-color: var(--accent); background: var(--paper); }
+.script-research-chip {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: 0; padding: 9px 12px;
+  background: var(--accent-soft); border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  color: var(--ink-strong); font-size: 13px; line-height: 1.45;
+}
+.script-chip-remove {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; flex: none; padding: 0;
+  border: 1px solid var(--line); border-radius: 50%;
+  background: var(--paper); color: var(--ink-soft); cursor: pointer;
+}
+.script-chip-remove:hover { color: var(--ink-strong); border-color: var(--ink-muted); }
 .script-proposal { margin: 16px 0; padding: 20px; border: 1px solid var(--line-deep); border-radius: var(--radius-panel); background: var(--surface-low); }
 .script-proposal-text { margin: 8px 0; color: var(--ink-soft); font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
 .script-proposal-section { margin: 12px 0; }

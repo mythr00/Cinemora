@@ -87,13 +87,24 @@ async function parseError(response: Response): Promise<ApiClientError> {
   try {
     const body = (await response.json()) as {
       error?: { code?: string; message?: string };
-      detail?: string;
+      detail?: string | { msg?: string; loc?: (string | number)[] }[];
     };
     if (body.error?.message) {
       message = body.error.message;
       code = body.error.code;
     } else if (typeof body.detail === "string") {
       message = body.detail;
+    } else if (Array.isArray(body.detail) && body.detail.length > 0) {
+      // FastAPI validation failures arrive as a list — flatten
+      // them into readable text instead of a bare status line.
+      message = body.detail
+        .map((item) => {
+          const field = (item.loc || [])
+            .filter((part) => part !== "body")
+            .join(".");
+          return field ? `${field}: ${item.msg || "invalid"}` : item.msg || "Invalid request.";
+        })
+        .join(" ");
     }
   } catch {
     // Non-JSON error body: keep the status-based message.
@@ -4782,6 +4793,9 @@ export type ScriptDraft = {
   generation?: {
     topic: string;
     angle: string;
+    language?: string;
+    research_id?: string | null;
+    research_channel?: string | null;
     outline: { heading: string; intent: string; word_budget: number }[];
     basis: string;
     at: string;

@@ -142,6 +142,13 @@ def test_resolve_rejects_non_channel_urls(client):
 
 def test_analyse_labels_basis_and_caps_selection(client, monkeypatch):
     headers = _user(client)
+    return _analyse_for_headers(client, monkeypatch, headers)
+
+
+def _analyse_for_headers(client, monkeypatch, headers):
+    """The analyse flow, parameterised by user so dependent tests
+    can act as the SAME user who owns the research record (the
+    redesign programme made generate_draft verify ownership)."""
     _stub_channel(monkeypatch)
     record = client.post(
         "/api/v1/script-studio/channel-research",
@@ -206,10 +213,8 @@ def test_analyse_labels_basis_and_caps_selection(client, monkeypatch):
 def test_idea_flows_into_existing_generation_with_reference(
     client, monkeypatch
 ):
-    record, _analysis = test_analyse_labels_basis_and_caps_selection(
-        client, monkeypatch
-    )
     headers = _user(client)
+    record, _analysis = _analyse_for_headers(client, monkeypatch, headers)
     # Script generation stubs: outline + sections + title.
     monkeypatch.setattr(
         llm_provider, "complete_json",
@@ -281,3 +286,96 @@ def test_channel_thumbnail_styles_measure_real_images(
     assert first["measurement"]["dimensions"] == [320, 180]
     assert first["measurement"]["palette"], "palette measured"
     assert "style reference only" in body["label"]
+
+
+# ---------------------------------------------------------------------
+# Redesign programme (2026-11-27): the pasted-URL forms users
+# actually copy, and research genuinely reaching generation.
+# ---------------------------------------------------------------------
+
+
+def test_resolve_normalises_pasted_url_forms(client, monkeypatch):
+    headers = _user(client)
+    seen_urls = []
+
+    def capturing_run(args):
+        seen_urls.append(args[-1])
+        return CHANNEL_PAYLOAD
+
+    monkeypatch.setattr(channel_research, "_run_ytdlp", capturing_run)
+    pasted_forms = [
+        "https://www.youtube.com/@HarbourDocs/videos",
+        "https://www.youtube.com/@HarbourDocs?si=share-token",
+        "https://www.youtube.com/@HarbourDocs/featured",
+        "youtube.com/@HarbourDocs",
+        "www.youtube.com/@HarbourDocs/shorts",
+        "https://m.youtube.com/@HarbourDocs",
+        "@HarbourDocs",
+    ]
+    for form in pasted_forms:
+        response = client.post(
+            "/api/v1/script-studio/channel-research",
+            headers=headers,
+            json={"channel_url": form},
+        )
+        assert response.status_code == 201, (form, response.text)
+    assert seen_urls == [
+        "https://www.youtube.com/@HarbourDocs/videos"
+    ] * len(pasted_forms)
+
+
+def test_generate_draft_refuses_unknown_research_id(client, monkeypatch):
+    headers = _user(client)
+    monkeypatch.setattr(llm_provider, "BREWKEG_API_KEY", "test-key")
+    response = client.post(
+        "/api/v1/script-studio/ai/draft",
+        headers=headers,
+        json={
+            "topic": "Anything",
+            "target_minutes": 10,
+            "research_id": "research-does-not-exist",
+        },
+    )
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "research_not_found"
+
+
+def test_generate_draft_prompt_carries_research_patterns(
+    client, monkeypatch
+):
+    headers = _user(client)
+    record, _analysis = _analyse_for_headers(client, monkeypatch, headers)
+    prompts = []
+
+    def capturing_complete_json(system, user, **kw):
+        prompts.append(user)
+        return {
+            "sections": [
+                {"heading": "Opening", "intent": "Open.",
+                 "word_budget": 700}
+            ]
+        }
+
+    monkeypatch.setattr(
+        llm_provider, "complete_json", capturing_complete_json
+    )
+    monkeypatch.setattr(
+        llm_provider, "complete_text",
+        lambda system, user, **kw: "Narration text.",
+    )
+    response = client.post(
+        "/api/v1/script-studio/ai/draft",
+        headers=headers,
+        json={
+            "topic": "The Last Lighthouse Keeper",
+            "target_minutes": 10,
+            "research_id": record["id"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    draft = response.json()
+    # The analysis pattern text reached the outline prompt — the
+    # research link is functional, not metadata-only.
+    assert any("Numbers in titles" in prompt for prompt in prompts)
+    assert draft["generation"]["research_id"] == record["id"]
+    assert draft["generation"]["research_channel"] == "Harbour Docs"
