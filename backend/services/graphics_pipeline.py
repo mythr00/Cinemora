@@ -456,7 +456,28 @@ GRAPHIC_SKIP_REASONS = frozenset({
     "document_presentation_disabled",  # Phase 6: founder rule — no genuine document source exists
     "stat_cap_reached",          # historical (pre-P0 stat family): the max_stats cap — no longer produced
     "terminal_graphics_decline",  # P0 rewiring: every content family was attempted and none could render from the recorded facts — the beat falls back to footage
+    "density_budget",            # Phase 6-7 (X4): the density budget (per-minute cap / minimum spacing / rest beat) resolved this candidate to footage — recorded, never silently dropped
 })
+
+# Phase 6–7 (X4): the density budget for full-frame graphics.
+# Evidence: the founder-judged films carried 14 and 18 graphics
+# over ~3–4 minutes — one graphic every ~13–17 s of runtime —
+# and were judged cluttered/ruined by them. The documentary-grade
+# default is therefore at most 4 FULL-FRAME graphics per minute
+# with at least 12 s between full-frame graphics, plus the rest
+# rule (the beat immediately after a full-frame graphic is
+# graphic-ineligible unless its problem is evidence/chronology-
+# critical). Lower thirds are exempt — they overlay footage
+# rather than replacing it — and are counted separately (they
+# are composition decisions, counted in visual_plan v2). The
+# budget is enforced only when the build carries recorded slot
+# durations (production always supplies them via jobs.py): a
+# per-minute cap cannot be measured without timings, and the
+# chain never invents them.
+GRAPHIC_DENSITY_DEFAULTS = {
+    "max_full_frame_per_minute": 4,
+    "min_spacing_seconds": 12.0,
+}
 
 # Fact-basis classes for rendered factual claims (MG-09). The three
 # classes are never conflated: only research_supported — with a
@@ -1336,6 +1357,7 @@ def build_motion_graphics_assets(
     genre_pack=None,
     manifest=None,
     slot_durations=None,
+    density_budget=None,
 ):
     """
     Generate real standalone MP4 motion-graphic assets.
@@ -1443,6 +1465,13 @@ def build_motion_graphics_assets(
                     "evidence_ref": entry.get("evidence_ref"),
                     "verified_data": entry.get("verified_data"),
                     "theme": entry.get("theme"),
+                    # Phase 6–7 (X2/X4): the Director's recorded
+                    # storytelling problem rides onto the target —
+                    # the density budget's rest rule exempts
+                    # evidence/chronology-critical beats, and the
+                    # produced/skip records stay auditable.
+                    "story_problem": entry.get("story_problem"),
+                    "selection_basis": entry.get("selection_basis"),
                 }
             )
         # Run-11 fix 5a: the manifest is the Director's direction,
@@ -1715,6 +1744,8 @@ def build_motion_graphics_assets(
                 "evidence_ref": target.get("evidence_ref"),
                 "verified_data": target.get("verified_data"),
                 "theme": target.get("theme"),
+                "story_problem": target.get("story_problem"),
+                "selection_basis": target.get("selection_basis"),
             }
         )
 
@@ -3796,6 +3827,86 @@ def build_motion_graphics_assets(
                 if _slot is not None:
                     target["slot_duration_seconds"] = _slot
 
+    # Phase 6–7 (X4): DENSITY BUDGET state. Active only when the
+    # build carries recorded slot durations (see
+    # GRAPHIC_DENSITY_DEFAULTS): each sentence's start offset is
+    # the cumulative sum of the recorded durations before it.
+    _density_cfg = dict(GRAPHIC_DENSITY_DEFAULTS)
+    if isinstance(density_budget, dict):
+        for _key in _density_cfg:
+            if isinstance(density_budget.get(_key), (int, float)):
+                _density_cfg[_key] = density_budget[_key]
+    _density_active = isinstance(slot_durations, dict) and bool(
+        slot_durations
+    )
+    _density_starts = {}
+    if _density_active:
+        _cursor = 0.0
+        for _num in sorted(
+            k for k in slot_durations
+            if isinstance(k, (int, float))
+        ):
+            _density_starts[_num] = _cursor
+            _cursor += float(slot_durations.get(_num) or 0)
+    _density_produced_starts = []
+    _density_last_graphic_sentence = None
+    _density_produced = 0
+    _density_exclusions = []
+
+    def _density_block(target):
+        """The density verdict for one target: None when the
+        budget admits it, else (rule, detail). Rules, in order:
+        rest_beat (the beat immediately after a produced
+        full-frame graphic is ineligible, unless its recorded
+        story problem is evidence/chronology-critical),
+        per_minute_cap, minimum_spacing."""
+        if not _density_active:
+            return None
+        number = target.get("sentence_number")
+        problem = target.get("story_problem")
+        critical = problem in ("evidence", "chronology")
+        if (
+            not critical
+            and _density_last_graphic_sentence is not None
+            and isinstance(number, (int, float))
+            and number == _density_last_graphic_sentence + 1
+        ):
+            return (
+                "rest_beat_after_graphic",
+                f"sentence {number} immediately follows the "
+                f"full-frame graphic on sentence "
+                f"{_density_last_graphic_sentence}; rest beats "
+                f"resolve to footage unless evidence/chronology-"
+                f"critical (problem: {problem or 'unclassified'})",
+            )
+        start = _density_starts.get(number)
+        if start is None:
+            return None
+        cap = _density_cfg["max_full_frame_per_minute"]
+        in_window = [
+            s for s in _density_produced_starts
+            if start - 60.0 < s <= start
+        ]
+        if len(in_window) >= cap:
+            return (
+                "per_minute_cap_reached",
+                f"{len(in_window)} full-frame graphics already "
+                f"produced in the 60 s window ending at "
+                f"{start:.1f}s (cap {cap}/min)",
+            )
+        spacing = _density_cfg["min_spacing_seconds"]
+        if (
+            _density_produced_starts
+            and start - _density_produced_starts[-1] < spacing
+        ):
+            return (
+                "minimum_spacing",
+                f"previous full-frame graphic started "
+                f"{start - _density_produced_starts[-1]:.1f}s "
+                f"before this beat (minimum spacing {spacing}s)",
+            )
+        return None
+
     # Targeted graphics FIRST — they answer a recorded coverage
     # failure, so the untargeted cap must never block them.
     for target in target_list:
@@ -3810,6 +3921,38 @@ def build_motion_graphics_assets(
                 }
             )
             _record_outcome(target, "skipped", None, "no_sentence_text")
+            continue
+
+        # Phase 6–7 (X4): the density budget gates BEFORE any
+        # family is attempted — a budget-exhausted candidate
+        # resolves to footage with the typed density_budget
+        # reason on BOTH the skip and the outcome, never a
+        # silent drop and never a cheaper graphic smuggled in.
+        _block = _density_block(target)
+        if _block is not None:
+            _rule, _detail = _block
+            _density_record = {
+                "rule": _rule,
+                "story_problem": target.get("story_problem"),
+                "budget": dict(_density_cfg),
+            }
+            _density_exclusions.append({
+                "sentence_number": target.get("sentence_number"),
+                **_density_record,
+            })
+            target_skips.append(
+                {
+                    "scene_number": target["scene_number"],
+                    "sentence_index": target["sentence_index"],
+                    "sentence_number": target["sentence_number"],
+                    "reason": "density_budget",
+                    "detail": _detail,
+                    "density": _density_record,
+                }
+            )
+            _record_outcome(target, "skipped", None, "density_budget")
+            target_outcomes[-1]["density"] = _density_record
+            covered.add(key)
             continue
 
         text = target["text"]
@@ -4098,6 +4241,22 @@ def build_motion_graphics_assets(
                     "schematic_reason": _schematic_reason,
                 })
             _record_outcome(target, "generated", produced_family, produced_reason)
+            # Phase 6–7 (X4): a produced graphic is FULL-FRAME —
+            # it spends density budget and rests the next beat.
+            if _density_active:
+                _density_produced += 1
+                _num = target.get("sentence_number")
+                if isinstance(_num, (int, float)):
+                    _density_last_graphic_sentence = _num
+                    if _num in _density_starts:
+                        _density_produced_starts.append(
+                            _density_starts[_num]
+                        )
+                        target_outcomes[-1]["density"] = {
+                            "start_seconds": _density_starts[_num],
+                            "story_problem": target.get(
+                                "story_problem"),
+                        }
             if _dup_defect is not None:
                 target_outcomes[-1]["quality_defect"] = (
                     "duplicate_graphic_payload"
@@ -4264,9 +4423,7 @@ def build_motion_graphics_assets(
 
     manifest = output_dir / "motion_graphics.json"
 
-    write_json_atomic(
-        manifest,
-        {
+    _manifest_payload = {
             "mode": mode,
             "genre_pack": _pack_id,
             # Phase 6 (AM-002): how this generation was targeted —
@@ -4307,8 +4464,25 @@ def build_motion_graphics_assets(
             # recorded with their original failure information,
             # never silently dropped.
             "graphic_failures": graphic_failures,
-        },
-    )
+    }
+    # Phase 6–7 (X4): the density record rides on the manifest
+    # only when the budget was active (recorded slot durations
+    # present) — its absence in older builds stays meaningful.
+    if _density_active:
+        _manifest_payload["density_budget"] = {
+            "max_full_frame_per_minute": _density_cfg[
+                "max_full_frame_per_minute"],
+            "min_spacing_seconds": _density_cfg[
+                "min_spacing_seconds"],
+            "full_frame_produced": _density_produced,
+            # Lower thirds are composition decisions over covered
+            # footage (counted in visual_plan v2's summary), never
+            # produced by this builder — exempt from the cap and
+            # counted there, not here.
+            "lower_third_produced": 0,
+            "exclusions": _density_exclusions,
+        }
+    write_json_atomic(manifest, _manifest_payload)
 
     print(
         f"MOTION GRAPHICS ASSETS: {len(assets)} generated"

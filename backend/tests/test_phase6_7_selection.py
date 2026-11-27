@@ -12,7 +12,9 @@ treatment. The problem + chosen treatment ride on the manifest
 entry and the plan-v2 decision, so the choice is auditable.
 """
 
-from services import visual_director
+import json
+
+from services import graphics_pipeline, visual_director
 from services.genre_packs import load_pack
 
 
@@ -319,6 +321,98 @@ def test_keyword_fallback_is_labelled_as_such():
     entry = manifest["entries"][0]
     assert entry["story_problem"] == "measurement"
     assert entry["selection_basis"] == "keyword_fallback"
+
+
+# ---------------------------------------------------------------------------
+# X4 — density & rest governance in the chain
+# ---------------------------------------------------------------------------
+
+def _density_targets(numbers, problems=None):
+    problems = problems or {}
+    return [
+        {
+            "scene_number": 1,
+            "sentence_index": n - 1,
+            "sentence_number": n,
+            "text": f"Exports rose {40 + n} percent that year.",
+            "scenario": {},
+            "story_problem": problems.get(n),
+        }
+        for n in numbers
+    ]
+
+
+def _read_manifest(tmp_path):
+    return json.loads(
+        (tmp_path / "motion_graphics.json").read_text()
+    )
+
+
+def test_density_budget_caps_rest_and_spacing(tmp_path):
+    """A synthetic 10-beat plan, 10 graphic candidates, 6 s per
+    beat (one minute total): the budget admits a subset (the
+    1st, 3rd, 5th, 7th beats — rest beats and the per-minute cap
+    exclude the rest) and EVERY exclusion is recorded with the
+    typed density_budget reason."""
+    targets = _density_targets(range(1, 11))
+    slots = {n: 6.0 for n in range(1, 11)}
+    assets = graphics_pipeline.build_motion_graphics_assets(
+        {"scenes": [], "case_bible": {}}, tmp_path,
+        targets=targets, slot_durations=slots,
+    )
+    produced = sorted(a["sentence_number"] for a in assets)
+    assert produced == [1, 3, 5, 7]
+    manifest = _read_manifest(tmp_path)
+    density = manifest["density_budget"]
+    assert density["max_full_frame_per_minute"] == 4
+    assert density["full_frame_produced"] == 4
+    assert len(density["exclusions"]) == 6
+    rules = {
+        e["sentence_number"]: e["rule"] for e in density["exclusions"]
+    }
+    assert rules[2] == "rest_beat_after_graphic"
+    assert rules[4] == "rest_beat_after_graphic"
+    assert rules[9] == "per_minute_cap_reached"
+    assert rules[10] == "per_minute_cap_reached"
+    skips = {
+        s["sentence_number"]: s
+        for s in manifest["targets"]["skipped"]
+    }
+    assert set(skips) == {2, 4, 6, 8, 9, 10}
+    for skip in skips.values():
+        assert skip["reason"] == "density_budget"
+        assert skip["density"]["rule"]
+    outcomes = {
+        o["sentence_number"]: o
+        for o in manifest["targets"]["outcomes"]
+    }
+    assert outcomes[1]["outcome"] == "generated"
+    assert outcomes[1]["density"]["start_seconds"] == 0.0
+    assert outcomes[2]["reason"] == "density_budget"
+
+
+def test_density_rest_rule_exempts_evidence_critical_beat(tmp_path):
+    """The beat right after a full-frame graphic is rested —
+    UNLESS its recorded problem is evidence-critical."""
+    targets = _density_targets([1, 2], problems={2: "evidence"})
+    slots = {1: 15.0, 2: 15.0}
+    assets = graphics_pipeline.build_motion_graphics_assets(
+        {"scenes": [], "case_bible": {}}, tmp_path,
+        targets=targets, slot_durations=slots,
+    )
+    assert sorted(a["sentence_number"] for a in assets) == [1, 2]
+
+
+def test_density_inactive_without_recorded_slot_durations(tmp_path):
+    """No recorded timings -> the budget cannot be measured and
+    the historical behaviour is unchanged (no density key)."""
+    targets = _density_targets([1, 2])
+    assets = graphics_pipeline.build_motion_graphics_assets(
+        {"scenes": [], "case_bible": {}}, tmp_path, targets=targets,
+    )
+    assert len(assets) == 2
+    manifest = _read_manifest(tmp_path)
+    assert "density_budget" not in manifest
 
 
 def test_unclassifiable_beat_keeps_historical_behaviour():
