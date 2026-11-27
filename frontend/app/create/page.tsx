@@ -666,7 +666,7 @@ export default function Home() {
                   : "Loading the configuration catalogue…"}
               </p>
             )}
-            <div className="music-license-note" aria-label="Footage license notice"><strong>Advanced · Rights and sourcing</strong><p>Footage is screened under the configured rights policy — a downloaded asset is not automatically cleared for publication.</p></div>
+            <div className="music-license-note" aria-label="Footage license notice"><strong>Rights</strong><p>Footage is screened under the configured rights policy — a downloaded asset is not automatically cleared for publication.</p></div>
           </section>
 
           <section className="create-step" aria-labelledby="review-title">
