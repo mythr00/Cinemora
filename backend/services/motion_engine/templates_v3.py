@@ -496,7 +496,30 @@ def archival_title(data, style, out_path, duration=5.0, sentence_index=None, sce
         "date": load_font(tokens["font_bold"], 30),
     }
     probe = _probe_draw()
-    title_lines = wrap_text(probe, title.upper(), fonts["title"], 1400)[:3]
+    # Phase 5 (X3) label fit: every text element is measured
+    # against the width it will be drawn at BEFORE any frame is
+    # drawn. An element that does not fit refuses the graphic
+    # with the typed label_does_not_fit reason — the historical
+    # [:64]/[:80]/[:40] character slices truncated text mid-word
+    # instead, which is exactly the defect class this refuses.
+    from services.motion_engine.label_fit import (
+        LABEL_FIT_REASON, fit_lines,
+    )
+
+    title_lines = fit_lines(probe, title.upper(), fonts["title"],
+                            1400, max_lines=3)
+    if title_lines is None:
+        return None, {"reason": LABEL_FIT_REASON,
+                      "detail": "title does not fit 1400px in 3 lines"}
+    for _key, _text, _font, _width in (
+        ("kicker", kicker.upper(), fonts["kicker"], 1400),
+        ("subtitle", subtitle, fonts["subtitle"], 1500),
+        ("date_label", date_label.upper(), fonts["date"], 1000),
+    ):
+        if _text and fit_lines(probe, _text, _font, _width,
+                               max_lines=1) is None:
+            return None, {"reason": LABEL_FIT_REASON,
+                          "detail": f"{_key} does not fit {_width}px"}
 
     def draw_frame(t, progress):
         canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
@@ -512,7 +535,7 @@ def archival_title(data, style, out_path, duration=5.0, sentence_index=None, sce
         y = (HEIGHT - total_h) // 2 + int((1 - fade) * 22)
         if kicker:
             kw = d.textlength(kicker.upper(), font=fonts["kicker"])
-            d.text((cx - kw / 2, y), kicker.upper()[:64],
+            d.text((cx - kw / 2, y), kicker.upper(),
                    font=fonts["kicker"], fill=tokens["accent"] + (alpha,))
             y += 50
         for line in title_lines:
@@ -526,7 +549,7 @@ def archival_title(data, style, out_path, duration=5.0, sentence_index=None, sce
         y += 44
         if subtitle:
             sw = d.textlength(subtitle, font=fonts["subtitle"])
-            d.text((cx - sw / 2, y), subtitle[:80], font=fonts["subtitle"],
+            d.text((cx - sw / 2, y), subtitle, font=fonts["subtitle"],
                    fill=tokens["muted"] + (alpha,))
             y += 54
         if date_label:
@@ -534,7 +557,7 @@ def archival_title(data, style, out_path, duration=5.0, sentence_index=None, sce
             pad = 26
             d.rectangle([cx - dw / 2 - pad, y, cx + dw / 2 + pad, y + 56],
                         outline=tokens["accent2"] + (alpha,), width=3)
-            d.text((cx - dw / 2, y + 10), date_label.upper()[:40],
+            d.text((cx - dw / 2, y + 10), date_label.upper(),
                    font=fonts["date"], fill=tokens["text"] + (alpha,))
         _footer(d, tokens)
         camera = {"scale": 1.0 + 0.045 * progress}

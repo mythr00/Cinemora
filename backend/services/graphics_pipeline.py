@@ -447,6 +447,8 @@ GRAPHIC_SKIP_REASONS = frozenset({
     "no_eligible_graphic_purpose",  # chain exhausted / schematic ineligible
     "comparison_not_rendered",   # comparison present, no template rendered it
     "rendering_failure",         # a renderer raised
+    "label_does_not_fit",        # Phase 5 (X3): a label measured against its box does not fit — the graphic is refused, never rendered clipped
+    "visual_validation_failed",  # Phase 5 (X3): the rendered frame failed visual inspection (near-empty / edge-clipped / text overrun)
     "validation_failed",         # probed OK but spec mismatch (dims/fps/duration)
     "invalid_graphic_output",    # missing/empty/undecodable/no video stream
     "document_presentation_disabled",  # Phase 6: founder rule — no genuine document source exists
@@ -1565,6 +1567,46 @@ def build_motion_graphics_assets(
             print(
                 f"MOTION GRAPHIC REJECTED (validation) "
                 f"[{graphic_type}]: {verdict['detail']}"
+            )
+            return None
+        # Phase 5 (X3): VISUAL validation — the technical probe
+        # above cannot see layout. A settled frame is inspected
+        # for the gross defect classes that shipped in the
+        # founder-judged films (near-empty cards, labels clipped
+        # at the frame edge, headlines overrunning their boxes).
+        # A graphic that fails is NOT registered: the failure is
+        # recorded with the typed visual_validation_failed reason
+        # and the beat falls back per the chain's rules (footage
+        # or the terminal decline — never another graphic chosen
+        # just because it renders). An unavailable inspection
+        # (frame extraction failed) is recorded on the verdict
+        # and does not block: technical validation already passed
+        # and a tooling failure must not fabricate a defect.
+        from services.motion_engine import frame_inspection
+
+        visual = frame_inspection.inspect_video(path)
+        verdict["visual"] = {
+            "passed": visual["passed"],
+            "defects": visual["defects"],
+            "metrics": visual["metrics"],
+        }
+        if visual["passed"] is False:
+            detail = "; ".join(
+                defect["detail"] for defect in visual["defects"]
+            )
+            graphic_failures.append({
+                "graphic_type": graphic_type,
+                "purpose": purpose,
+                "stage": "validation",
+                "file_path": str(path),
+                "reason": "visual_validation_failed",
+                "detail": detail,
+                "checks": verdict["checks"],
+                "visual_defects": visual["defects"],
+            })
+            print(
+                f"MOTION GRAPHIC REJECTED (visual validation) "
+                f"[{graphic_type}]: {detail}"
             )
             return None
         index += 1
@@ -2939,10 +2981,21 @@ def build_motion_graphics_assets(
             print(f"MOTION GRAPHIC SKIPPED (motion_engine {template_name}): {error}")
             return False, "rendering_failure", str(error)
         if not rendered:
+            _refusal = (metadata or {}).get("reason", "")
+            if _refusal == "label_does_not_fit":
+                # Phase 5 (X3): a label that does not fit its box
+                # refuses the graphic with its own typed reason —
+                # it is never rendered clipped, and the refusal is
+                # distinct from missing data.
+                return (
+                    False,
+                    "label_does_not_fit",
+                    (metadata or {}).get("detail", "") or _refusal,
+                )
             return (
                 False,
                 "missing_required_input",
-                (metadata or {}).get("reason", ""),
+                _refusal,
             )
         record = register_asset(
             path, template_name, f"motion_engine_{template_name}",
@@ -3620,7 +3673,7 @@ def build_motion_graphics_assets(
             # the original failure detail rides along in `detail`.
             _hard_reasons = {
                 "rendering_failure", "validation_failed",
-                "invalid_graphic_output",
+                "invalid_graphic_output", "visual_validation_failed",
             }
             # T5 guarantee (stage 6, rewired by the P0 removal):
             # the guarantee no longer renders anything, so it
@@ -3707,7 +3760,7 @@ def build_motion_graphics_assets(
             ]
             _hard = {
                 "rendering_failure", "validation_failed",
-                "invalid_graphic_output",
+                "invalid_graphic_output", "visual_validation_failed",
             }
             _prior = next(
                 (p for p in _prior_reasons if p[1] in _hard),
