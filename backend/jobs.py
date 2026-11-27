@@ -128,12 +128,6 @@ def _dispatch_quietly():
 
 SENTENCES_PER_SCENE = 40
 
-# Stage A: cap on UNTARGETED stat motion graphics per project.
-# Targeted graphics (for sentences with no verified visual) are
-# never blocked by this cap.
-MOTION_GRAPHIC_MAX_STATS = 3
-
-
 def _persistable_state(state: dict) -> dict:
     """The subset of the run state that may be written to disk.
 
@@ -2745,11 +2739,6 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
             motion_graphics_dir,
             mode=_graphics_params["mode"],
             targets=graphic_targets,
-            max_stats=(
-                _graphics_params["max_stats"]
-                if _graphics_params["max_stats"] is not None
-                else MOTION_GRAPHIC_MAX_STATS
-            ),
             genre_pack=_theme_pack,
             manifest=_graphics_manifest,
             slot_durations=_slot_durations,

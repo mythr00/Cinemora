@@ -477,15 +477,14 @@ def _template_candidates(row, outcome, pack):
 
 def _family_candidates(row, outcome, production_context):
     """Non-engine graphic families the pipeline may attempt for
-    this beat, in order. The stat family rides on the pipeline's
-    own extraction; process is included ONLY on a plan-level
+    this beat, in order. process is included ONLY on a plan-level
     signal (D1: no unconditional renders). (P0 removal,
-    2026-11-27: the chronology/"timeline" family was removed
-    completely and is never a candidate again.)"""
+    2026-11-27: the chronology/"timeline" family and the native
+    stat family were removed completely and are never candidates
+    again — statistics are served by the engine chart templates
+    above, fed by recorded data.)"""
     features = _text_features(outcome.get("text") or "")
     families = []
-    if features["has_number"]:
-        families.append("stat")
     if features["has_sequence"] and (
         (production_context or {}).get("timeline_event_count") or 0
     ) >= 3:
@@ -808,13 +807,13 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                 families = _family_candidates(
                     row, outcome, production_context
                 )
-                if fact_basis in (
-                    FACT_BASIS_ASSET, FACT_BASIS_RESEARCH,
-                ) and "stat" not in families:
-                    # The verified-data path IS the stat family: an
-                    # evidence-bearing entry always permits it,
-                    # whatever the sentence's own numbers look like.
-                    families.insert(0, "stat")
+                # (P0 removal, 2026-11-27: the verified-data path
+                # fed the native stat family, which is removed.
+                # The entry still carries its evidence_ref /
+                # verified_data record — the engine chart
+                # assemblers read the same facts from the bible's
+                # recorded fact table — but no stat family is
+                # inserted: that family no longer exists.)
                 manifest_entries.append({
                     "manifest_id": manifest_id,
                     "target": {

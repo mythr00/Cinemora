@@ -235,18 +235,16 @@ def is_metadata_title(value):
 
 def short_payload_for(text, sentence_record=None):
     """Select ONE short designed payload from a sentence, in
-    preference order: a statistic, a date, a named entity, a
-    place. Returns "" when the sentence carries none — the
-    caller then does not build a text graphic for the beat at
-    all (the narration sentence is never the fallback)."""
+    preference order: a date, a named entity, a place. Returns ""
+    when the sentence carries none — the caller then does not
+    build a text graphic for the beat at all (the narration
+    sentence is never the fallback). (P0 removal, 2026-11-27:
+    the statistic preference rode on the removed native stat
+    family's extraction; a bare number — above all a year — is
+    not a designed payload.)"""
     text = clean_text(text)
     if not text:
         return ""
-    stat = extract_stat(text, sentence_record=sentence_record)
-    if stat and stat.get("display"):
-        display = clean_text(stat["display"])
-        if is_short_payload(display):
-            return display
     date = detect_date(text)
     if date and is_short_payload(date):
         return date
@@ -438,7 +436,7 @@ GRAPHIC_FPS_TOLERANCE = 1.5
 # yet — both are Phase 3/4 territory).
 GRAPHIC_SKIP_REASONS = frozenset({
     "no_sentence_text",          # target carried no sentence text
-    "no_usable_statistic",       # extract_stat found no defensible value
+    "no_usable_statistic",       # historical (pre-P0 stat family): extraction found no defensible value — no longer produced
     "range_not_representable",   # range with conflicting endpoint units
     "missing_required_input",    # engine template refused its data
     "unsupported_template",      # template name not in the engine registry
@@ -452,7 +450,7 @@ GRAPHIC_SKIP_REASONS = frozenset({
     "validation_failed",         # probed OK but spec mismatch (dims/fps/duration)
     "invalid_graphic_output",    # missing/empty/undecodable/no video stream
     "document_presentation_disabled",  # Phase 6: founder rule — no genuine document source exists
-    "stat_cap_reached",          # Phase 6: legacy-mode stat cap (max_stats) reached
+    "stat_cap_reached",          # historical (pre-P0 stat family): the max_stats cap — no longer produced
     "terminal_graphics_decline",  # P0 rewiring: every content family was attempted and none could render from the recorded facts — the beat falls back to footage
 })
 
@@ -1152,256 +1150,6 @@ def _graphic_background():
     ]
 
 
-_STAT_VALUE_RE = re.compile(
-    r"^\s*(?P<prefix>\$\s?)?"
-    r"(?P<number>\d[\d,]*(?:\.\d+)?)"
-    r"(?P<suffix>\s*(?:million|billion|trillion)?\s*(?:%|[a-z]+)?)"
-    r"\s*$",
-    re.I,
-)
-
-
-def _parse_stat_value(value):
-    """Split a verbatim stat headline ('$5 million', '12,000 feet')
-    into prefix / numeric value / suffix for count-up animation.
-
-    Returns None when the value does not parse cleanly — the caller
-    then renders the headline statically, exactly as before. The
-    original string is always preserved for the final frame.
-    """
-    match = _STAT_VALUE_RE.match(clean_text(value))
-    if not match:
-        return None
-    number_text = match.group("number")
-    try:
-        number = float(number_text.replace(",", ""))
-    except ValueError:
-        return None
-    decimals = len(number_text.split(".")[1]) if "." in number_text else 0
-    return {
-        "prefix": match.group("prefix") or "",
-        "number_text": number_text,
-        "number": number,
-        "decimals": decimals,
-        "grouped": "," in number_text,
-        "suffix": match.group("suffix") or "",
-        # eif can only print a plain integer; anything with grouping
-        # commas or decimals uses stepped layers instead.
-        "eif_ok": decimals == 0 and "," not in number_text,
-    }
-
-
-def _format_stat_step(parsed, fraction):
-    """Format an intermediate count-up value with the same grouping
-    and decimal places as the verbatim final value."""
-    value = parsed["number"] * fraction
-    if parsed["decimals"]:
-        body = f"{value:,.{parsed['decimals']}f}"
-    elif parsed["grouped"]:
-        body = f"{value:,.0f}"
-    else:
-        body = f"{value:.0f}"
-    return f"{parsed['prefix']}{body}{parsed['suffix']}"
-
-
-def _countup_headline_filters(headline, x, y, fontsize, duration):
-    """Drawtext filters that animate the headline value counting up
-    from a low fraction to the VERBATIM final value.
-
-    - Plain integers: one drawtext whose numeric part is an ffmpeg
-      %{eif:...} expression clamped at the final value (continuous).
-    - Grouped/decimal values: four stepped drawtext layers
-      (25/50/75/100%) with enable windows; the last layer is the
-      original string, character for character.
-    - Unparseable values: the original static headline.
-    """
-    parsed = _parse_stat_value(headline)
-    if parsed is None or parsed["number"] <= 0:
-        return [
-            _ffmpeg_text_filter(
-                headline, str(x), str(y), fontsize, GRAPHIC_TEXT, 1.0,
-                bold=True,
-            )
-        ]
-
-    ramp = max(0.8, duration * 0.8)
-
-    if parsed["eif_ok"]:
-        whole = int(parsed["number"])
-        expr = rf"%{{eif\:{whole}*min(1\,t/{ramp:.3f})\:d}}"
-        animated = f"{parsed['prefix']}{expr}{parsed['suffix']}"
-        font = _fontfile(GRAPHIC_FONT_BOLD_FILE)
-        return [
-            "drawtext="
-            f"{font}text='{escape_drawtext(animated, programmatic=True)}':"
-            f"x={x}:y={y}:"
-            f"fontsize={fontsize}:"
-            f"fontcolor={GRAPHIC_TEXT}@1.0:"
-            "borderw=2:"
-            "bordercolor=black@0.45:"
-            "shadowx=3:"
-            "shadowy=3:"
-            "shadowcolor=black@0.65"
-        ]
-
-    filters = []
-    fractions = (0.25, 0.50, 0.75, 1.0)
-    for step, fraction in enumerate(fractions):
-        start = ramp * step / len(fractions)
-        if fraction >= 1.0:
-            text = headline  # verbatim final value
-            enable = f"gte(t,{start:.3f})"
-        else:
-            text = _format_stat_step(parsed, fraction)
-            end = ramp * (step + 1) / len(fractions)
-            enable = f"between(t,{start:.3f},{end:.3f})"
-        filters.append(
-            _ffmpeg_text_filter(
-                text, str(x), str(y), fontsize, GRAPHIC_TEXT, 1.0,
-                bold=True, enable=enable,
-            )
-        )
-    return filters
-
-
-def _render_stat_graphic(
-    output_file,
-    headline,
-    subtext="",
-    duration=4.0,
-    fact_basis=FACT_BASIS_SCRIPT,
-):
-    duration = _graphic_duration(0, duration, 3.0, 8.0)
-    # Gate 4 (B6): the fact basis is recorded on the asset record /
-    # recipe by the caller — it is NEVER drawn. The historical
-    # MG-09 stamp ("DATA / SCRIPT CLAIM" etc.) burned an internal
-    # provenance label into the frame (Gate 4 frame s19). Display
-    # text on this card is only the designed payload: the headline
-    # figure and the designed subtext.
-    if _contains_internal_label(headline) or _contains_internal_label(subtext):
-        raise ValueError(
-            "stat graphic display text carries an internal "
-            "classification/provenance label; refusing to render"
-        )
-
-    filters = _graphic_background()
-
-    filters += [
-        "drawbox="
-        "x=100:"
-        "y=120:"
-        "w=1720:"
-        "h=840:"
-        f"color={GRAPHIC_PANEL}@0.92:"
-        "t=fill",
-
-        "drawbox="
-        "x=100:"
-        "y=120:"
-        "w=1720:"
-        "h=5:"
-        "color=white@0.85:"
-        "t=fill",
-
-        "drawbox="
-        "x=145:"
-        "y=185:"
-        "w=7:"
-        "h=650:"
-        "color=white@0.85:"
-        "t=fill",
-
-    ]
-
-    # Gate 4 (B1): the headline is the sentence's own quantity,
-    # rendered VERBATIM from the first frame. The historical
-    # count-up animation displayed intermediate values as finished
-    # statements — the Hyatt stat card (bound correctly to
-    # "140 million dollars") read "88 MILLION DOLLARS" at the
-    # sentence midpoint, a factual self-contradiction in the
-    # film's largest type. An interim number is a false number:
-    # no count-up on factual headlines. The font shrinks to fit
-    # the panel instead of overflowing it.
-    _headline_len = max(len(clean_text(headline)), 1)
-    _headline_size = min(100, max(40, int(1580 / (0.62 * _headline_len))))
-    filters += [
-        _ffmpeg_text_filter(
-            headline, "190", "445", _headline_size, GRAPHIC_TEXT, 1.0,
-            bold=True,
-        )
-    ]
-
-    if subtext:
-        filters += [
-            _ffmpeg_text_filter(
-                subtext,
-                "195",
-                "535",
-                30,
-                "white",
-                0.72,
-            )
-        ]
-
-    # Animated analytical bars.
-    filters += [
-        "drawbox="
-        "x=195:"
-        "y=670:"
-        "w=1250:"
-        "h=3:"
-        "color=white@0.25:"
-        "t=fill",
-
-        "drawbox="
-        "x=195:"
-        "y=670:"
-        "w='min(1250,1250*t/4)':"
-        "h=3:"
-        "color=white@0.9:"
-        "t=fill",
-
-        "drawbox="
-        "x=195:"
-        "y=720:"
-        "w=760:"
-        "h=8:"
-        "color=white@0.12:"
-        "t=fill",
-
-        "drawbox="
-        "x=195:"
-        "y=720:"
-        "w='min(760,760*t/4)':"
-        "h=8:"
-        "color=white@0.65:"
-        "t=fill",
-
-        # Founder ruling 2026-11-23: no branding text is burned
-        # into generated graphics (the historical
-        # "CINEMORA / ANALYSIS" footer is removed; provenance
-        # lives in the asset record, not in pixels).
-    ]
-
-    command = [
-        "ffmpeg",
-        "-y",
-        "-f", "lavfi",
-        "-i",
-        f"color=c={GRAPHIC_BG_STAT}:s=1920x1080:r={FPS}",
-        "-t", f"{duration:.3f}",
-        "-vf", ",".join(filters),
-        "-an",
-        "-c:v", "libx264",
-        "-preset", PRESET,
-        "-crf", str(CRF),
-        "-pix_fmt", "yuv420p",
-        str(output_file),
-    ]
-
-    run_ffmpeg(command)
-
-
 def _render_process_graphic(
     output_file,
     steps,
@@ -1566,7 +1314,12 @@ def _render_process_graphic(
 
 
 # =========================================================
-# STAT EXTRACTION (MA-05)
+# SHARED TEXT-EXTRACTION HELPERS
+# (The MA-05 stat extraction that headed this section was
+# removed with the native stat family, P0 2026-11-27. What
+# remains is shared by the surviving engine chart family:
+# extract_comparison / _series_from_text / _percent_value —
+# all of which exclude bare years from statistic candidacy.)
 # =========================================================
 
 _STAT_STOP_NOUNS = {
@@ -1605,193 +1358,6 @@ def _percent_value(text):
         return float(match.group(1).replace(",", ""))
     except ValueError:
         return None
-
-
-_RANGE_ENDPOINT = (
-    r"(\$)?\s*(\d[\d,]*(?:\.\d+)?)\s*(million|billion|trillion|%|M\b|K\b)?"
-)
-
-
-def _normalise_range_scale(scale, prefix):
-    scale = (scale or "").lower()
-    if scale == "m":
-        return "million" if prefix else "m"
-    if scale == "k":
-        return "thousand" if prefix else "k"
-    return scale
-
-
-def _format_range_endpoint(prefix, number, scale):
-    rendered = f"{prefix or ''}{number}"
-    if scale == "%" or (scale and len(scale) == 1):
-        # Compact suffixes attach directly: 15%, $2M, 40K.
-        return rendered + scale
-    if scale:
-        return f"{rendered} {scale}"
-    return rendered
-
-
-# Words that follow a range constantly in prose but are never units.
-_RANGE_TRAILING_STOP_WORDS = frozenset({
-    "by", "in", "of", "and", "the", "a", "an", "on", "at", "for",
-    "with", "from", "over", "under", "than", "were", "was", "are",
-    "is", "it", "its", "during", "within", "across", "into", "per",
-    "to", "as", "or", "when", "while", "after", "before", "between",
-})
-
-
-def _extract_range(text):
-    """Faithful range extraction (MG-09).
-
-    Returns one of:
-    - {"display", "range_start", "range_end"}: BOTH endpoints are
-      preserved in the display string, with the shared currency
-      prefix / scale / unit distributed across both ("$2 million –
-      $4 million", "15% – 25%", "20 – 40 feet").
-    - {"unrepresentable": detail}: a range is clearly present but
-      its endpoints carry conflicting units, so no faithful display
-      exists — the caller refuses the graphic rather than dropping
-      an endpoint.
-    - None: no range present (a bare year span or a date fragment
-      is a date, not a statistic).
-    """
-    match = re.search(
-        r"\bbetween\s+" + _RANGE_ENDPOINT + r"\s+and\s+" + _RANGE_ENDPOINT,
-        text, re.I,
-    ) or re.search(
-        _RANGE_ENDPOINT + r"\s*(?:-|\u2013|\u2014| to )\s*" + _RANGE_ENDPOINT,
-        text, re.I,
-    )
-    if not match:
-        return None
-    groups = match.groups()
-    prefix1, number1, scale1 = groups[0], groups[1], groups[2] or ""
-    prefix2, number2, scale2 = groups[3], groups[4], groups[5] or ""
-    # The trailing unit word is scanned AFTER the match: the second
-    # endpoint's own optional whitespace would otherwise swallow the
-    # separating space and the unit would be lost. Prose stop-words
-    # ("by", "in", ...) are never units.
-    trailing_unit = ""
-    trailing_match = re.match(
-        r"\s*([A-Za-z][A-Za-z\-]*)", text[match.end():]
-    )
-    if trailing_match:
-        candidate = trailing_match.group(1)
-        if candidate.lower() not in _RANGE_TRAILING_STOP_WORDS:
-            trailing_unit = candidate
-
-    def _bare_year(number):
-        return (
-            len(number.replace(",", "")) == 4
-            and "," not in number
-            and "." not in number
-        )
-
-    # A pair of bare 4-digit years is a date span, not a stat; a
-    # bare year followed by a small number is a date fragment
-    # ("1961-08"), not a range.
-    if not scale1 and not scale2 and not prefix1 and not prefix2:
-        if _bare_year(number1) and _bare_year(number2):
-            return None
-        if _bare_year(number1):
-            try:
-                if float(number2.replace(",", "")) <= 31:
-                    return None
-            except ValueError:
-                pass
-
-    norm1 = _normalise_range_scale(scale1, prefix1)
-    norm2 = _normalise_range_scale(scale2, prefix2)
-    if norm1 and norm2 and norm1 != norm2:
-        return {
-            "unrepresentable": (
-                f"range endpoints carry conflicting units "
-                f"({scale1} vs {scale2})"
-            )
-        }
-    scale = scale1 or scale2
-    prefix = prefix1 or prefix2 or ""
-    start = _format_range_endpoint(prefix, number1, scale)
-    end = _format_range_endpoint(prefix, number2, scale)
-    display = f"{start} \u2013 {end}"
-    if trailing_unit and scale != "%":
-        display = f"{display} {trailing_unit}"
-    return {"display": display, "range_start": start, "range_end": end}
-
-
-def extract_stat(text, sentence_record=None):
-    """MA-05: extract ONE defensible statistic from a sentence.
-
-    Returns {"display", "kind", ...} or None. Kinds: money,
-    percent, count, range, range_unrepresentable. Order: the
-    analysed sentence record's `money` field first (structured
-    analysis beats regex), then ranges (BOTH endpoints preserved
-    in the display — MG-09), percentages, money in text, then
-    plain counts — a number plus ANY following noun, not a
-    whitelist of units.
-    """
-    text = clean_text(text)
-    if sentence_record and isinstance(sentence_record, dict):
-        money_field = sentence_record.get("money") or []
-        if isinstance(money_field, str):
-            money_field = [money_field]
-        for entry in money_field:
-            entry = clean_text(entry)
-            if entry:
-                return {"display": entry, "kind": "money",
-                        "source": "analysis_money_field"}
-    if not text:
-        return None
-
-    range_result = _extract_range(text)
-    if range_result is not None:
-        if range_result.get("unrepresentable"):
-            # MG-09: a range that cannot be displayed faithfully is
-            # refused, never truncated to a single endpoint.
-            return {"kind": "range_unrepresentable",
-                    "detail": range_result["unrepresentable"],
-                    "source": "regex_range"}
-        return {"display": range_result["display"], "kind": "range",
-                "range_start": range_result["range_start"],
-                "range_end": range_result["range_end"],
-                "source": "regex_range"}
-
-    percent_match = re.search(
-        r"(\d[\d,]*(?:\.\d+)?)\s*(?:%|percent\b)", text, re.I
-    )
-    if percent_match:
-        return {"display": f"{percent_match.group(1)}%", "kind": "percent",
-                "source": "regex_percent"}
-
-    money_match = re.search(
-        r"\$\s?\d[\d,]*(?:\.\d+)?(?:\s*(?:million|billion|trillion))?"
-        r"|\b\d+(?:\.\d+)?\s*(?:million|billion|trillion)\s+dollars?\b",
-        text, re.I,
-    )
-    if money_match:
-        return {"display": clean_text(money_match.group(0)), "kind": "money",
-                "source": "regex_money"}
-
-    for match in re.finditer(
-        r"(\d[\d,]*(?:\.\d+)?)\s*(million|billion|trillion)?\s*([A-Za-z][A-Za-z\-]*)",
-        text, re.I,
-    ):
-        noun = (match.group(3) or "").lower()
-        if noun in _STAT_STOP_NOUNS or not noun:
-            continue
-        number_text = match.group(1)
-        # A bare year followed by a noun ("in 1961 people ...") is
-        # not a count; comma/decimal/scale numbers still count.
-        try:
-            numeric = float(number_text.replace(",", ""))
-        except ValueError:
-            continue
-        if (1000 <= numeric <= 2100 and "," not in number_text
-                and "." not in number_text and not match.group(2)):
-            continue
-        return {"display": clean_text(match.group(0)), "kind": "count",
-                "source": "regex_count"}
-    return None
 
 
 def extract_comparison(text):
@@ -1946,7 +1512,6 @@ def build_motion_graphics_assets(
     output_dir,
     mode="balanced",
     targets=None,
-    max_stats=None,
     genre_pack=None,
     manifest=None,
     slot_durations=None,
@@ -1993,12 +1558,6 @@ def build_motion_graphics_assets(
     for an uncovered beat the manifest does not cover is appended
     as an undirected target, so every uncovered beat reaches the
     chain (and its terminal decline) instead of vanishing.
-
-    `max_stats` (legacy mode only) caps the number of stat-family
-    graphics produced for manifest-less targets — a cap, never a
-    quota (None = the historical per-mode default: 3 in balanced
-    mode, uncapped in heavy mode). Manifest-driven targets are
-    governed by the manifest, not by this cap.
     """
 
     if mode in {"off", "none", "disabled"}:
@@ -2031,11 +1590,6 @@ def build_motion_graphics_assets(
             pass
         return []
 
-    if max_stats is None:
-        # Historical defaults: balanced was capped at 3; heavy was
-        # uncapped (kept effectively uncapped here).
-        max_stats = 3 if mode == "balanced" else 1_000_000
-
     # Phase 6: manifest entries become the target list. Each entry
     # converts to a target dict carrying the Director's recorded
     # restrictions and stamps; the chain below consumes them.
@@ -2059,7 +1613,6 @@ def build_motion_graphics_assets(
                     "sentence_number": target_ref.get("sentence_number"),
                     "text": entry.get("text") or "",
                     "scenario": entry.get("scenario") or {},
-                    "money": entry.get("money"),
                     "manifest_id": entry.get("manifest_id"),
                     "template_candidates": entry.get(
                         "template_candidates"
@@ -2291,10 +1844,6 @@ def build_motion_graphics_assets(
                     target.get("text") or target.get("sentence_text") or ""
                 ),
                 "scenario": target.get("scenario") or {},
-                # MA-05: a target may itself carry the analysed
-                # sentence record's money field; when it does not,
-                # _make_stat falls back to the scene sentence record.
-                "money": target.get("money"),
                 # Phase 6: Visual Director manifest fields, carried
                 # through when the target came from a manifest
                 # entry (None/absent for legacy targets — the chain
@@ -2371,238 +1920,6 @@ def build_motion_graphics_assets(
     # NUMERICAL / SCALE GRAPHICS
     # -----------------------------------------------------
 
-    def _make_stat(scene_number, sentence_index, sentence_number,
-                   text, targeted, target=None):
-        """Render + register one stat graphic.
-
-        Returns (True, None, "") when an asset was created, else
-        (False, reason, detail) with a typed MG-08 reason: no
-        usable statistic, an unrepresentable range, a rendering
-        failure, or a validation failure are DISTINCT outcomes —
-        the historical bare False conflated them.
-
-        MA-05: extraction is extract_stat (percent / plain counts /
-        ranges / money, plus the analysed sentence record's `money`
-        field when reachable — via the target dict itself or the
-        matching scene sentence record in `data["scenes"]`). The
-        stat's kind is recorded.
-
-        MG-09 fact basis: extraction from the sentence itself
-        (regex over the sentence, or the analysis record's money
-        field — itself extracted from the script) is script_claim.
-        A research_supported basis is honoured only when the
-        extraction carries a recorded evidence reference; without
-        one it is downgraded to script_claim rather than stamped
-        VERIFIED on trust. Phase 2.3 adds the second recorded
-        path: a target carrying verified_data + an evidence_ref
-        naming a structured script fact (fact_id) presents that
-        fact with the basis the fact table recorded for it —
-        script_claim, or research_supported when the KB
-        corroboration's source rides on the ref."""
-        sentence_record = _sentences_by_key.get(
-            (scene_number, sentence_index)
-        )
-        # Phase 6 (AM-009): the verified asset-data path. When the
-        # caller (a Visual Director manifest entry, via its target)
-        # supplies verified_data drawn from a VERIFIED asset's
-        # recorded metadata TOGETHER WITH an evidence_ref naming
-        # that asset (asset_id), the stat presents that data and
-        # carries the FACT_BASIS_ASSET stamp + the evidence_ref on
-        # the record and recipe. Without BOTH, this path is not
-        # taken — a script claim is never promoted on request.
-        _verified = (target or {}).get("verified_data")
-        _evidence_ref = (target or {}).get("evidence_ref")
-        # Gate 4 (B1): a verified/script fact may serve this stat
-        # ONLY when it is attached to THIS sentence. A fact whose
-        # recorded sentence_number names a different sentence is
-        # another sentence's number — borrowing it is exactly the
-        # cross-sentence contradiction class Gate 4 flagged. Such
-        # a fact is ignored here; the sentence's own extraction
-        # below decides.
-        if isinstance(_verified, dict):
-            _fact_sentence = _verified.get("sentence_number")
-            if _fact_sentence is None and isinstance(_evidence_ref, dict):
-                _fact_sentence = _evidence_ref.get("sentence_number")
-            if (
-                _fact_sentence is not None
-                and sentence_number is not None
-                and _fact_sentence != sentence_number
-            ):
-                _verified = None
-        if (
-            isinstance(_verified, dict)
-            and _verified.get("display")
-            and isinstance(_evidence_ref, dict)
-            and _evidence_ref.get("asset_id")
-        ):
-            info = {
-                "kind": _verified.get("kind") or "verified_value",
-                "display": _verified["display"],
-                "source": "verified_asset_metadata",
-                "fact_basis": FACT_BASIS_ASSET,
-                "evidence_ref": _evidence_ref,
-                "range_start": _verified.get("range_start"),
-                "range_end": _verified.get("range_end"),
-            }
-        elif (
-            isinstance(_verified, dict)
-            and _verified.get("display")
-            and isinstance(_evidence_ref, dict)
-            and _evidence_ref.get("fact_id")
-        ):
-            # Phase 2.3 (script facts): the target carries a fact
-            # extracted at planning time from the sentence itself
-            # (services.script_facts, via the evidence producer and
-            # the Director's manifest). Its basis is the one the
-            # fact table recorded: research_supported only when
-            # the ref carries the corroborating KB source — the
-            # generic downgrade below still applies without it.
-            _fact_basis = (target or {}).get("fact_basis")
-            if _fact_basis not in (FACT_BASIS_RESEARCH, FACT_BASIS_SCRIPT):
-                _fact_basis = FACT_BASIS_SCRIPT
-            if _fact_basis == FACT_BASIS_RESEARCH and not (
-                _evidence_ref.get("kb_source")
-            ):
-                _fact_basis = FACT_BASIS_SCRIPT
-            info = {
-                "kind": _verified.get("kind") or "script_fact",
-                "display": _verified["display"],
-                "source": "script_fact_table",
-                "fact_basis": _fact_basis,
-                "evidence_ref": _evidence_ref,
-                "range_start": _verified.get("range_start"),
-                "range_end": _verified.get("range_end"),
-            }
-        else:
-            record_for_stat = None
-            if target and target.get("money"):
-                record_for_stat = {"money": target.get("money")}
-            elif sentence_record and sentence_record.get("money"):
-                record_for_stat = sentence_record
-            info = extract_stat(text, sentence_record=record_for_stat)
-        # Gate 4 (B1): when the sentence itself states a quantity,
-        # the card's headline MUST be that quantity. A verified /
-        # script-fact display that disagrees with the sentence's
-        # own extracted quantity is replaced by the sentence's own
-        # value (script_claim) — never rendered alongside or
-        # instead of it. Numbers are compared by their first
-        # numeric token, normalised.
-        if info and info.get("source") in (
-            "script_fact_table", "verified_asset_metadata",
-        ):
-            _own_record = None
-            if target and target.get("money"):
-                _own_record = {"money": target.get("money")}
-            elif sentence_record and sentence_record.get("money"):
-                _own_record = sentence_record
-            _own = extract_stat(text, sentence_record=_own_record)
-            if _own and _own.get("display"):
-                def _num(display):
-                    m = re.search(r"\d[\d,]*(?:\.\d+)?", str(display or ""))
-                    return m.group(0).replace(",", "") if m else None
-                if _num(_own["display"]) != _num(info.get("display")):
-                    info = _own
-        if not info:
-            return False, "no_usable_statistic", ""
-        if info.get("kind") == "range_unrepresentable":
-            return False, "range_not_representable", info.get("detail", "")
-
-        value = clean_text(info["display"])
-
-        fact_basis = info.get("fact_basis") or FACT_BASIS_SCRIPT
-        if fact_basis == FACT_BASIS_RESEARCH and not info.get("evidence_ref"):
-            fact_basis = FACT_BASIS_SCRIPT
-
-        path = (
-            output_dir
-            / f"motion_graphic_stat_{index + 1:03d}.mp4"
-        )
-
-        headline = value.upper()
-        # Founder ruling 2026-11-23: the stat card's context line
-        # is a short designed label (the sentence's first entity
-        # or place), never a truncated fragment of the narration
-        # sentence — the caption already carries the sentence.
-        _stat_names, _stat_places = labels_from_text(text)
-        subtext = (_stat_names + _stat_places + [""])[0]
-        try:
-            _render_stat_graphic(
-                path,
-                headline,
-                subtext,
-                duration=4.0,
-                fact_basis=fact_basis,
-            )
-        except Exception as error:
-            # AUD-21: skip this graphic; never fail the whole job.
-            print(f"MOTION GRAPHIC SKIPPED (stat): {error}")
-            return False, "rendering_failure", str(error)
-
-        record = register_asset(
-            path,
-            "stat",
-            "quantitative_explanation",
-            4.0,
-            headline,
-            text,
-            recipe=_recipe(
-                "stat", "ffmpeg_stat",
-                {
-                    "headline": headline,
-                    "subtext": subtext,
-                    "fact_basis": fact_basis,
-                    "extraction": {
-                        "kind": info["kind"],
-                        "source": info.get("source", ""),
-                        "display": value,
-                        "range_start": info.get("range_start"),
-                        "range_end": info.get("range_end"),
-                    },
-                },
-                4.0, "quantitative_explanation",
-                scene_number=scene_number,
-                sentence_index=sentence_index,
-                sentence_number=sentence_number or sentence_index + 1,
-                source_references=(
-                    [{
-                        "type": "verified_asset_metadata",
-                        "evidence_ref": info["evidence_ref"],
-                    }]
-                    if info.get("evidence_ref")
-                    else [{
-                        "type": "script_sentence",
-                        "scene_number": scene_number,
-                        "sentence_number": sentence_number or sentence_index + 1,
-                    }]
-                ),
-            ),
-            fact_basis=fact_basis,
-        )
-        if record is None:
-            failure = graphic_failures[-1]
-            return False, failure["reason"], failure["detail"]
-
-        record["scene_number"] = scene_number
-        record["sentence_index"] = sentence_index
-        record["sentence_number"] = (
-            sentence_number or sentence_index + 1
-        )
-        record["targeted"] = bool(targeted)
-        record["family"] = "stat"
-        record["stat_kind"] = info["kind"]
-        record["stat_display"] = value
-        record["stat_source"] = info.get("source", "")
-        record["delivered"] = True
-        if info.get("range_end"):
-            record["stat_range_end"] = info["range_end"]
-        if info.get("evidence_ref"):
-            # AM-009: the evidence trail rides on the asset record
-            # (and, via the recipe's source_references pattern, is
-            # recoverable at regeneration time).
-            record["evidence_ref"] = info["evidence_ref"]
-        if target and target.get("manifest_id"):
-            record["manifest_id"] = target["manifest_id"]
-        return True, None, ""
 
     # -----------------------------------------------------
     # EVENT SCHEMATIC support: the fallback for a targeted
@@ -4207,8 +3524,6 @@ def build_motion_graphics_assets(
         }
         return facts
 
-    _legacy_stats_created = 0
-
     # Gate 4 (B3): repetition guard + quality-defect record.
     # Identical graphic content (same template/family + same
     # designed payload) must not silently serve multiple
@@ -4348,61 +3663,16 @@ def build_motion_graphics_assets(
         produced_family = None
         produced_reason = ""
 
-        _stat_reason = None
-        _stat_detail = ""
         _engine_reason = None
         _engine_detail = ""
         _terminal_decline = None
 
-        # Variety pre-pass: if the previous target used the stat
-        # family and an engine alternative fits this one, try the
-        # alternative FIRST (stat remains the fallback below).
-        # Manifest targets skip the pre-pass — the Director already
-        # ordered their candidates; the chain does not re-decide.
-        if (
-            _last_family == "stat"
-            and comparison is None
-            and not target.get("manifest_id")
-        ):
-            _alt = _engine_alternative()
-            if _alt and _make_engine_graphic(
-                target, _alt[0], _alt[1], style=_alt[2]
-            )[0]:
-                produced_family = "motion_engine"
-                produced_reason = f"variety_alternative:{_alt[0]}"
-                _last_engine_template = _alt[0]
-
-        # 1) Stat (broadened extraction). A comparison sentence is
-        # NOT reduced to a single-value stat card — it falls
-        # through to the stat_comparison template below. Phase 6:
-        # manifest targets run the stat family only when the
-        # Director listed it; legacy targets are bounded by the
-        # max_stats cap (a cap, never a quota — D1 removed the
-        # untargeted sweep it used to bound).
-        if (
-            produced_family is None
-            and comparison is None
-            and _family_permitted(target, "stat")
-        ):
-            if (
-                not target.get("manifest_id")
-                and _legacy_stats_created >= max_stats
-            ):
-                _stat_reason = "stat_cap_reached"
-            else:
-                _stat_ok, _stat_reason, _stat_detail = _make_stat(
-                    target["scene_number"],
-                    target["sentence_index"],
-                    target["sentence_number"],
-                    text,
-                    targeted=True,
-                    target=target,
-                )
-                if _stat_ok:
-                    produced_family = "stat"
-                    produced_reason = "stat_value"
-                    if not target.get("manifest_id"):
-                        _legacy_stats_created += 1
+        # (P0 removal, 2026-11-27: chain stage 1 — the native
+        # stat family — and its variety pre-pass were removed
+        # completely: renderer, extraction, the max_stats cap and
+        # the recipe dispatch. Genuine statistics are served by
+        # the surviving engine chart family from recorded data,
+        # with years/dates excluded from statistic candidacy.)
 
         # 3) Process: sequence markers + process graphic unused.
         # The claim rebinds process_anchor (this loop runs in the
@@ -4598,7 +3868,6 @@ def build_motion_graphics_assets(
             _facts = _terminal_facts(target, text)
             _attempted = []
             for _stage_family, _stage_reason in (
-                ("stat", _stat_reason),
                 ("event_schematic", _schematic_reason),
                 ("motion_engine", _engine_reason),
             ):
@@ -4687,21 +3956,18 @@ def build_motion_graphics_assets(
             # the guarantee no longer renders anything, so it
             # contributes no reason of its own — an unserved beat
             # keeps the deciding stage's pinned MG-08 reason
-            # (no_usable_statistic, missing_document_source, ...)
+            # (missing_document_source, ...)
             # and carries the typed terminal_graphics_decline
             # alongside it (recorded below).
             _reason = None
             _detail = ""
             for _cand_reason, _cand_detail in (
                 (_engine_reason, _engine_detail),
-                (_stat_reason, _stat_detail),
                 (_schematic_reason, _schematic_detail),
             ):
                 if _cand_reason in _hard_reasons:
                     _reason, _detail = _cand_reason, _cand_detail
                     break
-            if _reason is None and _stat_reason == "range_not_representable":
-                _reason, _detail = _stat_reason, _stat_detail
             if _reason is None and _schematic_reason in (
                 "no_schematic_labels", "no_schematic_motif",
                 "schematic_cap_reached",
@@ -4724,8 +3990,6 @@ def build_motion_graphics_assets(
                 _reason = "missing_document_source"
             if _reason is None and _engine_reason:
                 _reason, _detail = _engine_reason, _engine_detail
-            if _reason is None and _stat_reason:
-                _reason, _detail = _stat_reason, _stat_detail
             if _reason is None:
                 _reason = "no_eligible_graphic_purpose"
             if _reason not in GRAPHIC_SKIP_REASONS:
@@ -4767,7 +4031,6 @@ def build_motion_graphics_assets(
             # gate) reached the target outcome but vanished from
             # the failure audit.
             _prior_reasons = [
-                ("stat", _stat_reason, _stat_detail),
                 ("event_schematic", _schematic_reason,
                  _schematic_detail),
                 ("motion_engine", _engine_reason, _engine_detail),
@@ -4949,7 +4212,6 @@ def build_motion_graphics_assets(
         manifest,
         {
             "mode": mode,
-            "max_stats": max_stats,
             "genre_pack": _pack_id,
             # Phase 6 (AM-002): how this generation was targeted —
             # by the Visual Director's graphics manifest (the
@@ -5049,16 +4311,6 @@ def render_graphic_from_recipe(recipe, out_path, duration=None):
         if not rendered:
             return None, metadata or {"reason": "template_refused"}
         return str(out_path), metadata or {}
-
-    if family == "stat":
-        _render_stat_graphic(
-            out_path,
-            inputs.get("headline", ""),
-            inputs.get("subtext", ""),
-            duration=effective_duration,
-            fact_basis=inputs.get("fact_basis") or FACT_BASIS_SCRIPT,
-        )
-        return str(out_path), {}
 
     if family == "process":
         _render_process_graphic(
