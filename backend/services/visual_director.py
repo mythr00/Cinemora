@@ -70,6 +70,249 @@ TREATMENT_UNRESOLVED = "unresolved"
 
 FACT_BASIS_ASSET = "verified_asset_metadata"
 FACT_BASIS_SCRIPT = "script_claim"
+
+# ---------------------------------------------------------------------------
+# Phase 6–7 (Motion Graphics Programme): semantic selection by
+# STORYTELLING PROBLEM (audit X2). Every beat that is a graphic
+# candidate — a starved beat the plan permits a graphic for, or a
+# covered beat eligible for a composition — is classified by the
+# storytelling problem a graphic would solve, from RECORDED data
+# only: the story-understanding visual intents and graphic
+# fallback the plan recorded, the scenario contracts, the case
+# bible, and the beat's coverage state. The closed problem set:
+#
+#   identification  who is this?        -> name super / lower third
+#   location        where is this?      -> locator / route
+#   chronology      when, in what order?-> chronology
+#   comparison      how do two states   -> chart family / before_after
+#                   or values differ?
+#   measurement     how much / how does -> chart family
+#                   it change?
+#   explanation     how does it work?   -> schematic / diagram family
+#   relationship    who connects to     -> relationship_network
+#                   whom?
+#   evidence        what does the       -> document_presentation
+#                   document show?         (genuine-document gate)
+#   reconstruction  show the event      -> NO automated treatment:
+#                   itself happening       a specialist decline,
+#                                          never a fabricated one
+#   rest            the beat's job is   -> NO graphic, recorded as
+#                   mood / pause           the deliberate success
+#                                          outcome no_graphic_by_design
+#
+# Keyword features (the historical regexes) remain ONLY as a
+# fallback signal where no recorded data decides, and the record
+# says which basis decided (`selection_basis`: "recorded" /
+# "keyword_fallback" / "none"). The classification is stamped on
+# the plan-v2 decision and on the manifest entry, so every
+# graphic choice is auditable after the fact.
+# ---------------------------------------------------------------------------
+
+STORY_PROBLEMS = frozenset({
+    "identification", "location", "chronology", "comparison",
+    "measurement", "explanation", "relationship", "evidence",
+    "reconstruction", "rest",
+})
+
+#: Treatment preference per problem: templates named here are
+#: tried first for a beat with that problem (stable order; the
+#: pack's template_affinities still order the candidates the pack
+#: expresses a preference about — see _template_candidates).
+PROBLEM_TREATMENT_PREFERENCE = {
+    "identification": ["profile_reveal"],
+    "location": [
+        "locator", "route", "satellite_zoom", "territory_expansion",
+        "heatmap",
+    ],
+    "chronology": ["chronology"],
+    "comparison": [
+        "before_after", "manim_bar_chart", "bar_chart",
+        "mpl_bar_chart", "stat_comparison", "pie_chart",
+    ],
+    "measurement": [
+        "manim_line_chart", "mpl_line_chart", "line_chart",
+        "data_gauge", "bubble_chart", "ring_badges",
+        "population_pyramid", "animated_dashboard",
+    ],
+    "explanation": [
+        "labelled_diagram", "molecular_diagram", "exploded_view",
+        "mechanical_cutaway", "blueprint_section",
+        "construction_sequence", "checklist_graphic",
+        "crime_scene_diagram",
+    ],
+    "relationship": ["relationship_network"],
+    "evidence": ["document_presentation", "classified_file"],
+    "reconstruction": [],
+    "rest": [],
+}
+
+#: Problems whose full-frame graphic may break the density
+#: budget's rest rule (Phase 6–7, audit X4): a genuine document or
+#: a chronology anchor cannot be deferred to a later beat without
+#: falsifying the narration order.
+DENSITY_CRITICAL_PROBLEMS = frozenset({"evidence", "chronology"})
+
+
+def _recorded_comparison_sides(scenario):
+    """The two recorded sides of a comparison contract (Phase
+    6–7, audit B6-advanced): the scenario's ``comparison`` record
+    — {"before": {...}, "after": {...}} or {"states": [a, b]} —
+    where each side records a label AND a value/display. Returns
+    the two side dicts, or [] when the contract does not record
+    two complete sides. Recorded data only."""
+    scenario = scenario or {}
+    contract = scenario.get("comparison")
+    if not isinstance(contract, dict):
+        return []
+    states = contract.get("states")
+    if isinstance(states, list):
+        sides = [s for s in states if isinstance(s, dict)]
+    else:
+        before, after = contract.get("before"), contract.get("after")
+        sides = [
+            s for s in (before, after) if isinstance(s, dict)
+        ]
+    complete = [
+        s for s in sides
+        if str(s.get("label") or "").strip()
+        and (
+            s.get("value") is not None
+            or str(s.get("display") or "").strip()
+        )
+    ]
+    return complete[:2] if len(complete) >= 2 else []
+
+
+def _recorded_diagram_parts(scenario):
+    """The recorded parts of a labelled-diagram contract (Phase
+    6–7, audit D1): the scenario's ``diagram`` record's ``parts``
+    — each a dict recording at least a ``name``. Returns the
+    usable parts (>= 2 required by the treatment), else []."""
+    scenario = scenario or {}
+    contract = scenario.get("diagram")
+    if not isinstance(contract, dict):
+        return []
+    parts = [
+        p for p in contract.get("parts") or []
+        if isinstance(p, dict) and str(p.get("name") or "").strip()
+    ]
+    return parts if len(parts) >= 2 else []
+
+
+def _classify_story_problem(row, outcome, bible=None, evidence_entry=None):
+    """Classify one graphic-candidate beat by storytelling
+    problem. Returns (problem, basis): problem is a member of
+    STORY_PROBLEMS or None (no basis decided — the historical
+    candidate order then applies unchanged); basis is "recorded"
+    when recorded data decided, "keyword_fallback" when only the
+    text features spoke, "none" when neither did.
+
+    Recorded precedence (first match wins): reconstruction (a
+    recorded reconstruction scenario — specialist work, never
+    automated) → evidence (the scene carries a genuine document
+    asset) → rest (an explicitly recorded rest/no-graphic flag,
+    or a recorded atmospheric primary intent: the beat's job is
+    mood) → relationship (recorded relations) → chronology
+    (>= 3 usable recorded timeline events) → comparison (a
+    recorded two-side comparison contract or recorded
+    before/after pair) → measurement (a recorded chart contract
+    or verified series; a recorded "statistic" graphic fallback)
+    → explanation (a recorded diagram/molecule/layers/stages/
+    checklist/markers contract; a recorded "diagram" fallback;
+    a recorded graphic_explanation intent) → identification (a
+    recorded person subject) → location (recorded places; a
+    recorded "map" fallback; a recorded establishing /
+    geographic primary intent)."""
+    row = row or {}
+    outcome = outcome or {}
+    scenario = outcome.get("scenario") or {}
+    kind = str(scenario.get("kind") or "").strip().lower()
+
+    # --- recorded basis -------------------------------------------
+    if kind == "reconstruction" or scenario.get("reconstruction"):
+        return "reconstruction", "recorded"
+    if outcome.get("document_asset"):
+        return "evidence", "recorded"
+    if scenario.get("rest") is True or scenario.get("no_graphic") is True:
+        return "rest", "recorded"
+    primary_intent = row.get("primary_visual_intent")
+    if primary_intent == "atmospheric":
+        return "rest", "recorded"
+    if _recorded_relations(scenario, bible):
+        return "relationship", "recorded"
+    if len(_recorded_timeline_events(
+            scenario, bible, row.get("sentence_number"))) >= 3:
+        return "chronology", "recorded"
+    if _recorded_comparison_sides(scenario) or (
+        scenario.get("before_image") and scenario.get("after_image")
+    ):
+        return "comparison", "recorded"
+    verified = (evidence_entry or {}).get("verified_data")
+    chart_contract = scenario.get("chart")
+    if (
+        isinstance(chart_contract, dict)
+        and (chart_contract.get("series") or chart_contract.get("points"))
+    ) or (
+        isinstance(verified, dict)
+        and (verified.get("series") or verified.get("points"))
+    ):
+        return "measurement", "recorded"
+    molecule = scenario.get("molecule")
+    if (
+        _recorded_diagram_parts(scenario)
+        or (isinstance(molecule, dict) and molecule.get("atoms"))
+        or (isinstance(scenario.get("layers"), list)
+            and scenario.get("layers"))
+        or (isinstance(scenario.get("stages"), list)
+            and len(scenario.get("stages") or []) >= 2)
+        or (isinstance(scenario.get("checklist"), list)
+            and scenario.get("checklist"))
+        or (isinstance(scenario.get("scene_markers"), list)
+            and scenario.get("scene_markers"))
+        or (isinstance(scenario.get("density_points"), list)
+            and len(scenario.get("density_points") or []) >= 3)
+        or scenario.get("pyramid")
+        or isinstance(scenario.get("expansion"), dict)
+    ):
+        return "explanation", "recorded"
+    # A recorded person subject outranks the plan's generic
+    # graphic-fallback kind: the fallback says "some graphic
+    # would explain", the subject contract says WHO the beat is
+    # about — identification is the sharper problem.
+    if (
+        str(scenario.get("subject_name") or "").strip()
+        or str(scenario.get("subject_type") or "").strip().lower()
+        == "person"
+    ):
+        return "identification", "recorded"
+    if _recorded_place_names(scenario):
+        return "location", "recorded"
+    fallback = row.get("graphic_fallback")
+    fallback_kind = (
+        fallback.get("kind") if isinstance(fallback, dict) else None
+    )
+    if fallback_kind == "statistic":
+        return "measurement", "recorded"
+    if fallback_kind == "diagram" or primary_intent == "graphic_explanation":
+        return "explanation", "recorded"
+    if fallback_kind == "map" or primary_intent in (
+        "establishing", "geographic_context",
+    ):
+        return "location", "recorded"
+
+    # --- keyword fallback (recorded data absent) ------------------
+    features = _text_features(outcome.get("text") or "", scenario)
+    if features["has_series"]:
+        return "measurement", "keyword_fallback"
+    if features["has_pair"] or features["has_comparison"]:
+        return "comparison", "keyword_fallback"
+    if features["has_percent"]:
+        return "measurement", "keyword_fallback"
+    if features["has_date"]:
+        return "chronology", "keyword_fallback"
+    if features["has_places"]:
+        return "location", "keyword_fallback"
+    return None, "none"
 # Transformation Phase 2.3: a script fact corroborated by a
 # recorded knowledge-base verdict (services.script_facts) — the
 # stamp is honoured only with the KB source on the evidence ref.
@@ -396,7 +639,7 @@ def _recorded_relations(scenario, bible):
     return edges
 
 
-def _template_candidates(row, outcome, pack, bible=None):
+def _template_candidates(row, outcome, pack, bible=None, problem=None):
     """Ordered engine-template candidates for a graphic beat, from
     plan-level features, ordered by the pack's template_affinities
     (AM-008 consumer: higher affinity first; unlisted templates
@@ -490,6 +733,22 @@ def _template_candidates(row, outcome, pack, bible=None):
         candidates.append("crime_scene_diagram")
     if scenario.get("before_image") and scenario.get("after_image"):
         candidates.append("before_after")
+    # Phase 6–7 (B6-advanced): a recorded two-side comparison
+    # contract (states/values with labels) qualifies before_after
+    # without any image pair — the pipeline assembler renders the
+    # recorded states and refuses without two recorded sides.
+    if _recorded_comparison_sides(scenario):
+        candidates.append("before_after")
+    # Phase 6–7 (X2): a recorded chart contract qualifies the
+    # line-chart family directly — the series lives in the
+    # scenario record, not in the sentence's numbers, so the
+    # text features above cannot see it. The pipeline's recorded
+    # -data contract (units + source) still governs the render.
+    _chart_contract = scenario.get("chart")
+    if isinstance(_chart_contract, dict) and (
+        _chart_contract.get("series") or _chart_contract.get("points")
+    ):
+        candidates += ["manim_line_chart", "mpl_line_chart", "line_chart"]
     photo_count = outcome.get("scene_photo_count") or 0
     # (P0 removal, 2026-11-27: evidence_board and red_string_board
     # candidacy removed with the templates — completely.)
@@ -561,6 +820,21 @@ def _template_candidates(row, outcome, pack, bible=None):
         candidates.append("text_highlight")
     # Dedupe, preserving feature order.
     candidates = list(dict.fromkeys(candidates))
+
+    # Phase 6–7 (X2): the beat's storytelling problem orders the
+    # candidates FIRST (its treatment family leads); the pack's
+    # template_affinities sort below then still puts any
+    # affinity-listed template ahead, with this order as the
+    # index it falls back to — so a pack preference is never
+    # overridden by the problem map, and a problem's treatment
+    # leads whenever the pack is silent.
+    preference = PROBLEM_TREATMENT_PREFERENCE.get(problem) or []
+    if preference:
+        rank = {name: i for i, name in enumerate(preference)}
+        candidates = sorted(
+            candidates,
+            key=lambda name: rank.get(name, len(preference)),
+        )
 
     affinities = {}
     profile = (pack or {}).get("visual_profile") or {}
@@ -881,6 +1155,12 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
     manifest_entries = []
     counts = {TREATMENT_FOOTAGE: 0, TREATMENT_GRAPHIC: 0,
               TREATMENT_UNRESOLVED: 0}
+    # Phase 6–7 (X2): the selection-intelligence record — every
+    # classified beat's problem, the deliberate no-graphic
+    # successes, and the specialist declines.
+    problem_counts = {}
+    no_graphic_by_design = 0
+    specialist_declines = []
     labelled_scenes = set()
     split_scenes = set()
     windowed_scenes = set()
@@ -906,6 +1186,20 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                 "tier": outcome.get("tier"),
                 "asset_file": outcome.get("asset_file"),
             }
+            # Phase 6–7 (X2): a covered beat is a composition
+            # candidate — its storytelling problem is classified
+            # and recorded on the decision (identification is the
+            # problem the name super / lower third below serves).
+            _problem, _basis = _classify_story_problem(
+                row, outcome, bible=bible,
+                evidence_entry=evidence.get(number),
+            )
+            if _problem is not None:
+                decision["story_problem"] = _problem
+                decision["selection_basis"] = _basis
+                problem_counts[_problem] = (
+                    problem_counts.get(_problem, 0) + 1
+                )
             # Composition precedence per beat (Phase 8): the
             # strictest trigger first — split_screen (comparison
             # signal + strictly-favoured affinity), then the
@@ -955,10 +1249,63 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
             counts[TREATMENT_FOOTAGE] += 1
         elif outcome.get("starved"):
             if _graphic_permitted(row):
+                # Phase 6–7 (X2): classify FIRST. Two problems
+                # produce NO manifest entry, by design:
+                #   rest           -> no graphic is the deliberate
+                #                     SUCCESS outcome for the beat
+                #                     (no_graphic_by_design — not a
+                #                     decline, not a failure);
+                #   reconstruction -> a specialist decline: no
+                #                     automated treatment exists
+                #                     and none is fabricated.
+                _problem, _basis = _classify_story_problem(
+                    row, outcome, bible=bible,
+                    evidence_entry=evidence.get(number),
+                )
+                if _problem is not None:
+                    problem_counts[_problem] = (
+                        problem_counts.get(_problem, 0) + 1
+                    )
+                if _problem == "rest":
+                    decision = {
+                        "treatment": TREATMENT_UNRESOLVED,
+                        "reason": "no_graphic_by_design",
+                        "story_problem": "rest",
+                        "selection_basis": _basis,
+                        "graphic_outcome": "no_graphic_by_design",
+                        "by_design": True,
+                    }
+                    no_graphic_by_design += 1
+                    counts[TREATMENT_UNRESOLVED] += 1
+                    decided["decision"] = decision
+                    rows.append(decided)
+                    continue
+                if _problem == "reconstruction":
+                    _decline = {
+                        "type": "specialist_decline",
+                        "problem": "reconstruction",
+                        "sentence_number": number,
+                        "detail": (
+                            "reconstruction has no automated "
+                            "treatment; none was fabricated"
+                        ),
+                    }
+                    specialist_declines.append(_decline)
+                    decision = {
+                        "treatment": TREATMENT_UNRESOLVED,
+                        "reason": "specialist_decline",
+                        "story_problem": "reconstruction",
+                        "selection_basis": _basis,
+                        "decline": _decline,
+                    }
+                    counts[TREATMENT_UNRESOLVED] += 1
+                    decided["decision"] = decision
+                    rows.append(decided)
+                    continue
                 graphic_index += 1
                 manifest_id = f"gm_{graphic_index:04d}"
                 candidates, affinities = _template_candidates(
-                    row, outcome, pack, bible=bible
+                    row, outcome, pack, bible=bible, problem=_problem
                 )
                 entry_evidence = evidence.get(number) or {}
                 evidence_ref = entry_evidence.get("evidence_ref")
@@ -1034,11 +1381,19 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
                     "evidence_ref": evidence_ref,
                     "verified_data": verified_data,
                     "reason": "starved_beat_graphic_permitted",
+                    # Phase 6–7 (X2): the storytelling problem
+                    # that selected this treatment, and the basis
+                    # that decided it — the audit trail for the
+                    # choice (the chosen treatment is `template`).
+                    "story_problem": _problem,
+                    "selection_basis": _basis,
                 })
                 decision = {
                     "treatment": TREATMENT_GRAPHIC,
                     "reason": "starved_beat_graphic_permitted",
                     "manifest_id": manifest_id,
+                    "story_problem": _problem,
+                    "selection_basis": _basis,
                 }
                 counts[TREATMENT_GRAPHIC] += 1
             else:
@@ -1079,6 +1434,12 @@ def reconcile_visual_plan(plan_v1, outcomes, genre_pack=None,
             # for this reconciliation (Subtle intensity disables
             # it); recorded so a zero count is explainable.
             "compositions_enabled": bool(compositions),
+            # Phase 6–7 (X2): selection-intelligence record —
+            # classified problems, deliberate no-graphic
+            # successes, specialist declines.
+            "story_problems": problem_counts,
+            "no_graphic_by_design": no_graphic_by_design,
+            "specialist_declines": specialist_declines,
             "pack_fields_consumed": [
                 "template_affinities", "composition_affinities",
                 "visual_theme",
