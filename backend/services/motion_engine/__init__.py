@@ -15,6 +15,10 @@ from services.motion_engine import templates as _templates  # noqa: E402,F401
 from services.motion_engine import templates_v2 as _templates_v2  # noqa: E402,F401
 from services.motion_engine import templates_v3 as _templates_v3  # noqa: E402,F401
 from services.motion_engine import templates_v4 as _templates_v4  # noqa: E402,F401
+# Phase 5 core treatments rebuild (2026-11-27): the v5 family
+# (chronology / route / locator / relationship_network)
+# self-registers into templates.TEMPLATES on import, like v2–v4.
+from services.motion_engine import templates_v5 as _templates_v5  # noqa: E402,F401
 # GitHub Skills Programme (2026-11-25): the Manim render engine's
 # templates self-register into templates.TEMPLATES on import. The
 # module never imports manim itself, so this stays cheap and safe

@@ -122,8 +122,12 @@ def test_removed_templates_absent_from_every_registry():
     for name in REMOVED_TEMPLATES:
         for registry in registries:
             assert name not in registry, name
-    # The surviving vocabulary is intact at its post-removal size.
-    assert len(engine_templates.TEMPLATES) == 42
+    # The surviving vocabulary is intact at its post-removal size
+    # plus the Phase 5 rebuilt treatments (2026-11-27), which
+    # register under NEW names (chronology / route / locator /
+    # relationship_network) — every REMOVED name above stays
+    # absent, which is the pin this test exists for.
+    assert len(engine_templates.TEMPLATES) == 46
     for survivor in (
         "archival_title", "document_presentation", "classified_file",
         "text_overlay", "text_highlight", "profile_reveal",

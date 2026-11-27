@@ -49,8 +49,12 @@ def test_registry_covers_all_fifteen_templates():
     # P0 removal (2026-11-27) supersedes the count again: eleven
     # low-quality templates were removed completely — 53 down to
     # 42 — and the removed names must NOT be in the vocabulary.
+    # Phase 5 core treatments (2026-11-27) grow it again, 42 to
+    # 46: the rebuilt treatments register under NEW names
+    # (chronology / route / locator / relationship_network) —
+    # the removed names stay absent, asserted below unchanged.
     names = set(templates.TEMPLATES) | set(templates_v2.V2_TEMPLATES)
-    assert len(names) == 42
+    assert len(names) == 46
     assert "manim_line_chart" in names and "manim_bar_chart" in names
     assert "mpl_line_chart" in names and "mpl_bar_chart" in names
     for name in (
