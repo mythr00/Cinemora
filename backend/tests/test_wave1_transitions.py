@@ -313,10 +313,16 @@ def test_render_timeline_all_cut_uses_plain_concat_unchanged(tmp_path, monkeypat
         copy.deepcopy(scenes), project_dir, expected_duration=2.0
     )
     assert renderer.count_frames_exact(output) == 60
-    # Plain concat: exactly the two scene clips, in order, nothing else.
+    # Plain assembly: exactly the two chapter bodies (Phase 5 —
+    # assembly inputs are per-scene chapter files), in order, with
+    # no transition segment anywhere. The pre-Phase-5 mechanism fed
+    # the two scene clips directly; the intent — an all-cut film
+    # engages no transition machinery — is unchanged.
     assert len(captured["clips"]) == 2
     assert all("transitions" not in str(c) for c in captured["clips"])
-    assert [Path(c).name for c in captured["clips"]] == ["clip_0001.mp4", "clip_0001.mp4"]
+    assert [Path(c).name for c in captured["clips"]] == [
+        "chapter_001.mp4", "chapter_002.mp4",
+    ]
     audit = json.loads((project_dir / "renderer_timing_audit.json").read_text())
     assert audit["transitions"]["status"] == "all_cut"
     assert audit["transitions"]["applied"] == []
