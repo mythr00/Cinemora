@@ -469,13 +469,18 @@ def test_validation_refusals_and_warnings():
              production_config.validate_config(missing_upload)["errors"]]
     assert codes == ["music_upload_missing"]
 
+    # Music library ACTIVATED by the founder mandate of
+    # 2026-11-27: the bundled catalogue ships with the codebase,
+    # so an unknown track id is refused as unknown (the
+    # unavailable case — no catalogue at all — is covered in
+    # test_music_library_activation.py).
     no_library = production_config.clean_config(
         {"music": {"enabled": True, "source": "library",
                    "track_id": "anything"}}
     )
     codes = [e["code"] for e in
              production_config.validate_config(no_library)["errors"]]
-    assert codes == ["music_library_unavailable"]
+    assert codes == ["music_track_unknown"]
 
     disabled = production_config.clean_config(
         {"motion_graphics": {"enabled": False}}
@@ -648,7 +653,11 @@ def test_catalogue_is_generated_from_the_live_systems(client, users):
     ]
     voice_ids = [v["id"] for v in catalogue["narration"]["voices"]]
     assert "default" in voice_ids
-    assert catalogue["music_library"]["configured"] is False
+    # Activated 2026-11-27 (CINEMATIC MUSIC LIBRARY mandate):
+    # the bundled catalogue is the deployment's library.
+    assert catalogue["music_library"]["configured"] is True
+    assert catalogue["music_library"]["available"] is True
+    assert catalogue["music_library"]["tracks"]
     assert catalogue["narration"]["provider"] == "kokoro"
     # The catalogue note is user-facing copy (founder directive
     # 2026-11-26 §I): it tells the user how to choose a voice and

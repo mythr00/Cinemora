@@ -89,6 +89,7 @@ ENV PYTHONUNBUFFERED=1 \
     CINEMORA_ALLOW_OPERATOR_TOKEN=0 \
     CINEMORA_SOURCE_EXTRACTION_ENABLED=1 \
     CINEMORA_MEDIA_ROOT=/data/media \
+    CINEMORA_MUSIC_CATALOGUE=/app/cinemora_music/catalogue.json \
     SOURCE_INTEL_DB=/data/source-intel/source_intel.sqlite3 \
     HF_HOME=/data/hf-cache \
     TMPDIR=/data/tmp \

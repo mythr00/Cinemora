@@ -5,19 +5,22 @@ This module is the PREPARATION half of the music library. It
 defines the track metadata model, the licence-evidence rules and
 a catalogue-file loader/validator — and nothing else:
 
-- NO catalogue ships with the codebase (no catalogue file, no
-  tracks, no assets). An absent catalogue is valid and means
-  "no library".
-- NOTHING imports this module in the live system: jobs.py,
-  api_v1.py and services/editor.py do not reference it (a test
-  pins that). There is no live endpoint, no selection logic, no
-  frontend picker.
-- ACTIVATION is founder-gated on the sourcing decision
-  (A: bundled CC0/public-domain starter set; B: commercial
-  provider; C: first-class user-supplied with attestation) — see
-  ~/workspace/cinemora-audit/MUSIC_LIBRARY_DESIGN.md. This module
-  deliberately does not pre-decide any of the three: the schema
-  carries all three source classes and no provider code exists.
+- An absent catalogue is valid and means "no library". (Since
+  the 2026-11-27 activation a bundled catalogue DOES ship —
+  see below — but the loader's absent-means-empty contract is
+  unchanged for operator catalogues.)
+- The live system reaches this module through
+  services.production_config only: jobs.py, api_v1.py and
+  services/editor.py do not import it directly (a test pins
+  that boundary).
+- ACTIVATION happened under the founder mandate of 2026-11-27
+  (CINEMATIC MUSIC LIBRARY): the founder supplied the tracks
+  himself (sourcing class "bundled" — founder-supplied platform
+  assets; licensing is the founder's, handled separately, so
+  records carry no licence claim). The bundled catalogue ships
+  at backend/cinemora_music/catalogue.json and is read through
+  services.production_config (CINEMORA_MUSIC_CATALOGUE overrides
+  it). The schema still carries all three source classes.
 
 The honesty rules mirror the rest of the system (M6, the Asset
 Manager directive): title/composer are RECORDED metadata, nullable

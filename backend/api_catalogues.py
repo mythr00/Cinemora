@@ -17,7 +17,8 @@ pre-extraction definitions.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from services import genre_packs, narration
 
@@ -53,10 +54,13 @@ def build_router(require_user) -> APIRouter:
     # and voices from services.narration.VOICE_CATALOGUE (Stage 3J: the
     # catalogue of voices actually installed). Nothing is hardcoded
     # here: installing a pack or a voice changes these responses with
-    # no API change. There is deliberately NO music catalogue route —
-    # the music library is founder-gated (P3) and stays unactivated;
+    # no API change. The music library routes below were activated by
+    # the founder mandate of 2026-11-27 (CINEMATIC MUSIC LIBRARY):
+    # the catalogue itself is read through
+    # services.production_config's loader over the
+    # CINEMORA_MUSIC_CATALOGUE seam (bundled library by default);
     # the packs' music metadata fields (music_mood / mix_preset) are
-    # likewise not catalogue data and are not exposed here.
+    # not catalogue data and are not exposed here.
 
 
     def _genre_view(pack: dict) -> dict:
@@ -140,5 +144,50 @@ def build_router(require_user) -> APIRouter:
             "voices": voices,
             "default_voice_id": narration.DEFAULT_VOICE_ID,
         }
+
+    # ---------------------------------------------------------------------
+    # Music library (founder mandate 2026-11-27) — browse + preview
+    # ---------------------------------------------------------------------
+
+    @router.get("/catalogues/music")
+    def list_music_catalogue(principal=Depends(require_user)):
+        """The configured music library for the selection UI:
+        the same library_state view the configuration catalogue
+        carries (configured / available / real tracks)."""
+        from services import production_config
+
+        return {"music_library": production_config.library_state()}
+
+    @router.get("/catalogues/music/{track_id}/preview")
+    def music_track_preview(track_id: str, principal=Depends(require_user)):
+        """Stream one library track's preview clip (its full file
+        when the record carries no preview asset). Unknown tracks
+        and missing files are honest 404s — a preview is never
+        silently swapped for another track."""
+        from services import production_config
+
+        catalogue, root = production_config.load_library()
+        if catalogue is None or catalogue.empty:
+            raise HTTPException(
+                status_code=404, detail="No music library is configured."
+            )
+        track = catalogue.by_id(track_id)
+        if track is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Music track {track_id!r} is not in the library.",
+            )
+        relative = track.assets.preview or track.assets.full
+        path = (root / relative).resolve()
+        if root.resolve() not in path.parents or not path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Audio for music track {track_id!r} is unavailable.",
+            )
+        return FileResponse(
+            path,
+            media_type="audio/mpeg",
+            filename=path.name,
+        )
 
     return router

@@ -590,9 +590,26 @@ def theme_pack_override(config, genre_pack):
 # ---------------------------------------------------------------------
 
 
+#: The bundled cinematic library shipped with the codebase
+#: (founder mandate 2026-11-27: CINEMATIC MUSIC LIBRARY — the
+#: library is ACTIVATED, no longer founder-gated preparation).
+#: CINEMORA_MUSIC_CATALOGUE overrides it; when the env var is
+#: unset and the bundled catalogue file exists, the bundled
+#: library is the catalogue. Tests monkeypatch this constant to
+#: simulate a deployment with no library at all.
+BUNDLED_CATALOGUE_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "cinemora_music" / "catalogue.json"
+)
+
+
 def catalogue_path():
     raw = os.environ.get("CINEMORA_MUSIC_CATALOGUE", "").strip()
-    return Path(raw) if raw else None
+    if raw:
+        return Path(raw)
+    if BUNDLED_CATALOGUE_PATH.is_file():
+        return BUNDLED_CATALOGUE_PATH
+    return None
 
 
 def load_library():
@@ -631,10 +648,17 @@ def library_state() -> dict:
                 "track_id": track.track_id,
                 "title": track.title,
                 "composer": track.composer,
+                "performer": track.performer,
                 "moods": list(track.moods),
+                # The mandate's browse categories ride in the
+                # record's genres; the first genre is the track's
+                # primary category for filtering.
+                "genres": list(track.genres),
+                "category": track.genres[0] if track.genres else None,
                 "duration_seconds": track.duration_seconds,
                 "licence_state": track.licence_state,
                 "source_class": track.source_class,
+                "has_preview": track.assets.preview is not None,
             }
             for track in catalogue.tracks
         ],

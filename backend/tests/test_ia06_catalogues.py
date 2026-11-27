@@ -14,9 +14,10 @@ other v1 route):
   the primary voice af_heart), all backed by the one installed
   Kokoro model + voices file.
 
-There is deliberately no music catalogue: the music library is
-founder-gated (P3) and these routes must not activate it — the
-genre view does not even carry the packs' music metadata fields.
+The genre view does not carry the packs' music metadata fields.
+(The music library itself was activated by the founder mandate
+of 2026-11-27 — CINEMATIC MUSIC LIBRARY — and is served by its
+own routes; see test_music_library_activation.py.)
 """
 
 import pytest
@@ -140,16 +141,20 @@ def test_genres_catalogue_style_families_are_truthful(client):
     assert genres["general"]["style_family"] is None
 
 
-def test_genres_catalogue_carries_no_music_activation(client):
-    # P3 is founder-gated: no music library route exists and the
-    # genre view does not smuggle the packs' music metadata in.
+def test_genres_catalogue_carries_no_pack_music_metadata(client):
+    # The genre view does not smuggle the packs' music metadata
+    # in — pack music fields are not catalogue data. (The music
+    # LIBRARY routes were activated separately by the founder
+    # mandate of 2026-11-27; their coverage lives in
+    # test_music_library_activation.py.)
     for entry in client.get(GENRES_URL, headers=HEADERS).json()["genres"]:
         assert "music_mood" not in entry
         assert "mix_preset" not in entry
         assert "tracks" not in entry
         assert "library" not in entry
-    missing = client.get("/api/v1/catalogues/music", headers=HEADERS)
-    assert missing.status_code == 404
+    music = client.get("/api/v1/catalogues/music", headers=HEADERS)
+    assert music.status_code == 200
+    assert music.json()["music_library"]["available"] is True
 
 
 # ---------------------------------------------------------------------

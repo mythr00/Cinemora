@@ -530,6 +530,229 @@ def final_audio_record(media_file, soundtrack_record=None):
 
 
 # --------------------------------------------------
+# Soundtrack validation (founder mandate 2026-11-27:
+# CINEMATIC MUSIC LIBRARY, "Audio validation")
+# --------------------------------------------------
+# The pre-completion checks the mandate names: the music bed
+# covers the full documentary duration, no unintended silent
+# sections, no abrupt loop boundaries, no clipping, narration
+# intelligible, final audio duration == final video duration
+# (the soundtrack is built to the narration's duration, which
+# the timeline renders 1:1). Every check is MEASURED from the
+# actual files; a measurement that cannot be taken is recorded
+# as None and makes the validation incomplete — never passed
+# silently.
+
+def detect_silence_spans(media_file, *, noise_db=-45.0, min_duration=1.0):
+    """Silent spans of a media file via ffmpeg silencedetect:
+    a list of {"start", "end", "duration"} dicts (seconds).
+    Returns None when the measurement itself fails."""
+    import re
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-i", str(media_file),
+                "-af",
+                f"silencedetect=noise={noise_db}dB:d={min_duration}",
+                "-f", "null", "-",
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, timeout=600,
+        )
+    except Exception as error:
+        print(f"Silence detection failed: {error}")
+        return None
+    spans = []
+    starts = [
+        float(m) for m in re.findall(
+            r"silence_start: ([0-9.]+)", result.stderr or "")
+    ]
+    ends = [
+        (float(e), float(d)) for e, d in re.findall(
+            r"silence_end: ([0-9.]+) \| silence_duration: ([0-9.]+)",
+            result.stderr or "")
+    ]
+    for start, (end, duration) in zip(starts, ends):
+        spans.append({"start": start, "end": end, "duration": duration})
+    if len(starts) > len(ends):
+        probe = probe_audio_file(media_file) or {}
+        total = probe.get("duration_seconds")
+        if total:
+            start = starts[-1]
+            spans.append({
+                "start": start, "end": float(total),
+                "duration": float(total) - start,
+            })
+    return spans
+
+
+def measure_max_sample_step(media_file):
+    """The largest absolute sample-to-sample step in the audio
+    (mono mixdown, native rate), as a 0..1 fraction of full
+    scale. A hard-cut loop seam or a click shows up here as a
+    step far beyond the material's own steps. Returns None when
+    the measurement fails."""
+    import array
+
+    try:
+        process = subprocess.Popen(
+            [
+                "ffmpeg", "-v", "error", "-i", str(media_file),
+                "-ac", "1", "-f", "s16le", "-",
+            ],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+    except Exception as error:
+        print(f"Sample-step measurement failed: {error}")
+        return None
+    max_step = 0
+    previous = None
+    remainder = b""
+    assert process.stdout is not None
+    while True:
+        chunk = process.stdout.read(1 << 20)
+        if not chunk:
+            break
+        data = remainder + chunk
+        usable = len(data) - (len(data) % 2)
+        remainder = data[usable:]
+        samples = array.array("h")
+        samples.frombytes(data[:usable])
+        for value in samples:
+            if previous is not None:
+                step = abs(value - previous)
+                if step > max_step:
+                    max_step = step
+            previous = value
+    process.wait()
+    if process.returncode != 0:
+        return None
+    return max_step / 32768.0
+
+
+def assess_bed_continuity(bed_file, track_file):
+    """Loop-boundary abruptness: the shaped bed's largest sample
+    step against the source track's own largest step. A properly
+    crossfaded loop introduces no step beyond the material's own
+    (a small tolerance covers resampling); a hard restart does."""
+    bed_step = measure_max_sample_step(bed_file)
+    track_step = measure_max_sample_step(track_file)
+    if bed_step is None or track_step is None:
+        return {"measured": False, "passed": None}
+    limit = track_step * 1.5 + 0.02
+    return {
+        "measured": True,
+        "bed_max_step": round(bed_step, 4),
+        "track_max_step": round(track_step, 4),
+        "limit": round(limit, 4),
+        "passed": bed_step <= limit,
+    }
+
+
+def validate_soundtrack(soundtrack_file, narration_file, *,
+                        music_applied):
+    """The mandate's pre-completion audio validation, measured
+    on the prepared soundtrack against the narration it was
+    mixed from. Music-specific checks are enforced only when
+    music was applied; the rest always run. `passed` requires
+    every enforced check; `complete` says every measurement
+    could actually be taken."""
+    checks = {"music_applied": bool(music_applied)}
+    try:
+        soundtrack_probe = probe_audio_file(soundtrack_file) or {}
+        narration_probe = probe_audio_file(narration_file) or {}
+        soundtrack_duration = soundtrack_probe.get("duration_seconds")
+        narration_duration = narration_probe.get("duration_seconds")
+        checks["soundtrack_duration_seconds"] = soundtrack_duration
+        checks["narration_duration_seconds"] = narration_duration
+        if soundtrack_duration and narration_duration:
+            delta = abs(soundtrack_duration - narration_duration)
+            checks["duration_delta_seconds"] = round(delta, 3)
+            checks["duration_match"] = delta <= 0.25
+        else:
+            checks["duration_delta_seconds"] = None
+            checks["duration_match"] = None
+
+        levels = measure_audio_levels(soundtrack_file)
+        ceiling = max_true_peak_dbtp()
+        checks["true_peak_dbtp"] = levels["true_peak_dbtp"]
+        checks["max_true_peak_dbtp"] = ceiling
+        checks["no_clipping"] = (
+            levels["true_peak_dbtp"] is not None
+            and levels["true_peak_dbtp"] <= ceiling + 0.1
+        )
+        checks["integrated_lufs"] = levels["integrated_lufs"]
+        checks["target_lufs"] = target_lufs()
+        loudness_in_band = (
+            levels["integrated_lufs"] is not None
+            and target_lufs() - 6.0
+            <= levels["integrated_lufs"]
+            <= target_lufs() + 3.0
+        )
+
+        spans = detect_silence_spans(soundtrack_file)
+        if spans is None or not soundtrack_duration:
+            checks["longest_internal_silence_seconds"] = None
+            checks["no_unintended_silence"] = None
+        else:
+            internal = [
+                span["duration"] for span in spans
+                if span["start"] >= 3.0
+                and span["end"] <= soundtrack_duration - 3.0
+            ]
+            longest = max(internal) if internal else 0.0
+            checks["longest_internal_silence_seconds"] = round(longest, 3)
+            checks["no_unintended_silence"] = (
+                longest <= 2.0 if music_applied else None
+            )
+
+        if music_applied:
+            provenance = assess_audio_provenance(
+                "applied", str(soundtrack_file), str(narration_file)
+            )
+            checks["music_detected_in_narration_gaps"] = provenance[
+                "music_detected"
+            ]
+            checks["provenance_consistent"] = provenance["consistent"]
+        else:
+            checks["music_detected_in_narration_gaps"] = None
+            checks["provenance_consistent"] = None
+
+        # Narration intelligibility is a PROXY check (labelled as
+        # such): the mix sits in the loudness band the narration
+        # was normalised to, and — when music is applied — the
+        # provenance cross-check confirms the narration's gaps
+        # carry the bed while its speech stays the dominant
+        # signal (the difference analysis behind M10).
+        intelligible = loudness_in_band and (
+            checks["provenance_consistent"] is not False
+        )
+        checks["narration_intelligibility_proxy"] = intelligible
+
+        enforced = [
+            checks["duration_match"],
+            checks["no_clipping"],
+            checks["narration_intelligibility_proxy"],
+        ]
+        if music_applied:
+            enforced += [
+                checks["no_unintended_silence"],
+                checks["music_detected_in_narration_gaps"],
+                checks["provenance_consistent"],
+            ]
+        checks["complete"] = all(value is not None for value in enforced)
+        checks["passed"] = bool(
+            checks["complete"] and all(enforced)
+        )
+    except Exception as error:  # validation must never kill a mix
+        checks["error"] = f"{type(error).__name__}: {error}"
+        checks["complete"] = False
+        checks["passed"] = False
+    return checks
+
+
+# --------------------------------------------------
 # Provenance cross-check (M10)
 # --------------------------------------------------
 
@@ -1540,6 +1763,7 @@ def prepare_soundtrack(
         "attack_ms": mix_config["duck_attack_ms"],
         "release_ms": mix_config["duck_release_ms"],
     }
+    bed_continuity = None
     try:
         loop_info = _mix_to_file(
             narration_file, mix_file, music_file, mix_config,
@@ -1549,6 +1773,17 @@ def prepare_soundtrack(
             raise RuntimeError(
                 f"Soundtrack mix was not created: {mix_file}"
             )
+        # Loop-boundary continuity is measured on the shaped bed
+        # itself, while it still exists (the finally below cleans
+        # the bed work dir up).
+        bed_file = bed_work_dir / "music_bed.wav"
+        if (
+            music_file
+            and bed_file.is_file()
+            and loop_info
+            and loop_info.get("mode") == "crossfade"
+        ):
+            bed_continuity = assess_bed_continuity(bed_file, music_file)
         normalisation = _normalise_audio(mix_file, output_file, mix_config)
     finally:
         mix_file.unlink(missing_ok=True)
@@ -1558,6 +1793,19 @@ def prepare_soundtrack(
         raise RuntimeError(
             f"Soundtrack was not created: {output_file}"
         )
+
+    # The mandate's pre-completion audio validation, measured on
+    # the delivered soundtrack (see validate_soundtrack). It is
+    # recorded on the soundtrack record; the final auditor's
+    # provenance verdict remains the pipeline's hard gate.
+    validation = validate_soundtrack(
+        output_file, narration_file, music_applied=bool(music_file)
+    )
+    if bed_continuity is not None:
+        validation["bed_continuity"] = bed_continuity
+        if bed_continuity.get("passed") is not True:
+            validation["complete"] = False
+            validation["passed"] = False
 
     print("\n========================================")
     print("SOUNDTRACK COMPLETE")
@@ -1643,6 +1891,7 @@ def prepare_soundtrack(
         "music_volume": resolved_volume if music_file else None,
         "identity": identity,
         "mix": mix_section,
+        "validation": validation,
         "error": (
             f"requested music file not found: {requested_file}"
             if missing_requested else None
