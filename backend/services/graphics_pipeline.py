@@ -1159,6 +1159,12 @@ _STAT_STOP_NOUNS = {
     "august", "september", "october", "november", "december",
 }
 
+_DOCUMENT_MARKERS = (
+    "document", "report", "letter", "filing", "memorandum", "memo",
+    "manuscript", "deposition", "affidavit", "transcript",
+)
+
+
 def _percent_value(text):
     match = re.search(
         r"(\d[\d,]*(?:\.\d+)?)\s*(?:%|percent\b)", clean_text(text), re.I
@@ -2196,6 +2202,9 @@ def build_motion_graphics_assets(
                 "markers": scenario.get("markers") or [],
             }
         return _assemble
+
+    def _verified_scene_assets(target):
+        return _verified_by_scene_assets.get(target["scene_number"]) or []
 
     def _assemble_newspaper_montage(target):
         articles = []
