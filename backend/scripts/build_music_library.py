@@ -28,6 +28,20 @@ Usage:
 A spec track whose staging file is absent is reported as MISSING
 and left out of the catalogue — the build never invents or
 substitutes a file. Re-running is idempotent.
+
+FOUNDER EXTENSION (2026-11-27, founder instruction: "Add
+everything I send only remove duplicate"): every audio file in
+the staging directory that is not part of the reference spec is
+ingested too, as a founder-supplied extra. Extra metadata is
+honest by construction: a title is recorded only from the file's
+own embedded tags or from the supplied filename, an artist only
+from embedded tags — anything else stays null, never invented.
+Extras are categorised from tag/filename evidence where present
+and fall back to cinematic_orchestral (the generic orchestral
+category), with the basis recorded in the manifest. Content is
+deduplicated by SHA-256 across spec and extras alike: a byte-
+identical second copy is skipped and reported, never catalogued
+twice.
 """
 
 from __future__ import annotations
@@ -35,6 +49,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -235,6 +250,10 @@ def _probe(path: Path) -> dict:
         "duration_seconds": round(float(fmt.get("duration", 0.0)), 3),
         "size_bytes": int(fmt.get("size", path.stat().st_size)),
         "format_name": fmt.get("format_name", ""),
+        "tags": {
+            str(k).lower(): str(v)
+            for k, v in (fmt.get("tags") or {}).items()
+        },
     }
 
 
@@ -261,6 +280,108 @@ def _make_preview(source: Path, dest: Path, duration: float) -> None:
     )
 
 
+AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".ogg", ".flac"}
+
+
+def _slugify(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return slug or "track"
+
+
+def _ingest_one(*, staged: Path, out: Path, seen_hashes: set,
+                track_id: str, title, artist, source_url, category,
+                moods, origin: str, category_basis: str | None,
+                notes: str):
+    """Copy/probe/preview one staged file into the library.
+
+    Returns (catalogue_entry, manifest_entry), or None when the
+    file's content duplicates a track already ingested (the copy
+    written for probing is removed again — duplicates are the
+    only thing ever removed, per the founder's instruction).
+    """
+    probe = _probe(staged)
+    full_rel = f"{category}/{track_id}.mp3"
+    full_path = out / full_rel
+    if staged.suffix.lower() == ".mp3" and probe["codec"] == "mp3":
+        full_path.write_bytes(staged.read_bytes())
+    else:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-v", "error", "-i", str(staged),
+                "-vn", "-c:a", "libmp3lame", "-q:a", "2",
+                str(full_path),
+            ],
+            check=True,
+        )
+        probe = _probe(full_path)
+    digest = _sha256(full_path)
+    if digest in seen_hashes:
+        full_path.unlink(missing_ok=True)
+        return None
+    seen_hashes.add(digest)
+    preview_rel = f"previews/{track_id}.mp3"
+    _make_preview(full_path, out / preview_rel, probe["duration_seconds"])
+    catalogue_entry = {
+        "track_id": track_id,
+        "content_sha256": digest,
+        "title": title,
+        "composer": None,
+        "performer": artist,
+        "source_class": "bundled",
+        "moods": moods,
+        "genres": [category],
+        "duration_seconds": probe["duration_seconds"],
+        "probe": {
+            "codec": probe["codec"],
+            "sample_rate": probe["sample_rate"],
+            "channels": probe["channels"],
+        },
+        "assets": {"full": full_rel, "preview": preview_rel},
+        "added_at": "2026-11-27",
+        "notes": notes,
+    }
+    manifest_entry = {
+        "track_id": track_id,
+        "title": title,
+        "artist": artist,
+        "source_url": source_url,
+        "local_location": full_rel,
+        "preview_location": preview_rel,
+        "duration_seconds": probe["duration_seconds"],
+        "format": "mp3",
+        "file_size_bytes": full_path.stat().st_size,
+        "category": category,
+        "content_sha256": digest,
+        "origin": origin,
+        "supplied_filename": staged.name,
+    }
+    if category_basis is not None:
+        manifest_entry["category_basis"] = category_basis
+    return catalogue_entry, manifest_entry
+
+
+def _extra_category(title: str | None, tags: dict) -> tuple[str, str]:
+    """Categorise a founder extra from its own evidence only.
+
+    Keyword checks run on whole words — a substring check would
+    file "Warm Neoclassical" under war ("wa**rm**"), which is
+    exactly the kind of silent mislabel this library must not do.
+    """
+    words = set(re.findall(
+        r"[a-z]+", f"{title or ''} {tags.get('genre', '')}".lower()))
+    if words & {"drum", "drums", "percussion"}:
+        return "military_drums", "title/tag keyword: drums/percussion"
+    if words & {"battle", "war", "fight", "gates", "warrior", "army"}:
+        return "epic_battles", "title/tag keyword: battle/war"
+    if words & {"destruction", "dark", "tension", "countdown", "thunder"}:
+        return "destruction_tension", "title/tag keyword: tension/dark"
+    if title:
+        return ("cinematic_orchestral",
+                "title/tag evidence only (no battle/drum/tension keyword)")
+    return ("cinematic_orchestral",
+            "default: no title/tag evidence in the supplied file")
+
+
 def build(staging: Path, out: Path) -> dict:
     for category in CATEGORIES:
         (out / category).mkdir(parents=True, exist_ok=True)
@@ -269,61 +390,95 @@ def build(staging: Path, out: Path) -> dict:
     catalogue_tracks = []
     manifest_tracks = []
     missing = []
+    duplicates_skipped = []
+    seen_hashes: set = set()
+    seen_ids: set = set()
+    consumed: set = set()
+
     for spec in TRACK_SPEC:
         staged = staging / spec["staging"]
         if not staged.is_file():
             missing.append(spec["track_id"])
             continue
-        probe = _probe(staged)
-        full_rel = f"{spec['category']}/{spec['track_id']}.mp3"
-        full_path = out / full_rel
-        if staged.suffix.lower() == ".mp3" and probe["codec"] == "mp3":
-            full_path.write_bytes(staged.read_bytes())
+        consumed.add(staged.name)
+        result = _ingest_one(
+            staged=staged, out=out, seen_hashes=seen_hashes,
+            track_id=spec["track_id"], title=spec["title"],
+            artist=spec["artist"], source_url=spec["source_url"],
+            category=spec["category"], moods=spec["moods"],
+            origin="mandate_reference", category_basis=None,
+            notes=f"Founder-supplied reference. Source: {spec['source_url']}",
+        )
+        if result is None:
+            duplicates_skipped.append({
+                "supplied_filename": staged.name,
+                "track_id": spec["track_id"],
+                "reason": "content identical to an earlier track",
+            })
+            continue
+        seen_ids.add(spec["track_id"])
+        catalogue_tracks.append(result[0])
+        manifest_tracks.append(result[1])
+
+    extras = 0
+    for staged in sorted(staging.iterdir()):
+        if not staged.is_file() or staged.name in consumed:
+            continue
+        if staged.suffix.lower() not in AUDIO_SUFFIXES:
+            continue
+        tags = _probe(staged)["tags"]
+        tag_title = tags.get("title") or None
+        tag_artist = tags.get("artist") or tags.get("album_artist") or None
+        pixabay_match = re.fullmatch(r"pixabay-(\d+)", staged.stem)
+        if tag_title:
+            track_id = _slugify(tag_title)
+            title = tag_title
+            title_basis = "embedded file tags"
+        elif pixabay_match:
+            track_id = f"pixabay-{pixabay_match.group(1)}"
+            title = None
+            title_basis = "none: filename carries only a Pixabay id"
         else:
-            subprocess.run(
-                [
-                    "ffmpeg", "-y", "-v", "error", "-i", str(staged),
-                    "-vn", "-c:a", "libmp3lame", "-q:a", "2",
-                    str(full_path),
-                ],
-                check=True,
+            track_id = _slugify(staged.stem)
+            title = staged.stem.replace("-", " ").replace("_", " ").title()
+            title_basis = "supplied filename"
+        base_id = track_id
+        suffix = 2
+        while track_id in seen_ids:
+            track_id = f"{base_id}-{suffix}"
+            suffix += 1
+        category, category_basis = _extra_category(title, tags)
+        comment = tags.get("comment") or ""
+        source_url = comment if comment.startswith("http") else None
+        notes = (
+            "Founder-supplied extra (beyond the mandate reference "
+            f"list), supplied as {staged.name}. Title basis: "
+            f"{title_basis}."
+        )
+        if pixabay_match and not tag_title:
+            notes += (
+                " Filename identifies a Pixabay track id; the exact"
+                " page URL and title were not supplied and are not"
+                " invented."
             )
-            probe = _probe(full_path)
-        preview_rel = f"previews/{spec['track_id']}.mp3"
-        _make_preview(full_path, out / preview_rel, probe["duration_seconds"])
-        digest = _sha256(full_path)
-        catalogue_tracks.append({
-            "track_id": spec["track_id"],
-            "content_sha256": digest,
-            "title": spec["title"],
-            "composer": None,
-            "performer": spec["artist"],
-            "source_class": "bundled",
-            "moods": spec["moods"],
-            "genres": [spec["category"]],
-            "duration_seconds": probe["duration_seconds"],
-            "probe": {
-                "codec": probe["codec"],
-                "sample_rate": probe["sample_rate"],
-                "channels": probe["channels"],
-            },
-            "assets": {"full": full_rel, "preview": preview_rel},
-            "added_at": "2026-11-27",
-            "notes": f"Founder-supplied reference. Source: {spec['source_url']}",
-        })
-        manifest_tracks.append({
-            "track_id": spec["track_id"],
-            "title": spec["title"],
-            "artist": spec["artist"],
-            "source_url": spec["source_url"],
-            "local_location": full_rel,
-            "preview_location": preview_rel,
-            "duration_seconds": probe["duration_seconds"],
-            "format": "mp3",
-            "file_size_bytes": full_path.stat().st_size,
-            "category": spec["category"],
-            "content_sha256": digest,
-        })
+        result = _ingest_one(
+            staged=staged, out=out, seen_hashes=seen_hashes,
+            track_id=track_id, title=title, artist=tag_artist,
+            source_url=source_url, category=category, moods=[],
+            origin="founder_extra", category_basis=category_basis,
+            notes=notes,
+        )
+        if result is None:
+            duplicates_skipped.append({
+                "supplied_filename": staged.name,
+                "track_id": track_id,
+                "reason": "content identical to an earlier track",
+            })
+            continue
+        seen_ids.add(track_id)
+        extras += 1
+        catalogue_tracks.append(result[0])
+        manifest_tracks.append(result[1])
 
     catalogue = {"catalogue_version": 1, "tracks": catalogue_tracks}
     (out / "catalogue.json").write_text(
@@ -333,7 +488,9 @@ def build(staging: Path, out: Path) -> dict:
         "library": "cinemora_music",
         "generated_at": "2026-11-27",
         "distinct_tracks": len(manifest_tracks),
+        "founder_extras": extras,
         "missing_track_ids": missing,
+        "duplicates_skipped": duplicates_skipped,
         "tracks": manifest_tracks,
     }
     (out / "music_library_manifest.json").write_text(
@@ -360,6 +517,10 @@ def main() -> int:
     )
     print(f"catalogue verified: {len(catalogue)} track(s)")
     print(f"distinct tracks built: {manifest['distinct_tracks']}")
+    print(f"founder extras ingested: {manifest['founder_extras']}")
+    for skipped in manifest["duplicates_skipped"]:
+        print(f"DUPLICATE skipped: {skipped['supplied_filename']} "
+              f"({skipped['reason']})")
     if manifest["missing_track_ids"]:
         print("MISSING from staging (not built, not substituted):")
         for track_id in manifest["missing_track_ids"]:

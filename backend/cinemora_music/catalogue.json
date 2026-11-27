@@ -28,6 +28,618 @@
       },
       "added_at": "2026-11-27",
       "notes": "Founder-supplied reference. Source: https://www.youtube.com/watch?v=emEmVbrLlQs"
+    },
+    {
+      "track_id": "the-war",
+      "content_sha256": "90818d64cbefce2eda43ecea39dcdb431b78708928f7bc05ec422ae9e7273025",
+      "title": "The War",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [
+        "epic",
+        "war",
+        "build-up"
+      ],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 48.405,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/the-war.mp3",
+        "preview": "previews/the-war.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/build-up-scenes-the-war-184745/"
+    },
+    {
+      "track_id": "epic-war-background-music",
+      "content_sha256": "7e36cb1093d51adcd7c06dd64dc5f4740fb53fb13334bbabd4e07c804baa4816",
+      "title": "Epic War Background Music",
+      "composer": null,
+      "performer": "ViacheslavStarostin",
+      "source_class": "bundled",
+      "moods": [
+        "epic",
+        "war",
+        "main-title"
+      ],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 153.469,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/epic-war-background-music.mp3",
+        "preview": "previews/epic-war-background-music.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/main-title-epic-war-background-music-409406/"
+    },
+    {
+      "track_id": "epic-military-army-war",
+      "content_sha256": "0a639369d3816367de90e79474111f3f615eef2ad37c16067b06767f3d80965c",
+      "title": "Epic Military Army War Background Music",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [
+        "epic",
+        "military",
+        "war"
+      ],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 122.384,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/epic-military-army-war.mp3",
+        "preview": "previews/epic-military-army-war.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/main-title-epic-military-army-war-background-music-341438/"
+    },
+    {
+      "track_id": "the-battle-rages-on",
+      "content_sha256": "415b773bbb29ca65f90356fbc119e9af749c6ff8fa0e83bd78375628c75fef42",
+      "title": "The Battle Rages On",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [
+        "epic",
+        "battle",
+        "action"
+      ],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 211.801,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/the-battle-rages-on.mp3",
+        "preview": "previews/the-battle-rages-on.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/main-title-the-battle-rages-on-cinematic-action-theme-135285/"
+    },
+    {
+      "track_id": "countdown-to-destruction",
+      "content_sha256": "f679b91cff4e8ff095f5018e8525b555dba0b38e55e88cd96192af09f918e12d",
+      "title": "Countdown to Destruction",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [
+        "tension",
+        "destruction",
+        "dark"
+      ],
+      "genres": [
+        "destruction_tension"
+      ],
+      "duration_seconds": 96.026,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "destruction_tension/countdown-to-destruction.mp3",
+        "preview": "previews/countdown-to-destruction.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/main-title-countdown-to-destruction-183346/"
+    },
+    {
+      "track_id": "epic-battle-133925",
+      "content_sha256": "07f346cd8bbb8c7256894d0f2106643148f412534736c1aa8dc7d33586a3d912",
+      "title": "Epic Battle",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [
+        "epic",
+        "battle",
+        "action"
+      ],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 74.083,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/epic-battle-133925.mp3",
+        "preview": "previews/epic-battle-133925.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/action-epic-battle-133925/"
+    },
+    {
+      "track_id": "epic-battle-cinematic-soul",
+      "content_sha256": "327b45da44bc75d8432f9536ccd2bbaf6bc72649477cd9d772cab30eaa19f1b9",
+      "title": "Epic Battle",
+      "composer": null,
+      "performer": "Cinematic-Soul",
+      "source_class": "bundled",
+      "moods": [
+        "epic",
+        "battle",
+        "cinematic"
+      ],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 181.812,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/epic-battle-cinematic-soul.mp3",
+        "preview": "previews/epic-battle-cinematic-soul.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/action-epic-epic-battle-627481/"
+    },
+    {
+      "track_id": "epic-fight-alec-koff",
+      "content_sha256": "c82a121ddd598392e7556dc8265e69ed2c39a213b71a77af5b366e2a760401c3",
+      "title": "Epic Fight",
+      "composer": null,
+      "performer": "Alec_Koff",
+      "source_class": "bundled",
+      "moods": [
+        "tension",
+        "fight",
+        "adventure"
+      ],
+      "genres": [
+        "destruction_tension"
+      ],
+      "duration_seconds": 58.54,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "destruction_tension/epic-fight-alec-koff.mp3",
+        "preview": "previews/epic-fight-alec-koff.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/adventure-epic-fight-487416/"
+    },
+    {
+      "track_id": "war-drums",
+      "content_sha256": "843a4dc6f8b19e05a5cfb2d2eb5b118d19b22efb1a115dbe644e7919b8bedb20",
+      "title": "War Drums",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [
+        "drums",
+        "war",
+        "percussion"
+      ],
+      "genres": [
+        "military_drums"
+      ],
+      "duration_seconds": 86.387,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "military_drums/war-drums.mp3",
+        "preview": "previews/war-drums.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/build-up-scenes-war-drums-173853/"
+    },
+    {
+      "track_id": "battle-drums",
+      "content_sha256": "d0f237edd98727285d93a4af0e68dcf6f791789d77883474c70004e602093a03",
+      "title": "Battle Drums",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [
+        "drums",
+        "battle",
+        "percussion"
+      ],
+      "genres": [
+        "military_drums"
+      ],
+      "duration_seconds": 81.267,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "military_drums/battle-drums.mp3",
+        "preview": "previews/battle-drums.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/adventure-battle-drums-485960/"
+    },
+    {
+      "track_id": "epic-drums",
+      "content_sha256": "19004650062d61b440682c135d07c5b64f8eb0361f19657acad97b1f6032cff9",
+      "title": "Epic Drums",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [
+        "drums",
+        "epic",
+        "orchestral"
+      ],
+      "genres": [
+        "military_drums"
+      ],
+      "duration_seconds": 100.023,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "military_drums/epic-drums.mp3",
+        "preview": "previews/epic-drums.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/orchestral-battle-drums-630760/"
+    },
+    {
+      "track_id": "epic-orchestral",
+      "content_sha256": "f2fd89a7282606e6b5410b284cf1962ee213a1c0befe73cccce8714acf7fd571",
+      "title": "Epic Orchestral",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [
+        "orchestral",
+        "cinematic",
+        "emotional"
+      ],
+      "genres": [
+        "cinematic_orchestral"
+      ],
+      "duration_seconds": 109.349,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "cinematic_orchestral/epic-orchestral.mp3",
+        "preview": "previews/epic-orchestral.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/main-title-epic-orchestral-274992/"
+    },
+    {
+      "track_id": "epic-battle-music-tunetank",
+      "content_sha256": "7768fcdf0dae4998ba25b4b0c642e28168feae943ead9ac2f22c45479b43bbfb",
+      "title": "Epic Battle Music",
+      "composer": null,
+      "performer": "Tunetank",
+      "source_class": "bundled",
+      "moods": [
+        "epic",
+        "battle",
+        "adventure"
+      ],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 76.042,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/epic-battle-music-tunetank.mp3",
+        "preview": "previews/epic-battle-music-tunetank.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/adventure-epic-battle-music-347288/"
+    },
+    {
+      "track_id": "battle-esvisionaria",
+      "content_sha256": "e16f6d209bc33d28b2b3be0eb3452b0e6f53de6d0c77485628155d4e097d437a",
+      "title": "Battle",
+      "composer": null,
+      "performer": "esvisionaria",
+      "source_class": "bundled",
+      "moods": [
+        "epic",
+        "classical",
+        "battle"
+      ],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 30.276,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/battle-esvisionaria.mp3",
+        "preview": "previews/battle-esvisionaria.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/epic-classical-battle-175695/"
+    },
+    {
+      "track_id": "epic-battle-yevhen-astafiev",
+      "content_sha256": "aded4175a5ffc0a2ce92e6ea4eb89dd6cb75b49073daf8f091910ae7f0cdd006",
+      "title": "Epic Battle",
+      "composer": null,
+      "performer": "YevhenAstafiev",
+      "source_class": "bundled",
+      "moods": [
+        "epic",
+        "battle",
+        "orchestral"
+      ],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 165.552,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 48000,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/epic-battle-yevhen-astafiev.mp3",
+        "preview": "previews/epic-battle-yevhen-astafiev.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied reference. Source: https://pixabay.com/music/orchestral-epic-epic-battle-607250/"
+    },
+    {
+      "track_id": "thunder-at-the-gates",
+      "content_sha256": "b11336862a4a4d181a6af67902ddc8299cfe156a41064a2a81f583a7d37da173",
+      "title": "Thunder at the Gates",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [],
+      "genres": [
+        "epic_battles"
+      ],
+      "duration_seconds": 152.398,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "epic_battles/thunder-at-the-gates.mp3",
+        "preview": "previews/thunder-at-the-gates.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied extra (beyond the mandate reference list), supplied as pixabay-000112.mp3. Title basis: embedded file tags."
+    },
+    {
+      "track_id": "pixabay-10380",
+      "content_sha256": "305903d2a34f8b8e06fd62ea231de6dac5050d3b3789a9f70c9edc052a178c9e",
+      "title": null,
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [],
+      "genres": [
+        "cinematic_orchestral"
+      ],
+      "duration_seconds": 210.913,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "cinematic_orchestral/pixabay-10380.mp3",
+        "preview": "previews/pixabay-10380.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied extra (beyond the mandate reference list), supplied as pixabay-10380.mp3. Title basis: none: filename carries only a Pixabay id. Filename identifies a Pixabay track id; the exact page URL and title were not supplied and are not invented."
+    },
+    {
+      "track_id": "pixabay-117406",
+      "content_sha256": "8c84ea03ba998f10253a2906e26d338ef2f92377a66d7abb6e0bb68fd3e04ee1",
+      "title": null,
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [],
+      "genres": [
+        "cinematic_orchestral"
+      ],
+      "duration_seconds": 106.162,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "cinematic_orchestral/pixabay-117406.mp3",
+        "preview": "previews/pixabay-117406.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied extra (beyond the mandate reference list), supplied as pixabay-117406.mp3. Title basis: none: filename carries only a Pixabay id. Filename identifies a Pixabay track id; the exact page URL and title were not supplied and are not invented."
+    },
+    {
+      "track_id": "pixabay-471947",
+      "content_sha256": "4e8d14a9efa7a83fb5d9c2ae2cfa2225d1e12a827e4f591a1a1948d9255001c3",
+      "title": null,
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [],
+      "genres": [
+        "cinematic_orchestral"
+      ],
+      "duration_seconds": 112.039,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "cinematic_orchestral/pixabay-471947.mp3",
+        "preview": "previews/pixabay-471947.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied extra (beyond the mandate reference list), supplied as pixabay-471947.mp3. Title basis: none: filename carries only a Pixabay id. Filename identifies a Pixabay track id; the exact page URL and title were not supplied and are not invented."
+    },
+    {
+      "track_id": "pixabay-489749",
+      "content_sha256": "67baa10c3ddc12bf3259c6934e076f4db6434968f831052580063d5463195956",
+      "title": null,
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [],
+      "genres": [
+        "cinematic_orchestral"
+      ],
+      "duration_seconds": 136.072,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "cinematic_orchestral/pixabay-489749.mp3",
+        "preview": "previews/pixabay-489749.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied extra (beyond the mandate reference list), supplied as pixabay-489749.mp3. Title basis: none: filename carries only a Pixabay id. Filename identifies a Pixabay track id; the exact page URL and title were not supplied and are not invented."
+    },
+    {
+      "track_id": "pixabay-573976",
+      "content_sha256": "36e8410d1fde72df8e7aa98cf783f45675dff6daa19064877a0f8c4136716274",
+      "title": null,
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [],
+      "genres": [
+        "cinematic_orchestral"
+      ],
+      "duration_seconds": 52.532,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "cinematic_orchestral/pixabay-573976.mp3",
+        "preview": "previews/pixabay-573976.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied extra (beyond the mandate reference list), supplied as pixabay-573976.mp3. Title basis: none: filename carries only a Pixabay id. Filename identifies a Pixabay track id; the exact page URL and title were not supplied and are not invented."
+    },
+    {
+      "track_id": "pixabay-615497",
+      "content_sha256": "4e9cbb66375891f13ca92e20ad6e9b83a4296e0bc4acae6c5ab797a3dcc1ee4c",
+      "title": null,
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [],
+      "genres": [
+        "cinematic_orchestral"
+      ],
+      "duration_seconds": 167.732,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 44100,
+        "channels": 2
+      },
+      "assets": {
+        "full": "cinematic_orchestral/pixabay-615497.mp3",
+        "preview": "previews/pixabay-615497.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied extra (beyond the mandate reference list), supplied as pixabay-615497.mp3. Title basis: none: filename carries only a Pixabay id. Filename identifies a Pixabay track id; the exact page URL and title were not supplied and are not invented."
+    },
+    {
+      "track_id": "warm-neoclassical",
+      "content_sha256": "8d9fd89ba1679b70b5d6fc9e61f2a8d562a6ef0cfbee06f7cc174b72065ba388",
+      "title": "Warm Neoclassical",
+      "composer": null,
+      "performer": null,
+      "source_class": "bundled",
+      "moods": [],
+      "genres": [
+        "cinematic_orchestral"
+      ],
+      "duration_seconds": 180.0,
+      "probe": {
+        "codec": "mp3",
+        "sample_rate": 48000,
+        "channels": 2
+      },
+      "assets": {
+        "full": "cinematic_orchestral/warm-neoclassical.mp3",
+        "preview": "previews/warm-neoclassical.mp3"
+      },
+      "added_at": "2026-11-27",
+      "notes": "Founder-supplied extra (beyond the mandate reference list), supplied as warm-neoclassical.mp3. Title basis: supplied filename."
     }
   ]
 }
