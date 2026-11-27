@@ -342,6 +342,16 @@ span.authenticated-media-state {
   font-size: var(--type-small); font-weight: 600; text-decoration: none; white-space: nowrap;
 }
 .app-approvals:hover { text-decoration: underline; }
+/* Small screens: the topbar's brand + connection status +
+   account menu otherwise crowd until the status icon touches
+   the wordmark. The status keeps its icon (with the full
+   message in its title/sr text) and its Retry control; only
+   the visible label text gives way. */
+@media (max-width: 640px) {
+  .app-topbar { padding: 0 14px; gap: 10px; }
+  .app-topbar-right { gap: 10px; }
+  .app-topbar .connection > span:not(.sr-only) { display: none; }
+}
 
 /* Account menu + account pages (Phase 8.5) */
 .account-menu { position: relative; }
