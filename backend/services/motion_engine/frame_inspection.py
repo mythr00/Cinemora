@@ -61,15 +61,18 @@ INK_DIFF_THRESHOLD = 60
 
 #: Below this content fraction a full-frame graphic may be a
 #: near-empty card — but fraction alone cannot tell a one-word
-#: filler card from a legitimate one-word TITLE (a rendered
+#: filler card from a legitimate sparse graphic (a rendered
 #: archival_title "Coffee" scores 0.008, inside the closing_card
-#: range 0.003–0.008). The second condition separates them: the
-#: filler card's largest glyph is small print (12px at analysis
-#: scale), while a title is display type (17px+). A frame is
-#: near-empty only when BOTH hold: almost no ink, and nothing
-#: in it is display-size.
+#: range 0.003–0.008; a two-item checklist scores 0.009). Two
+#: further conditions separate them: the filler card's largest
+#: glyph is small print (12px at analysis scale, vs display
+#: type at 17px+), and its content huddles in one small cluster
+#: (bounding box 5–7% of the frame, vs ~20% for the checklist's
+#: spread of title + counter + rows). A frame is near-empty
+#: only when ALL THREE hold.
 NEAR_EMPTY_MAX_FRACTION = 0.010
 NEAR_EMPTY_MAX_COMPONENT_HEIGHT = 14
+NEAR_EMPTY_MAX_BBOX_FRACTION = 0.10
 
 #: Edge-clipping is only judged on designed (non-photographic)
 #: frames: above this content fraction the frame is full-bleed
@@ -79,6 +82,10 @@ EDGE_CHECK_MAX_FRACTION = 0.35
 #: Ink pixels in one edge band (counted over runs of text-like
 #: length only) at/above this count as clipped content.
 EDGE_MIN_PIXELS = 4
+
+#: A row/column whose ink covers at least this fraction of the
+#: frame is a full-bleed design element, not clipped content.
+EDGE_FULLBLEED_COVERAGE = 0.35
 
 #: A run along an edge longer than this fraction of the frame
 #: dimension is structural (grid line, vignette, rule), never a
@@ -150,15 +157,31 @@ def _edge_band_defects(mask, width, height):
     band row. Runs shorter than 3px are noise; runs longer than
     EDGE_RUN_MAX_FRACTION of the dimension are structural and
     ignored. What remains is text-height ink touching the edge:
-    a label the frame cut off."""
+    a label the frame cut off.
+
+    Full-bleed design rows/columns are excluded first: a row
+    whose ink covers >= EDGE_FULLBLEED_COVERAGE of the width is
+    a deliberate edge-to-edge element (the crime-scene caution
+    band, a vignette edge), and ink in such a row is the design
+    reaching the edge on purpose, not a label cut off by it."""
     defects = []
+    row_full = [
+        sum(mask[y * width:(y + 1) * width]) >= EDGE_FULLBLEED_COVERAGE * width
+        for y in range(height)
+    ]
+    col_full = [
+        sum(mask[y * width + x] for y in range(height))
+        >= EDGE_FULLBLEED_COVERAGE * height
+        for x in range(width)
+    ]
 
     def _band_pixels(vertical, fixed):
         # Ink pixels along one edge line (a column for the
         # left/right bands, a row for top/bottom), counting only
         # runs of text-like length: >= 3px (below is noise) and
         # <= EDGE_RUN_MAX_FRACTION of the line's length (above
-        # is a structural line, not a clipped glyph).
+        # is a structural line, not a clipped glyph). Pixels in
+        # full-bleed rows/columns break runs and never count.
         limit = height if vertical else width
         max_run = limit * EDGE_RUN_MAX_FRACTION
         total = 0
@@ -166,7 +189,13 @@ def _edge_band_defects(mask, width, height):
         for along in range(limit):
             idx = (along * width + fixed) if vertical else (
                 fixed * width + along)
-            if mask[idx]:
+            # A pixel belongs to a full-bleed element when its
+            # row spans the frame (a horizontal band) or its
+            # column does (a vertical band) — either way it is
+            # design reaching the edge, not clipped content.
+            full = row_full[along if vertical else fixed] or (
+                col_full[fixed if vertical else along])
+            if mask[idx] and not full:
                 run += 1
             else:
                 if 3 <= run <= max_run:
@@ -289,14 +318,24 @@ def inspect_frame(image):
     metrics = {"ink_fraction": round(fraction, 4)}
     if fraction < NEAR_EMPTY_MAX_FRACTION:
         tallest = _largest_component_height(mask, width, height)
+        xs = [i % width for i in range(width * height) if mask[i]]
+        ys = [i // width for i in range(width * height) if mask[i]]
+        bbox_fraction = (
+            ((max(xs) - min(xs) + 1) / width)
+            * ((max(ys) - min(ys) + 1) / height)
+            if xs else 0.0
+        )
         metrics["largest_component_height"] = tallest
-        if tallest <= NEAR_EMPTY_MAX_COMPONENT_HEIGHT:
+        metrics["content_bbox_fraction"] = round(bbox_fraction, 4)
+        if (tallest <= NEAR_EMPTY_MAX_COMPONENT_HEIGHT
+                and bbox_fraction < NEAR_EMPTY_MAX_BBOX_FRACTION):
             defects.append({
                 "type": "near_empty_frame",
                 "detail": (
                     f"content occupies {fraction:.3%} of the frame "
-                    f"(< {NEAR_EMPTY_MAX_FRACTION:.1%}) and its "
-                    f"largest element is {tallest}px tall — a "
+                    f"(< {NEAR_EMPTY_MAX_FRACTION:.1%}), its largest "
+                    f"element is {tallest}px tall and it all sits "
+                    f"in {bbox_fraction:.1%} of the frame — a "
                     "full-frame graphic with almost nothing in it"
                 ),
             })

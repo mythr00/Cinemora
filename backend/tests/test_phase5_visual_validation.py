@@ -249,6 +249,55 @@ def test_synthetic_clean_title_frame_passes():
     assert verdict["passed"] is True, verdict["defects"]
 
 
+def test_synthetic_full_bleed_band_is_not_edge_clipping():
+    # A deliberate edge-to-edge design band (the crime-scene
+    # caution tape shape) touches both edges by design — it is
+    # not a clipped label and must not be flagged.
+    frame = _blank_frame()
+    draw = ImageDraw.Draw(frame)
+    font = load_font(FONT_BOLD, 40)
+    draw.text((760, 300), "THE COFFEE TRADE", font=font,
+              fill=(245, 238, 220))
+    draw.text((760, 700), "ESTABLISHED 1555", font=font,
+              fill=(245, 238, 220))
+    for x in range(0, 1920, 96):  # full-width striped band
+        draw.polygon([(x, 1036), (x + 48, 1036), (x + 24, 1080),
+                      (x - 24, 1080)], fill=(232, 178, 64))
+    verdict = frame_inspection.inspect_frame(frame)
+    assert "content_clipped_at_frame_edge" not in _defect_types(verdict)
+
+
+def test_sparse_checklist_frame_passes_inspection(tmp_path):
+    # A real sparse-but-legitimate graphic: title + counter +
+    # two checklist rows. Its ink fraction sits in the
+    # closing_card range, but its content is spread across the
+    # frame — the near-empty check must not flag it.
+    from services.motion_engine import templates as engine
+
+    rendered, _meta = engine.TEMPLATES["checklist_graphic"](
+        {"items": [
+            {"label": "Inspect rods", "state": "done"},
+            {"label": "Check welds", "state": "pending"},
+        ], "title": "Checks"},
+        "editorial", tmp_path / "cl.mp4", duration=2.0)
+    assert rendered is not None
+    verdict = frame_inspection.inspect_video(rendered)
+    assert verdict["passed"] is True, verdict["defects"]
+
+
+def test_crime_scene_frame_passes_inspection(tmp_path):
+    # The caution-tape band spans the full width by design.
+    from services.motion_engine import templates as engine
+
+    rendered, _meta = engine.TEMPLATES["crime_scene_diagram"](
+        {"markers": [{"label": "Case file", "at": [0.3, 0.4]}],
+         "title": "Scene"},
+        "editorial", tmp_path / "cs.mp4", duration=2.0)
+    assert rendered is not None
+    verdict = frame_inspection.inspect_video(rendered)
+    assert verdict["passed"] is True, verdict["defects"]
+
+
 # ---------------------------------------------------------------------------
 # 3. Template-level label-fit refusal
 # ---------------------------------------------------------------------------
