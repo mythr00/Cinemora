@@ -29,10 +29,11 @@ flags the gross defect classes those films exhibited:
 Thresholds were calibrated against the programme's evidence
 frames (cinemora-audit/motion-graphics-programme/evidence/):
 every closing_card frame scores an ink fraction under 0.009
-(the acceptable archival_title scores 0.039+); the waveform
-frame is the only designed frame with edge ink; the process
-frame's merged headline spans 82% of the frame width at text
-height while no acceptable frame's text does.
+with small-print glyphs only, while a legitimate sparse title
+carries display-size type (see NEAR_EMPTY_* below); the
+waveform frame is the only designed frame with edge ink; the
+process frame's merged headline spans 82% of the frame width
+at text height while no acceptable frame's text does.
 
 The inspection is deliberately conservative: it flags gross
 defects only. Fine layout judgement stays with label-fit
@@ -58,11 +59,17 @@ ANALYSIS_SIZE = (480, 270)
 #: textured backgrounds sums to ~42 and stays below it.
 INK_DIFF_THRESHOLD = 60
 
-#: Below this content fraction a full-frame graphic is a
-#: near-empty card, not a treatment. Calibrated: closing_card
-#: evidence frames 0.003–0.008; the sparsest acceptable frame
-#: (archival_title) is 0.039.
+#: Below this content fraction a full-frame graphic may be a
+#: near-empty card — but fraction alone cannot tell a one-word
+#: filler card from a legitimate one-word TITLE (a rendered
+#: archival_title "Coffee" scores 0.008, inside the closing_card
+#: range 0.003–0.008). The second condition separates them: the
+#: filler card's largest glyph is small print (12px at analysis
+#: scale), while a title is display type (17px+). A frame is
+#: near-empty only when BOTH hold: almost no ink, and nothing
+#: in it is display-size.
 NEAR_EMPTY_MAX_FRACTION = 0.010
+NEAR_EMPTY_MAX_COMPONENT_HEIGHT = 14
 
 #: Edge-clipping is only judged on designed (non-photographic)
 #: frames: above this content fraction the frame is full-bleed
@@ -107,6 +114,32 @@ def _ink_mask(image):
             mask[i] = 1
             count += 1
     return mask, width, height, count / float(width * height)
+
+
+def _largest_component_height(mask, width, height):
+    """Height (px, analysis scale) of the tallest connected ink
+    component — glyphs, rules and shapes alike."""
+    seen = bytearray(width * height)
+    best = 0
+    for start in range(width * height):
+        if not mask[start] or seen[start]:
+            continue
+        queue = deque([start])
+        seen[start] = 1
+        min_y = max_y = start // width
+        while queue:
+            cell = queue.popleft()
+            cx, cy = cell % width, cell // width
+            min_y = min(min_y, cy)
+            max_y = max(max_y, cy)
+            for nxt in (cell - 1, cell + 1, cell - width, cell + width):
+                if (0 <= nxt < width * height and mask[nxt]
+                        and not seen[nxt]
+                        and abs(nxt % width - cx) <= 1):
+                    seen[nxt] = 1
+                    queue.append(nxt)
+        best = max(best, max_y - min_y + 1)
+    return best
 
 
 def _edge_band_defects(mask, width, height):
@@ -253,22 +286,27 @@ def inspect_frame(image):
         image = Image.open(image)
     mask, width, height, fraction = _ink_mask(image)
     defects = []
+    metrics = {"ink_fraction": round(fraction, 4)}
     if fraction < NEAR_EMPTY_MAX_FRACTION:
-        defects.append({
-            "type": "near_empty_frame",
-            "detail": (
-                f"content occupies {fraction:.3%} of the frame "
-                f"(< {NEAR_EMPTY_MAX_FRACTION:.1%}) — a full-frame "
-                "graphic with almost nothing in it"
-            ),
-        })
+        tallest = _largest_component_height(mask, width, height)
+        metrics["largest_component_height"] = tallest
+        if tallest <= NEAR_EMPTY_MAX_COMPONENT_HEIGHT:
+            defects.append({
+                "type": "near_empty_frame",
+                "detail": (
+                    f"content occupies {fraction:.3%} of the frame "
+                    f"(< {NEAR_EMPTY_MAX_FRACTION:.1%}) and its "
+                    f"largest element is {tallest}px tall — a "
+                    "full-frame graphic with almost nothing in it"
+                ),
+            })
     if fraction <= EDGE_CHECK_MAX_FRACTION:
         defects.extend(_edge_band_defects(mask, width, height))
     defects.extend(_overrun_defects(mask, width, height))
     return {
         "passed": not defects,
         "defects": defects,
-        "metrics": {"ink_fraction": round(fraction, 4)},
+        "metrics": metrics,
     }
 
 

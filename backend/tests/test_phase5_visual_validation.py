@@ -191,13 +191,31 @@ def _blank_frame():
 
 
 def test_synthetic_one_word_card_is_near_empty():
+    # The closing_card shape: a small-print kicker, a hairline
+    # rule and ONE small word on an empty field.
     frame = _blank_frame()
     draw = ImageDraw.Draw(frame)
-    font = load_font(FONT_BOLD, 64)
-    draw.text((880, 500), "Alexandria", font=font, fill=(245, 238, 220))
+    kicker_font = load_font(FONT_BOLD, 20)
+    word_font = load_font(FONT_BOLD, 44)
+    draw.text((850, 390), "THE PORT", font=kicker_font, fill=(154, 42, 32))
+    draw.rectangle([910, 440, 1010, 444], fill=(154, 42, 32))
+    draw.text((830, 500), "Alexandria", font=word_font,
+              fill=(245, 238, 220))
     verdict = frame_inspection.inspect_frame(frame)
     assert verdict["passed"] is False
     assert "near_empty_frame" in _defect_types(verdict)
+
+
+def test_synthetic_one_word_display_title_is_not_near_empty():
+    # The legitimate sparse title: one word, but at DISPLAY size
+    # (the archival_title treatment). Ink fraction alone is in
+    # the closing_card range — the check must not flag it.
+    frame = _blank_frame()
+    draw = ImageDraw.Draw(frame)
+    font = load_font(FONT_BOLD, 84)
+    draw.text((800, 480), "Coffee", font=font, fill=(245, 238, 220))
+    verdict = frame_inspection.inspect_frame(frame)
+    assert "near_empty_frame" not in _defect_types(verdict)
 
 
 def test_synthetic_edge_clipped_label_is_flagged():
