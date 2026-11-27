@@ -33,6 +33,12 @@ function userLabel(user: { email?: string | null; display_name?: string | null }
   return user.display_name || user.email || "Unknown account";
 }
 
+function userInitials(user: { email?: string | null; display_name?: string | null } | null | undefined) {
+  const label = userLabel(user).split("@")[0];
+  const parts = label.split(/[\s._-]+/).filter(Boolean);
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?";
+}
+
 export default function TeamSpacePage() {
   const [overview, setOverview] = useState<TeamOverview | null>(null);
   const [busy, setBusy] = useState(true);
@@ -136,7 +142,7 @@ export default function TeamSpacePage() {
         {!busy && !error && overview && (
           <>
             {overview.invitations_in.length > 0 && (
-              <section>
+              <section className="panel">
                 <h2>
                   <MailPlus size={16} /> Invitations for you
                 </h2>
@@ -172,7 +178,7 @@ export default function TeamSpacePage() {
               </section>
             )}
 
-            <section>
+            <section className="panel">
               <h2>
                 <MailPlus size={16} /> Invite a collaborator
               </h2>
@@ -233,7 +239,7 @@ export default function TeamSpacePage() {
               </p>
             </section>
 
-            <section>
+            <section className="panel">
               <h2>
                 <Users size={16} /> Your people
               </h2>
@@ -246,19 +252,23 @@ export default function TeamSpacePage() {
                 <ul className="team-people">
                   {overview.people.map((person) => (
                     <li key={person.user.user_id}>
-                      <span>
-                        <strong>{userLabel(person.user)}</strong>
-                        {person.user.email && (
-                          <span className="plan-meta"> · {person.user.email}</span>
-                        )}
+                      <span className="team-person">
+                        <span className="team-avatar" aria-hidden>
+                          {userInitials(person.user)}
+                        </span>
+                        <span>
+                          <strong>{userLabel(person.user)}</strong>
+                          {person.user.email && (
+                            <span className="plan-meta"> · {person.user.email}</span>
+                          )}
+                        </span>
                       </span>
                       <span className="team-role">
-                        {person.projects
-                          .map(
-                            (entry) =>
-                              `${entry.project_title || "Untitled"} · ${entry.role}`,
-                          )
-                          .join("  ·  ")}
+                        {person.projects.map((entry) => (
+                          <span className="team-chip" key={entry.project_id}>
+                            {entry.project_title || "Untitled"} · {entry.role}
+                          </span>
+                        ))}
                       </span>
                     </li>
                   ))}
@@ -266,7 +276,7 @@ export default function TeamSpacePage() {
               )}
             </section>
 
-            <section>
+            <section className="panel">
               <h2>
                 <UserCheck size={16} /> Projects and their teams
               </h2>

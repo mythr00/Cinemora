@@ -413,12 +413,9 @@ export default function ScriptStudioPage() {
             <div className="panel script-panel">
               <h2><Sparkles size={16} /> Draft from a brief</h2>
               <p className="script-note">
-                The AI designs an outline with per-section word budgets for
-                your target length (5–60 minutes), then writes one section
-                at a time. The result is a new draft — your existing drafts
-                are never touched. If no AI provider is configured on this
-                deployment, this reports unavailable instead of inventing a
-                script.
+                Describe the film and the AI drafts a full script at your
+                target length, as a new draft — your existing drafts are
+                never touched.
               </p>
               <div className="script-form script-form-stack">
                 <label className="script-field">
@@ -470,10 +467,7 @@ export default function ScriptStudioPage() {
                     ))}
                   </select>
                   <span className="script-note">
-                    The language the narration is written in. Production
-                    narration is a separate step — a language without an
-                    installed voice is reported before any production
-                    charge, never silently replaced with English.
+                    The language the script is written in.
                   </span>
                 </label>
                 <div className="script-field">
@@ -521,14 +515,10 @@ export default function ScriptStudioPage() {
             <div className="panel script-panel">
               <h2>Research a channel</h2>
               <p className="script-note">
-                Paste a YouTube channel URL. Cinemora reads the
-                channel&apos;s real recent videos and their reported
-                statistics — nothing is estimated or invented. Pick
-                up to three videos and the analysis studies what
-                they actually contain: transcripts where captions
-                exist, titles and metadata otherwise, always
-                labelled. The ideas it proposes are original —
-                written for your channel, never copies.
+                Paste a YouTube channel URL and Cinemora reads its real
+                videos and reported statistics. Pick up to three videos —
+                the analysis studies what they contain and proposes
+                original ideas for your channel.
               </p>
               <div className="script-form script-form-stack">
                 <label className="script-field">
@@ -879,13 +869,10 @@ export default function ScriptStudioPage() {
                 <div className="panel script-panel">
                   <h2><ShieldCheck size={16} /> Analysis &amp; fact check</h2>
                   <p className="script-note">
-                    Analysis runs the production pipeline&apos;s own script
-                    analysis — sentence roles, derived scenes and the Case
-                    Bible entities. Fact check extracts the script&apos;s
-                    dated events and quantities with the pipeline&apos;s fact
-                    machinery: every fact starts as a <em>script claim</em>{" "}
-                    and is only upgraded when a verified knowledge-base
-                    record supports it.
+                    Check the draft before production. Analysis maps its
+                    sentences and scenes; fact check marks every claim the
+                    script makes — and whether a verified source supports
+                    it, or it stays a <em>script claim</em>.
                   </p>
                   <div className="script-form">
                     <button type="button" className="button button-secondary" onClick={() => void analyse()} disabled={working === "analysis"}>
@@ -900,7 +887,7 @@ export default function ScriptStudioPage() {
                       <p className="script-meta">
                         Mode: <strong>{draft.analysis.mode}</strong>
                         {draft.analysis.mode === "degraded"
-                          ? " (no AI provider configured — the pipeline's heuristic planner; a production with a provider configured runs the full planner)"
+                          ? " (basic analysis — no AI provider configured on this deployment)"
                           : ""}{" "}
                         · {draft.analysis.sentence_count} sentences ·{" "}
                         {draft.analysis.scenes.length} scenes · analysed{" "}
@@ -1034,12 +1021,9 @@ export default function ScriptStudioPage() {
                     </button>
                   </div>
                   <p className="script-note">
-                    Sending to production creates a real project with this
-                    script (section headings are structure and are not
-                    narrated) through the normal project creation path.
-                    Attaching writes the script onto one of your existing
-                    projects instead, snapshotted in that project&apos;s
-                    Versions.
+                    Send to production creates a project with this script
+                    (headings are structure — they are not narrated). Attach
+                    writes it onto an existing project instead.
                   </p>
                   {draft.project_id && (
                     <p className="script-meta">

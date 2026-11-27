@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AppNavigation } from "@/components/app-navigation";
 import { ErrorState, LoadingState } from "@/components/states";
-import { HandCoins } from "lucide-react";
+import { Check, Copy, HandCoins } from "lucide-react";
 import {
   enrollAffiliate,
   getAffiliateDashboard,
@@ -40,6 +40,18 @@ export default function AffiliatePage() {
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState("");
   const [working, setWorking] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const copyLink = async () => {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setNotice("Copy failed — select the link text and copy it manually.");
+    }
+  };
 
   const load = useCallback(async () => {
     setError(null);
@@ -90,7 +102,7 @@ export default function AffiliatePage() {
   const metrics = dashboard?.metrics;
 
   return (
-    <main className="app-page">
+    <main className="app-page affiliate-page">
       <AppNavigation />
       <section className="plan-content">
         <p className="eyebrow">ACCOUNT</p>
@@ -118,12 +130,12 @@ export default function AffiliatePage() {
         {notice && <p className="plan-meta">{notice}</p>}
 
         {!busy && !error && dashboard && !dashboard.enrolled && (
-          <section>
+          <section className="panel">
             <p className="plan-intro">
               You are not enrolled yet. Enrolling creates your personal
               referral link and code — no approval wait, no cost.
             </p>
-            <button type="button" disabled={working === "enroll"} onClick={() => void enroll()}>
+            <button type="button" className="button button-primary" disabled={working === "enroll"} onClick={() => void enroll()}>
               {working === "enroll" ? "Enrolling…" : "Enrol and get my link"}
             </button>
           </section>
@@ -131,7 +143,7 @@ export default function AffiliatePage() {
 
         {!busy && !error && dashboard?.enrolled && metrics && (
           <>
-            <section>
+            <section className="panel">
               <h2>Your referral link</h2>
               <p className="plan-meta">
                 Code <strong>{dashboard.code}</strong>
@@ -139,9 +151,13 @@ export default function AffiliatePage() {
                   ? " · This affiliate account is suspended — new referrals and commission are paused."
                   : ""}
               </p>
-              <p>
+              <div className="affiliate-link-panel">
                 <code>{link}</code>
-              </p>
+                <button type="button" className="button button-secondary" onClick={() => void copyLink()}>
+                  {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+                  {copied ? "Copied" : "Copy link"}
+                </button>
+              </div>
               <p className="plan-meta">
                 Commission rate: {dashboard.rate_percent}% lifetime ·
                 Attribution: the customer is yours from registration, for
@@ -150,30 +166,47 @@ export default function AffiliatePage() {
               </p>
             </section>
 
-            <section>
+            <section className="panel">
               <h2>Performance</h2>
-              <ul className="team-people">
-                <li><span>Recorded link visits</span><strong>{metrics.link_clicks}</strong></li>
-                <li><span>Registrations through your link</span><strong>{metrics.registrations}</strong></li>
-                <li><span>Referred customers</span><strong>{metrics.referred_customers}</strong></li>
-                <li><span>Currently subscribed</span><strong>{metrics.active_customers}</strong></li>
+              <div className="affiliate-stats">
+                <div className="affiliate-stat">
+                  <span>Lifetime earnings</span>
+                  <strong>{money(metrics.lifetime_earnings_cents)}</strong>
+                </div>
+                <div className="affiliate-stat">
+                  <span>Pending review</span>
+                  <strong>{money(metrics.pending_cents)}</strong>
+                </div>
+                <div className="affiliate-stat">
+                  <span>Approved, awaiting payout</span>
+                  <strong>{money(metrics.approved_cents)}</strong>
+                </div>
+                <div className="affiliate-stat">
+                  <span>Paid out</span>
+                  <strong>{money(metrics.paid_cents)}</strong>
+                </div>
+                <div className="affiliate-stat">
+                  <span>Reversed (refunds)</span>
+                  <strong>{money(metrics.reversed_cents)}</strong>
+                </div>
+              </div>
+              <ul className="affiliate-funnel">
+                <li>Recorded link visits <strong>{metrics.link_clicks}</strong></li>
+                <li>Registrations <strong>{metrics.registrations}</strong></li>
+                <li>Referred customers <strong>{metrics.referred_customers}</strong></li>
+                <li>Currently subscribed <strong>{metrics.active_customers}</strong></li>
                 <li>
-                  <span>Visit → registration conversion</span>
+                  Visit → registration{" "}
                   <strong>
                     {metrics.conversion_percent != null
                       ? `${metrics.conversion_percent}%`
                       : "—"}
                   </strong>
                 </li>
-                <li><span>Lifetime earnings</span><strong>{money(metrics.lifetime_earnings_cents)}</strong></li>
-                <li><span>Pending review</span><strong>{money(metrics.pending_cents)}</strong></li>
-                <li><span>Approved, awaiting payout</span><strong>{money(metrics.approved_cents)}</strong></li>
-                <li><span>Paid out</span><strong>{money(metrics.paid_cents)}</strong></li>
-                <li><span>Reversed (refunds)</span><strong>{money(metrics.reversed_cents)}</strong></li>
               </ul>
             </section>
 
-            <section>
+            <section className="panel">
               <h2>Payout method</h2>
               <p className="plan-intro">
                 Payouts are arranged manually by the Cinemora team from
@@ -200,7 +233,7 @@ export default function AffiliatePage() {
               </div>
             </section>
 
-            <section>
+            <section className="panel">
               <h2>Recent activity</h2>
               {(dashboard.recent_activity || []).length === 0 ? (
                 <p className="plan-intro">
@@ -226,7 +259,7 @@ export default function AffiliatePage() {
               )}
             </section>
 
-            <section>
+            <section className="panel">
               <h2>Payout history</h2>
               {(dashboard.payout_history || []).length === 0 ? (
                 <p className="plan-intro">No payouts yet.</p>
