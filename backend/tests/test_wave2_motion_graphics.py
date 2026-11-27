@@ -603,7 +603,17 @@ def test_photo_backed_wave2_through_pipeline(tmp_path):
     entries = [
         _entry("w2_0030", 1, 0, 1, texts[0],
                templates=["layered_reveal"]),
-        _entry("w2_0031", 1, 1, 2, texts[1], templates=["text_overlay"]),
+        # (Phase 6-7 (G2): this entry rode hud_overlay, removed
+        # as a decorative impostor; it now rides object_labels
+        # on its own recorded anchors — the photo-backed chain
+        # coverage this test exists for is unchanged.)
+        _entry("w2_0031", 1, 1, 2, texts[1],
+               templates=["object_labels"],
+               scenario={
+                   "place": "France",
+                   "object_labels": [
+                       {"text": "Signal gantry", "at": [0.65, 0.35]}],
+               }),
         _entry("w2_0032", 1, 2, 3, texts[2],
                templates=["object_labels"], scenario=scenario),
         _entry("w2_0033", 1, 3, 4, texts[3],
@@ -612,7 +622,7 @@ def test_photo_backed_wave2_through_pipeline(tmp_path):
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced", manifest=_manifest(entries))
     by_template = {a.get("template"): a for a in assets}
-    for name in ("layered_reveal", "text_overlay", "object_labels",
+    for name in ("layered_reveal", "object_labels",
                  "newspaper_wall"):
         assert name in by_template, name
         assert by_template[name]["validation"]["passed"], name
