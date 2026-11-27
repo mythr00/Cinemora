@@ -86,11 +86,23 @@ def _numeric_items(raw, value_key="value"):
             value = float(entry.get(value_key))
         except (TypeError, ValueError):
             continue
-        items.append({
+        item = {
             "label": _clean(entry.get("label")) or "ITEM",
             "value": value,
             "display": _clean(entry.get("display")),
-        })
+        }
+        # Phase 6–7 (B6-advanced): recorded uncertainty range for
+        # this point, when the recorded series carries one —
+        # carried through verbatim, never synthesised.
+        try:
+            low = float(entry.get("low"))
+            high = float(entry.get("high"))
+        except (TypeError, ValueError):
+            low = high = None
+        if low is not None and high is not None and low <= value <= high:
+            item["low"] = low
+            item["high"] = high
+        items.append(item)
     return items
 
 
@@ -124,9 +136,26 @@ def line_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_n
         if not source:
             return None, {"reason": "chart_source_missing",
                           "detail": "recorded series carries no source"}
+    # Phase 6–7 (B6-advanced): UNCERTAINTY. A recorded series may
+    # carry estimate ranges per point (low/high, carried by
+    # _numeric_items) and/or an explicit estimated flag. Ranges
+    # render as a band + error bars; estimated values are LABELLED
+    # estimated in the source line — estimates are never presented
+    # as exact.
+    uncertainty = data.get("uncertainty") if isinstance(
+        data.get("uncertainty"), dict) else {}
+    ranged = [p for p in points if "low" in p and "high" in p]
+    estimated = bool(
+        data.get("estimated") or uncertainty.get("estimated")
+        or ranged
+    )
     from services.motion_engine.templates_v2 import _nice_max
 
     values = [p["value"] for p in points]
+    if ranged:
+        # The scale must contain the uncertainty band, not clip it.
+        values = values + [p["low"] for p in ranged] \
+            + [p["high"] for p in ranged]
     v_min = min(0.0, min(values))
     v_max = _nice_max(max(values) - v_min) + v_min if max(values) > v_min else v_min + 1.0
     bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=59)
@@ -183,10 +212,44 @@ def line_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_n
         if source:
             # B7: the small source line — the recorded source of
             # the data, drawn as data attribution (never a file
-            # name or an asset/provider label).
-            d.text((x0, y_bot + 104), f"Source — {source}"[:72],
+            # name or an asset/provider label). Phase 6–7: when
+            # the values are estimates, the line SAYS so.
+            source_line = f"Source — {source}"
+            if estimated:
+                source_line += " · estimated"
+            d.text((x0, y_bot + 104), source_line[:72],
                    font=fonts["tick"], fill=tokens["muted"] + (255,))
         frac = ease_in_out(clamp01(progress * 1.25))
+        # Uncertainty band (revealed with the line): the polygon
+        # between the high and low polylines over the ranged
+        # points, plus an error bar at each ranged point.
+        if ranged and frac > 0:
+            band = [
+                _xy(i, p["high"]) for i, p in enumerate(points)
+                if "high" in p
+            ] + [
+                _xy(i, p["low"]) for i, p in reversed(list(
+                    enumerate(points)))
+                if "low" in p
+            ]
+            if len(band) >= 4:
+                d.polygon(band, fill=tokens["accent2"] + (44,))
+            for i, p in enumerate(points):
+                if "low" not in p or "high" not in p:
+                    continue
+                point_frac = 0.0 if len(coords) == 1 else i / (
+                    len(coords) - 1)
+                if frac < point_frac:
+                    continue
+                px_ = coords[i][0]
+                y_hi = _xy(i, p["high"])[1]
+                y_lo = _xy(i, p["low"])[1]
+                d.line([px_, y_hi, px_, y_lo],
+                       fill=tokens["accent2"] + (230,), width=3)
+                d.line([px_ - 9, y_hi, px_ + 9, y_hi],
+                       fill=tokens["accent2"] + (230,), width=3)
+                d.line([px_ - 9, y_lo, px_ + 9, y_lo],
+                       fill=tokens["accent2"] + (230,), width=3)
         # Area under the line (revealed with it).
         if frac > 0:
             shown = _window_points(coords, frac)
@@ -223,7 +286,9 @@ def line_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_n
     return path, _meta("line_chart", style_name, duration, sentence_index, scene_number,
                        {"points": len(points), "title": bool(title),
                         "units": bool(units), "source": bool(source),
-                        "recorded": recorded})
+                        "recorded": recorded,
+                        "uncertainty": bool(ranged),
+                        "estimated": estimated})
 
 
 def _window_points(coords, frac):
@@ -341,7 +406,11 @@ def pie_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_nu
             ly += 88
         if source:
             # B7: the small source line (see line_chart).
-            d.text((110, HEIGHT - 64), f"Source — {source}"[:72],
+            # Phase 6–7: estimated values are labelled estimated.
+            source_line = f"Source — {source}"
+            if data.get("estimated"):
+                source_line += " · estimated"
+            d.text((110, HEIGHT - 64), source_line[:72],
                    font=fonts["legend"], fill=tokens["muted"] + (255,))
         _footer(d, tokens)
         return canvas.composite()
@@ -350,7 +419,8 @@ def pie_chart(data, style, out_path, duration=5.0, sentence_index=None, scene_nu
     return path, _meta("pie_chart", style_name, duration, sentence_index, scene_number,
                        {"items": len(items), "title": bool(title),
                         "total": total, "source": bool(source),
-                        "recorded": recorded})
+                        "recorded": recorded,
+                        "estimated": bool(data.get("estimated"))})
 
 
 # ---------------------------------------------------------------------------

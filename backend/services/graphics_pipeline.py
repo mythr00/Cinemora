@@ -2237,7 +2237,10 @@ def build_motion_graphics_assets(
     def _series_points(raw_series):
         """Normalise a recorded series into chart points, or
         None when it carries fewer than 2 numeric points or its
-        values are all bare years (see _is_bare_year_value)."""
+        values are all bare years (see _is_bare_year_value).
+        Phase 6–7 (B6-advanced): a point's recorded uncertainty
+        range (low/high) rides through when both bounds are
+        recorded and bracket the value — never synthesised."""
         points = []
         for entry in raw_series or []:
             if not isinstance(entry, dict):
@@ -2246,22 +2249,65 @@ def build_motion_graphics_assets(
                 value = float(entry.get("value"))
             except (TypeError, ValueError):
                 continue
-            points.append({
+            point = {
                 "label": clean_text(
                     entry.get("label") or entry.get("date") or ""),
                 "value": value,
                 "display": clean_text(entry.get("display") or ""),
-            })
+            }
+            try:
+                low = float(entry.get("low"))
+                high = float(entry.get("high"))
+            except (TypeError, ValueError):
+                low = high = None
+            if low is not None and high is not None \
+                    and low <= value <= high:
+                point["low"] = low
+                point["high"] = high
+            points.append(point)
         if len(points) < 2:
             return None
         if all(_is_bare_year_value(p["value"]) for p in points):
             return None
         return points
 
+    def _recorded_uncertainty(container, points):
+        """The recorded uncertainty record of a chart container
+        (Phase 6–7, B6-advanced): {"estimated": bool, "note": str}
+        when the container marks its values as estimates (an
+        explicit `estimated`/`estimates` flag, an `uncertainty`
+        record, or per-point low/high ranges / estimated flags);
+        None when nothing marks them — unmarked values are exact
+        as recorded and are never relabelled."""
+        if not isinstance(container, dict):
+            return None
+        raw = container.get("uncertainty")
+        raw = raw if isinstance(raw, dict) else {}
+        raw_series = container.get("series") or container.get("points")
+        estimated = bool(
+            container.get("estimated")
+            or container.get("estimates")
+            or raw.get("estimated")
+            or any("low" in p and "high" in p for p in points or [])
+            or (
+                isinstance(raw_series, list)
+                and any(
+                    isinstance(e, dict) and e.get("estimated")
+                    for e in raw_series
+                )
+            )
+        )
+        note = clean_text(raw.get("note") or "")
+        if not estimated and not note:
+            return None
+        return {"estimated": estimated, "note": note}
+
     def _recorded_chart_series(target):
         """A chart series from RECORDED data only (Phase 5
-        B5/B7), as (points, units, source) — or None when no
-        recorded series exists for this beat.
+        B5/B7), as (points, units, source, uncertainty) — or None
+        when no recorded series exists for this beat.
+        `uncertainty` (Phase 6–7, B6-advanced) is the recorded
+        estimate record from _recorded_uncertainty, or None.
 
         Sources, in order: (1) the manifest entry's
         ``verified_data`` (the AM-009 seam: the Director's entry
@@ -2292,6 +2338,7 @@ def build_motion_graphics_assets(
                         clean_text(verified.get("units")
                                    or verified.get("unit") or ""),
                         clean_text(verified.get("source") or ""),
+                        _recorded_uncertainty(verified, points),
                     )
         scenario = target.get("scenario") or {}
         contract = scenario.get("chart")
@@ -2305,6 +2352,7 @@ def build_motion_graphics_assets(
                         clean_text(contract.get("units")
                                    or contract.get("unit") or ""),
                         clean_text(contract.get("source") or ""),
+                        _recorded_uncertainty(contract, points),
                     )
         grouped = _fact_quantities()
         for unit, facts in grouped.items():
@@ -2320,13 +2368,13 @@ def build_motion_graphics_assets(
                     (f["source"] for f in facts if f.get("source")),
                     "",
                 ) or "Case bible fact table"
-                return points, unit, source
+                return points, unit, source, None
         return None
 
     def _assemble_line_chart(target):
         recorded = _recorded_chart_series(target)
         if recorded is not None:
-            points, units, source = recorded
+            points, units, source, uncertainty = recorded
             data = {
                 "points": points,
                 "title": short_title_for(target),
@@ -2336,6 +2384,13 @@ def build_motion_graphics_assets(
                 data["units"] = units
             if source:
                 data["source"] = source
+            if uncertainty is not None:
+                # Phase 6–7 (B6-advanced): the recorded estimate
+                # record rides to the template — ranges render as
+                # a band/error bars, estimates are labelled.
+                data["uncertainty"] = uncertainty
+                if uncertainty.get("estimated"):
+                    data["estimated"] = True
             return data
         points = _series_from_text(target["text"])
         if points:
@@ -3227,6 +3282,42 @@ def build_motion_graphics_assets(
 
     def _assemble_before_after(target):
         scenario = target.get("scenario") or {}
+        # Phase 6–7 (B6-advanced): the recorded comparison
+        # contract — two recorded states/values with labels
+        # (scenario["comparison"]: {"before": {...}, "after":
+        # {...}} or {"states": [a, b]}). Both sides must record a
+        # label AND a value/display; without two recorded sides
+        # the comparison is refused (falls through to None).
+        contract = scenario.get("comparison")
+        if isinstance(contract, dict):
+            raw_states = contract.get("states")
+            if isinstance(raw_states, list):
+                sides = [s for s in raw_states if isinstance(s, dict)]
+            else:
+                sides = [
+                    s for s in (
+                        contract.get("before"), contract.get("after"))
+                    if isinstance(s, dict)
+                ]
+            states = []
+            for side in sides:
+                label = clean_text(side.get("label") or "")
+                display = clean_text(side.get("display") or "")
+                if not display and side.get("value") is not None:
+                    value = side.get("value")
+                    display = (
+                        f"{value:g}" if isinstance(value, (int, float))
+                        else clean_text(value)
+                    )
+                if label and display:
+                    states.append({"label": label, "value": display})
+            if len(states) >= 2:
+                return {
+                    "states": states[:2],
+                    "title": short_title_for(target),
+                }
+            if contract:
+                return None
         before = scenario.get("before_image")
         after = scenario.get("after_image")
         if not before or not after:

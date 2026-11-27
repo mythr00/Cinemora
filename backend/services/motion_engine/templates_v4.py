@@ -1458,6 +1458,25 @@ def before_after(data, style, out_path, duration=5.0, sentence_index=None, scene
     before = _load_image(data.get("before"))
     after = _load_image(data.get("after"))
     if before is None or after is None:
+        # Phase 6–7 (B6-advanced): the recorded-STATES mode. A
+        # recorded comparison contract (two recorded states with
+        # labels + values — no image pair) renders as two state
+        # panels with the same wipe reveal. Fewer than two
+        # complete recorded sides refuses, exactly like a missing
+        # image pair: a comparison with one side is not drawn.
+        states = []
+        for entry in data.get("states") or []:
+            if not isinstance(entry, dict):
+                continue
+            label = _clean(entry.get("label"))
+            value = _clean(
+                entry.get("display") or entry.get("value"))
+            if label and value:
+                states.append({"label": label, "value": value})
+        if len(states) >= 2:
+            return _before_after_states(
+                states[:2], data, style_name, tokens, out_path,
+                duration, sentence_index, scene_number)
         return None, {"reason": "missing_pair"}
     before_label = _clean(data.get("before_label")) or "BEFORE"
     after_label = _clean(data.get("after_label")) or "AFTER"
@@ -1511,6 +1530,84 @@ def before_after(data, style, out_path, duration=5.0, sentence_index=None, scene
                        {"pair": True, "title": bool(title),
                         "before_label": before_label,
                         "after_label": after_label})
+
+
+def _before_after_states(states, data, style_name, tokens, out_path,
+                         duration, sentence_index, scene_number):
+    """The recorded-states before/after (Phase 6–7): state 1 as
+    the full-frame panel, state 2 wiped in over it with the same
+    divider reveal as the image mode. Only the two recorded
+    states are drawn — label + recorded value, nothing else."""
+    title = _clean(data.get("title"))
+    fonts = {
+        "label": load_font(tokens["font_bold"], 34),
+        "value": load_font(tokens["font_bold"], 120),
+        "title": load_font(tokens["font_bold"], 40),
+    }
+    probe = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+
+    def _fit_value_font(text):
+        for size in (120, 96, 76, 60, 48):
+            font = load_font(tokens["font_bold"], size)
+            if probe.textlength(text, font=font) <= WIDTH - 320:
+                return font
+        return font
+
+    def _panel(state, tint):
+        img = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=71)
+        layer = img.convert("RGBA")
+        d = ImageDraw.Draw(layer, "RGBA")
+        d.rectangle([0, 0, WIDTH, HEIGHT], fill=tint + (46,))
+        label = state["label"].upper()
+        lw = d.textlength(label, font=fonts["label"])
+        d.rectangle(
+            [(WIDTH - lw) / 2 - 22, 250, (WIDTH + lw) / 2 + 22, 322],
+            fill=(0, 0, 0, 130))
+        d.text(((WIDTH - lw) / 2, 264), label[:40],
+               font=fonts["label"], fill=(255, 255, 255, 255))
+        value_font = _fit_value_font(state["value"])
+        vw = d.textlength(state["value"], font=value_font)
+        d.text(((WIDTH - vw) / 2, 430), state["value"][:32],
+               font=value_font, fill=tokens["text"] + (255,))
+        return layer
+
+    panels = [
+        _panel(states[0], tokens["muted"]),
+        _panel(states[1], tokens["accent"]),
+    ]
+
+    def draw_frame(t, progress):
+        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
+        base = canvas.new_layer("before")
+        base.image = panels[0].copy()
+        wipe = ease_in_out(clamp01((progress - 0.12) * 1.35))
+        divider = int(WIDTH * wipe)
+        layer = canvas.new_layer("after")
+        if divider > 0:
+            layer.image.alpha_composite(
+                panels[1].crop((0, 0, divider, HEIGHT)), (0, 0))
+        d = ImageDraw.Draw(layer.image, "RGBA")
+        if 0 < divider < WIDTH:
+            d.rectangle([divider - 4, 0, divider + 4, HEIGHT],
+                        fill=tokens["accent"] + (255,))
+            d.ellipse([divider - 30, HEIGHT // 2 - 30,
+                       divider + 30, HEIGHT // 2 + 30],
+                      fill=tokens["accent"] + (255,),
+                      outline=(255, 255, 255, 255), width=3)
+        if title:
+            tw = d.textlength(title.upper(), font=fonts["title"])
+            d.text(((WIDTH - tw) / 2, HEIGHT - 108),
+                   title.upper()[:52], font=fonts["title"],
+                   fill=tokens["text"] + (255,))
+        _footer(d, tokens)
+        return canvas.composite()
+
+    path = core.render_template(draw_frame, out_path, duration=duration)
+    return path, _meta("before_after", style_name, duration,
+                       sentence_index, scene_number,
+                       {"pair": True, "states": True, "title": bool(title),
+                        "before_label": states[0]["label"],
+                        "after_label": states[1]["label"]})
 
 
 # ---------------------------------------------------------------------------
