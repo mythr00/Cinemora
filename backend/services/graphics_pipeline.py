@@ -2569,19 +2569,6 @@ def build_motion_graphics_assets(
         return {"items": valid[:7],
                 "title": short_title_for(target)}
 
-    def _assemble_milestone_waveform(target):
-        events = [
-            {"when": clean_text(e.get("when", "")),
-             "what": clean_text(e.get("what", "")),
-             "amplitude": e.get("amplitude", e.get("weight"))}
-            for e in timeline_events
-            if clean_text(e.get("what", ""))
-        ]
-        if len(events) < 3:
-            return None
-        return {"events": events[:7],
-                "title": short_title_for(target)}
-
     def _assemble_territory_expansion(target):
         scenario = target.get("scenario") or {}
         expansion = scenario.get("expansion")
@@ -2829,7 +2816,7 @@ def build_motion_graphics_assets(
         # archival_title — they are reachable only through a
         # Director manifest entry, where the candidacy conditions
         # in visual_director are their recorded-evidence gate.
-        "milestone_waveform", "bubble_chart", "animated_dashboard",
+        "bubble_chart", "animated_dashboard",
         "holographic_panel", "classified_file",
         # GitHub Skills Programme (2026-11-25): the Manim engine's
         # templates are Director-only for the same reason, plus a
@@ -2876,7 +2863,6 @@ def build_motion_graphics_assets(
         "population_pyramid": _assemble_population_pyramid,
         "animated_dashboard": _assemble_animated_dashboard,
         "checklist_graphic": _assemble_checklist_graphic,
-        "milestone_waveform": _assemble_milestone_waveform,
         "territory_expansion": _assemble_territory_expansion,
         "satellite_zoom": _assemble_satellite_zoom,
         "heatmap": _assemble_heatmap,

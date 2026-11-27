@@ -204,7 +204,7 @@ ASSEMBLED_TEMPLATES = frozenset({
     # only for a genuine document asset, exactly like
     # document_presentation.
     "bubble_chart", "population_pyramid", "animated_dashboard",
-    "checklist_graphic", "milestone_waveform",
+    "checklist_graphic",
     "territory_expansion", "satellite_zoom", "heatmap",
     "classified_file", "newspaper_wall", "crime_scene_diagram",
     "construction_sequence", "molecular_diagram",

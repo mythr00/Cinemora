@@ -9,9 +9,10 @@ identical to services.motion_engine.templates (v1).
 Families:
   F1 charts      — bubble_chart, population_pyramid,
                    animated_dashboard (multi-stat panel).
-  F2 sequences   — checklist_graphic, milestone_waveform
-                   (engine presentations of the process/timeline
-                   concepts; the native families are untouched).
+  F2 sequences   — checklist_graphic. (milestone_waveform was
+                   removed completely by the founder's P0 ruling,
+                   2026-11-27, as were the native process/timeline
+                   families it presented.)
   F3 maps        — territory_expansion, satellite_zoom, heatmap.
   F4 evidence    — newspaper_wall, crime_scene_diagram
                    (classified_file lives with its base template
@@ -449,113 +450,6 @@ def checklist_graphic(data, style, out_path, duration=5.0, sentence_index=None, 
 # F2. Milestone waveform — recorded events on an amplitude track
 # ---------------------------------------------------------------------------
 
-def milestone_waveform(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
-    style_name, tokens = resolve_style(style)
-    data = data or {}
-    events = []
-    amplitude_source = "recorded"
-    for entry in data.get("events") or []:
-        if not isinstance(entry, dict):
-            continue
-        what = _clean(entry.get("what") or entry.get("label"))
-        if not what:
-            continue
-        amplitude = entry.get("amplitude", entry.get("weight"))
-        try:
-            amplitude = float(amplitude) if amplitude is not None else None
-        except (TypeError, ValueError):
-            amplitude = None
-        events.append({
-            "when": _clean(entry.get("when") or entry.get("date")),
-            "what": what,
-            "amplitude": amplitude,
-        })
-    if len(events) < 3:
-        return None, {"reason": "insufficient_events"}
-    events = events[:7]
-    if any(e["amplitude"] is None for e in events):
-        # No recorded magnitude for at least one event: stem
-        # heights become presentational (an ordinal pattern), and
-        # the record says so — the waveform never invents a
-        # magnitude and stamps it as data.
-        amplitude_source = "ordinal"
-        pattern = [0.55, 0.9, 0.4, 1.0, 0.5, 0.8, 0.65]
-        for i, event in enumerate(events):
-            if event["amplitude"] is None:
-                event["amplitude"] = pattern[i % len(pattern)]
-    peak = max(e["amplitude"] for e in events) or 1.0
-    for event in events:
-        event["amplitude"] = event["amplitude"] / peak
-    title = _clean(data.get("title"))
-    bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=103)
-    fonts = {
-        "title": load_font(tokens["font_bold"], 44),
-        "when": load_font(tokens["font_bold"], 25),
-        "what": load_font(tokens["font"], 24),
-    }
-    probe = _probe_draw()
-    x0, x1 = 170, WIDTH - 170
-    axis_y = 640
-    max_h = 300
-
-    def _points(frac):
-        pts = [(x0 - 60, axis_y)]
-        for i, event in enumerate(events):
-            ex = x0 + (x1 - x0) * (i / (len(events) - 1))
-            pts.append((ex, axis_y - event["amplitude"] * max_h))
-        pts.append((x1 + 60, axis_y))
-        return pts
-
-    def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
-        base = canvas.new_layer("bg")
-        base.image = bg.convert("RGBA")
-        layer = canvas.new_layer("wave")
-        d = ImageDraw.Draw(layer.image, "RGBA")
-        if title:
-            tw = d.textlength(title.upper(), font=fonts["title"])
-            d.text(((WIDTH - tw) / 2, 84), title.upper()[:58],
-                   font=fonts["title"], fill=tokens["text"] + (255,))
-        d.line([x0 - 60, axis_y, x1 + 60, axis_y],
-               fill=(255, 255, 255, 160), width=3)
-        frac = ease_in_out(clamp01(progress * 1.25))
-        if frac > 0:
-            progressive_polyline(
-                d, _points(frac), frac, fill=tokens["accent"] + (255,),
-                width=5)
-        for i, event in enumerate(events):
-            node_frac = i / (len(events) - 1)
-            if frac < node_frac:
-                continue
-            ex = x0 + (x1 - x0) * node_frac
-            ey = axis_y - event["amplitude"] * max_h
-            d.line([ex, axis_y, ex, ey], fill=tokens["accent2"] + (190,),
-                   width=3)
-            d.ellipse([ex - 10, ey - 10, ex + 10, ey + 10],
-                      fill=(255, 255, 255, 255),
-                      outline=tokens["accent"] + (255,), width=3)
-            if event["when"]:
-                ww = d.textlength(event["when"].upper(), font=fonts["when"])
-                d.text((ex - ww / 2, ey - 52), event["when"].upper()[:22],
-                       font=fonts["when"], fill=tokens["text"] + (255,))
-            label = event["what"]
-            while label and probe.textlength(
-                    label, font=fonts["what"]) > 250:
-                label = label[:-1]
-            lw = d.textlength(label, font=fonts["what"])
-            row_y = axis_y + 34 if i % 2 == 0 else axis_y + 96
-            d.text((ex - lw / 2, row_y), label, font=fonts["what"],
-                   fill=tokens["muted"] + (255,))
-        _footer(d, tokens)
-        return canvas.composite()
-
-    path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta("milestone_waveform", style_name, duration,
-                       sentence_index, scene_number,
-                       {"events": len(events), "title": bool(title),
-                        "amplitude_source": amplitude_source})
-
-
 # ---------------------------------------------------------------------------
 # F3. Territory expansion — recorded region states, grown in order
 # ---------------------------------------------------------------------------
@@ -599,6 +493,7 @@ def _state_polygons(states):
             return None, "no_polygon_data"
         resolved.append(polygons)
     return resolved, None
+
 
 
 def territory_expansion(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
@@ -1804,7 +1699,6 @@ V4_TEMPLATES = {
     "population_pyramid": population_pyramid,
     "animated_dashboard": animated_dashboard,
     "checklist_graphic": checklist_graphic,
-    "milestone_waveform": milestone_waveform,
     "territory_expansion": territory_expansion,
     "satellite_zoom": satellite_zoom,
     "heatmap": heatmap,

@@ -348,14 +348,12 @@ def _template_candidates(row, outcome, pack):
     if features["has_pair"]:
         candidates.append("pie_chart")
     # Wave 2 (F1/F2 breadth): the dashboard, bubble chart and
-    # holographic panel ride on the same recorded series cue;
-    # the milestone waveform rides on the date cue (its
-    # assembler still requires >= 3 recorded timeline events).
+    # holographic panel ride on the same recorded series cue.
+    # (P0 removal, 2026-11-27: milestone_waveform candidacy on
+    # the date cue removed with the template — completely.)
     if features["has_series"]:
         candidates += [
             "bubble_chart", "animated_dashboard", "holographic_panel"]
-    if features["has_date"]:
-        candidates.append("milestone_waveform")
     place = scenario.get("place") or scenario.get("location")
     if place:
         candidates.append("territory_map")
