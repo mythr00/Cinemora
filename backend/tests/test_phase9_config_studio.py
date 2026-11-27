@@ -1170,3 +1170,51 @@ def test_chosen_voice_reaches_the_run_options(client, users):
     )
     assert run is not None
     assert run["options"]["voice_id"] == "bm_george"
+
+
+# ---------------------------------------------------------------------
+# Redesign programme (2026-11-27): motion graphics OFF means NO
+# graphics — the composition seam and the build record included.
+# ---------------------------------------------------------------------
+
+
+def test_off_build_replaces_a_stale_graphics_record(tmp_path):
+    import json as _json
+
+    stale = {
+        "mode": "balanced",
+        "count": 3,
+        "assets": [{"file_path": "old-graphic.mp4"}],
+    }
+    (tmp_path / "motion_graphics.json").write_text(
+        _json.dumps(stale), encoding="utf-8"
+    )
+    data = {"case_bible": {"timeline": []}, "scenes": [],
+            "processed_scenes": []}
+    assets = graphics_pipeline.build_motion_graphics_assets(
+        data, tmp_path, mode="off", targets=[]
+    )
+    assert assets == []
+    record = _json.loads(
+        (tmp_path / "motion_graphics.json").read_text(encoding="utf-8")
+    )
+    # The record now describes THIS run: off, nothing made — the
+    # previous run's graphics no longer leak into reporting.
+    assert record["mode"] == "off"
+    assert record["count"] == 0
+    assert record["assets"] == []
+
+
+def test_composition_gate_reads_the_runs_own_state():
+    gate = jobs._motion_graphics_disabled_for_run
+    # OFF by stage state, by resolved snapshot, or by flat key.
+    assert gate({"motion_graphics": {"enabled": False}}, {}) is True
+    assert gate(
+        {}, {"production_config_resolved": {"graphics": {"mode": "off"}}}
+    ) is True
+    assert gate({}, {"motion_graphics_enabled": False}) is True
+    # ON runs (and runs with no OFF signal) stamp as before.
+    assert gate({"motion_graphics": {"enabled": True}},
+                {"motion_graphics_enabled": True}) is False
+    assert gate({}, {}) is False
+    assert gate(None, None) is False

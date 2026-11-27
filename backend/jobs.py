@@ -86,6 +86,27 @@ ANALYSIS_TIMEOUT_SECONDS = 1800
 REVISION_RENDER_TIMEOUT_SECONDS = 3600
 
 
+def _motion_graphics_disabled_for_run(state, options) -> bool:
+    """Whether THIS run has motion graphics OFF, decided from the
+    run's own records — the motion-designer stage state, the
+    resolved configuration snapshot, and the flat projection.
+    Used at the video_editor composition seam so a stale v2
+    visual plan left in the shared project directory by an
+    earlier graphics-ON run can never stamp compositions into
+    an OFF run (redesign programme, 2026-11-27)."""
+    mg_state = (state or {}).get("motion_graphics") or {}
+    resolved = (
+        ((options or {}).get("production_config_resolved") or {})
+        .get("graphics")
+        or {}
+    )
+    return (
+        mg_state.get("enabled") is False
+        or resolved.get("mode") == "off"
+        or (options or {}).get("motion_graphics_enabled") is False
+    )
+
+
 def _dispatch_quietly():
     """Fail-soft dispatcher pass (Phase 8.4): submissions and
     completions are the two moments capacity changes."""
@@ -3132,6 +3153,17 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
         # the same composition plans the renderer will apply.
         # Fail-soft: a composition failure never blocks the render;
         # the items simply render uncomposed.
+        #
+        # Redesign programme (2026-11-27): stamping is GATED on
+        # this run's motion-graphics state. Before this gate, the
+        # seam trusted any v2 plan found in the shared project
+        # directory — a plan left by an earlier graphics-ON run
+        # could stamp lower-thirds and split-screens into a
+        # graphics-OFF run sharing the directory. When this run
+        # is OFF, nothing is stamped, whatever the file says.
+        _compositions_disabled = _motion_graphics_disabled_for_run(
+            state, options
+        )
         try:
             _plan_v2_path = project_dir / "visual_plan.json"
             if _plan_v2_path.exists():
@@ -3141,6 +3173,17 @@ def run_full_pipeline(project_id: str, script: str, run_id: str = None, options=
                 if (
                     isinstance(_plan_v2_doc, dict)
                     and _plan_v2_doc.get("version") == 2
+                    and _compositions_disabled
+                ):
+                    print(
+                        "Composition: a v2 visual plan exists but "
+                        "motion graphics are OFF for this run — "
+                        "no compositions stamped."
+                    )
+                if (
+                    isinstance(_plan_v2_doc, dict)
+                    and _plan_v2_doc.get("version") == 2
+                    and not _compositions_disabled
                 ):
                     from services import composition as _composition
 

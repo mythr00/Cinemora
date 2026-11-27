@@ -2334,6 +2334,33 @@ def build_motion_graphics_assets(
     """
 
     if mode in {"off", "none", "disabled"}:
+        # Redesign programme (2026-11-27): an OFF build still
+        # writes its record — an empty one. Without this, a
+        # motion_graphics.json left in the shared project
+        # directory by an earlier graphics-ON run survived, and
+        # this run's outcome annotation and visual-quality
+        # measurement described graphics it never made.
+        try:
+            _off_dir = Path(output_dir)
+            _off_dir.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(
+                _off_dir / "motion_graphics.json",
+                {
+                    "mode": "off",
+                    "count": 0,
+                    "assets": [],
+                    "targets": {
+                        "requested": 0,
+                        "generated": 0,
+                        "skipped": [],
+                        "outcomes": [],
+                    },
+                    "undelivered": [],
+                    "motion_graphics_disabled": True,
+                },
+            )
+        except Exception:
+            pass
         return []
 
     if max_stats is None:
