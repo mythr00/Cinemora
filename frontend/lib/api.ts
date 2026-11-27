@@ -2500,6 +2500,23 @@ export async function fetchAuthenticatedMediaObjectUrl(
 }
 
 /**
+ * Fetch a music-library track's preview clip as an object URL
+ * (CINEMATIC MUSIC LIBRARY, 2026-11-27). The preview route is
+ * authenticated like every v1 route, so the bytes come through
+ * the same header-auth fetch as other media; the caller owns
+ * revoking the object URL.
+ */
+export async function fetchMusicPreviewObjectUrl(
+  trackId: string,
+  signal?: AbortSignal,
+): Promise<{ url: string; contentType: string }> {
+  return fetchAuthenticatedMediaObjectUrl(
+    `/api/v1/catalogues/music/${encodeURIComponent(trackId)}/preview`,
+    signal,
+  );
+}
+
+/**
  * A meaningful download filename derived from a media path: the
  * last path segment when it carries a file extension. Recorded
  * media keys are bare hashes with no name to derive, so those
@@ -5336,10 +5353,16 @@ export type ConfigCatalogue = {
       track_id: string;
       title: string | null;
       composer: string | null;
+      performer?: string | null;
       moods: string[];
+      genres?: string[];
+      /** Primary browse category (the mandate's five library
+       * categories), or null when the record carries none. */
+      category?: string | null;
       duration_seconds: number | null;
       licence_state: string;
       source_class: string;
+      has_preview?: boolean;
     }>;
   };
   narration: {

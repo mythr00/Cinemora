@@ -2179,6 +2179,18 @@ span.editor-thumb { display: flex; flex-direction: column; align-items: center; 
 .p9-secondary-button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink-strong); padding: 9px 14px; font-size: 14px; cursor: pointer; }
 .p9-secondary-button:hover { border-color: var(--ink-muted); }
 .p9-secondary-button:disabled { opacity: 0.5; cursor: default; }
+.p9-library-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.p9-search { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); padding: 7px 10px; color: var(--ink-muted); flex: 1 1 200px; }
+.p9-search input { border: none; background: none; outline: none; font-size: 14px; color: var(--ink-strong); width: 100%; }
+.p9-category-filter .select-wrap select { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink-strong); font-size: 14px; padding: 8px 30px 8px 10px; }
+.p9-track-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow-y: auto; }
+.p9-track { display: flex; align-items: stretch; gap: 8px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); padding: 8px 10px; }
+.p9-track.is-selected { border-color: var(--ink-strong); box-shadow: 0 0 0 1px var(--ink-strong); }
+.p9-track-main { flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: none; background: none; cursor: pointer; text-align: left; padding: 2px 4px; min-width: 0; }
+.p9-track-title { color: var(--ink-strong); font-size: 14px; font-weight: 500; }
+.p9-track-meta { color: var(--ink-muted); font-size: 12.5px; }
+.p9-preview-button { display: inline-flex; align-items: center; justify-content: center; width: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink-strong); cursor: pointer; flex: none; }
+.p9-preview-button:hover { border-color: var(--ink-muted); }
 .p9-sections { display: flex; flex-direction: column; gap: 8px; }
 .p9-section-row { display: flex; gap: 12px; align-items: flex-end; }
 .p9-section-row label { display: flex; flex-direction: column; gap: 5px; color: var(--ink-muted); font-size: 12px; }

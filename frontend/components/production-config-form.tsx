@@ -1,8 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronDown, Music, Plus, Trash2, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import {
+  ChevronDown,
+  Music,
+  Pause,
+  Play,
+  Plus,
+  Search,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import {
+  fetchMusicPreviewObjectUrl,
   voiceDisplayName,
   type ConfigCatalogue,
   type ProductionConfig,
@@ -72,6 +82,28 @@ function swatch(rgb: number[]): string {
   return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
 }
 
+/** The music library's browse categories (founder mandate
+ * 2026-11-27) with their display labels. A track whose category
+ * is not listed here still shows, under its raw category name. */
+const MUSIC_CATEGORY_LABELS: Record<string, string> = {
+  epic_battles: "Epic Battles",
+  american_frontier: "American Frontier / Western",
+  destruction_tension: "Destruction & Tension",
+  military_drums: "Military Drums",
+  cinematic_orchestral: "Cinematic Orchestral",
+};
+
+function musicCategoryLabel(category: string | null | undefined): string {
+  if (!category) return "";
+  return MUSIC_CATEGORY_LABELS[category] || category;
+}
+
+function formatTrackDuration(seconds: number | null): string {
+  if (!seconds || seconds <= 0) return "";
+  const total = Math.round(seconds);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
 export function ProductionConfigForm({
   catalogue,
   value,
@@ -110,6 +142,96 @@ export function ProductionConfigForm({
   const moods = Array.from(
     new Set(library.tracks.flatMap((track) => track.moods)),
   ).sort();
+
+  // Music library picker (founder mandate 2026-11-27): browse,
+  // search, filter by category, preview play/pause, select. The
+  // preview fetches the track's authenticated preview clip and
+  // plays it through one shared Audio element; switching tracks
+  // or unmounting stops playback and revokes the object URL.
+  const [trackSearch, setTrackSearch] = useState("");
+  const [trackCategory, setTrackCategory] = useState("");
+  const [preview, setPreview] = useState<{
+    trackId: string;
+    state: "loading" | "playing" | "error";
+  } | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+  const previewSeqRef = useRef(0);
+
+  function stopPreview() {
+    previewSeqRef.current += 1;
+    audioRef.current?.pause();
+    audioRef.current = null;
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    setPreview(null);
+  }
+
+  useEffect(() => {
+    return () => {
+      previewSeqRef.current += 1;
+      audioRef.current?.pause();
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+    };
+  }, []);
+
+  async function togglePreview(trackId: string) {
+    if (preview?.trackId === trackId && preview.state === "playing") {
+      stopPreview();
+      return;
+    }
+    stopPreview();
+    const seq = previewSeqRef.current;
+    setPreview({ trackId, state: "loading" });
+    try {
+      const { url } = await fetchMusicPreviewObjectUrl(trackId);
+      if (previewSeqRef.current !== seq) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      previewUrlRef.current = url;
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => {
+        if (previewSeqRef.current === seq) stopPreview();
+      };
+      await audio.play();
+      if (previewSeqRef.current === seq) {
+        setPreview({ trackId, state: "playing" });
+      }
+    } catch {
+      if (previewSeqRef.current === seq) {
+        setPreview({ trackId, state: "error" });
+      }
+    }
+  }
+
+  const libraryCategories = Array.from(
+    new Set(
+      library.tracks
+        .map((track) => track.category)
+        .filter((category): category is string => Boolean(category)),
+    ),
+  ).sort();
+  const searchNeedle = trackSearch.trim().toLowerCase();
+  const visibleTracks = library.tracks.filter((track) => {
+    if (trackCategory && track.category !== trackCategory) return false;
+    if (!searchNeedle) return true;
+    const haystack = [
+      track.title || "",
+      track.performer || "",
+      track.composer || "",
+      track.track_id,
+      ...track.moods,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(searchNeedle);
+  });
 
   return (
     <div className="p9-form">
@@ -398,64 +520,131 @@ export function ProductionConfigForm({
               </div>
             )}
             {music.source === "library" && libraryUsable && (
-              <div className="form-fields">
-                <label className="field-label" htmlFor="p9-track">
-                  TRACK
-                  <span className="select-wrap">
-                    <select
-                      id="p9-track"
-                      value={music.track_id || ""}
-                      onChange={(event) =>
-                        edit({
-                          ...value,
-                          music: {
-                            ...music,
-                            track_id: event.target.value || null,
-                            mood: event.target.value ? music.mood : music.mood,
-                          },
-                        })
-                      }
-                    >
-                      <option value="">Choose by mood instead…</option>
-                      {library.tracks.map((track) => (
-                        <option key={track.track_id} value={track.track_id}>
-                          {track.title || track.track_id}
-                          {track.composer ? ` — ${track.composer}` : ""} (
-                          {track.licence_state})
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown size={18} strokeWidth={1.7} aria-hidden />
-                  </span>
-                </label>
-                <label className="field-label" htmlFor="p9-mood">
-                  OR MOOD
-                  <span className="select-wrap">
-                    <select
-                      id="p9-mood"
-                      value={music.mood || ""}
-                      onChange={(event) =>
-                        edit({
-                          ...value,
-                          music: {
-                            ...music,
-                            mood: event.target.value || null,
-                            track_id: event.target.value ? null : music.track_id,
-                          },
-                        })
-                      }
-                    >
-                      <option value="">Any mood</option>
-                      {moods.map((mood) => (
-                        <option key={mood} value={mood}>
-                          {mood}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown size={18} strokeWidth={1.7} aria-hidden />
-                  </span>
-                </label>
-              </div>
+              <>
+                <div className="p9-library-tools">
+                  <label className="p9-search">
+                    <Search size={15} strokeWidth={2} aria-hidden />
+                    <input
+                      type="search"
+                      value={trackSearch}
+                      placeholder="Search tracks…"
+                      aria-label="Search music library"
+                      onChange={(event) => setTrackSearch(event.target.value)}
+                    />
+                  </label>
+                  <label className="p9-category-filter">
+                    <span className="select-wrap">
+                      <select
+                        value={trackCategory}
+                        aria-label="Filter by category"
+                        onChange={(event) =>
+                          setTrackCategory(event.target.value)
+                        }
+                      >
+                        <option value="">All categories</option>
+                        {libraryCategories.map((category) => (
+                          <option key={category} value={category}>
+                            {musicCategoryLabel(category)}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={18} strokeWidth={1.7} aria-hidden />
+                    </span>
+                  </label>
+                </div>
+                <ul className="p9-track-list">
+                  {visibleTracks.map((track) => {
+                    const selected = music.track_id === track.track_id;
+                    const trackPreview =
+                      preview?.trackId === track.track_id ? preview : null;
+                    const meta = [
+                      track.performer || track.composer || "",
+                      musicCategoryLabel(track.category),
+                      formatTrackDuration(track.duration_seconds),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ");
+                    return (
+                      <li
+                        key={track.track_id}
+                        className={`p9-track${selected ? " is-selected" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          className="p9-track-main"
+                          aria-pressed={selected}
+                          onClick={() =>
+                            edit({
+                              ...value,
+                              music: { ...music, track_id: track.track_id },
+                            })
+                          }
+                        >
+                          <span className="p9-track-title">
+                            {track.title || track.track_id}
+                          </span>
+                          {meta && (
+                            <span className="p9-track-meta">{meta}</span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="p9-preview-button"
+                          aria-label={
+                            trackPreview?.state === "playing"
+                              ? `Stop preview of ${track.title || track.track_id}`
+                              : `Preview ${track.title || track.track_id}`
+                          }
+                          onClick={() => togglePreview(track.track_id)}
+                        >
+                          {trackPreview?.state === "playing" ? (
+                            <Pause size={15} strokeWidth={2} aria-hidden />
+                          ) : (
+                            <Play size={15} strokeWidth={2} aria-hidden />
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                  {visibleTracks.length === 0 && (
+                    <li className="p9-hint">No tracks match your search.</li>
+                  )}
+                </ul>
+                {preview?.state === "error" && (
+                  <p className="p9-hint">
+                    That track&rsquo;s preview could not be loaded.
+                  </p>
+                )}
+                <div className="form-fields">
+                  <label className="field-label" htmlFor="p9-mood">
+                    OR CHOOSE BY MOOD
+                    <span className="select-wrap">
+                      <select
+                        id="p9-mood"
+                        value={music.mood || ""}
+                        onChange={(event) =>
+                          edit({
+                            ...value,
+                            music: {
+                              ...music,
+                              mood: event.target.value || null,
+                              track_id: event.target.value ? null : music.track_id,
+                            },
+                          })
+                        }
+                      >
+                        <option value="">Any mood</option>
+                        {moods.map((mood) => (
+                          <option key={mood} value={mood}>
+                            {mood}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={18} strokeWidth={1.7} aria-hidden />
+                    </span>
+                  </label>
+                </div>
+              </>
             )}
             <div className="form-fields">
               <label className="field-label" htmlFor="p9-volume">
