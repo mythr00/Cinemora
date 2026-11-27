@@ -34,7 +34,10 @@ from services.motion_engine import themes as engine_themes
 # is what this list names now.
 WAVE1_TEMPLATES = [
     "line_chart", "pie_chart",
-    "exploded_view", "mechanical_cutaway", "blueprint_section",
+    # Phase 9 final fix (2026-11-27): mechanical_cutaway removed
+    # as a selectable treatment (item-11 FAIL) — pinned absent in
+    # tests/test_phase9_final_fixes.py.
+    "exploded_view", "blueprint_section",
     "newspaper_montage", "profile_reveal",
     "text_overlay", "text_highlight",
     "archival_title",
@@ -152,7 +155,9 @@ def test_registry_covers_all_wave1_templates():
     # labelled_diagram: 47; (G2): -2 impostors
     # hud_overlay/holographic_panel: 45; +1
     # tracked_annotation (G2 bridge): 46.
-    assert len(engine_templates.TEMPLATES) == 46
+    # Phase 9 final fix (2026-11-27): -1 mechanical_cutaway
+    # (item-11 FAIL removal): 45.
+    assert len(engine_templates.TEMPLATES) == 45
 
 
 def test_wave1_templates_refuse_with_typed_reasons(tmp_path):
@@ -500,10 +505,14 @@ def test_director_registers_every_wave1_template():
         assert removed not in _candidates(
             "Trade through the port doubled.", scenario=place), removed
     layers = {"layers": [{"label": "Deck", "depth": 1}]}
-    for name in ("exploded_view", "mechanical_cutaway",
-                 "blueprint_section"):
+    for name in ("exploded_view", "blueprint_section"):
         assert name in _candidates(
             "The section shows the load path.", scenario=layers), name
+    # Phase 9 final fix: the layers cue must NEVER propose
+    # mechanical_cutaway again (full pins in
+    # tests/test_phase9_final_fixes.py).
+    assert "mechanical_cutaway" not in _candidates(
+        "The section shows the load path.", scenario=layers)
     assert "document_presentation" in _candidates(
         "The report was filed.",
         document_asset={"path": "/x.jpg", "source": "wikimedia",

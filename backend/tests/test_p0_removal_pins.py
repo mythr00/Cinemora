@@ -133,7 +133,10 @@ def test_removed_templates_absent_from_every_registry():
     # Phase 6-7: +1 labelled_diagram (D1), -2 impostors
     # hud_overlay/holographic_panel (G2) -> 45;
     # +1 tracked_annotation (G2 bridge) -> 46.
-    assert len(engine_templates.TEMPLATES) == 46
+    # Phase 9 final fix (2026-11-27): -1 mechanical_cutaway
+    # (item-11 FAIL removal; its own pins live in
+    # tests/test_phase9_final_fixes.py) -> 45.
+    assert len(engine_templates.TEMPLATES) == 45
     for survivor in (
         "archival_title", "document_presentation", "classified_file",
         "text_overlay", "text_highlight", "profile_reveal",

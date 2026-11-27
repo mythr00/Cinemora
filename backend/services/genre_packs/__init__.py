@@ -190,7 +190,9 @@ ASSEMBLED_TEMPLATES = frozenset({
     "bar_chart", "data_gauge", "ring_badges", "stat_comparison",
     # Wave 1 (Motion Graphics Engine plan §C).
     "line_chart", "pie_chart",
-    "exploded_view", "mechanical_cutaway", "blueprint_section",
+    # (Phase 9 final fix, 2026-11-27: mechanical_cutaway removed
+    # from the assembled set with the treatment itself.)
+    "exploded_view", "blueprint_section",
     "newspaper_montage", "profile_reveal",
     "document_presentation",
     "text_overlay", "text_highlight",

@@ -2959,7 +2959,10 @@ def build_motion_graphics_assets(
         "mpl_line_chart": _assemble_line_chart,
         "pie_chart": _assemble_pie_chart,
         "exploded_view": _section_variant("exploded"),
-        "mechanical_cutaway": _section_variant("cutaway"),
+        # Phase 9 final fix (2026-11-27): no mechanical_cutaway
+        # assembler — the treatment is unproducible until a real
+        # cutaway exists (see templates_v2 and
+        # tests/test_phase9_final_fixes.py).
         "blueprint_section": _section_variant("blueprint"),
         "newspaper_montage": _assemble_newspaper_montage,
         "profile_reveal": _assemble_profile_reveal,

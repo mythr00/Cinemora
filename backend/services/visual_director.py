@@ -136,7 +136,7 @@ PROBLEM_TREATMENT_PREFERENCE = {
     ],
     "explanation": [
         "labelled_diagram", "molecular_diagram", "exploded_view",
-        "mechanical_cutaway", "blueprint_section",
+        "blueprint_section",
         "construction_sequence", "checklist_graphic",
         "crime_scene_diagram",
     ],
@@ -700,10 +700,13 @@ def _template_candidates(row, outcome, pack, bible=None, problem=None):
     # dataset survives; `place` is still read below for the
     # satellite_zoom cue.)
     # F5 schematic variants: only on caller-recorded layers.
+    # (Phase 9 final fix, 2026-11-27: mechanical_cutaway candidacy
+    # removed with the treatment — it is unproducible until a real
+    # cutaway exists; pinned in tests/test_phase9_final_fixes.py.)
     layers = scenario.get("layers")
     if isinstance(layers, list) and layers:
         candidates += [
-            "exploded_view", "mechanical_cutaway", "blueprint_section"]
+            "exploded_view", "blueprint_section"]
     # Wave 2 scenario-recorded data contracts (the layers
     # precedent): each of these templates is proposed ONLY when
     # the scenario itself records the data it renders — the

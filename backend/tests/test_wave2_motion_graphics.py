@@ -152,7 +152,9 @@ def test_registry_covers_all_wave2_templates():
     # Phase 6-7: +1 labelled_diagram (D1), -2 impostors
     # hud_overlay/holographic_panel (G2) -> 45;
     # +1 tracked_annotation (G2 bridge) -> 46.
-    assert len(engine_templates.TEMPLATES) == 46
+    # Phase 9 final fix (2026-11-27): -1 mechanical_cutaway
+    # (item-11 FAIL removal) -> 45.
+    assert len(engine_templates.TEMPLATES) == 45
 
 
 def test_wave2_templates_refuse_with_typed_reasons(tmp_path):

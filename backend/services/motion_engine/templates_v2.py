@@ -638,7 +638,17 @@ def _section_variant(variant, template_name):
 
 
 exploded_view = _section_variant("exploded", "exploded_view")
-mechanical_cutaway = _section_variant("cutaway", "mechanical_cutaway")
+# Phase 9 final fix (2026-11-27): mechanical_cutaway REMOVED as a
+# selectable treatment. The creative test suite's item-11 inspection
+# found it rendered the same layered band stack as cross_section
+# inside a bolted frame — no mechanism, nothing cut away — under a
+# name that promises a cutaway: misleading presentation. Following
+# the programme's P0 pattern it is unproducible until a real cutaway
+# exists; the treatment survives only as a specification in the
+# programme record (Level 2/3, requires recorded subject geometry
+# the scenario contract does not yet carry). Removal pinned in
+# tests/test_phase9_final_fixes.py. cross_section itself is
+# untouched: it honestly labels itself "SCHEMATIC — NOT TO SCALE".
 blueprint_section = _section_variant("blueprint", "blueprint_section")
 
 
@@ -851,8 +861,9 @@ V2_TEMPLATES = {
     "bar_chart": bar_chart,
     "satellite_annotation": satellite_annotation,
     # Wave 1 (F5): schematic variants over cross_section.
+    # (Phase 9 final fix: mechanical_cutaway removed — see the
+    # note at the wrapper definitions above.)
     "exploded_view": exploded_view,
-    "mechanical_cutaway": mechanical_cutaway,
     "blueprint_section": blueprint_section,
 }
 

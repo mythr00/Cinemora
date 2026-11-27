@@ -54,8 +54,10 @@ def test_registry_covers_all_fifteen_templates():
     # (chronology / route / locator / relationship_network) —
     # the removed names stay absent, asserted below unchanged.
     # Phase 6-7 (D1): +1 labelled_diagram -> 47.
+    # Phase 9 final fix (2026-11-27): -1 mechanical_cutaway
+    # (item-11 FAIL removal) -> 45.
     names = set(templates.TEMPLATES) | set(templates_v2.V2_TEMPLATES)
-    assert len(names) == 46
+    assert len(names) == 45
     assert "manim_line_chart" in names and "manim_bar_chart" in names
     assert "mpl_line_chart" in names and "mpl_bar_chart" in names
     for name in (
@@ -67,11 +69,15 @@ def test_registry_covers_all_fifteen_templates():
         assert name not in names, name
     for name in (
         "line_chart", "pie_chart", "exploded_view",
-        "mechanical_cutaway", "blueprint_section",
+        "blueprint_section",
         "newspaper_montage", "profile_reveal",
         "text_overlay", "text_highlight", "archival_title",
     ):
         assert name in names, name
+    # Phase 9 final fix (2026-11-27): mechanical_cutaway removed
+    # as a selectable treatment (item-11 FAIL) — absent here, and
+    # pinned unproducible in tests/test_phase9_final_fixes.py.
+    assert "mechanical_cutaway" not in names
     for name in (
         "bubble_chart", "population_pyramid", "animated_dashboard",
         "checklist_graphic",
