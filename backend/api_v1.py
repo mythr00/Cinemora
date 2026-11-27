@@ -1756,6 +1756,11 @@ def _prepare_creation_options(db, principal, options) -> dict:
     options = dict(options or {})
     flat_language = options.pop("language", None)
     raw = options.get("production_config")
+    # Whether the CALLER submitted a configuration document (as
+    # opposed to one seeded from saved defaults or synthesised
+    # from a flat language below) — it decides whose voice wins
+    # when both a document and a flat voice_id arrive.
+    caller_submitted_config = isinstance(raw, dict)
     if flat_language is not None:
         raw = dict(raw) if isinstance(raw, dict) else {}
         narration = dict(raw.get("narration") or {})
@@ -1774,6 +1779,19 @@ def _prepare_creation_options(db, principal, options) -> dict:
         prepared.pop(key, None)
     prepared["production_config"] = config
     prepared.update(production_config.flat_options(config))
+    # Redesign programme (2026-11-27): an explicitly submitted
+    # flat voice_id is a deliberate pick at creation time, and a
+    # configuration the caller did NOT submit — saved defaults
+    # seeding the project — must not silently replace it with
+    # the default's voice. A caller-submitted configuration
+    # that names a voice stays authoritative, as before; one
+    # that names none leaves the explicit pick standing too
+    # (its voiceless projection would otherwise substitute a
+    # language primary for the chosen voice).
+    explicit_voice = (options or {}).get("voice_id")
+    config_voice = (config.get("narration") or {}).get("voice_id")
+    if explicit_voice and not (caller_submitted_config and config_voice):
+        prepared["voice_id"] = explicit_voice
     return prepared
 
 

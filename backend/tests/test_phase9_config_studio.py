@@ -1064,3 +1064,109 @@ def test_voice_to_documentary_flow(client, users, tmp_path, monkeypatch):
         f"/api/v1/projects/{project['id']}", headers=headers
     ).json()
     assert view["script"] == "The harbour opened in 1956.\n\nShips followed."
+
+
+# ---------------------------------------------------------------------
+# Redesign programme (2026-11-27): voice selection integrity.
+# The voice the user picks must be the voice the run narrates
+# with — no silent replacement by defaults (F1), no silent
+# fallback for unvalidated flat voices (F2), and clearing a
+# voice must actually clear it (F3).
+# ---------------------------------------------------------------------
+
+
+def test_flat_voice_is_validated_at_the_run_gate():
+    from services.production_config import ConfigError
+
+    # A real installed voice passes untouched.
+    resolved = production_config.resolve_run_options(
+        None, {"voice_id": "bm_george"}
+    )
+    assert resolved["voice_id"] == "bm_george"
+
+    # A bogus voice refuses BEFORE queueing/charging instead of
+    # silently falling back to the default in narration.
+    with pytest.raises(ConfigError) as caught:
+        production_config.resolve_run_options(
+            None, {"voice_id": "no_such_voice"}
+        )
+    assert caught.value.code == "voice_not_installed"
+
+    # A French voice on an (implicitly English) production
+    # refuses as a language mismatch…
+    with pytest.raises(ConfigError) as caught:
+        production_config.resolve_run_options(
+            None, {"voice_id": "ff_siwis"}
+        )
+    assert caught.value.code == "voice_language_mismatch"
+
+    # …and passes when the production is French.
+    resolved = production_config.resolve_run_options(
+        None, {"voice_id": "ff_siwis", "language": "fr"}
+    )
+    assert resolved["voice_id"] == "ff_siwis"
+
+
+def test_defaults_do_not_overwrite_an_explicit_flat_voice(client, users):
+    a, _ = users
+    headers = _bearer(a)
+    response = client.put(
+        "/api/v1/config/defaults",
+        json={"config": {"narration": {"voice_id": "af_heart"}}},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    # No explicit pick: the saved default seeds the project.
+    project = _create_project(client, headers)
+    assert project["options"]["voice_id"] == "af_heart"
+
+    # An explicit pick at creation wins over the default.
+    project = _create_project(
+        client, headers, options={"voice_id": "bm_george"}
+    )
+    assert project["options"]["voice_id"] == "bm_george"
+
+
+def test_clearing_the_config_voice_clears_the_flat_voice(client, users):
+    a, _ = users
+    headers = _bearer(a)
+    project = _create_project(
+        client, headers,
+        options={
+            "production_config": {
+                "narration": {"voice_id": "bm_george"},
+                "music": {"enabled": False, "source": "none"},
+            }
+        },
+    )
+    assert project["options"]["voice_id"] == "bm_george"
+
+    response = client.put(
+        f"/api/v1/projects/{project['id']}/config",
+        json={"config": {"narration": {"voice_id": None}}},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+
+    refreshed = client.get(
+        f"/api/v1/projects/{project['id']}", headers=headers
+    ).json()
+    assert "voice_id" not in (refreshed["options"] or {})
+
+
+def test_chosen_voice_reaches_the_run_options(client, users):
+    a, _ = users
+    headers = _bearer(a)
+    project = _create_project(
+        client, headers, options={"voice_id": "bm_george"}
+    )
+    response = client.post(
+        f"/api/v1/projects/{project['id']}/runs", json={}, headers=headers
+    )
+    assert response.status_code == 202, response.text
+    run = run_ledger.latest_run_for(
+        project["id"], run_ledger.script_sha256(SCRIPT_BODY)
+    )
+    assert run is not None
+    assert run["options"]["voice_id"] == "bm_george"

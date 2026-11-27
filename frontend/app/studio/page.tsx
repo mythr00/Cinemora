@@ -11,6 +11,7 @@ import {
   getProjectStatus,
   getVoiceCatalogue,
   listProjects,
+  voiceDisplayName,
   submitRun,
   type ApiConnectionStatus,
   type ProjectStatus,
@@ -52,8 +53,8 @@ const MAX_SCRIPT_CHARS = 60000;
 // by the backend from the script, and is never a user choice.
 const NARRATION_VOICE_ID = "af_heart";
 const FALLBACK_VOICES: VoiceCatalogueEntry[] = [
-  { id: NARRATION_VOICE_ID, is_default: false, alias_of: null, model: "kokoro-v1.0.onnx", model_file: "kokoro-v1.0.onnx", config_file: "voices-v1.0.bin", installed: true },
-  { id: "default", is_default: true, alias_of: NARRATION_VOICE_ID, model: "kokoro-v1.0.onnx", model_file: "kokoro-v1.0.onnx", config_file: "voices-v1.0.bin", installed: true },
+  { id: NARRATION_VOICE_ID, name: "Heart", region: "English (US)", gender: "female", is_default: false, alias_of: null, model: "kokoro-v1.0.onnx", model_file: "kokoro-v1.0.onnx", config_file: "voices-v1.0.bin", installed: true },
+  { id: "default", name: "Heart", region: "English (US)", gender: "female", is_default: true, alias_of: NARRATION_VOICE_ID, model: "kokoro-v1.0.onnx", model_file: "kokoro-v1.0.onnx", config_file: "voices-v1.0.bin", installed: true },
 ];
 
 // GoMotion redesign (2026-11-24): the desk is create-first. The
@@ -344,7 +345,7 @@ export default function StudioPage() {
               <input id="dash-title" className="thumbnail-input" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={300} placeholder="e.g. The Yangtze Incident" />
             </label>
             <label className="field-label" htmlFor="dash-voice">NARRATION VOICE
-              <span className="select-wrap"><select id="dash-voice" value={effectiveVoiceId} onChange={(event) => setVoiceId(event.target.value)}>{voiceOptions.map((voice) => <option key={voice.id} value={voice.id}>{voice.id} · English (US)</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
+              <span className="select-wrap"><select id="dash-voice" value={effectiveVoiceId} onChange={(event) => setVoiceId(event.target.value)}>{voiceOptions.map((voice) => <option key={voice.id} value={voice.id}>{voiceDisplayName(voice)}</option>)}</select><ChevronDown size={18} strokeWidth={1.7} aria-hidden /></span>
             </label>
             <div className="field-label length-field"><span>ESTIMATED RUNTIME</span><div className="runtime-value">{duration ? `~${duration} min` : "Add a script"}</div></div>
           </div>

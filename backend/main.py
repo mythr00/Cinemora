@@ -434,6 +434,12 @@ def enqueue_full_pipeline_legacy(
     job_id = enqueue_full_pipeline(
         project.id,
         project.script,
+        # Redesign programme (2026-11-27): the project's stored
+        # options (including its voice) govern the run, exactly
+        # as on the v1 path — this alias previously dropped them
+        # all, so a legacy-submitted run narrated in the default
+        # voice whatever the project carried.
+        options=dict(project.options or {}),
     )
 
     response.headers["Deprecation"] = "true"

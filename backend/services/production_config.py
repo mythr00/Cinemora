@@ -1111,6 +1111,54 @@ def resolve_run_options(project, merged_options) -> dict:
                 raise ConfigError(
                     422, "language_narration_unsupported", reason
                 )
+        # Redesign programme (2026-11-27): a flat voice_id with no
+        # configuration document gets the SAME validation a
+        # config-carried voice gets in validate_config. Before
+        # this, a bogus or language-mismatched flat voice (the
+        # Studio desk path) reached narration, which silently
+        # fell back to the default voice — the user was never
+        # told the voice they picked was not the voice used.
+        flat_voice = (merged_options or {}).get("voice_id")
+        if flat_voice:
+            from services import narration as narration_service
+
+            _model, _cfg, _resolved, fell_back = (
+                narration_service.resolve_voice(flat_voice)
+            )
+            if fell_back:
+                raise ConfigError(
+                    422,
+                    "voice_not_installed",
+                    f"Voice {flat_voice!r} is not in the installed "
+                    "voice catalogue; narration would silently "
+                    "fall back to the default voice. Choose an "
+                    "installed voice.",
+                )
+            if not _model.exists():
+                raise ConfigError(
+                    422,
+                    "voice_model_missing",
+                    f"The model files for voice {flat_voice!r} "
+                    "are not installed on this deployment.",
+                )
+            # An absent flat language is an English production —
+            # the same default the configuration path applies
+            # (flat["language"] falls back to "en").
+            voice_lang = narration_service.voice_language(_resolved)
+            production_lang = languages_service.normalize(
+                flat_language or "en"
+            )
+            if voice_lang != production_lang:
+                raise ConfigError(
+                    422,
+                    "voice_language_mismatch",
+                    f"Voice {flat_voice!r} speaks "
+                    f"{languages_service.name_of(voice_lang)}, "
+                    "but the production language is "
+                    f"{languages_service.name_of(production_lang)}. "
+                    "Choose a voice that speaks the production "
+                    "language.",
+                )
         return merged_options
     config = clean_config(raw)
     validation = validate_config(config)
@@ -1129,7 +1177,18 @@ def resolve_run_options(project, merged_options) -> dict:
     # or project options carried, then write the projection.
     for key in PROJECTION_OWNED_KEYS:
         merged.pop(key, None)
-    merged.update(flat_options(config))
+    projected = flat_options(config)
+    merged.update(projected)
+    # Redesign programme (2026-11-27): voice_id is a key the
+    # configuration projects, so when a configuration document
+    # governs the run, a flat voice_id the projection does not
+    # write must not survive from an earlier state — otherwise
+    # clearing the voice in the configuration ("Deployment
+    # default") silently kept the old voice in place. When the
+    # projection DOES write a voice (the configured voice, or a
+    # non-English language's primary), that voice stands.
+    if "voice_id" not in projected:
+        merged.pop("voice_id", None)
     merged[CONFIG_KEY] = config
     merged["production_config_resolved"] = {
         "preset": matching_preset(config),
@@ -1177,6 +1236,12 @@ def save_project_config(db, project, raw_config) -> dict:
             + "; ".join(e["message"] for e in validation["errors"]),
         )
     options = _apply_projection(dict(project.options or {}), config)
+    # Same rule as the run gate: the saved configuration is
+    # authoritative for voice_id — if its projection writes no
+    # voice, a stale flat voice_id from an earlier state is
+    # cleared rather than silently persisting.
+    if "voice_id" not in flat_options(config):
+        options.pop("voice_id", None)
     project.options = options
     db.commit()
     db.refresh(project)

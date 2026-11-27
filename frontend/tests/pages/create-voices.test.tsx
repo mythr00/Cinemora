@@ -19,7 +19,7 @@
  * lib/api is mocked at the module boundary with a small,
  * truthfully-shaped catalogue subset.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import CreatePage from "@/app/create/page";
 import {
@@ -180,7 +180,8 @@ function configCatalogue() {
 }
 
 function voiceRow(label: string) {
-  const name = screen.getAllByText(label, { selector: "strong" })[0];
+  const list = document.querySelector(".voice-catalog-list") as HTMLElement;
+  const name = within(list).getAllByText(label, { selector: "strong" })[0];
   return name.closest(".voice-catalog-row") as HTMLElement;
 }
 
@@ -190,8 +191,15 @@ function inUseRow() {
     .closest(".voice-catalog-row") as HTMLElement;
 }
 
+// Scoped to the Step-2 voice list: the Step-5 summary also names
+// the in-use voice (naturally, since the redesign), so a
+// page-wide count would see the label twice.
 async function awaitVoice(label: string) {
-  return screen.findAllByText(label, { selector: "strong" });
+  await waitFor(() =>
+    expect(document.querySelector(".voice-catalog-list")).not.toBeNull(),
+  );
+  const list = document.querySelector(".voice-catalog-list") as HTMLElement;
+  return within(list).findAllByText(label, { selector: "strong" });
 }
 
 async function selectLanguage(code: string) {
