@@ -1159,23 +1159,6 @@ _STAT_STOP_NOUNS = {
     "august", "september", "october", "november", "december",
 }
 
-_SEQUENCE_MARKERS = (
-    "first", "then", "after", "before", "finally", "next", "later",
-    "subsequently", "eventually", "meanwhile",
-)
-
-_DOCUMENT_MARKERS = (
-    "document", "report", "letter", "filing", "memorandum", "memo",
-    "manuscript", "deposition", "affidavit", "transcript",
-)
-
-
-def _has_sequence_marker(text):
-    lowered = f" {clean_text(text).lower()} "
-    return any(f" {marker} " in lowered or f" {marker}," in lowered
-               for marker in _SEQUENCE_MARKERS)
-
-
 def _percent_value(text):
     match = re.search(
         r"(\d[\d,]*(?:\.\d+)?)\s*(?:%|percent\b)", clean_text(text), re.I
@@ -1993,34 +1976,6 @@ def build_motion_graphics_assets(
         return {
             "regions": [{"country": match, "label": match}],
             "title": place,
-        }
-
-    def _assemble_outcome_path(target):
-        """outcome_path data from the case bible's recorded
-        timeline events (their "what" labels, in order). Only for
-        a target whose own text carries sequence markers — the
-        template visualises a progression, so a non-sequence
-        sentence never assembles it (the same trigger the process
-        family uses). Fewer than two recorded events assemble
-        nothing."""
-        if not _has_sequence_marker(target.get("text") or ""):
-            return None
-        events = [
-            clean_text(e.get("what", ""))
-            for e in timeline_events
-            if clean_text(e.get("what", ""))
-        ]
-        if len(events) < 2:
-            return None
-        return {
-            # Gate 4 (B4): labels ride FULL — shorten() truncated
-            # them mid-word ("Havens Steel proposed using two
-            # sh…") and the template then clipped them at the
-            # frame edge. The outcome_path template now wraps /
-            # shrinks / clamps labels itself.
-            "outcomes": [
-                {"label": e} for e in events[:6]
-            ],
         }
 
     # -----------------------------------------------------
@@ -2891,7 +2846,6 @@ def build_motion_graphics_assets(
     #: table for the per-template disposition).
     _ASSEMBLERS = {
         "territory_map": _assemble_territory_map,
-        "outcome_path": _assemble_outcome_path,
         # Wave 1 (Motion Graphics Engine plan §C).
         "line_chart": _assemble_line_chart,
         # GitHub Skills Programme: the Manim line chart consumes
@@ -3398,7 +3352,6 @@ def build_motion_graphics_assets(
         text = target["text"]
         comparison = extract_comparison(text)
         percent = _percent_value(text)
-        has_sequence = _has_sequence_marker(text)
         lowered = text.lower()
         has_document = any(m in lowered for m in _DOCUMENT_MARKERS)
 

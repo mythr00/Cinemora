@@ -697,112 +697,6 @@ def data_gauge(data, style, out_path, duration=5.0, sentence_index=None, scene_n
 # 5. Outcome path
 # ---------------------------------------------------------------------------
 
-def outcome_path(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
-    style_name, tokens = resolve_style(style)
-    data = data or {}
-    outcomes = [o for o in (data.get("outcomes") or []) if isinstance(o, dict) and _clean(o.get("label"))]
-    if not outcomes:
-        return None, {"reason": "no_outcomes"}
-    outcomes = outcomes[:6]
-    title_left = _clean(data.get("title_left"))
-    title_right = _clean(data.get("title_right"))
-    bg = _textured_dark((WIDTH, HEIGHT), (5, 5, 8), seed=17)
-    fonts = {
-        "title": load_font(tokens["font_bold"], 36),
-        "label": load_font(tokens["font_bold"], 27),
-        "small": load_font(tokens["font"], 24),
-        "num": load_font(tokens["font_bold"], 30),
-    }
-    points = []
-    for i in range(121):
-        x = 120 + (WIDTH - 240) * i / 120
-        y = HEIGHT / 2 + math.sin(i / 120 * math.pi * 2.2) * 150
-        points.append((x, y))
-
-    def draw_frame(t, progress):
-        canvas = core.Canvas(bg=(5, 5, 8))
-        base = canvas.new_layer("bg", parallax=0.2)
-        base.image = bg.convert("RGBA")
-        layer = canvas.new_layer("path")
-        d = ImageDraw.Draw(layer.image, "RGBA")
-        frac = ease_in_out(clamp01(progress * 1.15))
-        for wdt, alpha in ((14, 50), (7, 120)):
-            progressive_polyline(d, points, frac, fill=tokens["accent"] + (alpha,), width=wdt)
-        progressive_polyline(d, points, frac, fill=(255, 255, 255, 235), width=3)
-        n = len(outcomes)
-        for i, outcome in enumerate(outcomes):
-            at = (i + 0.5) / n
-            if frac < at:
-                continue
-            # Point on sine path at fraction `at`.
-            idx = min(len(points) - 1, int(at * (len(points) - 1)))
-            x, y = points[idx]
-            above = (i % 2 == 0)
-            d.ellipse([x - 30, y - 30, x + 30, y + 30], fill=tokens["bg"] + (255,), outline=tokens["accent"] + (255,), width=4)
-            num = str(i + 1)
-            nw = d.textlength(num, font=fonts["num"])
-            d.text((x - nw / 2, y - 19), num, font=fonts["num"], fill=(255, 255, 255, 255))
-            # Gate 4 (B4): labels wrap at word boundaries and
-            # shrink-to-fit a 320px box, clamped inside the frame
-            # safe area (outer 2% = 38px). The historical [:34]
-            # slice truncated labels mid-word ("…using two sh")
-            # and centred them unclamped, so the first/last
-            # labels ran off the frame edge.
-            label = _clean(outcome.get("label"))
-            result = _clean(outcome.get("outcome"))
-            label_lines, label_font = _fit_label(
-                d, label, tokens, max_width=320, sizes=(27, 22, 19),
-                max_lines=3)
-            result_lines, result_font = _fit_label(
-                d, result, tokens, max_width=320, sizes=(24, 20, 17),
-                max_lines=2, bold=False)
-            if above:
-                d.line([x, y - 30, x, y - 78], fill=(255, 255, 255, 160), width=2)
-                _lh = label_font.size + 7
-                _top = y - 84 - len(label_lines) * _lh
-                for _line in label_lines:
-                    _top += _lh
-                    lw = d.textlength(_line, font=label_font)
-                    d.text((_clamped_text_x(x, lw), _top - _lh), _line,
-                           font=label_font, fill=(255, 255, 255, 255))
-                _ry = y - 102
-                for _line in result_lines:
-                    rw = d.textlength(_line, font=result_font)
-                    d.text((_clamped_text_x(x, rw), _ry), _line,
-                           font=result_font, fill=tokens["accent"] + (255,))
-                    _ry += result_font.size + 6
-            else:
-                d.line([x, y + 30, x, y + 78], fill=(255, 255, 255, 160), width=2)
-                _ly = y + 92
-                for _line in label_lines:
-                    lw = d.textlength(_line, font=label_font)
-                    d.text((_clamped_text_x(x, lw), _ly), _line,
-                           font=label_font, fill=(255, 255, 255, 255))
-                    _ly += label_font.size + 7
-                for _line in result_lines:
-                    rw = d.textlength(_line, font=result_font)
-                    d.text((_clamped_text_x(x, rw), _ly), _line,
-                           font=result_font, fill=tokens["accent"] + (255,))
-                    _ly += result_font.size + 6
-        top = canvas.new_layer("titles")
-        td = ImageDraw.Draw(top.image, "RGBA")
-        if title_left:
-            td.text((90, 70), title_left.upper()[:40], font=fonts["title"], fill=(255, 255, 255, 255))
-        if title_right:
-            rw = td.textlength(title_right.upper(), font=fonts["title"])
-            td.text((WIDTH - 90 - rw, 70), title_right.upper()[:40], font=fonts["title"], fill=tokens["accent"] + (255,))
-        _footer(td, tokens)
-        return canvas.composite()
-
-    path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta("outcome_path", style_name, duration, sentence_index, scene_number,
-                       {"outcomes": len(outcomes)})
-
-
-# ---------------------------------------------------------------------------
-# 6. Stat comparison
-# ---------------------------------------------------------------------------
-
 def _stat_bar_width(value, max_value, local, max_w=1050, min_w=30):
     """Bar width for stat_comparison. Proportional to the value,
     with a minimum visible stub for small-but-nonzero values: at
@@ -1087,7 +981,6 @@ TEMPLATES = {
     "territory_map": territory_map,
     "editorial_panel": editorial_panel,
     "data_gauge": data_gauge,
-    "outcome_path": outcome_path,
     "stat_comparison": stat_comparison,
     "document_presentation": document_presentation,
     # Wave 2 (F4): the classified-file variant of the document
