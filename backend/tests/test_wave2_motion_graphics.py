@@ -146,7 +146,10 @@ def test_registry_covers_all_wave2_templates():
     # chart engine's mpl_line_chart / mpl_bar_chart.
     # P0 removal (2026-11-27): eleven templates removed
     # completely — 53 down to 42.
-    assert len(engine_templates.TEMPLATES) == 42
+    # Phase 5 core treatments (2026-11-27): +4 rebuilt treatments
+    # under new names (chronology / route / locator /
+    # relationship_network): 46.
+    assert len(engine_templates.TEMPLATES) == 46
 
 
 def test_wave2_templates_refuse_with_typed_reasons(tmp_path):

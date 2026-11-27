@@ -146,7 +146,10 @@ def test_registry_covers_all_wave1_templates():
         assert name in engine_templates.TEMPLATES, name
     # 15 pre-Wave-1 + closing_card + 17 Wave 1 registrations,
     # minus the eleven P0 removals: 42 registered templates.
-    assert len(engine_templates.TEMPLATES) == 42
+    # Phase 5 core treatments (2026-11-27): +4 rebuilt treatments
+    # under new names (chronology / route / locator /
+    # relationship_network): 46.
+    assert len(engine_templates.TEMPLATES) == 46
 
 
 def test_wave1_templates_refuse_with_typed_reasons(tmp_path):
