@@ -1,4 +1,5 @@
 name: build-image
+# Rebuild trigger: path-watched so image refreshes can be forced with a no-op edit (2026-11-27).
 on:
   workflow_dispatch:
   push:
