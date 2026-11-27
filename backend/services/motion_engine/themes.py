@@ -1,10 +1,14 @@
 """Theme design system (Master Directive Phase 6, AM-024;
 extended by Phase 9 with the founder theme vocabulary, §13.3).
 
-The documentary themes as DATA. Each theme is a full motion
--engine token set (the same shape services.motion_engine.styles
-produces) plus a `name`, so `resolve_style` accepts a theme dict
+Phase 5 (A5): this module is THE one typography/theme system
+for the motion engine. Each theme is a full motion-engine token
+set plus a `name`, so `resolve_style` accepts a theme dict
 directly and templates record the theme name as their style.
+services.motion_engine.styles is a thin alias layer over this
+module: its three legacy style names resolve through the
+LEGACY_THEME_MAP below, and there are no separate legacy token
+sets.
 
 Genre packs select the default theme through their `visual_theme`
 field. Pack values predate the six-theme vocabulary ("editorial",
@@ -21,7 +25,15 @@ behaviour and records that no theme applied; a theme is never
 invented for a pack that did not select one.
 """
 
-from services.motion_engine.styles import FONT, FONT_BOLD
+from pathlib import Path
+
+# The bundled DejaVu pair — no downloads, ever. Defined here (and
+# mirrored by styles.py for its existing importers) so this module
+# never imports the alias layer: styles imports themes, never the
+# reverse.
+_FONT_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
+FONT = _FONT_DIR / "DejaVuSans.ttf"
+FONT_BOLD = _FONT_DIR / "DejaVuSans-Bold.ttf"
 
 
 def _tokens(name, bg, surface, text, muted, accent, accent2,
