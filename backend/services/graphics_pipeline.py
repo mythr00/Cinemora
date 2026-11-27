@@ -2767,6 +2767,34 @@ def build_motion_graphics_assets(
             or short_title_for(target),
         }
 
+    def _assemble_tracked_annotation(target):
+        """Phase 6–7 (G2): tracked annotation is fed ONLY by the
+        scenario's recorded ``tracked_annotation`` contract —
+        {clip, anchor {x, y, w, h}, label} where the clip is a
+        real recorded file and the anchor is the region on its
+        first frame the label belongs to. Anything missing
+        declines; the tracker itself refuses an untrackable
+        anchor or an early-lost track."""
+        scenario = target.get("scenario") or {}
+        contract = scenario.get("tracked_annotation")
+        if not isinstance(contract, dict):
+            return None
+        clip = contract.get("clip")
+        anchor = contract.get("anchor")
+        label = clean_text(contract.get("label") or "")
+        if not clip or not os.path.exists(str(clip)):
+            return None
+        if not isinstance(anchor, dict) or not label:
+            return None
+        try:
+            anchor = {
+                key: float(anchor[key])
+                for key in ("x", "y", "w", "h")
+            }
+        except (KeyError, TypeError, ValueError):
+            return None
+        return {"clip": str(clip), "anchor": anchor, "label": label}
+
     def _assemble_molecular_diagram(target):
         scenario = target.get("scenario") or {}
         molecule = scenario.get("molecule")
@@ -2900,6 +2928,10 @@ def build_motion_graphics_assets(
         # scenario's recorded diagram contract — Director-only
         # for the same recorded-evidence reason.
         "labelled_diagram",
+        # Phase 6–7 (G2): tracked annotation is fed by the
+        # scenario's recorded tracked_annotation contract (a
+        # real clip + anchor) — Director-only likewise.
+        "tracked_annotation",
         # GitHub Skills Programme (2026-11-25): the Manim engine's
         # templates are Director-only for the same reason, plus a
         # cost discipline the others do not need — a Manim render
@@ -2958,6 +2990,8 @@ def build_motion_graphics_assets(
         "relationship_network": _assemble_relationship_network,
         # Phase 6–7 (D1).
         "labelled_diagram": _assemble_labelled_diagram,
+        # Phase 6–7 (G2).
+        "tracked_annotation": _assemble_tracked_annotation,
     }
 
     def _engine_duration_for(target):

@@ -349,3 +349,167 @@ def test_estimated_flag_without_ranges_rides_the_contract(tmp_path):
     assert inputs["uncertainty"]["estimated"] is True
     assert assets[0]["engine_metadata"]["inputs"]["estimated"] is True
     assert assets[0]["engine_metadata"]["inputs"]["uncertainty"] is False
+
+
+# ---------------------------------------------------------------------------
+# G2 — tracked annotation (genuine detect + track, Level 2)
+# ---------------------------------------------------------------------------
+
+import subprocess
+
+import numpy as np
+import pytest
+
+from services.motion_engine import tracking
+
+
+def _make_clip(path, visible_until=None, duration=2.0):
+    """A synthetic REAL clip, generated frame by frame: a
+    textured square (white with a black core — a solid patch
+    would be a degenerate template) moving rightwards across a
+    dark frame, optionally vanishing at `visible_until`
+    seconds. Written via a rawvideo pipe: drawbox expressions
+    are not per-frame in this ffmpeg build."""
+    import subprocess as _sp
+
+    from PIL import Image, ImageDraw
+
+    fps = 10
+    total = int(duration * fps)
+    proc = _sp.Popen(
+        ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo",
+         "-pix_fmt", "rgb24", "-s", "640x360", "-r", str(fps),
+         "-i", "-", "-an", "-c:v", "libx264", "-pix_fmt",
+         "yuv420p", str(path)],
+        stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+    for i in range(total):
+        t = i / fps
+        image = Image.new("RGB", (640, 360), (32, 32, 40))
+        if visible_until is None or t < visible_until:
+            d = ImageDraw.Draw(image)
+            x = int(20 + 80 * t)
+            d.rectangle([x, 150, x + 60, 210], fill=(255, 255, 255))
+            d.rectangle([x + 18, 168, x + 42, 192], fill=(0, 0, 0))
+        proc.stdin.write(image.tobytes())
+    proc.stdin.close()
+    proc.wait()
+    return path
+
+
+_ANCHOR = {"x": 20 / 640, "y": 150 / 360, "w": 60 / 640, "h": 60 / 360}
+
+
+def test_track_positions_follow_a_moving_patch():
+    frames = []
+    for i in range(12):
+        frame = np.zeros((120, 200), dtype=np.uint8)
+        x = 10 + i * 8
+        frame[40:70, x:x + 30] = 255
+        frame[50:60, x + 10:x + 20] = 0  # textured core
+        frames.append(frame)
+    centres, lost_at = tracking.track_positions(frames, (10, 40, 30, 30))
+    assert lost_at is None
+    xs = [c[0] for c in centres]
+    assert xs[-1] > xs[0] + 0.3
+    assert all(b >= a for a, b in zip(xs, xs[1:]))
+
+
+def test_track_positions_record_loss_when_patch_vanishes():
+    frames = []
+    for i in range(12):
+        frame = np.zeros((120, 200), dtype=np.uint8)
+        if i < 5:
+            frame[40:70, 10 + i * 8:40 + i * 8] = 255
+            frame[50:60, 20 + i * 8:30 + i * 8] = 0
+        frames.append(frame)
+    centres, lost_at = tracking.track_positions(frames, (10, 40, 30, 30))
+    assert lost_at is not None and lost_at <= 6
+    assert all(c is None for c in centres[lost_at:])
+
+
+def test_tracked_annotation_follows_the_square(tmp_path):
+    clip = _make_clip(tmp_path / "clip.mp4")
+    path, meta = tracking.render_tracked_annotation(
+        {"clip": str(clip), "anchor": _ANCHOR, "label": "Crane"},
+        "editorial", tmp_path / "out.mp4", duration=2.0)
+    assert path is not None
+    inputs = meta["inputs"]
+    assert inputs["track_lost_at"] is None
+    assert inputs["tracked_frames"] == inputs["source_frames"]
+    positions = inputs["positions"]
+    assert positions[-1][0] > positions[0][0] + 0.15
+
+
+def test_tracked_annotation_records_late_loss(tmp_path):
+    # The square vanishes at t=1.2s of 2s (frame ~12 of 20):
+    # late enough to render, and the loss is on the record.
+    clip = _make_clip(tmp_path / "clip.mp4", visible_until=1.2)
+    path, meta = tracking.render_tracked_annotation(
+        {"clip": str(clip), "anchor": _ANCHOR, "label": "Crane"},
+        "editorial", tmp_path / "out.mp4", duration=2.0)
+    assert path is not None
+    inputs = meta["inputs"]
+    assert inputs["track_lost_at"] is not None
+    assert inputs["tracked_frames"] == inputs["track_lost_at"]
+    assert inputs["positions"][inputs["track_lost_at"]] is None
+
+
+def test_tracked_annotation_refuses_early_loss(tmp_path):
+    # The square vanishes at t=0.2s (frame ~2 of 20): the track
+    # is lost almost immediately — refuse, never coast.
+    clip = _make_clip(tmp_path / "clip.mp4", visible_until=0.2)
+    path, meta = tracking.render_tracked_annotation(
+        {"clip": str(clip), "anchor": _ANCHOR, "label": "Crane"},
+        "editorial", tmp_path / "out.mp4", duration=2.0)
+    assert path is None
+    assert meta["reason"] == "track_lost"
+
+
+def test_tracked_annotation_refuses_featureless_anchor(tmp_path):
+    clip = _make_clip(tmp_path / "clip.mp4")
+    path, meta = tracking.render_tracked_annotation(
+        {"clip": str(clip),
+         "anchor": {"x": 0.7, "y": 0.05, "w": 0.1, "h": 0.1},
+         "label": "Nothing"},
+        "editorial", tmp_path / "out.mp4", duration=1.0)
+    assert path is None
+    assert meta["reason"] == "anchor_not_trackable"
+
+
+def test_tracked_annotation_refuses_missing_clip_and_label(tmp_path):
+    path, meta = tracking.render_tracked_annotation(
+        {"clip": str(tmp_path / "nope.mp4"), "anchor": _ANCHOR,
+         "label": "Crane"},
+        "editorial", tmp_path / "out.mp4", duration=1.0)
+    assert path is None and meta["reason"] == "no_clip"
+    clip = _make_clip(tmp_path / "clip.mp4")
+    path, meta = tracking.render_tracked_annotation(
+        {"clip": str(clip), "anchor": _ANCHOR, "label": ""},
+        "editorial", tmp_path / "out.mp4", duration=1.0)
+    assert path is None and meta["reason"] == "no_label"
+
+
+def test_tracked_annotation_renders_through_chain(tmp_path):
+    clip = _make_clip(tmp_path / "clip.mp4")
+    entries = [_entry(
+        "gm_0001", 1, 0, 1, "The crane moved across the yard.",
+        ["tracked_annotation"],
+        scenario={"tracked_annotation": {
+            "clip": str(clip), "anchor": _ANCHOR, "label": "Crane",
+        }},
+    )]
+    assets = _build(tmp_path, entries)
+    assert len(assets) == 1
+    record = assets[0]
+    assert record["template"] == "tracked_annotation"
+    inputs = record["engine_metadata"]["inputs"]
+    assert inputs["track_lost_at"] is None
+    assert inputs["positions"][-1][0] > inputs["positions"][0][0]
+
+
+def test_tracked_annotation_chain_refuses_without_contract(tmp_path):
+    entries = [_entry(
+        "gm_0001", 1, 0, 1, "The crane moved across the yard.",
+        ["tracked_annotation"], scenario={},
+    )]
+    assert _build(tmp_path, entries) == []

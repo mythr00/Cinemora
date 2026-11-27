@@ -881,10 +881,18 @@ def labelled_diagram(data, style, out_path, duration=5.0,
          "positions": "recorded" if recorded_positions else "ordered_grid"})
 
 
+# Phase 6–7 (G2): tracked annotation — a genuine detect+track
+# template (services.motion_engine.tracking), registered here
+# with the v5 family. It renders over a REAL clip, following a
+# recorded anchor region frame by frame; a lost track is
+# recorded, never faked.
+from services.motion_engine import tracking as _tracking  # noqa: E402
+
 TEMPLATES.update({
     "chronology": chronology,
     "route": route,
     "locator": locator,
     "relationship_network": relationship_network,
     "labelled_diagram": labelled_diagram,
+    "tracked_annotation": _tracking.render_tracked_annotation,
 })

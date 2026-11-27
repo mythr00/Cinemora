@@ -55,7 +55,7 @@ def test_registry_covers_all_fifteen_templates():
     # the removed names stay absent, asserted below unchanged.
     # Phase 6-7 (D1): +1 labelled_diagram -> 47.
     names = set(templates.TEMPLATES) | set(templates_v2.V2_TEMPLATES)
-    assert len(names) == 45
+    assert len(names) == 46
     assert "manim_line_chart" in names and "manim_bar_chart" in names
     assert "mpl_line_chart" in names and "mpl_bar_chart" in names
     for name in (

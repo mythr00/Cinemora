@@ -726,6 +726,14 @@ def _template_candidates(row, outcome, pack, bible=None, problem=None):
     # parts) — the same recorded-contract discipline.
     if _recorded_diagram_parts(scenario):
         candidates.append("labelled_diagram")
+    # Phase 6–7 (G2): tracked annotation is proposed ONLY when
+    # the scenario records its tracked_annotation contract (a
+    # real clip + anchor region + label).
+    _tracked = scenario.get("tracked_annotation")
+    if isinstance(_tracked, dict) and _tracked.get("clip") \
+            and isinstance(_tracked.get("anchor"), dict) \
+            and _tracked.get("label"):
+        candidates.append("tracked_annotation")
     if isinstance(scenario.get("density_points"), list) \
             and len(scenario["density_points"]) >= 3:
         candidates.append("heatmap")

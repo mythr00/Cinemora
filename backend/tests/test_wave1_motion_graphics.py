@@ -150,8 +150,9 @@ def test_registry_covers_all_wave1_templates():
     # under new names (chronology / route / locator /
     # relationship_network): 46. Phase 6-7 (D1): +1
     # labelled_diagram: 47; (G2): -2 impostors
-    # hud_overlay/holographic_panel: 45.
-    assert len(engine_templates.TEMPLATES) == 45
+    # hud_overlay/holographic_panel: 45; +1
+    # tracked_annotation (G2 bridge): 46.
+    assert len(engine_templates.TEMPLATES) == 46
 
 
 def test_wave1_templates_refuse_with_typed_reasons(tmp_path):
