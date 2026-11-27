@@ -148,8 +148,8 @@ def test_legacy_analyze_requires_auth_and_enqueues_pipeline(
     project_id = _create_legacy_project(client)
     calls = []
 
-    def fake_enqueue(pid, script):
-        calls.append((pid, script))
+    def fake_enqueue(pid, script, options=None):
+        calls.append((pid, script, options))
         return "job-ia08-1"
 
     # main imported the name directly, so patch it where it is used.
@@ -165,7 +165,10 @@ def test_legacy_analyze_requires_auth_and_enqueues_pipeline(
     body = ok.json()
     assert body["status"] == "pipeline_queued"
     assert body["job_id"] == "job-ia08-1"
-    assert calls == [(project_id, "IA-08 legacy script.")]
+    # Redesign programme (2026-11-27, F4): the legacy enqueue now
+    # carries the project's stored options ({} here — the legacy
+    # creation stored none), exactly as the v1 path does.
+    assert calls == [(project_id, "IA-08 legacy script.", {})]
     # Honest deprecation signalling on the response.
     assert ok.headers.get("deprecation") == "true"
     assert "/api/v1/" in (ok.headers.get("x-deprecated") or "")

@@ -121,8 +121,8 @@ def _a_v1_project(client, a):
 def _stub_enqueue(monkeypatch):
     calls = []
 
-    def fake_enqueue(pid, script):
-        calls.append((pid, script))
+    def fake_enqueue(pid, script, options=None):
+        calls.append((pid, script, options))
         return "job-legacy-isolation-1"
 
     monkeypatch.setattr(main, "enqueue_full_pipeline", fake_enqueue)
@@ -196,7 +196,12 @@ def test_legacy_owner_read_status_enqueue_still_works(
     assert queued.status_code == 200, queued.text
     assert queued.json()["status"] == "pipeline_queued"
     assert queued.json()["job_id"] == "job-legacy-isolation-1"
-    assert calls == [(pid, "Owner A script. One sentence. Another one.")]
+    # Redesign programme (2026-11-27, F4): the enqueue carries
+    # the project's stored options dict alongside id + script.
+    assert len(calls) == 1
+    assert calls[0][0] == pid
+    assert calls[0][1] == "Owner A script. One sentence. Another one."
+    assert isinstance(calls[0][2], dict)
 
 
 # ---------------------------------------------------------------------
