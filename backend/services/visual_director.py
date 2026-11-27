@@ -355,19 +355,11 @@ def _template_candidates(row, outcome, pack):
         candidates += [
             "bubble_chart", "animated_dashboard", "holographic_panel"]
     place = scenario.get("place") or scenario.get("location")
-    if place:
-        candidates.append("territory_map")
-        # F3 map overlays, each on its recorded cue.
-        if any(m in lowered for m in ("border", "boundary", "frontier")):
-            candidates.append("border_map")
-        if features["has_places"]:
-            candidates.append("route_map")
-        if any(m in lowered for m in (
-                "troops", "army", "offensive", "invasion", "advanced on")):
-            candidates.append("military_map")
-        if any(m in lowered for m in (
-                "trade", "shipping", "cargo", "exports", "port")):
-            candidates.append("trade_route_map")
+    # (P0 removal, 2026-11-27: the F3 map family candidacy —
+    # territory_map + border/route/trade_route/military variants
+    # — removed with the renderers, completely. The geography
+    # dataset survives; `place` is still read below for the
+    # satellite_zoom cue.)
     # F5 schematic variants: only on caller-recorded layers.
     layers = scenario.get("layers")
     if isinstance(layers, list) and layers:

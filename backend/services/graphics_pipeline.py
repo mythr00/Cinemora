@@ -1943,41 +1943,6 @@ def build_motion_graphics_assets(
     # None means the template is not attempted for this target.
     # -----------------------------------------------------
 
-    def _assemble_territory_map(target):
-        """territory_map data from the target's recorded place:
-        the scenario's place (or the sentence record's first
-        location) must resolve EXACTLY to a country in the motion
-        engine's geography dataset — an unresolved place assembles
-        nothing (the template itself refuses invented geography)."""
-        scenario = target.get("scenario") or {}
-        sentence = _sentences_by_key.get(
-            (target["scene_number"], target["sentence_index"]), {}
-        )
-        locations = sentence.get("locations") or []
-        place = clean_text(
-            scenario.get("place")
-            or scenario.get("location")
-            or (locations[0] if locations else "")
-            or ""
-        )
-        if not place:
-            return None
-        try:
-            from services.motion_engine import geography
-
-            names = geography.country_names()
-        except Exception:
-            return None
-        match = next(
-            (n for n in names if n.lower() == place.lower()), None
-        )
-        if match is None:
-            return None
-        return {
-            "regions": [{"country": match, "label": match}],
-            "title": place,
-        }
-
     # -----------------------------------------------------
     # Wave 1 assemblers (Motion Graphics Engine plan §C).
     # Every assembler returns engine data built ONLY from the
@@ -2216,27 +2181,6 @@ def build_motion_graphics_assets(
             if value:
                 return value
         return None
-
-    def _map_variant(name):
-        def _assemble(target):
-            data = _assemble_territory_map(target)
-            if data is None:
-                return None
-            data = dict(data)
-            data["variant"] = name
-            # Recorded movement data rides on the scenario when
-            # the analysis recorded it (projected [lon, lat]
-            # points — the geography module's own contract).
-            scenario = target.get("scenario") or {}
-            if scenario.get("route_points"):
-                data["routes"] = [{
-                    "points": scenario["route_points"],
-                    "label": clean_text(scenario.get("event") or ""),
-                }]
-            if scenario.get("fronts"):
-                data["fronts"] = scenario["fronts"]
-            return data
-        return _assemble
 
     def _section_variant(name):
         def _assemble(target):
@@ -2609,9 +2553,37 @@ def build_motion_graphics_assets(
             "weight_label": clean_text(
                 scenario.get("density_label") or ""),
         }
-        base = _assemble_territory_map(target)
-        if base is not None:
-            data["regions"] = base["regions"]
+        # Optional base regions from the target's recorded place,
+        # resolved EXACTLY against the geography dataset (the
+        # dataset survives the P0 removal; only the map RENDERERS
+        # were removed). An unresolved place adds no regions —
+        # geography is never invented.
+        _place = clean_text(
+            scenario.get("place")
+            or scenario.get("location")
+            or ""
+        )
+        if not _place:
+            _sentence = _sentences_by_key.get(
+                (target["scene_number"], target["sentence_index"]), {}
+            )
+            _locations = _sentence.get("locations") or []
+            _place = clean_text(_locations[0] if _locations else "")
+        if _place:
+            try:
+                from services.motion_engine import geography
+
+                _match = next(
+                    (n for n in geography.country_names()
+                     if n.lower() == _place.lower()),
+                    None,
+                )
+            except Exception:
+                _match = None
+            if _match is not None:
+                data["regions"] = [
+                    {"country": _match, "label": _match}
+                ]
         return data
 
     def _assemble_classified_file(target):
@@ -2832,7 +2804,6 @@ def build_motion_graphics_assets(
     #: no production assembler (see the Phase 6 proposal's audit
     #: table for the per-template disposition).
     _ASSEMBLERS = {
-        "territory_map": _assemble_territory_map,
         # Wave 1 (Motion Graphics Engine plan §C).
         "line_chart": _assemble_line_chart,
         # GitHub Skills Programme: the Manim line chart consumes
@@ -2845,10 +2816,6 @@ def build_motion_graphics_assets(
         # may also serve the undirected fallback chain.
         "mpl_line_chart": _assemble_line_chart,
         "pie_chart": _assemble_pie_chart,
-        "border_map": _map_variant("border"),
-        "route_map": _map_variant("route"),
-        "trade_route_map": _map_variant("trade"),
-        "military_map": _map_variant("military"),
         "exploded_view": _section_variant("exploded"),
         "mechanical_cutaway": _section_variant("cutaway"),
         "blueprint_section": _section_variant("blueprint"),

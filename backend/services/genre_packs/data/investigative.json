@@ -181,8 +181,7 @@
    "hud_overlay": 1,
    "before_after": 1,
    "layered_reveal": 1,
-   "object_labels": 1,
-   "outcome_path": 2
+   "object_labels": 1
   }
  },
  "visual_theme": "editorial",

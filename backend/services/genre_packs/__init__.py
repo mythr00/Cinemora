@@ -175,10 +175,9 @@ PROFILE_CATEGORIES = (
 #: the templates with a production assembler in graphics_pipeline's
 #: targeted-graphics chain. Naming a registered-but-unassembled
 #: template is a validation failure, not dead configuration — the
-#: MG-104 failure mode, linted from day one. Phase 6 (AM-010)
-#: landed the territory_map
-#: assembler; Wave 1 of the Motion Graphics Engine plan landed
-#: the rest of the assembled set below — including
+#: MG-104 failure mode, linted from day one. Wave 1 of the
+#: Motion Graphics Engine plan landed
+#: the assembled set below — including
 #: document_presentation, whose assembler exists but yields a
 #: render ONLY for a genuine retrieved document asset with
 #: recorded provenance (without one the attempt records the
@@ -189,10 +188,8 @@ PROFILE_CATEGORIES = (
 #: schematic family instead — per the Phase 6 audit table.
 ASSEMBLED_TEMPLATES = frozenset({
     "bar_chart", "data_gauge", "ring_badges", "stat_comparison",
-    "territory_map",
     # Wave 1 (Motion Graphics Engine plan §C).
     "line_chart", "pie_chart",
-    "border_map", "route_map", "trade_route_map", "military_map",
     "exploded_view", "mechanical_cutaway", "blueprint_section",
     "newspaper_montage", "profile_reveal",
     "document_presentation",
