@@ -177,8 +177,8 @@ def _fake_renders(monkeypatch):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\x00" * 2048)
 
-    monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic",
-                        fake_write)
+    # P0 removal (2026-11-27): the native stat renderer this
+    # fixture used to fake is removed; the validator seam remains.
     monkeypatch.setattr(
         graphics_pipeline, "validate_graphic_output",
         lambda path, expected_duration=None, **kwargs: {
@@ -190,8 +190,12 @@ def _fake_renders(monkeypatch):
 
 def test_end_to_end_verified_graphic_from_producer(tmp_path, monkeypatch):
     """The jobs call shape, end to end: producer -> Director ->
-    manifest -> graphics pipeline -> a graphic stamped
-    verified_asset_metadata with the producer's evidence_ref."""
+    manifest -> graphics pipeline. P0 removal (2026-11-27): the
+    verified-data path used to end in a native stat graphic
+    stamped verified_asset_metadata; that family is removed
+    completely, so the Director still stamps the entry (below)
+    but the pipeline produces NO graphic from it — the verified
+    display is never promoted onto a card."""
     _fake_renders(monkeypatch)
     processed = _processed([_asset()])
     outcomes = _outcomes(processed)
@@ -219,11 +223,8 @@ def test_end_to_end_verified_graphic_from_producer(tmp_path, monkeypatch):
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced", manifest=manifest,
     )
-    assert len(assets) == 1
-    asset = assets[0]
-    assert asset["fact_basis"] == graphics_pipeline.FACT_BASIS_ASSET
-    assert asset["stat_display"] == "140 FEET"
-    assert asset["evidence_ref"]["asset_id"] == "cand_survey_1"
+    assert assets == []
+    assert all("stat_display" not in a for a in assets)
 
 
 def test_end_to_end_without_fact_stays_script_claim(tmp_path, monkeypatch):

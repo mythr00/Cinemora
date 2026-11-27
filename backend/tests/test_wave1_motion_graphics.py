@@ -26,12 +26,17 @@ from services import genre_packs, graphics_pipeline, visual_director
 from services.motion_engine import templates as engine_templates
 from services.motion_engine import themes as engine_themes
 
+# P0 removal (2026-11-27): six Wave 1 registrations were removed
+# completely — the map family (border_map, route_map,
+# trade_route_map, military_map), red_string_board and
+# photo_parallax. They are pinned ABSENT in
+# tests/test_p0_removal_pins.py; the surviving Wave 1 vocabulary
+# is what this list names now.
 WAVE1_TEMPLATES = [
     "line_chart", "pie_chart",
-    "border_map", "route_map", "trade_route_map", "military_map",
     "exploded_view", "mechanical_cutaway", "blueprint_section",
-    "red_string_board", "newspaper_montage", "profile_reveal",
-    "photo_parallax", "text_overlay", "text_highlight",
+    "newspaper_montage", "profile_reveal",
+    "text_overlay", "text_highlight",
     "archival_title",
 ]
 
@@ -139,8 +144,9 @@ def _stub_validator(monkeypatch):
 def test_registry_covers_all_wave1_templates():
     for name in WAVE1_TEMPLATES + ["document_presentation"]:
         assert name in engine_templates.TEMPLATES, name
-    # 15 pre-Wave-1 + closing_card + 17 Wave 1 registrations.
-    assert len(engine_templates.TEMPLATES) >= 31
+    # 15 pre-Wave-1 + closing_card + 17 Wave 1 registrations,
+    # minus the eleven P0 removals: 42 registered templates.
+    assert len(engine_templates.TEMPLATES) == 42
 
 
 def test_wave1_templates_refuse_with_typed_reasons(tmp_path):
@@ -150,13 +156,10 @@ def test_wave1_templates_refuse_with_typed_reasons(tmp_path):
                        "insufficient_points"),
         "pie_chart": ({"items": [{"label": "a", "value": 0}]},
                       "no_numeric_items"),
-        "military_map": ({"regions": [{"country": "France"}]},
-                         "no_movement_data"),
         "newspaper_montage": ({"articles": []}, "no_articles"),
         "profile_reveal": ({"title": "X"}, "no_photo"),
         "archival_title": ({}, "no_title"),
         "text_highlight": ({}, "no_text"),
-        "photo_parallax": ({}, "no_photo"),
         "document_presentation": (
             {"image": str(tmp_path / "missing.jpg")},
             "document_image_missing"),
@@ -409,27 +412,14 @@ def test_investigation_variants_through_pipeline(tmp_path):
     by_template = {}
     for asset in assets:
         by_template.setdefault(asset.get("template"), []).append(asset)
-    for name in ("newspaper_montage", "profile_reveal",
-                 "photo_parallax"):
+    for name in ("newspaper_montage", "profile_reveal"):
         assert len(by_template.get(name) or []) == 1, name
         assert by_template[name][0]["validation"]["passed"]
-    # PIN CHANGED (MG-04, Motion Graphics audit): red_string_board
-    # no longer renders for this beat. The board's photos carry no
-    # recorded labels, and strings between unlabelled photos
-    # fabricate relationships — the family now declines until a
-    # label source covers every connected node.
+    # P0 removal (2026-11-27): photo_parallax and red_string_board
+    # are removed completely — entries naming them produce
+    # nothing (they are not substituted with another treatment).
+    assert not by_template.get("photo_parallax")
     assert not by_template.get("red_string_board")
-    # Full-bleed photo treatment: no theme background is visible
-    # by design (the photo fills the frame; theme tokens ride the
-    # title band), so the check is size + non-blank only.
-    frame = _frame(by_template["photo_parallax"][0]["file_path"],
-                   tmp_path / "par.png", at=1.5)
-    assert frame.size == (1920, 1080)
-    px = list(frame.resize((64, 36)).getdata())
-    means = [sum(c) / 3 for c in px]
-    mean = sum(means) / len(means)
-    variance = sum((m - mean) ** 2 for m in means) / len(means)
-    assert variance > 25, "parallax frame looks blank"
 
 
 # ---------------------------------------------------------------------------
@@ -491,14 +481,18 @@ def test_director_registers_every_wave1_template():
     assert "pie_chart" in _candidates(
         "Road moved 60 units while rail moved 25 units.")
     place = {"place": "France"}
-    assert "border_map" in _candidates(
-        "The border was closed at dawn.", scenario=place)
-    assert "route_map" in _candidates(
-        "They drove from France to Germany.", scenario=place)
-    assert "military_map" in _candidates(
-        "The army advanced on the capital.", scenario=place)
-    assert "trade_route_map" in _candidates(
-        "Trade through the port doubled.", scenario=place)
+    # P0 removal (2026-11-27): the map family is removed
+    # completely — place/movement cues must NEVER propose it.
+    for removed in ("border_map", "route_map", "military_map",
+                    "trade_route_map", "territory_map"):
+        assert removed not in _candidates(
+            "The border was closed at dawn.", scenario=place), removed
+        assert removed not in _candidates(
+            "They drove from France to Germany.", scenario=place), removed
+        assert removed not in _candidates(
+            "The army advanced on the capital.", scenario=place), removed
+        assert removed not in _candidates(
+            "Trade through the port doubled.", scenario=place), removed
     layers = {"layers": [{"label": "Deck", "depth": 1}]}
     for name in ("exploded_view", "mechanical_cutaway",
                  "blueprint_section"):
@@ -515,10 +509,14 @@ def test_director_registers_every_wave1_template():
     assert "profile_reveal" in _candidates(
         "She was last seen in July.",
         scene_has_identity_photo=True)
-    assert "red_string_board" in _candidates(
+    # P0 removal: the board and parallax candidacies are gone.
+    assert "red_string_board" not in _candidates(
         "Two photographs pinned the timeline.",
         scene_photo_count=2)
-    assert "photo_parallax" in _candidates(
+    assert "evidence_board" not in _candidates(
+        "Two photographs pinned the timeline.",
+        scene_photo_count=2)
+    assert "photo_parallax" not in _candidates(
         "The van crossed the desert.", scene_photo_count=1)
     assert "text_overlay" in _candidates(
         "The van crossed the desert.", scene_photo_count=1)
@@ -549,7 +547,14 @@ def test_lower_third_reachable_on_all_five_packs():
 
 
 # ---------------------------------------------------------------------------
-# §D.4 — T5 guarantee widened by exactly one step
+# §D.4 — T5 guarantee REMOVED (P0 rewiring, 2026-11-27): the
+# guarantee no longer renders anything. A beat no surviving
+# family serves ends in exactly one of two terminal outcomes:
+# footage fallback (recorded by jobs) or the typed
+# terminal_graphics_decline on its skip/outcome records. These
+# two tests replace the pre-removal floor pins
+# (test_t5_guarantee_serves_timeline_recap /
+# test_t5_guarantee_serves_outcome_path_before_card).
 # ---------------------------------------------------------------------------
 
 def _guarantee_data(events):
@@ -565,29 +570,8 @@ def _guarantee_data(events):
     }
 
 
-def test_t5_guarantee_serves_timeline_recap(tmp_path, monkeypatch):
+def test_t5_starved_beats_decline_no_timeline_recap(tmp_path, monkeypatch):
     _stub_validator(monkeypatch)
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_timeline_graphic",
-        lambda path, *a, **k: (
-            Path(path).parent.mkdir(parents=True, exist_ok=True),
-            Path(path).write_bytes(b"\x00" * 2048),
-            "proportional",
-        )[-1],
-    )
-
-    def fake_comparison(data, style, out_path, duration=5.0,
-                        sentence_index=None, scene_number=None):
-        path = Path(out_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"\x00" * 4096)
-        return str(path), {
-            "generator": "motion_engine",
-            "template": "stat_comparison", "generated": True,
-        }
-
-    monkeypatch.setitem(
-        engine_templates.TEMPLATES, "stat_comparison", fake_comparison)
     events = [
         {"when": "1979", "what": "Design changed"},
         {"when": "July 1981", "what": "Walkways collapse"},
@@ -605,37 +589,40 @@ def test_t5_guarantee_serves_timeline_recap(tmp_path, monkeypatch):
             ],
         }],
     }
-    targets = [
-        {"scene_number": 1, "sentence_index": 0, "sentence_number": 1,
-         "text": "In 1981 the load was 60 tons, up from 25 tons "
-                 "in 1979.",
-         "family_candidates": ["stat"]},
-        {"scene_number": 1, "sentence_index": 1, "sentence_number": 2,
-         "text": "In August 1981, the skywalk fell.",
-         "family_candidates": []},
+    entries = [
+        _entry("w1_0050", 1, 0, 1,
+               "In 1981 the load was 60 tons, up from 25 tons "
+               "in 1979.", templates=[]),
+        _entry("w1_0051", 1, 1, 2,
+               "In August 1981, the skywalk fell.", templates=[]),
     ]
+    entries[0]["family_candidates"] = ["stat"]
+    entries[1]["family_candidates"] = []
     assets = graphics_pipeline.build_motion_graphics_assets(
         _guarantee_data(events) | data, tmp_path, mode="balanced",
-        targets=targets,
+        manifest=_manifest(entries),
     )
-    recaps = [
-        a for a in assets
-        if a.get("family") == "timeline"
-        and a.get("coverage_guarantee") is True
-    ]
-    assert len(recaps) == 1
-    assert recaps[0]["sentence_number"] == 2
+    # No recap, no card, no graphic of any kind: the bible's
+    # events no longer buy a chronology graphic for a starved
+    # beat, and the removed stat family serves nothing either.
+    assert assets == []
     manifest = json.loads(
         (tmp_path / "motion_graphics.json").read_text())
     by_sentence = {
         o["sentence_number"]: o
         for o in manifest["targets"]["outcomes"]
     }
-    assert by_sentence[2]["reason"] == (
-        "coverage_guarantee:timeline_recap")
+    for number in (1, 2):
+        assert by_sentence[number]["outcome"] == "skipped"
+        assert by_sentence[number]["terminal_decline"]["reason"] == (
+            "terminal_graphics_decline")
+    assert not [
+        o for o in manifest["targets"]["outcomes"]
+        if str(o.get("reason") or "").startswith("coverage_guarantee")
+    ]
 
 
-def test_t5_guarantee_serves_outcome_path_before_card(tmp_path):
+def test_t5_sequence_beat_declines_without_outcome_path(tmp_path):
     events = [
         {"when": "1979", "what": "Design changed"},
         {"when": "July 1981", "what": "Walkways collapse"},
@@ -651,15 +638,15 @@ def test_t5_guarantee_serves_outcome_path_before_card(tmp_path):
     entry = _entry("w1_0040", 1, 0, 1, text, templates=[])
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced", manifest=_manifest([entry]))
-    paths = [a for a in assets if a.get("template") == "outcome_path"]
-    assert len(paths) == 1
-    assert paths[0]["coverage_guarantee"] is True
-    assert not [a for a in assets
-                if a.get("template") == "closing_card"]
+    # The sequence-shaped beat is NOT served by outcome_path and
+    # NOT by a closing card — both are removed completely.
+    assert assets == []
     manifest = json.loads(
         (tmp_path / "motion_graphics.json").read_text())
     outcome = manifest["targets"]["outcomes"][0]
-    assert outcome["reason"] == "coverage_guarantee:outcome_path"
+    assert outcome["outcome"] == "skipped"
+    assert outcome["terminal_decline"]["reason"] == (
+        "terminal_graphics_decline")
 
 
 # ---------------------------------------------------------------------------
@@ -668,10 +655,6 @@ def test_t5_guarantee_serves_outcome_path_before_card(tmp_path):
 
 def test_template_level_variety_rotates_repeat(tmp_path, monkeypatch):
     _stub_validator(monkeypatch)
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_stat_graphic",
-        lambda path, *a, **k: Path(path).write_bytes(b"\x00" * 2048),
-    )
 
     def fake_template(name):
         def render(data, style, out_path, duration=5.0,

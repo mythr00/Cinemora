@@ -426,27 +426,10 @@ def test_retimed_graphic_shows_its_whole_sequence(tmp_path):
     assert tail[2] > 150 and tail[0] < 100  # blue, not red
 
 
-def test_timeline_label_rows_separate_clustered_nodes():
-    positions = [190.0, 360.0, 530.0, 700.0, 870.0, 1040.0]
-    rows = gp._timeline_label_rows(positions, close_distance=400.0)
-    for a, b in zip(rows, rows[1:]):
-        assert a != b
-
-
-def test_timeline_graphic_renders_all_events(tmp_path):
-    events = [
-        {"when": "summer 2021", "what": "Gabby Petito and Brian Laundrie traveled across America in a white van."},
-        {"when": "July 2021", "what": "Gabby Petito set out from Blue Point on a four-month journey."},
-        {"when": "August 12, 2021", "what": "Police in Moab, Utah, stopped the van and separated the couple."},
-        {"when": "late August 2021", "what": "The van was seen at the Spread Creek camping area."},
-        {"when": "August 30, 2021", "what": "The last text was sent from Gabby's phone."},
-        {"when": "September 1, 2021", "what": "Brian Laundrie arrived home in Florida without Gabby."},
-    ]
-    out = tmp_path / "timeline.mp4"
-    mode = gp._render_timeline_graphic(out, events, duration=6.0)
-    assert mode in ("proportional", "even_fallback")
-    info = renderer.probe_media(str(out))
-    assert info is not None and info["duration"] == pytest.approx(6.0, abs=0.3)
+# P0 removal (2026-11-27): the two timeline tests here
+# (label-row separation, full timeline render) are deleted —
+# the native timeline renderer and its layout helpers are
+# removed completely (R1).
 
 
 @pytest.mark.parametrize("size", ["720x1280", "960x720"])

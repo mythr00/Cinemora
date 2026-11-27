@@ -849,31 +849,16 @@ def _graphics_data():
 
 
 def _stub_graphics(monkeypatch):
+    # P0 removal (2026-11-27): this fixture used to also stub a
+    # fake closing_card floor template and the native stat
+    # renderer; both are removed completely. Only the validator
+    # seam remains.
     monkeypatch.setattr(
         graphics_pipeline, "validate_graphic_output",
         lambda path, expected_duration=None, **kwargs: {
             "passed": True, "failure_kind": None, "detail": "",
             "checks": {}, "probe": None,
         },
-    )
-    from services.motion_engine import templates as engine_templates
-
-    def fake_card(data, style, out_path, duration=5.0,
-                  sentence_index=None, scene_number=None):
-        path = Path(out_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"\x00" * 4096)
-        return str(path), {
-            "generator": "motion_engine", "template": "closing_card",
-            "generated": True,
-        }
-
-    monkeypatch.setitem(
-        engine_templates.TEMPLATES, "closing_card", fake_card
-    )
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_stat_graphic",
-        lambda path, *a, **k: Path(path).write_bytes(b"\x00" * 2048),
     )
 
 
@@ -898,16 +883,16 @@ def _manifest_entry(manifest_id, scene, index, number, text, **extra):
     return entry
 
 
-def test_directed_but_refused_target_served_by_floor(
+def test_directed_but_refused_target_declines(
     tmp_path, monkeypatch
 ):
-    """Run 11 sentences 9/10: a Director-directed manifest entry
-    whose chain refuses it (the schematic stage finds no labels)
-    used to stay skipped because the floor served only
-    undirected targets. The direction is a preference order, not
-    a veto: the floor serves the beat, and the directed refusal
-    stands recorded in graphic_failures, superseded by the
-    guarantee."""
+    """P0 rewiring (2026-11-27) replaces the run-11 floor pin:
+    a Director-directed manifest entry whose chain refuses it
+    (the schematic stage finds no labels) used to be served by
+    the closing-card floor, its refusal superseded by the
+    guarantee. The floor is removed completely — the beat is
+    skipped with the typed terminal decline and the directed
+    refusal stands recorded, superseded by nothing."""
     _stub_graphics(monkeypatch)
     entry = _manifest_entry(
         "gm_0010", 3, 1, 10, "They drove on through the desert town."
@@ -916,22 +901,24 @@ def test_directed_but_refused_target_served_by_floor(
     assets = graphics_pipeline.build_motion_graphics_assets(
         _graphics_data(), tmp_path, mode="balanced", manifest=manifest,
     )
-    cards = [a for a in assets if a["graphic_type"] == "closing_card"]
-    assert len(cards) == 1
-    assert cards[0]["manifest_id"] == "gm_0010"
-    assert cards[0]["coverage_guarantee"] is True
-    assert cards[0]["sentence_number"] == 10
+    assert assets == []
     written = json.loads((tmp_path / "motion_graphics.json").read_text())
-    assert written["targets"]["skipped"] == []
-    superseded = [
-        f for f in written["graphic_failures"]
-        if f.get("superseded_by") == "coverage_guarantee:closing_card"
-    ]
-    assert len(superseded) == 1
-    assert superseded[0]["reason"] in (
+    assert len(written["targets"]["skipped"]) == 1
+    skip = written["targets"]["skipped"][0]
+    assert skip["sentence_number"] == 10
+    assert skip["reason"] in (
         "no_schematic_labels", "no_schematic_motif"
     )
-    assert superseded[0]["sentence_number"] == 10
+    assert skip["terminal_decline"]["reason"] == (
+        "terminal_graphics_decline"
+    )
+    assert not [
+        f for f in written["graphic_failures"]
+        if f.get("superseded_by")
+    ]
+    outcome = written["targets"]["outcomes"][0]
+    assert outcome["outcome"] == "skipped"
+    assert outcome["terminal_decline"] == skip["terminal_decline"]
 
 
 def test_unmanifested_uncovered_beat_enters_graphics_chain(
@@ -942,8 +929,10 @@ def test_unmanifested_uncovered_beat_enters_graphics_chain(
     retrieval left uncovered. The caller's target for sentence
     12 used to be discarded when a manifest existed, so the beat
     never entered the chain and its graphics_outcome stayed
-    null. It is now appended as an undirected target and served
-    by the floor; the manifested beat is not duplicated."""
+    null. It is appended as an undirected target (that behaviour
+    survives the P0 rewiring); P0 changes only the terminal
+    outcome — no floor serves either beat now, so both decline
+    with the typed terminal decline and neither is duplicated."""
     _stub_graphics(monkeypatch)
     entry = _manifest_entry(
         "gm_0022", 7, 0, 22,
@@ -973,20 +962,14 @@ def test_unmanifested_uncovered_beat_enters_graphics_chain(
         _graphics_data(), tmp_path, mode="balanced",
         targets=targets, manifest=manifest,
     )
-    served = {
-        a["sentence_number"] for a in assets
-        if a["graphic_type"] == "closing_card"
-    }
-    assert served == {22, 12}
-    card12 = [
-        a for a in assets if a["sentence_number"] == 12
-    ][0]
-    assert card12.get("manifest_id") is None
-    assert card12["coverage_guarantee"] is True
+    assert assets == []
     written = json.loads((tmp_path / "motion_graphics.json").read_text())
     outcomes = written["targets"]["outcomes"]
     by_sentence = {o["sentence_number"]: o for o in outcomes}
     assert set(by_sentence) == {22, 12}
-    assert by_sentence[12]["outcome"] == "generated"
-    assert by_sentence[22]["outcome"] == "generated"
-    assert written["targets"]["skipped"] == []
+    for number in (22, 12):
+        assert by_sentence[number]["outcome"] == "skipped"
+        assert by_sentence[number]["terminal_decline"]["reason"] == (
+            "terminal_graphics_decline"
+        )
+    assert len(written["targets"]["skipped"]) == 2

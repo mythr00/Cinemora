@@ -28,6 +28,7 @@ Seams exercised:
 """
 
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -182,17 +183,29 @@ def _manifest_entry(manifest_id, index, number, text):
 def test_graphics_failure_is_a_recorded_skip_not_a_dead_stage(
     tmp_path, monkeypatch,
 ):
+    """P0 removal rewrite (2026-11-27): the original drove a
+    flaky native stat renderer and pinned the run-10 closing-card
+    floor covering the failed beat. Both are removed. The same
+    reliability contract now runs on a surviving engine template:
+    a renderer that raises on the first entry does not kill the
+    stage — the second entry still generates, the first entry's
+    rendering_failure is RECORDED, and its outcome is a skip with
+    the typed terminal decline (no floor covers it)."""
     calls = {"count": 0}
 
-    def flaky_write(path, *args, **kwargs):
+    def flaky_template(data, style, out_path, **kwargs):
         calls["count"] += 1
         if calls["count"] == 1:
             raise RuntimeError("renderer exploded")
+        path = Path(out_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\x00" * 2048)
+        return str(path), {"template": "data_gauge", "generated": True}
 
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_stat_graphic", flaky_write
+    from services.motion_engine import templates as engine_templates
+
+    monkeypatch.setitem(
+        engine_templates.TEMPLATES, "data_gauge", flaky_template
     )
     monkeypatch.setattr(
         graphics_pipeline, "validate_graphic_output",
@@ -201,45 +214,48 @@ def test_graphics_failure_is_a_recorded_skip_not_a_dead_stage(
             "checks": {}, "probe": None,
         },
     )
+
+    def _entry(manifest_id, index, number, text_):
+        return {
+            "manifest_id": manifest_id,
+            "target": {"scene_number": 1, "sentence_index": index,
+                       "sentence_number": number},
+            "text": text_, "scenario": {},
+            "purpose": "coverage_fallback",
+            "template_candidates": ["data_gauge"],
+            "family_candidates": [],
+            "theme": None, "fact_basis": "script_claim",
+            "evidence_ref": None, "verified_data": None,
+        }
+
     manifest = {
         "version": 1, "project_id": "p8", "theme": None,
         "entries": [
-            _manifest_entry("gm_0001", 0, 1, "Exports rose 42 percent."),
-            _manifest_entry("gm_0002", 1, 2, "Imports rose 17 percent."),
+            _entry("gm_0001", 0, 1, "Exports rose 42 percent."),
+            _entry("gm_0002", 1, 2, "Imports rose 17 percent."),
         ],
     }
     assets = graphics_pipeline.build_motion_graphics_assets(
         _graphics_data(), tmp_path, mode="balanced", manifest=manifest,
     )
     # The stage does not die: the second entry still generates.
-    # The failed entry's rendering_failure is RECORDED (below),
-    # and — run-10 fix — the entry is a coverage_fallback target,
-    # so the T5 guarantee floor serves it with a closing card
-    # instead of leaving the beat uncovered: two assets, and
-    # gm_0001's outcome is the guarantee, not a skip.
-    assert len(assets) == 2
+    assert len(assets) == 1
+    assert assets[0]["manifest_id"] == "gm_0002"
     import json
 
     written = json.loads((tmp_path / "motion_graphics.json").read_text())
     outcomes = {
         o["manifest_id"]: o for o in written["targets"]["outcomes"]
     }
-    assert outcomes["gm_0001"]["outcome"] == "generated"
-    assert outcomes["gm_0001"]["reason"] == (
-        "coverage_guarantee:closing_card"
+    # The failed entry is a recorded skip carrying the typed
+    # terminal decline — no guarantee floor covers it.
+    assert outcomes["gm_0001"]["outcome"] == "skipped"
+    assert outcomes["gm_0001"]["terminal_decline"]["reason"] == (
+        "terminal_graphics_decline"
     )
-    # The stat failure itself remains on record — the floor
-    # covers the beat, it does not erase the failure.
-    assert any(
-        f["reason"] == "rendering_failure"
-        for f in written["graphic_failures"]
-    )
+    skip = written["targets"]["skipped"][0]
+    assert skip["reason"] == "rendering_failure"
     assert outcomes["gm_0002"]["outcome"] == "generated"
-
-
-# ---------------------------------------------------------------------------
-# Render failure
-# ---------------------------------------------------------------------------
 
 def test_render_scene_with_no_genuine_media_fails_loudly(tmp_path):
     scene = {

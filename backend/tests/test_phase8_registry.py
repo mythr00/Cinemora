@@ -9,6 +9,13 @@ rendering-neutral — these tests pin identity, not approximation.
 
 Run-10 fix (2026-11-22): the registry grows to 15 with
 "closing_card", the T5 coverage-guarantee template.
+
+P0 removal (2026-11-27): the founder's ruling removed eleven
+registered templates completely — closing_card, evidence_board,
+red_string_board, photo_parallax, outcome_path,
+milestone_waveform and the map family (territory_map, border_map,
+route_map, trade_route_map, military_map) — shrinking the registry
+from 53 to 42. This file now pins the post-removal vocabulary.
 """
 
 from services.motion_engine import core, motion_registry, templates, templates_v2
@@ -38,25 +45,31 @@ def test_registry_covers_all_fifteen_templates():
     # Skills programme grows it again, 49 to 51: the two Manim-engine
     # registrations (manim_line_chart, manim_bar_chart); and 51 to
     # 53 with the two matplotlib chart registrations (mpl_line_chart,
-    # mpl_bar_chart). The fifteen-template vocabulary itself is
-    # intact.
+    # mpl_bar_chart).
+    # P0 removal (2026-11-27) supersedes the count again: eleven
+    # low-quality templates were removed completely — 53 down to
+    # 42 — and the removed names must NOT be in the vocabulary.
     names = set(templates.TEMPLATES) | set(templates_v2.V2_TEMPLATES)
-    assert len(names) == 53
+    assert len(names) == 42
     assert "manim_line_chart" in names and "manim_bar_chart" in names
     assert "mpl_line_chart" in names and "mpl_bar_chart" in names
-    # The run-10 T5 guarantee template is part of the vocabulary.
-    assert "closing_card" in names
     for name in (
-        "line_chart", "pie_chart", "border_map", "route_map",
-        "trade_route_map", "military_map", "exploded_view",
-        "mechanical_cutaway", "blueprint_section", "red_string_board",
-        "newspaper_montage", "profile_reveal", "photo_parallax",
+        "closing_card", "evidence_board", "red_string_board",
+        "photo_parallax", "outcome_path", "milestone_waveform",
+        "territory_map", "border_map", "route_map",
+        "trade_route_map", "military_map",
+    ):
+        assert name not in names, name
+    for name in (
+        "line_chart", "pie_chart", "exploded_view",
+        "mechanical_cutaway", "blueprint_section",
+        "newspaper_montage", "profile_reveal",
         "text_overlay", "text_highlight", "archival_title",
     ):
         assert name in names, name
     for name in (
         "bubble_chart", "population_pyramid", "animated_dashboard",
-        "checklist_graphic", "milestone_waveform",
+        "checklist_graphic",
         "territory_expansion", "satellite_zoom", "heatmap",
         "classified_file", "newspaper_wall", "crime_scene_diagram",
         "construction_sequence", "molecular_diagram",

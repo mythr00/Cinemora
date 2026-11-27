@@ -8,6 +8,15 @@ its scenario and the case bible), and only a beat no family can
 render from those facts declines, with the decline recorded
 explicitly.
 
+P0 SUPERSESSION (2026-11-27): the founder's removal ruling took
+the terminal sweep's graphics (closing card, timeline recap,
+outcome path) out completely and rewired the guarantee to render
+nothing. The Blocker-2 tests below now pin the rewired terminal
+behaviour: a beat no surviving family can serve declines
+explicitly (attempted families + available facts on the skip and
+outcome records) and falls back to footage — no floor graphic is
+ever manufactured.
+
 Blocker 3: the pre-render coverage repair pass — after graphics,
 sentences still in missing_visuals get ONE bounded repair attempt
 through the existing asset machinery; a sentence that survives
@@ -47,10 +56,6 @@ def _stub_validator(monkeypatch):
             "checks": {}, "probe": None,
         },
     )
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_stat_graphic",
-        lambda path, *a, **k: Path(path).write_bytes(b"\x00" * 2048),
-    )
 
 
 def _stub_terminal_template(monkeypatch, name, refuse=False):
@@ -88,14 +93,16 @@ DATE_NAME_TEXT = (
 )
 
 
-def test_terminal_graphic_for_date_and_name_sentence(tmp_path, monkeypatch):
-    """(a) A sentence carrying only a date and a name: the stat
-    family declines (no usable statistic), the schematic family
-    declines (no labels), and the terminal sweep still ends the
-    beat with a rendered designed graphic whose payload is the
-    short element — never the narration sentence."""
+def test_date_and_name_sentence_declines_without_floor(
+    tmp_path, monkeypatch
+):
+    """P0 rewiring (2026-11-27) replaces the Gate 2 terminal-card
+    pin: a sentence carrying only a date and a name — no usable
+    statistic, no schematic labels — used to be served by the
+    terminal sweep's closing card. The card is removed
+    completely and the guarantee renders nothing, so the beat
+    declines explicitly and is left to footage fallback."""
     _stub_validator(monkeypatch)
-    _stub_terminal_template(monkeypatch, "closing_card")
     data = {
         "case_bible": {"title": "The Box That Changed Trade",
                        "timeline": [], "entities": []},
@@ -111,38 +118,28 @@ def test_terminal_graphic_for_date_and_name_sentence(tmp_path, monkeypatch):
             "text": DATE_NAME_TEXT, "scenario": {},
         }],
     )
-    assert len(assets) == 1
-    card = assets[0]
-    assert card["coverage_guarantee"] is True
-    assert card["terminal_guarantee"] == "closing_card"
-    assert card["delivered"] is True
-    payload = card["engine_inputs"]["quote"]
-    # The payload is a designed element (the date or the name),
-    # never the sentence, never a fragment of it beyond the fact.
-    assert payload in ("1956", "Malcom McLean", "MALCOM MCLEAN")
-    assert payload != DATE_NAME_TEXT
-    assert len(payload.split()) <= 8
-    for value in card["engine_inputs"].values():
-        if isinstance(value, str):
-            assert "cinemora" not in value.lower()
-            assert "generated graphic" not in value.lower()
+    assert assets == []
     manifest = _manifest(tmp_path)
-    assert manifest["targets"]["generated"] == 1
-    assert manifest["targets"]["skipped"] == []
+    assert manifest["targets"]["generated"] == 0
+    assert len(manifest["targets"]["skipped"]) == 1
     outcome = manifest["targets"]["outcomes"][0]
-    assert outcome["outcome"] == "generated"
-    assert outcome["reason"] == "coverage_guarantee:closing_card"
+    assert outcome["outcome"] == "skipped"
+    decline = outcome["terminal_decline"]
+    assert decline["reason"] == "terminal_graphics_decline"
+    assert "names" in decline["facts_available"]
+    assert "dates" in decline["facts_available"]
 
 
-def test_terminal_graphic_from_bible_facts_only(tmp_path, monkeypatch):
-    """(a, widened facts) A sentence whose own text yields NO
-    selectable payload — its facts live in the case bible. The
-    pre-Gate-2 floor attempted an empty card and skipped; the
-    sweep builds the payload from the recorded bible facts."""
+def test_bible_facts_only_sentence_declines_without_floor(
+    tmp_path, monkeypatch
+):
+    """P0 rewiring: a sentence whose own text yields NO selectable
+    payload — its facts live in the case bible — used to get a
+    closing card built from the bible facts. The floor is gone:
+    the beat declines; bible facts never manufacture a graphic."""
     _stub_validator(monkeypatch)
-    _stub_terminal_template(monkeypatch, "closing_card")
-    text = "By then, everything had already changed for her family."
-    assert graphics_pipeline.short_payload_for(text) == ""
+    text_ = "By then, everything had already changed for her family."
+    assert graphics_pipeline.short_payload_for(text_) == ""
     data = {
         "case_bible": {
             "title": "Vanished",
@@ -153,21 +150,23 @@ def test_terminal_graphic_from_bible_facts_only(tmp_path, monkeypatch):
         },
         "scenes": [{
             "scene_number": 3,
-            "sentences": [{"text": text, "sentence_number": 9}],
+            "sentences": [{"text": text_, "sentence_number": 9}],
         }],
     }
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced",
         targets=[{
             "scene_number": 3, "sentence_index": 0, "sentence_number": 9,
-            "text": text, "scenario": {},
+            "text": text_, "scenario": {},
         }],
     )
-    assert len(assets) == 1
-    card = assets[0]
-    assert card["coverage_guarantee"] is True
-    assert card["engine_inputs"]["quote"] == "Gabby Petito"
-    assert card["engine_inputs"]["quote"] != text
+    assert assets == []
+    manifest = _manifest(tmp_path)
+    outcome = manifest["targets"]["outcomes"][0]
+    assert outcome["outcome"] == "skipped"
+    assert outcome["terminal_decline"]["reason"] == (
+        "terminal_graphics_decline"
+    )
 
 
 def test_terminal_decline_is_explicit_when_no_family_can_render(
@@ -178,8 +177,6 @@ def test_terminal_decline_is_explicit_when_no_family_can_render(
     explicit: attempted families + available facts ride both the
     skip entry and the outcome record."""
     _stub_validator(monkeypatch)
-    _stub_terminal_template(monkeypatch, "closing_card", refuse=True)
-    _stub_terminal_template(monkeypatch, "archival_title", refuse=True)
     data = {
         "case_bible": {"title": "The Box That Changed Trade",
                        "timeline": [], "entities": []},
@@ -203,7 +200,12 @@ def test_terminal_decline_is_explicit_when_no_family_can_render(
     assert skips[0]["reason"] in graphics_pipeline.GRAPHIC_SKIP_REASONS
     decline = skips[0]["terminal_decline"]
     assert decline["reason"] == "terminal_graphics_decline"
-    assert decline["attempted_families"] == ["closing_card"]
+    # P0 rewiring: the attempted families are the chain stages
+    # that actually attempted the beat (the terminal sweep's
+    # closing_card attempt is gone). For this bare target the
+    # schematic stage is not even eligible — its coverage gate
+    # closes before any attempt — so the list is honestly empty.
+    assert decline["attempted_families"] == []
     assert "names" in decline["facts_available"]
     assert "dates" in decline["facts_available"]
     outcome = manifest["targets"]["outcomes"][0]

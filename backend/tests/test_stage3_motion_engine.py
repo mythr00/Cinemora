@@ -38,50 +38,6 @@ def test_core_easing_and_keyframes():
     assert 0 < track.value_at(1.0) < 100
 
 
-def test_territory_map_refuses_without_polygons(tmp_path):
-    path, meta = templates.territory_map(
-        {"regions": [], "title": "Nowhere"}, "editorial",
-        tmp_path / "map.mp4", duration=SHORT,
-    )
-    assert path is None
-    assert meta["reason"] == "no_polygon_data"
-
-
-def test_territory_map_renders(tmp_path):
-    data = {
-        "regions": [{"points": [[0.2, 0.25], [0.7, 0.25], [0.75, 0.7], [0.25, 0.75]],
-                     "label": "Test Region"}],
-        "routes": [{"points": [[0.25, 0.6], [0.5, 0.45], [0.7, 0.35]], "label": "Route"}],
-        "title": "Test Map",
-    }
-    path, meta = templates.territory_map(data, "editorial", tmp_path / "map.mp4",
-                                          duration=SHORT, sentence_index=2, scene_number=1)
-    _check(path)
-    assert meta["generator"] == "motion_engine"
-    assert meta["template"] == "territory_map"
-    assert meta["generated"] is True
-    assert meta["sentence_index"] == 2 and meta["scene_number"] == 1
-
-
-def test_evidence_board_renders_with_generated_photo(tmp_path):
-    photo = _photo(tmp_path)
-    data = {"photos": [{"path": photo, "caption": "Stand-in still"},
-                       {"path": str(tmp_path / "missing.jpg"), "caption": "gone"}],
-            "title": "The Board", "labels": ["Exhibit A"]}
-    path, meta = templates.evidence_board(data, "true_crime", tmp_path / "board.mp4",
-                                           duration=SHORT)
-    _check(path)
-    assert meta["inputs"]["photos"] == 1  # missing file skipped
-
-
-def test_evidence_board_refuses_with_no_valid_photos(tmp_path):
-    path, meta = templates.evidence_board(
-        {"photos": [{"path": str(tmp_path / "nope.jpg"), "caption": "x"}]},
-        "history", tmp_path / "board.mp4", duration=SHORT,
-    )
-    assert path is None and meta["reason"] == "no_valid_photos"
-
-
 def test_editorial_panel_renders(tmp_path):
     photo = _photo(tmp_path)
     data = {"photo": photo, "title": "A Decision",
@@ -105,17 +61,6 @@ def test_data_gauge_refuses_without_percent(tmp_path):
     path, meta = templates.data_gauge(
         {"label": "x"}, "editorial", tmp_path / "gauge.mp4", duration=SHORT)
     assert path is None and meta["reason"] == "no_percent_value"
-
-
-def test_outcome_path_renders(tmp_path):
-    data = {"outcomes": [{"label": "Start", "outcome": "Began"},
-                         {"label": "Middle", "outcome": "Turned"},
-                         {"label": "End", "outcome": "Resolved"}],
-            "title_left": "Before", "title_right": "After"}
-    path, meta = templates.outcome_path(data, "true_crime", tmp_path / "path.mp4",
-                                         duration=SHORT)
-    _check(path)
-    assert meta["inputs"]["outcomes"] == 3
 
 
 def test_stat_comparison_renders(tmp_path):
@@ -151,3 +96,7 @@ def test_document_presentation_refuses_without_text(tmp_path):
         {"title": "Empty", "body": ""}, "history", tmp_path / "doc.mp4",
         duration=SHORT)
     assert path is None and meta["reason"] == "no_document_text"
+
+
+# P0 removal (2026-11-27): deleted template tests for removed
+# templates — territory_map (R9), evidence_board (R3) and outcome_path (R7) templates removed.

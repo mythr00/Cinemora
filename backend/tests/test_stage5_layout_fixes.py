@@ -126,26 +126,6 @@ def test_place_labels_single_label_lands_on_anchor():
 # Timeline reveal timing
 # ---------------------------------------------------------------------------
 
-def test_timeline_final_node_reveals_before_the_end():
-    events = [
-        {"when": "20 April 1949", "what": "Amethyst shelled"},
-        {"when": "21 April 1949", "what": "Consort driven back"},
-        {"when": "22 April 1949", "what": "London repelled"},
-        {"when": "31 July 1949", "what": "Escape downriver"},
-    ]
-    positions, mode, reveals = graphics_pipeline._timeline_node_positions(
-        events, 6.0)
-    assert reveals == sorted(reveals)
-    # Old behaviour: the last reveal landed at ~95.8% of duration.
-    assert reveals[-1] <= 0.85 * 6.0 + 1e-9
-    assert reveals[-1] / 6.0 <= 0.86
-    assert graphics_pipeline.TIMELINE_SCAN_FRACTION == 0.85
-
-
-# ---------------------------------------------------------------------------
-# stat_comparison bar floor
-# ---------------------------------------------------------------------------
-
 def test_stat_bar_width_floor_and_proportionality():
     width = templates._stat_bar_width
     assert width(101, 101, 1.0) == 1050          # the maximum bar
@@ -179,3 +159,7 @@ def test_engine_metadata_records_sentence_and_timing(tmp_path):
     assert path1 is not None
     assert set(meta1) == set(meta)
     assert meta1["sentence_index"] == 7 and meta1["duration"] == 1.2
+
+
+# P0 removal (2026-11-27): deleted template tests for removed
+# templates — the native timeline renderer's reveal timing removed with R1.

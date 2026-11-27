@@ -105,14 +105,10 @@ def test_short_payload_selects_designed_element_not_sentence():
     ) == ""
 
 
-def test_closing_card_refuses_a_full_sentence(tmp_path):
-    rendered, meta = engine_templates.TEMPLATES["closing_card"](
-        {"quote": TANTLINGER_SENTENCE}, "editorial",
-        tmp_path / "card.mp4", duration=1.0,
-        sentence_index=0, scene_number=1,
-    )
-    assert rendered is None
-    assert meta["reason"] == "payload_not_short"
+# P0 removal (2026-11-27): test_closing_card_refuses_a_full_
+# sentence deleted — closing_card is removed completely. The
+# payload_not_short discipline it pinned survives on text_overlay
+# (next test).
 
 
 def test_text_overlay_refuses_a_full_sentence(tmp_path):
@@ -340,28 +336,10 @@ def test_ffmpeg_text_filter_uses_textfile_not_inline_text():
     assert "text='" not in filt
 
 
-def test_timeline_graphic_apostrophe_label_leaves_top_edge_clean(
-    tmp_path,
-):
-    """The film's chronology graphic burned raw drawtext filter
-    text across its top edge because an apostrophe corrupted the
-    inline text= value. With textfile= the label renders at its
-    node and the top rows stay background."""
-    out = tmp_path / "tl.mp4"
-    graphics_pipeline._render_timeline_graphic(
-        str(out),
-        [{"when": "1956", "what": "McLean's boxes reduced costs"}],
-        duration=2.0,
-    )
-    frame = tmp_path / "tl.png"
-    subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-ss", "1.5",
-         "-i", str(out), "-frames:v", "1", str(frame)],
-        check=True,
-    )
-    img = Image.open(frame).convert("L")
-    top = img.crop((0, 0, img.width, 24))
-    assert max(top.getdata()) < 60  # background only, no leaked text
+# P0 removal (2026-11-27): the timeline renderer's apostrophe
+# regression test is deleted with the renderer (R1). The textfile
+# discipline behind it is pinned by
+# test_ffmpeg_text_filter_uses_textfile_not_inline_text above.
 
 
 def test_series_from_text_requires_one_shared_unit():
@@ -378,14 +356,6 @@ def test_series_from_text_requires_one_shared_unit():
     assert points is not None and len(points) == 3
 
 
-def test_timeline_and_process_graphics_refuse_empty_content():
-    with pytest.raises(ValueError):
-        graphics_pipeline._render_timeline_graphic(
-            "/tmp/never.mp4", [], duration=2.0)
-    with pytest.raises(ValueError):
-        graphics_pipeline._render_timeline_graphic(
-            "/tmp/never.mp4", [{"when": "", "what": ""}],
-            duration=2.0)
-    with pytest.raises(ValueError):
-        graphics_pipeline._render_process_graphic(
-            "/tmp/never.mp4", [], duration=2.0)
+# P0 removal (2026-11-27): test_timeline_and_process_graphics_
+# refuse_empty_content deleted — both native renderers are
+# removed completely (R1/R6).

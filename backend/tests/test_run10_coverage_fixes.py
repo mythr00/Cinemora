@@ -619,69 +619,41 @@ def _closing_target():
     }]
 
 
-def test_unservable_target_gets_guarantee_closing_card(
+def test_unservable_target_declines_with_typed_reason(
     tmp_path, monkeypatch
 ):
-    """The run-10 closing beat: no stat, no date, no sequence, no
-    schematic labels, no engine data — every content family
-    declines. The T5 floor serves it with a designed closing
-    card instead of nothing."""
+    """P0 rewiring (2026-11-27) replaces the run-10 guarantee-card
+    pin: the closing beat — no stat, no date, no sequence, no
+    schematic labels, no engine data — used to be served by the
+    T5 floor's closing card. The card is removed completely and
+    the guarantee renders nothing, so the beat produces NO
+    graphic and its outcome is a skip carrying the typed
+    terminal decline."""
     _stub_validator(monkeypatch)
-    _stub_closing_card(monkeypatch)
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_stat_graphic",
-        lambda path, *a, **k: Path(path).write_bytes(b"\x00" * 2048),
-    )
     assets = graphics_pipeline.build_motion_graphics_assets(
         _graphics_data(), tmp_path, mode="balanced",
         targets=_closing_target(),
     )
-    cards = [a for a in assets if a["graphic_type"] == "closing_card"]
-    assert len(cards) == 1
-    card = cards[0]
-    assert card["coverage_guarantee"] is True
-    assert card["family"] == "motion_engine"
-    assert card["delivered"] is True
-    assert card["targeted"] is True
-    assert card["scene_number"] == 7
-    assert card["sentence_index"] == 0
-    assert card["sentence_number"] == 22
-    # Honesty stamps: generated in-house, never footage.
-    assert card["generated"] is True
-    assert card["visual_format"] == "graphic"
-    assert card["source"] == "cinemora_motion_graphics"
-    # The recipe regenerates the same template.
-    assert card["graphic_recipe"]["template"] == "closing_card"
-    # PIN CHANGED (founder defect ruling 2026-11-23): the card's
-    # payload is the short element SELECTED from the sentence —
-    # the person's name — never the sentence itself (the old pin
-    # expected the full narration sentence as the card's text,
-    # which is the full-sentence-card defect the founder banned).
-    assert card["engine_inputs"]["quote"] == "Gabby Petito"
-    assert card["engine_inputs"]["kicker"] == "Gabby Petito"
-
+    assert assets == []
     manifest = json.loads((tmp_path / "motion_graphics.json").read_text())
-    assert manifest["targets"]["generated"] == 1
-    assert manifest["targets"]["skipped"] == []
+    assert manifest["targets"]["generated"] == 0
+    assert len(manifest["targets"]["skipped"]) == 1
     outcome = manifest["targets"]["outcomes"][0]
-    assert outcome["outcome"] == "generated"
-    assert outcome["family"] == "motion_engine"
-    assert outcome["reason"] == "coverage_guarantee:closing_card"
+    assert outcome["outcome"] == "skipped"
+    assert outcome["terminal_decline"]["reason"] == (
+        "terminal_graphics_decline"
+    )
 
 
 def test_guarantee_failure_is_recorded_with_typed_reason(
     tmp_path, monkeypatch
 ):
-    """When even the floor cannot serve the beat, the skip is
-    recorded with a typed MG-08 reason — for the run-10 sentence
-    shape, the schematic stage's no_schematic_labels (the reason
-    run 10 itself recorded) — never a silent skip."""
+    """The unserved beat's skip is recorded with a typed MG-08
+    reason — for the run-10 sentence shape, the schematic stage's
+    no_schematic_labels (the reason run 10 itself recorded) —
+    never a silent skip, and the SAME terminal decline rides the
+    skip entry and the outcome record."""
     _stub_validator(monkeypatch)
-    _stub_closing_card(monkeypatch, refuse=True)
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_stat_graphic",
-        lambda path, *a, **k: Path(path).write_bytes(b"\x00" * 2048),
-    )
     assets = graphics_pipeline.build_motion_graphics_assets(
         _graphics_data(), tmp_path, mode="balanced",
         targets=_closing_target(),
@@ -694,36 +666,30 @@ def test_guarantee_failure_is_recorded_with_typed_reason(
     assert skips[0]["sentence_number"] == 22
     assert skips[0]["reason"] in graphics_pipeline.GRAPHIC_SKIP_REASONS
     assert skips[0]["reason"] == "no_schematic_labels"
+    decline = skips[0]["terminal_decline"]
+    assert decline["reason"] == "terminal_graphics_decline"
+    assert "event_schematic" in decline["attempted_families"]
+    outcome = manifest["targets"]["outcomes"][0]
+    assert outcome["terminal_decline"] == decline
 
 
-def test_guarantee_graphic_covers_sentence_on_timeline(
+def test_unserved_sentence_stays_uncovered_for_footage_fallback(
     tmp_path, monkeypatch
 ):
-    """End to end for the beat: graphics asset -> jobs attach
-    shape -> scene timeline. The sentence's only visual is the
-    guarantee card; coverage is complete and the item is stamped
-    assignment=motion_graphic, tier=graphic."""
+    """P0 rewiring: with no floor graphic, the closing beat's
+    sentence is left uncovered by graphics — the exact signal
+    the jobs/tier-ladder footage fallback consumes (terminal
+    outcome (a) of the rewired guarantee)."""
     _stub_validator(monkeypatch)
-    _stub_closing_card(monkeypatch)
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_stat_graphic",
-        lambda path, *a, **k: Path(path).write_bytes(b"\x00" * 2048),
-    )
     assets = graphics_pipeline.build_motion_graphics_assets(
         _graphics_data(), tmp_path, mode="balanced",
         targets=_closing_target(),
     )
-    assert len(assets) == 1
-    visual = dict(assets[0])
-    visual["type"] = "video"
-    visual["source"] = "cinemora_motion_graphics"
-    visual["motion_graphic"] = True
-    visual["file_path"] = assets[0].get("file_path") or assets[0].get("path")
-    visual["path"] = visual["file_path"]
+    assert assets == []
     scene_media = {
         "scene_number": 7,
         "duration_seconds": 3.0,
-        "videos": [visual],
+        "videos": [],
         "images": [],
         "sentences": [
             {"sentence_number": 22, "videos": [], "images": []},
@@ -734,55 +700,18 @@ def test_guarantee_graphic_covers_sentence_on_timeline(
         "start": 0.0, "end": 2.7,
     }]
     result = build_scene_timeline(scene_media, timings)
-    assert result["uncovered_sentence_indexes"] == []
-    assert len(result["items"]) == 1
-    item = result["items"][0]
-    assert item["assignment"] == "motion_graphic"
-    assert item["tier"] == "graphic"
+    # No timeline item covers the sentence: it is left entirely
+    # to the footage side (the missing-visual record + graphics
+    # outcome are the fallback's inputs).
+    assert result["items"] == []
 
 
-def test_closing_card_template_renders_and_refuses_honestly(tmp_path):
-    """The real template: renders a valid MP4 from a short
-    designed payload (the REAL validator passes it), and refuses
-    — with typed reasons — for empty text and for a full
-    narration sentence.
-
-    PIN CHANGED (founder defect ruling 2026-11-23): the render
-    case previously fed the whole closing sentence as the card's
-    quote; that IS the banned full-sentence card. The render
-    case now uses the selected short payload, and the sentence
-    itself is a refusal case."""
+def test_closing_card_template_is_gone():
+    """P0 removal pin (replaces the closing-card render/refusal
+    test): the template is removed from the registry completely."""
     from services.motion_engine import templates as engine_templates
 
-    out = tmp_path / "card.mp4"
-    rendered, meta = engine_templates.TEMPLATES["closing_card"](
-        {"quote": "Gabby Petito", "kicker": "Gabby Petito"},
-        "editorial", out, duration=3.0,
-        sentence_index=0, scene_number=7,
-    )
-    assert rendered is not None
-    assert Path(rendered).exists()
-    verdict = graphics_pipeline.validate_graphic_output(
-        rendered, expected_duration=3.0
-    )
-    assert verdict["passed"], verdict
-
-    refused, meta = engine_templates.TEMPLATES["closing_card"](
-        {"quote": "  "}, "editorial", tmp_path / "none.mp4",
-        duration=3.0,
-    )
-    assert refused is None
-    assert meta["reason"] == "no_text"
-
-    refused, meta = engine_templates.TEMPLATES["closing_card"](
-        {"quote": CLOSING_TEXT, "kicker": "Gabby Petito"},
-        "editorial", tmp_path / "sentence.mp4",
-        duration=3.0,
-    )
-    assert refused is None
-    assert meta["reason"] == "payload_not_short"
-
-
+    assert "closing_card" not in engine_templates.TEMPLATES
 def test_missing_visuals_annotated_with_graphics_outcomes(tmp_path):
     """jobs stamps the graphics stage's outcome onto the
     missing_visuals records the asset report aggregates — served

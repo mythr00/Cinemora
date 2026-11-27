@@ -68,33 +68,7 @@ def test_unknown_country_never_invented():
     assert geography.outline_for("Atlantis", projection) == []
 
 
-def test_territory_map_renders_dataset_china(tmp_path):
-    path, meta = templates.territory_map(
-        {"regions": [{"country": "China", "label": "China"}]},
-        "history", tmp_path / "china.mp4", duration=1.2,
-    )
-    assert path is not None
-    info = probe_video(path)
-    assert info["width"] == 1920 and info["height"] == 1080
-    assert meta["generator"] == "motion_engine"
-    assert meta["generated"] is True
-    assert meta["inputs"]["outline_sources"] == ["dataset"]
 
 
-def test_territory_map_caller_polygon_still_works(tmp_path):
-    path, meta = templates.territory_map(
-        {"regions": [{"label": "Testland",
-                      "points": [[0.2, 0.3], [0.8, 0.3], [0.8, 0.7], [0.2, 0.7]]}]},
-        "editorial", tmp_path / "caller.mp4", duration=1.2,
-    )
-    assert path is not None
-    assert meta["inputs"]["outline_sources"] == ["caller"]
-
-
-def test_territory_map_unknown_country_refuses(tmp_path):
-    path, meta = templates.territory_map(
-        {"regions": [{"country": "Atlantis"}]},
-        "editorial", tmp_path / "atlantis.mp4", duration=1.2,
-    )
-    assert path is None
-    assert meta["reason"] == "no_polygon_data"
+# P0 removal (2026-11-27): deleted template tests for removed
+# templates — territory_map template removed (R9); the geography DATASET tests above survive untouched.

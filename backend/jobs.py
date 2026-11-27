@@ -1216,6 +1216,13 @@ def _annotate_missing_visual_graphics_outcomes(
                 "family": outcome.get("family"),
                 "reason": outcome.get("reason"),
             }
+            if outcome.get("terminal_decline"):
+                # P0 rewiring: the typed decline rides the stamp
+                # so the report shows WHY graphics left the beat
+                # to footage, not merely that it did.
+                entry["graphics_outcome"]["terminal_decline"] = (
+                    outcome["terminal_decline"]
+                )
             annotated += 1
     return annotated
 

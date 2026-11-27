@@ -309,7 +309,11 @@ def test_director_stamps_kb_fact_as_research_supported():
     assert entry["fact_basis"] == "research_supported"
     assert entry["verified_data"]["display"] == "22-year-old"
     assert entry["evidence_ref"]["kb_source"] == "wikidata"
-    assert "stat" in entry["family_candidates"]
+    # P0 removal (2026-11-27): the Director used to add the
+    # native stat family for a research-supported fact; that
+    # family is removed completely, so the basis still stamps
+    # (above) but "stat" is never a family candidate.
+    assert "stat" not in entry["family_candidates"]
 
 
 def test_director_never_promotes_a_fact_without_kb_source():
@@ -366,35 +370,11 @@ def _entry(manifest_id, scene, index, number, text, families, **extra):
     return entry
 
 
-def test_chronology_renders_from_extracted_events(tmp_path):
-    """The real render path (no renderer stubs): the chronology
-    graphic is produced from the fact table's events, and the
-    graphics manifest shows the fact basis per graphic."""
-    table = script_facts.build_fact_table(PETITO_SENTENCES, bible=PETITO_BIBLE)
-    events = script_facts.timeline_events_from_facts(table["facts"])
-    entry = _entry(
-        "gm_0001", 1, 0, 1, PETITO_TEXTS[0], families=["timeline"]
-    )
-    assets = graphics_pipeline.build_motion_graphics_assets(
-        _graphics_data(events), tmp_path, mode="balanced",
-        manifest=_manifest([entry]),
-    )
-    timelines = [a for a in assets if a["graphic_type"] == "timeline"]
-    assert len(timelines) == 1
-    asset = timelines[0]
-    recipe_events = asset["graphic_recipe"]["inputs"]["events"]
-    assert len(recipe_events) >= 5
-    for event in recipe_events:
-        assert event["sentence_number"]
-        assert event["fact_id"]
-        assert event["fact_basis"] == "script_claim"
-    assert asset["fact_basis"] == "script_claim"
-    # The manifest on disk shows the same basis for the graphic.
-    manifest = json.loads((tmp_path / "motion_graphics.json").read_text())
-    manifest_asset = [
-        a for a in manifest["assets"] if a["graphic_type"] == "timeline"
-    ][0]
-    assert manifest_asset["fact_basis"] == "script_claim"
+# P0 removal (2026-11-27): test_chronology_renders_from_
+# extracted_events deleted — the chronology (timeline) graphic
+# is removed completely (R1); extracted events no longer render
+# as a graphic. The fact-table event extraction itself is
+# pinned elsewhere in this file.
 
 
 def test_dateless_script_produces_zero_chronology(tmp_path):
@@ -422,13 +402,6 @@ def _fake_renders(monkeypatch):
         fake_write(path)
         return "proportional"
 
-    monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_write)
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_timeline_graphic", fake_timeline
-    )
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_process_graphic", fake_write
-    )
     monkeypatch.setattr(
         graphics_pipeline, "validate_graphic_output",
         lambda path, expected_duration=None, **kwargs: {
@@ -439,6 +412,11 @@ def _fake_renders(monkeypatch):
 
 
 def test_fact_stat_carries_research_basis(tmp_path, monkeypatch):
+    """P0 removal pin (rewritten): a research-supported fact with
+    a KB source used to ride the native stat family onto a card.
+    The family is removed completely — the entry now produces NO
+    graphic; the verified display is never promoted onto a card
+    that no longer exists."""
     _fake_renders(monkeypatch)
     entry = _entry(
         "gm_0001", 1, 1, 2, PETITO_TEXTS[1], families=["stat"],
@@ -454,15 +432,14 @@ def test_fact_stat_carries_research_basis(tmp_path, monkeypatch):
         _graphics_data([]), tmp_path, mode="balanced",
         manifest=_manifest([entry]),
     )
-    assert len(assets) == 1
-    asset = assets[0]
-    assert asset["fact_basis"] == graphics_pipeline.FACT_BASIS_RESEARCH
-    assert asset["stat_display"] == "22-YEAR-OLD"
-    assert asset["stat_source"] == "script_fact_table"
-    assert asset["evidence_ref"]["kb_source"] == "wikidata"
+    assert assets == []
 
 
 def test_fact_stat_without_kb_source_is_downgraded(tmp_path, monkeypatch):
+    """P0 removal pin (rewritten): without a KB source the fact
+    was downgraded to a script claim and still rendered as a
+    stat. The stat family is gone, so the entry produces NO
+    graphic either way."""
     _fake_renders(monkeypatch)
     entry = _entry(
         "gm_0001", 1, 1, 2, PETITO_TEXTS[1], families=["stat"],
@@ -477,5 +454,4 @@ def test_fact_stat_without_kb_source_is_downgraded(tmp_path, monkeypatch):
         _graphics_data([]), tmp_path, mode="balanced",
         manifest=_manifest([entry]),
     )
-    assert len(assets) == 1
-    assert assets[0]["fact_basis"] == graphics_pipeline.FACT_BASIS_SCRIPT
+    assert assets == []

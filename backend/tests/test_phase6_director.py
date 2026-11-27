@@ -175,8 +175,12 @@ def test_fact_basis_verified_only_with_full_evidence():
     }
     assert by_number[1]["fact_basis"] == "verified_asset_metadata"
     assert by_number[1]["evidence_ref"]["asset_id"] == "asset-9"
-    # The verified-data path always permits the stat family.
-    assert by_number[1]["family_candidates"][0] == "stat"
+    # P0 removal (2026-11-27): the verified-data path used to
+    # always permit the native stat family; that family is
+    # removed completely, so verified data now rides on the entry
+    # (fact_basis/evidence_ref above) for the surviving chart
+    # assemblers and NEVER names "stat".
+    assert "stat" not in by_number[1]["family_candidates"]
     assert by_number[2]["fact_basis"] == "script_claim"
     assert by_number[2]["evidence_ref"] is None
     assert by_number[3]["fact_basis"] == "script_claim"

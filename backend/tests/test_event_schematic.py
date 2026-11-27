@@ -165,6 +165,16 @@ def _fake_schematic(monkeypatch):
 
 
 
+def _refuse_closing_card(monkeypatch):
+    # P0 removal (2026-11-27): the T5 closing-card floor this
+    # helper used to refuse no longer exists — the guarantee was
+    # rewired to render nothing, so the schematic stage's skip
+    # records are the chain's final records exactly as these
+    # tests assert, with no stub needed. Kept as a no-op so the
+    # tests below keep their original shape.
+    return None
+
+
 def _fake_stat_and_summary(monkeypatch):
     # No timeline events in the fixture data, so only the stat
     # renderer needs a fake (it is never reached for our sentence,
@@ -173,23 +183,6 @@ def _fake_stat_and_summary(monkeypatch):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\x00" * 2048)
 
-    monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_write)
-
-
-def _refuse_closing_card(monkeypatch):
-    # Run-10 fix (T5 graphics guarantee): a target no family can
-    # serve now falls to a designed closing card instead of a
-    # recorded skip. The schematic tests below pin the SCHEMATIC
-    # stage's skip records, so the guarantee floor is refused
-    # here and the chain exhausts exactly as it did before the
-    # floor existed. The guarantee itself is covered in
-    # tests/test_run10_coverage_fixes.py.
-    from services.motion_engine import templates as engine_templates
-
-    monkeypatch.setitem(
-        engine_templates.TEMPLATES, "closing_card",
-        lambda *args, **kwargs: (None, {"reason": "no_text"}),
-    )
 
 
 def test_schematic_generated_for_empty_scene_with_labels(

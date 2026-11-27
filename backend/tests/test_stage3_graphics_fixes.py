@@ -24,7 +24,7 @@ import pytest
 
 from services import graphics_pipeline, vector_graphics
 from services.graphics_pipeline import (
-    escape_drawtext, extract_comparison, extract_stat,
+    escape_drawtext, extract_comparison,
 )
 from services.media_probe import probe_video
 
@@ -50,44 +50,16 @@ def test_escape_programmatic_string_untouched():
     assert escape_drawtext(expr) != expr
 
 
-def test_real_ffmpeg_colon_label_render(tmp_path):
-    """The colon defect, end to end: a timeline label containing
-    'around 4:00 a.m.' must render through the live drawtext path."""
-    out = tmp_path / "timeline_colon.mp4"
-    graphics_pipeline._render_timeline_graphic(
-        out,
-        [
-            {"when": "20 April 1949", "what": "Shelling began around 4:00 a.m."},
-            {"when": "31 July 1949", "what": "Escape at 100% darkness: night"},
-        ],
-        duration=4.0,
-    )
-    info = probe_video(out)
-    assert info is not None
-    assert info["width"] == 1920 and info["height"] == 1080
-    assert info["duration_seconds"] > 0
+# P0 removal (2026-11-27): test_real_ffmpeg_colon_label_render
+# rendered through the native timeline renderer, removed
+# completely with R1. The drawtext escaping it exercised is
+# pinned by the unit tests above; surviving real-render coverage
+# lives in the schematic/engine test files.
 
 
 # ---------------------------------------------------------------------------
 # MA-02 — timeline de-collision
 # ---------------------------------------------------------------------------
-
-def test_timeline_nodes_min_gap_and_label_rows():
-    events = [
-        {"when": "January 1961", "what": "A"},
-        {"when": "February 1961", "what": "B"},
-        {"when": "March 1961", "what": "C"},
-        {"when": "November 1989", "what": "D"},
-    ]
-    positions, mode, _ = graphics_pipeline._timeline_node_positions(events, 6.0)
-    assert mode == "proportional"
-    for prev, cur in zip(positions, positions[1:]):
-        assert cur - prev >= 170.0 - 1e-6
-    rows = graphics_pipeline._timeline_label_rows(positions)
-    # Clustered neighbours must not share a label row.
-    assert rows[0] != rows[1]
-    assert rows[1] != rows[2]
-
 
 # ---------------------------------------------------------------------------
 # MA-01 / MA-03 — process steps + anchoring (fake renders)
@@ -98,19 +70,11 @@ def _fake_renders(monkeypatch):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\x00" * 2048)
 
-    def fake_timeline(path, *args, **kwargs):
-        fake_write(path)
-        return "proportional"
-
     captured = {}
 
-    def fake_process(path, steps, *args, **kwargs):
-        captured["steps"] = steps
-        fake_write(path)
-
-    monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_write)
-    monkeypatch.setattr(graphics_pipeline, "_render_timeline_graphic", fake_timeline)
-    monkeypatch.setattr(graphics_pipeline, "_render_process_graphic", fake_process)
+    # P0 removal (2026-11-27): the native stat/timeline/process
+    # renderers this fixture used to fake are removed completely;
+    # only the validator seam remains.
     # MG-05 (Motion Graphics programme Phase 1): registration now
     # validates rendered output before an asset is recorded. These
     # are logic tests whose fake renderers write non-media bytes,
@@ -143,74 +107,39 @@ def _bible_data(scenes=None):
     }
 
 
-def test_process_steps_built_from_what(tmp_path, monkeypatch):
-    captured = _fake_renders(monkeypatch)
-    graphics_pipeline.build_motion_graphics_assets(
-        _bible_data(), tmp_path, mode="balanced",
-        targets=[{"scene_number": 1, "sentence_index": 0, "sentence_number": 1,
-                  "text": "A quiet opening sentence."}],
-    )
-    steps = captured["steps"]
-    labels = [s["label"] if isinstance(s, dict) else s for s in steps]
-    assert any("Tensions rise" in label for label in labels)
-    assert not any(label.startswith("June 1961") for label in labels)
-    sublabels = [s.get("sublabel", "") for s in steps if isinstance(s, dict)]
-    assert "June 1961" in sublabels
-
-
-def test_process_anchors_to_single_target(tmp_path, monkeypatch):
+def test_bible_alone_produces_no_graphics(tmp_path, monkeypatch):
+    """P0 removal pin (replaces the MA-01/MA-03 process tests and
+    the MA-06 chronology-anchor test): the case bible's timeline
+    used to buy process and timeline graphics for targeted beats.
+    Both families are removed completely — a bible full of events
+    and a quiet targeted sentence produce NO graphic at all, and
+    the beat declines."""
     _fake_renders(monkeypatch)
     assets = graphics_pipeline.build_motion_graphics_assets(
         _bible_data(), tmp_path, mode="balanced",
         targets=[{"scene_number": 1, "sentence_index": 0, "sentence_number": 1,
                   "text": "A quiet opening sentence."}],
     )
-    process = next(a for a in assets if a["graphic_type"] == "process")
-    assert process["scene_number"] == 1
-    assert process["sentence_index"] == 0
-    assert process.get("delivered") is True
+    assert assets == []
+    manifest = json.loads((tmp_path / "motion_graphics.json").read_text())
+    assert manifest["count"] == 0
+    skip = manifest["targets"]["skipped"][0]
+    assert skip["terminal_decline"]["reason"] == (
+        "terminal_graphics_decline"
+    )
 
 
 def test_process_not_rendered_with_zero_targets(tmp_path, monkeypatch):
-    # Phase 6 SUPERSESSION (AM-001/D1): this test previously
-    # pinned the process graphic rendering unanchored with zero
-    # targets and being recorded as "undelivered". D1 removed the
-    # unconditional render: with no targets there is no process
-    # graphic at all — nothing rendered, nothing to record as
-    # undelivered.
+    # Phase 6 SUPERSESSION (AM-001/D1) + P0 removal: with no
+    # targets there are no graphics of any removed family —
+    # nothing rendered, nothing recorded as undelivered.
     _fake_renders(monkeypatch)
     assets = graphics_pipeline.build_motion_graphics_assets(
         _bible_data(), tmp_path, mode="balanced",
     )
-    assert [a for a in assets if a["graphic_type"] == "process"] == []
+    assert assets == []
     manifest = json.loads((tmp_path / "motion_graphics.json").read_text())
-    assert not any(
-        u["graphic_type"] == "process" for u in manifest["undelivered"]
-    )
-
-
-# ---------------------------------------------------------------------------
-# MA-06 — chronology anchor preference
-# ---------------------------------------------------------------------------
-
-def test_timeline_anchor_prefers_date_sentence(tmp_path, monkeypatch):
-    _fake_renders(monkeypatch)
-    targets = [
-        {"scene_number": 1, "sentence_index": 0, "sentence_number": 1,
-         "text": "Crowds gathered in silence at the square."},
-        {"scene_number": 1, "sentence_index": 1, "sentence_number": 2,
-         "text": "On 9 November 1989 the border opened."},
-    ]
-    data = _bible_data(scenes=[{"scene_number": 1, "sentences": [
-        {"text": targets[0]["text"], "sentence_number": 1},
-        {"text": targets[1]["text"], "sentence_number": 2},
-    ]}])
-    assets = graphics_pipeline.build_motion_graphics_assets(
-        data, tmp_path, mode="balanced", targets=targets,
-    )
-    timeline = next(a for a in assets if a["graphic_type"] == "timeline")
-    assert timeline["sentence_index"] == 1
-    assert timeline["anchor_reason"] == "chronology_sentence"
+    assert manifest["undelivered"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -241,36 +170,6 @@ def test_schematic_no_motif_returns_none_and_no_file(tmp_path):
 # MA-05 — stat extraction
 # ---------------------------------------------------------------------------
 
-def test_extract_stat_percent():
-    info = extract_stat("About 62 percent of the crew were below deck.")
-    assert info["kind"] == "percent" and info["display"] == "62%"
-    info = extract_stat("Roughly 62% survived the night.")
-    assert info["kind"] == "percent"
-
-
-def test_extract_stat_plain_counts():
-    info = extract_stat("More than 3,000 people lined the banks.")
-    assert info["kind"] == "count" and "3,000" in info["display"]
-    info = extract_stat("A fleet of 200 ships waited offshore.")
-    assert info["kind"] == "count" and "200 ships" in info["display"]
-
-
-def test_extract_stat_range_uses_first_value():
-    info = extract_stat("Between 100 and 200 sailors were on watch.")
-    assert info["kind"] == "range"
-    assert info["display"].startswith("100")
-    assert info["range_end"] == "200"
-
-
-def test_extract_stat_money_from_analysis_record():
-    info = extract_stat(
-        "The refit was expensive.",
-        sentence_record={"money": ["$5 million"]},
-    )
-    assert info["kind"] == "money" and info["display"] == "$5 million"
-    assert info["source"] == "analysis_money_field"
-
-
 def test_extract_comparison_two_values():
     items = extract_comparison(
         "Exports reached 200 ships, compared with 120 ships a decade earlier."
@@ -279,7 +178,11 @@ def test_extract_comparison_two_values():
     assert items[0]["value"] == 200 and items[1]["value"] == 120
 
 
-def test_stat_kind_recorded_on_asset(tmp_path, monkeypatch):
+def test_percent_sentence_served_by_engine_gauge(tmp_path, monkeypatch):
+    """P0 removal pin (replaces test_stat_kind_recorded_on_asset):
+    a percent sentence is served by the SURVIVING engine
+    data_gauge template — never by a native "stat" graphic, a
+    type that no longer exists."""
     _fake_renders(monkeypatch)
     data = {"case_bible": {"timeline": []}, "scenes": [
         {"scene_number": 1, "sentences": [
@@ -291,8 +194,9 @@ def test_stat_kind_recorded_on_asset(tmp_path, monkeypatch):
         targets=[{"scene_number": 1, "sentence_index": 0, "sentence_number": 1,
                   "text": "About 62 percent of the crew were below deck."}],
     )
-    stats = [a for a in assets if a["graphic_type"] == "stat"]
-    assert stats and stats[0]["stat_kind"] == "percent"
+    assert not [a for a in assets if a["graphic_type"] == "stat"]
+    gauges = [a for a in assets if a.get("template") == "data_gauge"]
+    assert len(gauges) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +218,6 @@ def test_schematic_fires_when_only_own_sentence_uncovered(tmp_path, monkeypatch)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\x00" * 2048)
 
-    monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_write)
     # MG-05 (Motion Graphics programme Phase 1): registration now
     # validates rendered output before an asset is recorded. These
     # are logic tests whose fake renderers write non-media bytes,

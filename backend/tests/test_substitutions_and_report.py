@@ -11,6 +11,7 @@
 
 import subprocess
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -57,44 +58,41 @@ def test_low_confidence_youtube_fallback_is_off():
 
 
 def test_one_failing_graphic_does_not_kill_graphics(tmp_path, monkeypatch):
+    """P0 removal rewrite (2026-11-27): the original made the
+    native stat renderer raise. That renderer is removed; the
+    contract — one failing graphic never kills the graphics
+    stage — now runs on a directed engine template."""
     def boom(*args, **kwargs):
         raise RuntimeError("ffmpeg exploded")
 
-    monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", boom)
-    data = {
-        "case_bible": {},
-        "scenes": [
-            {
-                "scene_number": 1,
-                "sentences": [{"text": "It cost $5 million to build.", "sentence_number": 1}],
-            }
-        ],
-    }
-    assets = graphics_pipeline.build_motion_graphics_assets(data, tmp_path, mode="balanced")
+    from services.motion_engine import templates as engine_templates
+
+    monkeypatch.setitem(engine_templates.TEMPLATES, "data_gauge", boom)
+    assets = graphics_pipeline.build_motion_graphics_assets(
+        _gauge_data(), tmp_path, mode="balanced",
+        manifest=_gauge_manifest(),
+    )
     assert assets == []
 
 
 def test_working_graphic_is_registered(tmp_path, monkeypatch):
-    def fake_render(path, *args, **kwargs):
+    """P0 removal rewrite (2026-11-27): a working directed engine
+    template's graphic is registered (the native stat renderer
+    this test originally faked is removed)."""
+    def fake_render(data, style, out_path, **kwargs):
+        path = Path(out_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"\x00" * 2048)
+        return str(path), {"template": "data_gauge", "generated": True}
 
-    monkeypatch.setattr(graphics_pipeline, "_render_stat_graphic", fake_render)
-    data = {
-        "case_bible": {},
-        "scenes": [
-            {
-                "scene_number": 1,
-                "sentences": [{"text": "It cost $5 million to build.", "sentence_number": 1}],
-            }
-        ],
-    }
-    # MG-05 (Motion Graphics programme Phase 1): registration now
-    # validates rendered output before an asset is recorded. These
-    # are logic tests whose fake renderers write non-media bytes,
-    # so the validator is stubbed at the same seam; the real
-    # validator is covered by dedicated real-file tests in
-    # tests/test_motion_graphics_programme.py.
+    from services.motion_engine import templates as engine_templates
+
+    monkeypatch.setitem(
+        engine_templates.TEMPLATES, "data_gauge", fake_render)
+    # MG-05: registration validates rendered output; the fake
+    # renderer writes non-media bytes, so the validator is
+    # stubbed at its seam (the real validator is covered by
+    # dedicated real-file tests in test_motion_graphics_programme).
     monkeypatch.setattr(
         graphics_pipeline, "validate_graphic_output",
         lambda path, expected_duration=None, **kwargs: {
@@ -102,24 +100,44 @@ def test_working_graphic_is_registered(tmp_path, monkeypatch):
             "checks": {}, "probe": None,
         },
     )
-
-    # Phase 6 supersession (AM-001/D1): this test previously
-    # relied on the untargeted statistics sweep finding the
-    # sentence on its own. The sweep is deleted — a graphic is
-    # generated only for a targeted requirement — so the sentence
-    # is now passed as an explicit target; the MG-05 registration
-    # behaviour under test is unchanged.
     assets = graphics_pipeline.build_motion_graphics_assets(
-        data, tmp_path, mode="balanced",
-        targets=[{
-            "scene_number": 1, "sentence_index": 0, "sentence_number": 1,
-            "text": "It cost $5 million to build.",
-        }],
+        _gauge_data(), tmp_path, mode="balanced",
+        manifest=_gauge_manifest(),
     )
     assert len(assets) == 1
-    assert assets[0]["graphic_type"] == "stat"
+    assert assets[0]["template"] == "data_gauge"
 
 
+def _gauge_data():
+    return {
+        "case_bible": {},
+        "scenes": [
+            {
+                "scene_number": 1,
+                "sentences": [{
+                    "text": "It ran at 62 percent of capacity.",
+                    "sentence_number": 1,
+                }],
+            }
+        ],
+    }
+
+
+def _gauge_manifest():
+    return {
+        "version": 1, "project_id": "sub", "theme": None,
+        "entries": [{
+            "manifest_id": "sub_0001",
+            "target": {"scene_number": 1, "sentence_index": 0,
+                       "sentence_number": 1},
+            "text": "It ran at 62 percent of capacity.",
+            "scenario": {}, "purpose": "coverage_fallback",
+            "template_candidates": ["data_gauge"],
+            "family_candidates": [],
+            "theme": None, "fact_basis": "script_claim",
+            "evidence_ref": None, "verified_data": None,
+        }],
+    }
 def test_verified_visual_beats_motion_graphic(tmp_path):
     verified = tmp_path / "verified.mp4"
     verified.write_bytes(b"\x00" * 2048)

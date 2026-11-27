@@ -46,10 +46,8 @@ def _stub_validator(monkeypatch):
             "checks": {}, "probe": None,
         },
     )
-    monkeypatch.setattr(
-        graphics_pipeline, "_render_stat_graphic",
-        lambda path, *a, **k: Path(path).write_bytes(b"\x00" * 2048),
-    )
+    # P0 removal (2026-11-27): the native stat renderer patch
+    # that used to sit here is gone with the family.
 
 
 def _stub_template(monkeypatch, name, refuse=False):
@@ -142,6 +140,11 @@ def _hyatt_data(entry_extra=None):
 
 def test_b1_fact_attached_to_other_sentence_is_not_borrowed(
         tmp_path, monkeypatch):
+    """P0 removal pin (rewritten): B1 pinned that a stat card
+    never borrows another sentence's figure. The stat family is
+    removed completely — an entry carrying a borrowed verified
+    display now produces NO graphic at all, so nothing can be
+    borrowed onto a card."""
     _stub_validator(monkeypatch)
     data, manifest = _hyatt_data({
         "verified_data": {"display": "88 million dollars",
@@ -150,15 +153,14 @@ def test_b1_fact_attached_to_other_sentence_is_not_borrowed(
     })
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced", manifest=manifest)
-    stats = [a for a in assets if a.get("graphic_type") == "stat"]
-    assert len(stats) == 1
-    headline = stats[0]["graphic_recipe"]["inputs"]["headline"]
-    assert headline == "140 MILLION DOLLARS"
-    assert "88" not in headline
+    assert assets == []
 
 
 def test_b1_conflicting_verified_display_yields_to_sentence_quantity(
         tmp_path, monkeypatch):
+    """P0 removal pin (rewritten): with the stat family gone, a
+    conflicting verified display has nothing to yield to and
+    nothing to headline — the entry produces no graphic."""
     _stub_validator(monkeypatch)
     data, manifest = _hyatt_data({
         "verified_data": {"display": "88 million dollars",
@@ -167,27 +169,12 @@ def test_b1_conflicting_verified_display_yields_to_sentence_quantity(
     })
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced", manifest=manifest)
-    stats = [a for a in assets if a.get("graphic_type") == "stat"]
-    assert len(stats) == 1
-    assert stats[0]["graphic_recipe"]["inputs"]["headline"] == \
-        "140 MILLION DOLLARS"
+    assert assets == []
 
 
-def test_b1_stat_headline_is_verbatim_from_the_first_frames(tmp_path):
-    """Real render: the headline band at ~1s must already show the
-    final figure — before the fix the count-up showed ~35M there
-    on its way to 140M."""
-    out = tmp_path / "stat.mp4"
-    graphics_pipeline._render_stat_graphic(
-        out, "140 MILLION DOLLARS", "", duration=4.0,
-        fact_basis="script_claim")
-    early = _frame(out, tmp_path / "early.png", at=1.0)
-    late = _frame(out, tmp_path / "late.png", at=3.8)
-    band = (150, 400, 1750, 580)
-    diff = ImageChops.difference(early.crop(band), late.crop(band))
-    px = list(diff.resize((320, 36)).getdata())
-    mean = sum(sum(c) for c in px) / (len(px) * 3)
-    assert mean < 2.0, f"headline band changed over time (mean {mean})"
+# P0 removal (2026-11-27): test_b1_stat_headline_is_verbatim_
+# from_the_first_frames deleted — it rendered through the
+# native stat renderer, removed completely with R5.
 
 
 # ---------------------------------------------------------------------
@@ -210,20 +197,10 @@ def _captured_render(monkeypatch):
     return commands
 
 
-def test_b6_no_internal_label_in_stat_render_for_any_basis(
-        tmp_path, monkeypatch):
-    for basis in ("script_claim", "research_supported",
-                  "verified_asset_metadata"):
-        commands = _captured_render(monkeypatch)
-        graphics_pipeline._render_stat_graphic(
-            tmp_path / "s.mp4", "140 MILLION DOLLARS", "Settlements",
-            duration=4.0, fact_basis=basis)
-        joined = " ".join(commands)
-        for label in graphics_pipeline._STAT_STAMPS.values():
-            assert label not in joined
-        assert "DATA /" not in joined
-        assert "SCRIPT CLAIM" not in joined
-        assert "140 MILLION DOLLARS" in joined
+# P0 removal (2026-11-27): test_b6_no_internal_label_in_stat_
+# render_for_any_basis deleted — it rendered through the native
+# stat renderer, removed completely. The B6 detector itself
+# (next test) survives: it guards every surviving render path.
 
 
 def test_b6_internal_label_detector_covers_the_class():
@@ -259,42 +236,11 @@ HYATT_EVENTS = [
 ]
 
 
-def test_b4_timeline_label_boxes_stay_in_safe_area_and_untruncated():
-    positions, _mode, _reveals = graphics_pipeline._timeline_node_positions(
-        HYATT_EVENTS, 6.0)
-    for index, event in enumerate(HYATT_EVENTS):
-        for field, base in (("when", 27), ("what", 22)):
-            box = graphics_pipeline._label_box(
-                positions[index], event[field], 360, base,
-                max_lines=2 if field == "when" else 3)
-            assert box["x"] >= graphics_pipeline.TIMELINE_SAFE_MARGIN
-            assert box["right"] <= \
-                1920 - graphics_pipeline.TIMELINE_SAFE_MARGIN
-            # The full label survives across the wrapped lines —
-            # no truncation, no ellipsis, no split words.
-            assert " ".join(box["lines"]) == \
-                graphics_pipeline.clean_text(event[field])
-            assert "..." not in " ".join(box["lines"])
-
-
-def test_b4_timeline_render_keeps_text_out_of_the_outer_border(tmp_path):
-    out = tmp_path / "timeline.mp4"
-    graphics_pipeline._render_timeline_graphic(
-        out, HYATT_EVENTS, duration=6.0)
-    frame = _frame(out, tmp_path / "tl.png", at=5.8)
-    assert _bright_pixels_in_border(frame) == 0
-
-
-def test_b4_outcome_path_render_keeps_labels_in_frame(tmp_path):
-    out = tmp_path / "outcome.mp4"
-    rendered, _meta = engine_templates.TEMPLATES["outcome_path"](
-        {"outcomes": [
-            {"label": e["what"]} for e in HYATT_EVENTS[:6]
-        ]},
-        "editorial", out, duration=2.5)
-    assert rendered is not None
-    frame = _frame(out, tmp_path / "op.png", at=2.4)
-    assert _bright_pixels_in_border(frame) == 0
+# P0 removal (2026-11-27): the B4 timeline layout/render tests
+# and the outcome_path render test are deleted — both families
+# (native timeline, outcome_path template) are removed
+# completely. The assembler label-fitting pin below survives:
+# _fit_label is a shared templates helper.
 
 
 def test_b4_outcome_path_assembler_no_longer_truncates_labels():
@@ -331,11 +277,15 @@ def _two_beat_data():
     }
 
 
-def test_b3_repeated_payload_moves_to_a_distinct_payload(
+def test_b3_repeated_beats_decline_without_duplicate_payloads(
         tmp_path, monkeypatch):
+    """P0 rewiring (rewritten): two beats whose only payload was
+    the same name used to be served two closing cards with the
+    repetition guard moving the second to a distinct payload.
+    The floor is removed — both beats decline, no payload is
+    ever duplicated, and no duplicate-payload defect is
+    recorded."""
     _stub_validator(monkeypatch)
-    _stub_template(monkeypatch, "closing_card")
-    _stub_template(monkeypatch, "archival_title")
     assets = graphics_pipeline.build_motion_graphics_assets(
         _two_beat_data(), tmp_path, mode="balanced",
         targets=[
@@ -348,22 +298,23 @@ def test_b3_repeated_payload_moves_to_a_distinct_payload(
              "text": "Malcom McLean counted the cranes at Newark.",
              "scenario": {}},
         ])
-    cards = [a for a in assets if a.get("template") == "closing_card"]
-    assert len(assets) == 2
-    if len(cards) == 2:
-        quotes = [c["engine_inputs"]["quote"] for c in cards]
-        assert quotes[0] != quotes[1], quotes
+    assert assets == []
     manifest = _manifest_file(tmp_path)
     dupes = [d for d in manifest["graphic_quality_defects"]
              if d["type"] == "duplicate_graphic_payload"]
     assert dupes == []
+    assert len(manifest["targets"]["skipped"]) == 2
 
 
-def test_b3_assigned_schematic_substitution_is_recorded_not_silent(
+def test_b3_assigned_schematic_declines_without_substitution(
         tmp_path, monkeypatch):
+    """P0 rewiring (rewritten): an entry assigned the schematic
+    family whose stage declines used to be filled by the
+    guarantee floor with the substitution recorded. The floor
+    is removed — the beat is simply skipped with the terminal
+    decline; no family silently (or recorded-ly) substitutes
+    for the assigned one."""
     _stub_validator(monkeypatch)
-    _stub_template(monkeypatch, "closing_card")
-    _stub_template(monkeypatch, "archival_title")
     entry = {
         "manifest_id": "g4_schem",
         "target": {"scene_number": 1, "sentence_index": 0,
@@ -381,17 +332,12 @@ def test_b3_assigned_schematic_substitution_is_recorded_not_silent(
                 "entries": [entry]}
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced", manifest=manifest)
-    # The schematic declined (no labels/motif in this fixture);
-    # the beat is still filled (Gate 2 guarantee) but NOT by an
-    # event_schematic, and the substitution is explicit.
-    assert assets, "terminal guarantee must still fill the beat"
-    assert not [a for a in assets if a.get("family") == "event_schematic"]
-    served = assets[0]
-    assert served.get("assigned_family") == "event_schematic"
-    assert served["family_substitution"]["assigned"] == "event_schematic"
-    defects = _manifest_file(tmp_path)["graphic_quality_defects"]
-    assert any(d["type"] == "assigned_family_not_delivered"
-               for d in defects)
+    assert assets == []
+    outcome = _manifest_file(tmp_path)["targets"]["outcomes"][0]
+    assert outcome["outcome"] == "skipped"
+    assert outcome["terminal_decline"]["reason"] == (
+        "terminal_graphics_decline"
+    )
 
 
 def test_b3_schematic_renders_a_real_diagram_when_motif_fits(

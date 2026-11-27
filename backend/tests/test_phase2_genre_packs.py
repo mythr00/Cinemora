@@ -131,12 +131,18 @@ def test_engineering_plan_differs_from_general():
     gen_candidates, gen_affinities = _candidates_for("general")
     assert eng_candidates != gen_candidates
     assert eng_affinities != gen_affinities
-    # The investigation beat's evidence board outranks under
-    # engineering; under general it is not affinity-ranked at all.
-    assert eng_affinities.get("evidence_board") == 2
-    assert "evidence_board" not in gen_affinities
-    assert eng_candidates.index("evidence_board") < gen_candidates.index(
-        "evidence_board"
+    # The packs rank the surviving chart family differently:
+    # general weights the bar chart at 2 where engineering
+    # weights it 1, and engineering weights the text overlay
+    # at 2 where general weights it 1. (P0 removal, 2026-11-27:
+    # this assertion previously rode on evidence_board, removed
+    # completely with its template and affinities.)
+    assert eng_affinities.get("bar_chart") == 1
+    assert gen_affinities.get("bar_chart") == 2
+    assert eng_affinities.get("text_overlay") == 2
+    assert gen_affinities.get("text_overlay") == 1
+    assert eng_candidates.index("text_overlay") < gen_candidates.index(
+        "text_overlay"
     )
 
 
@@ -172,7 +178,10 @@ def test_new_pack_priors_lean_explanatory(pack_id):
     assert set(profile["template_affinities"]) <= (
         genre_packs.ASSEMBLED_TEMPLATES
     )
-    assert profile["template_affinities"]["outcome_path"] == 3
+    # The new packs lean hard on the surviving cutaway family.
+    # (P0 removal, 2026-11-27: this pin previously named
+    # outcome_path == 3, removed completely with its template.)
+    assert profile["template_affinities"]["exploded_view"] >= 2
 
 
 # ---------------------------------------------------------------------------

@@ -25,9 +25,12 @@ from services import genre_packs, graphics_pipeline, visual_director
 from services.motion_engine import templates as engine_templates
 from services.motion_engine import themes as engine_themes
 
+# P0 removal (2026-11-27): milestone_waveform was removed
+# completely from the Wave 2 registrations; it is pinned ABSENT
+# in tests/test_p0_removal_pins.py.
 WAVE2_TEMPLATES = [
     "bubble_chart", "population_pyramid", "animated_dashboard",
-    "checklist_graphic", "milestone_waveform",
+    "checklist_graphic",
     "territory_expansion", "satellite_zoom", "heatmap",
     "classified_file", "newspaper_wall", "crime_scene_diagram",
     "construction_sequence", "molecular_diagram",
@@ -141,7 +144,9 @@ def test_registry_covers_all_wave2_templates():
     # manim_line_chart / manim_bar_chart registered alongside.
     # +2 (GitHub Skills Programme, 2026-11-25): the matplotlib
     # chart engine's mpl_line_chart / mpl_bar_chart.
-    assert len(engine_templates.TEMPLATES) == 53
+    # P0 removal (2026-11-27): eleven templates removed
+    # completely — 53 down to 42.
+    assert len(engine_templates.TEMPLATES) == 42
 
 
 def test_wave2_templates_refuse_with_typed_reasons(tmp_path):
@@ -156,9 +161,6 @@ def test_wave2_templates_refuse_with_typed_reasons(tmp_path):
             {"stats": [{"label": "a", "value": 1}]},
             "insufficient_stats"),
         "checklist_graphic": ({"items": []}, "no_items"),
-        "milestone_waveform": (
-            {"events": [{"when": "2000", "what": "x"}]},
-            "insufficient_events"),
         "territory_expansion": (
             {"states": [{"label": "1900",
                          "regions": [{"country": "France"}]}]},
@@ -247,12 +249,6 @@ def _direct_cases(tmp_path):
                 {"label": "Check the box beam welds", "state": "active"},
                 {"label": "Sign off the drawings", "state": "pending"},
             ], "title": "Inspection"},
-        "milestone_waveform": {
-            "events": [
-                {"when": "1956", "what": "First container sailing"},
-                {"when": "1970", "what": "ISO standard fixed"},
-                {"when": "2020", "what": "Mega ships arrive"},
-            ], "title": "The container era"},
         "territory_expansion": {
             "states": [
                 {"label": "1900", "regions": [{"country": "France"}]},
@@ -348,26 +344,6 @@ def test_wave2_template_renders_recorded_data(tmp_path, name):
         _assert_frame_alive(frame)
 
 
-def test_milestone_waveform_stamps_ordinal_amplitude(tmp_path):
-    theme = engine_themes.THEMES["investigative"]
-    _path, meta = engine_templates.TEMPLATES["milestone_waveform"](
-        {"events": [
-            {"when": "1956", "what": "First sailing"},
-            {"when": "1970", "what": "ISO standard"},
-            {"when": "2020", "what": "Mega ships"},
-        ]}, theme, str(tmp_path / "w.mp4"), duration=0.6)
-    # No recorded magnitudes: the heights are presentational and
-    # the record says so — never stamped as data.
-    assert meta["inputs"]["amplitude_source"] == "ordinal"
-    _path, meta = engine_templates.TEMPLATES["milestone_waveform"](
-        {"events": [
-            {"when": "1956", "what": "First", "amplitude": 2},
-            {"when": "1970", "what": "Standard", "amplitude": 5},
-            {"when": "2020", "what": "Mega", "amplitude": 9},
-        ]}, theme, str(tmp_path / "w2.mp4"), duration=0.6)
-    assert meta["inputs"]["amplitude_source"] == "recorded"
-
-
 def test_crime_scene_stamps_schematic(tmp_path):
     theme = engine_themes.THEMES["investigative"]
     _path, meta = engine_templates.TEMPLATES["crime_scene_diagram"](
@@ -451,7 +427,11 @@ def test_bubble_chart_from_fact_table(tmp_path):
     assert charts[0]["validation"]["passed"]
 
 
-def test_milestone_waveform_from_case_bible_timeline(tmp_path):
+def test_milestone_waveform_entry_produces_nothing(tmp_path):
+    """P0 removal pin (replaces the case-bible waveform render
+    test): the bible timeline no longer buys a milestone_waveform
+    graphic — an entry naming the removed template produces
+    nothing at all."""
     timeline = [
         {"when": "1956", "what": "First container sailing"},
         {"when": "1970", "what": "ISO standard fixed"},
@@ -465,11 +445,7 @@ def test_milestone_waveform_from_case_bible_timeline(tmp_path):
                    templates=["milestone_waveform"])
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced", manifest=_manifest([entry]))
-    waves = [a for a in assets
-             if a.get("template") == "milestone_waveform"]
-    assert len(waves) == 1
-    assert len(waves[0]["engine_inputs"]["events"]) == 3
-    assert waves[0]["validation"]["passed"]
+    assert assets == []
 
 
 def test_scenario_contract_templates_through_pipeline(tmp_path):
@@ -674,7 +650,9 @@ def test_director_registers_every_wave2_template():
     for name in ("bubble_chart", "animated_dashboard",
                  "holographic_panel"):
         assert name in _candidates(series), name
-    assert "milestone_waveform" in _candidates(
+    # P0 removal: a dated beat must NEVER propose the removed
+    # milestone_waveform.
+    assert "milestone_waveform" not in _candidates(
         "In 1956 the first ship sailed.")
     assert "population_pyramid" in _candidates(
         "The town's ages shifted.", scenario={

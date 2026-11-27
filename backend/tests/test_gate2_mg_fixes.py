@@ -236,28 +236,10 @@ def test_mg06_newspaper_headlines_are_short_payloads_only(tmp_path):
 # MG-04 — red_string_board requires labels for connected nodes
 # ---------------------------------------------------------------------------
 
-def test_mg04_template_refuses_unlabelled_board(tmp_path):
-    photos = [
-        {"path": _photo(tmp_path / "p1.jpg"), "caption": ""},
-        {"path": _photo(tmp_path / "p2.jpg"), "caption": ""},
-    ]
-    rendered, meta = engine_templates.TEMPLATES["red_string_board"](
-        {"photos": photos, "labels": [], "title": "The Board"},
-        "investigative", tmp_path / "board.mp4", duration=2.5)
-    assert rendered is None
-    assert meta["reason"] == "unlabelled_board_nodes"
-
-
-def test_mg04_template_renders_labelled_board(tmp_path):
-    photos = [
-        {"path": _photo(tmp_path / "p1.jpg"), "caption": ""},
-        {"path": _photo(tmp_path / "p2.jpg"), "caption": ""},
-    ]
-    rendered, meta = engine_templates.TEMPLATES["red_string_board"](
-        {"photos": photos, "labels": ["The Van", "The Driver"],
-         "title": "The Board"},
-        "investigative", tmp_path / "board.mp4", duration=2.5)
-    assert rendered is not None
+# P0 removal (2026-11-27): the two MG-04 template tests are
+# deleted — red_string_board is removed completely, so there is
+# no template left to refuse or render. The pipeline-level pin
+# below survives: a directed board entry produces nothing.
 
 
 def test_mg04_pipeline_declines_unlabelled_board(tmp_path):
@@ -329,7 +311,7 @@ def test_mg11_template_renders_at_requested_duration(tmp_path):
 
 def test_mg11_builder_renders_at_slot_duration(tmp_path):
     data = _container_data(tmp_path, [])
-    entry = _entry("mg_1101", 1, 0, 1, MCLEAN_TEXT, ["closing_card"])
+    entry = _entry("mg_1101", 1, 0, 1, MCLEAN_TEXT, ["archival_title"])
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced", manifest=_manifest([entry]),
         slot_durations={1: 9.0})
@@ -341,7 +323,7 @@ def test_mg11_builder_renders_at_slot_duration(tmp_path):
 
 def test_mg11_builder_default_duration_without_slot(tmp_path):
     data = _container_data(tmp_path, [])
-    entry = _entry("mg_1102", 1, 0, 1, MCLEAN_TEXT, ["closing_card"])
+    entry = _entry("mg_1102", 1, 0, 1, MCLEAN_TEXT, ["archival_title"])
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced", manifest=_manifest([entry]))
     assert len(assets) == 1
