@@ -159,49 +159,6 @@ def test_uv01_line_chart_from_display_only_production_facts(
     assert [p["value"] for p in points] == [12.0, 30.0, 55.0]
 
 
-def test_uv01_hud_readouts_from_production_dict_shape(
-    tmp_path, monkeypatch
-):
-    _stub_validator(monkeypatch)
-    photo = tmp_path / "yard.jpg"
-    Image.new("RGB", (800, 600), (70, 90, 130)).save(photo)
-    table = {
-        "facts": [
-            _quantity(42, "units", 1),
-            _quantity(7, "cranes", 2),
-        ],
-        "record": {"facts": 2, "quantities": 2},
-    }
-    data = _chart_data(table)
-    data["processed_scenes"] = [{
-        "scene": {"scene_number": 1, "sentences": []},
-        "images": [{
-            "verification": {"accepted": True},
-            "path": str(photo), "file_path": str(photo),
-            "provider": "wikimedia",
-            "source_url": "https://example.org/yard",
-            "title": "The container yard", "type": "image",
-        }],
-        "videos": [],
-    }]
-    entry = _entry("uv_0003", 1, 1, 2, _TEXTS[1],
-                   templates=["hud_overlay"])
-    assets = graphics_pipeline.build_motion_graphics_assets(
-        data, tmp_path, mode="balanced", manifest=_manifest([entry]),
-    )
-    huds = [a for a in assets if a.get("template") == "hud_overlay"]
-    assert len(huds) == 1
-    readouts = huds[0]["engine_inputs"]["readouts"]
-    # Only sentence 2's own fact (7 cranes) — sentence 1's fact
-    # does not leak into this beat's overlay.
-    assert readouts == [{"label": "cranes", "value": "7 cranes"}]
-
-
-# ---------------------------------------------------------------------
-# UV-12 — conflicted facts never reach a graphic
-# ---------------------------------------------------------------------
-
-
 def test_uv12_conflicted_quantity_fact_excluded_from_chart(
     tmp_path, monkeypatch
 ):

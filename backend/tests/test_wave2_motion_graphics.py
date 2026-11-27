@@ -34,7 +34,7 @@ WAVE2_TEMPLATES = [
     "territory_expansion", "satellite_zoom", "heatmap",
     "classified_file", "newspaper_wall", "crime_scene_diagram",
     "construction_sequence", "molecular_diagram",
-    "hud_overlay", "holographic_panel", "before_after",
+    "before_after",
     "layered_reveal", "object_labels",
 ]
 
@@ -149,8 +149,9 @@ def test_registry_covers_all_wave2_templates():
     # Phase 5 core treatments (2026-11-27): +4 rebuilt treatments
     # under new names (chronology / route / locator /
     # relationship_network): 46.
-    # Phase 6-7 (D1): +1 labelled_diagram -> 47.
-    assert len(engine_templates.TEMPLATES) == 47
+    # Phase 6-7: +1 labelled_diagram (D1), -2 impostors
+    # hud_overlay/holographic_panel (G2) -> 45.
+    assert len(engine_templates.TEMPLATES) == 45
 
 
 def test_wave2_templates_refuse_with_typed_reasons(tmp_path):
@@ -181,10 +182,6 @@ def test_wave2_templates_refuse_with_typed_reasons(tmp_path):
         "molecular_diagram": (
             {"atoms": [{"element": "O", "at": [0.5, 0.5]}]},
             "insufficient_atoms"),
-        "hud_overlay": ({}, "no_photo"),
-        "holographic_panel": (
-            {"items": [{"label": "a", "value": "1"}]},
-            "insufficient_items"),
         "before_after": ({"before": photo}, "missing_pair"),
         "layered_reveal": (
             {"photos": [{"path": photo}]}, "insufficient_photos"),
@@ -295,15 +292,6 @@ def _direct_cases(tmp_path):
                 {"element": "H", "at": [0.35, 0.62]},
                 {"element": "H", "at": [0.65, 0.62]},
             ], "bonds": [[0, 1], [0, 2]], "title": "Water"},
-        "hud_overlay": {
-            "photo": photo,
-            "readouts": [{"label": "Flow", "value": "42 units"}],
-            "title": "Terminal systems"},
-        "holographic_panel": {
-            "items": [
-                {"label": "Depth", "value": "12 m"},
-                {"label": "Flow", "value": "42"},
-            ], "title": "Harbour panel"},
         "before_after": {
             "before": photo, "after": photo2, "title": "The yard"},
         "layered_reveal": {
@@ -333,7 +321,7 @@ def test_wave2_template_renders_recorded_data(tmp_path, name):
     assert meta["template"] == name
     frame = _frame(path, tmp_path / f"{name}.png", at=0.9)
     if name in ("satellite_zoom", "before_after", "layered_reveal",
-                "hud_overlay", "object_labels", "newspaper_wall"):
+                "object_labels", "newspaper_wall"):
         # Photo-full frames: no theme background by design (the
         # photo fills the frame — or, for the newspaper wall, the
         # papers tile it) — size + non-blank only, the Wave 1
@@ -614,7 +602,7 @@ def test_photo_backed_wave2_through_pipeline(tmp_path):
     entries = [
         _entry("w2_0030", 1, 0, 1, texts[0],
                templates=["layered_reveal"]),
-        _entry("w2_0031", 1, 1, 2, texts[1], templates=["hud_overlay"]),
+        _entry("w2_0031", 1, 1, 2, texts[1], templates=["text_overlay"]),
         _entry("w2_0032", 1, 2, 3, texts[2],
                templates=["object_labels"], scenario=scenario),
         _entry("w2_0033", 1, 3, 4, texts[3],
@@ -623,13 +611,12 @@ def test_photo_backed_wave2_through_pipeline(tmp_path):
     assets = graphics_pipeline.build_motion_graphics_assets(
         data, tmp_path, mode="balanced", manifest=_manifest(entries))
     by_template = {a.get("template"): a for a in assets}
-    for name in ("layered_reveal", "hud_overlay", "object_labels",
+    for name in ("layered_reveal", "text_overlay", "object_labels",
                  "newspaper_wall"):
         assert name in by_template, name
         assert by_template[name]["validation"]["passed"], name
     assert len(by_template["layered_reveal"]
                ["engine_inputs"]["photos"]) >= 2
-    assert by_template["hud_overlay"]["engine_inputs"]["readouts"]
 
 
 # ---------------------------------------------------------------------------
@@ -651,9 +638,13 @@ def _candidates(text, scenario=None, **outcome_extra):
 
 def test_director_registers_every_wave2_template():
     series = "Levels rose 12 units, then 30 units, then 55 units."
-    for name in ("bubble_chart", "animated_dashboard",
-                 "holographic_panel"):
+    for name in ("bubble_chart", "animated_dashboard"):
         assert name in _candidates(series), name
+    # Phase 6-7 (G2): the decorative impostors are unproducible —
+    # no candidacy, ever.
+    assert "holographic_panel" not in _candidates(series)
+    assert "hud_overlay" not in _candidates(
+        "Levels reached 42 units.", scene_photo_count=1)
     # P0 removal: a dated beat must NEVER propose the removed
     # milestone_waveform.
     assert "milestone_waveform" not in _candidates(
@@ -698,10 +689,6 @@ def test_director_registers_every_wave2_template():
     assert "classified_file" not in _candidates("The memo surfaced.")
     assert "newspaper_wall" in _candidates(
         "The newspaper headline announced the verdict.")
-    assert "hud_overlay" in _candidates(
-        "Levels reached 42 units.", scene_photo_count=1)
-    assert "hud_overlay" not in _candidates(
-        "Levels reached 42 units.", scene_photo_count=0)
     assert "object_labels" in _candidates(
         "The crane stood over the yard.",
         scenario={"object_labels": [{"text": "Crane",

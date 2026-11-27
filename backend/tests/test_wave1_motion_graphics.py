@@ -149,8 +149,9 @@ def test_registry_covers_all_wave1_templates():
     # Phase 5 core treatments (2026-11-27): +4 rebuilt treatments
     # under new names (chronology / route / locator /
     # relationship_network): 46. Phase 6-7 (D1): +1
-    # labelled_diagram: 47.
-    assert len(engine_templates.TEMPLATES) == 47
+    # labelled_diagram: 47; (G2): -2 impostors
+    # hud_overlay/holographic_panel: 45.
+    assert len(engine_templates.TEMPLATES) == 45
 
 
 def test_wave1_templates_refuse_with_typed_reasons(tmp_path):

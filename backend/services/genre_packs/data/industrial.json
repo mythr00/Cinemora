@@ -77,8 +77,6 @@
     "crime_scene_diagram",
     "construction_sequence",
     "molecular_diagram",
-    "hud_overlay",
-    "holographic_panel",
     "before_after",
     "layered_reveal",
     "object_labels"
@@ -196,9 +194,7 @@
       "construction_sequence": 2,
       "checklist_graphic": 2,
       "bubble_chart": 2,
-      "hud_overlay": 2,
       "satellite_zoom": 2,
-      "holographic_panel": 1,
       "population_pyramid": 1,
       "territory_expansion": 1,
       "classified_file": 1,

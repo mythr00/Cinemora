@@ -55,7 +55,7 @@ def test_registry_covers_all_fifteen_templates():
     # the removed names stay absent, asserted below unchanged.
     # Phase 6-7 (D1): +1 labelled_diagram -> 47.
     names = set(templates.TEMPLATES) | set(templates_v2.V2_TEMPLATES)
-    assert len(names) == 47
+    assert len(names) == 45
     assert "manim_line_chart" in names and "manim_bar_chart" in names
     assert "mpl_line_chart" in names and "mpl_bar_chart" in names
     for name in (
@@ -78,10 +78,13 @@ def test_registry_covers_all_fifteen_templates():
         "territory_expansion", "satellite_zoom", "heatmap",
         "classified_file", "newspaper_wall", "crime_scene_diagram",
         "construction_sequence", "molecular_diagram",
-        "hud_overlay", "holographic_panel", "before_after",
+        "before_after",
         "layered_reveal", "object_labels",
     ):
         assert name in names, name
+    # Phase 6-7 (G2): the decorative impostors are removed.
+    for name in ("hud_overlay", "holographic_panel"):
+        assert name not in names, name
 
 
 def test_easing_behaviour_unchanged_at_sample_points():

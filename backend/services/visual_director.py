@@ -685,13 +685,14 @@ def _template_candidates(row, outcome, pack, bible=None, problem=None):
         candidates += ["manim_line_chart", "mpl_line_chart", "line_chart"]
     if features["has_pair"]:
         candidates.append("pie_chart")
-    # Wave 2 (F1/F2 breadth): the dashboard, bubble chart and
-    # holographic panel ride on the same recorded series cue.
+    # Wave 2 (F1/F2 breadth): the dashboard and bubble chart
+    # ride on the same recorded series cue.
     # (P0 removal, 2026-11-27: milestone_waveform candidacy on
-    # the date cue removed with the template — completely.)
+    # the date cue removed with the template — completely.
+    # Phase 6-7 (G2): holographic_panel candidacy removed with
+    # the template — a decorative impostor, never a treatment.)
     if features["has_series"]:
-        candidates += [
-            "bubble_chart", "animated_dashboard", "holographic_panel"]
+        candidates += ["bubble_chart", "animated_dashboard"]
     place = scenario.get("place") or scenario.get("location")
     # (P0 removal, 2026-11-27: the F3 map family candidacy —
     # territory_map + border/route/trade_route/military variants
@@ -781,12 +782,11 @@ def _template_candidates(row, outcome, pack, bible=None, problem=None):
         # this pair — template deleted completely. text_overlay
         # stays.)
         candidates += ["text_overlay"]
-        # Wave 2 photo-backed breadth: the HUD needs recorded
-        # numbers to read out; object labels need the scenario's
-        # recorded anchors; the satellite zoom needs a recorded
-        # place (or focus) plus an aerial cue in the text.
-        if features["has_number"]:
-            candidates.append("hud_overlay")
+        # Wave 2 photo-backed breadth: object labels need the
+        # scenario's recorded anchors; the satellite zoom needs
+        # a recorded place (or focus) plus an aerial cue in the
+        # text. (Phase 6-7 (G2): hud_overlay candidacy removed
+        # with the template.)
         if isinstance(scenario.get("object_labels"), list) \
                 and scenario["object_labels"]:
             candidates.append("object_labels")

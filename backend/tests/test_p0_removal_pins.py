@@ -38,6 +38,9 @@ REMOVED_TEMPLATES = [
     "photo_parallax", "outcome_path", "milestone_waveform",
     "territory_map", "border_map", "route_map",
     "trade_route_map", "military_map",
+    # Phase 6-7 (G2): the decorative impostor templates —
+    # removed with the same discipline (audit G2, secondary set).
+    "hud_overlay", "holographic_panel",
 ]
 
 REMOVED_NATIVE_FAMILIES = ["stat", "process", "timeline"]
@@ -127,8 +130,9 @@ def test_removed_templates_absent_from_every_registry():
     # register under NEW names (chronology / route / locator /
     # relationship_network) — every REMOVED name above stays
     # absent, which is the pin this test exists for.
-    # Phase 6-7 (D1): +1 labelled_diagram -> 47.
-    assert len(engine_templates.TEMPLATES) == 47
+    # Phase 6-7: +1 labelled_diagram (D1), -2 impostors
+    # hud_overlay/holographic_panel (G2) -> 45.
+    assert len(engine_templates.TEMPLATES) == 45
     for survivor in (
         "archival_title", "document_presentation", "classified_file",
         "text_overlay", "text_highlight", "profile_reveal",

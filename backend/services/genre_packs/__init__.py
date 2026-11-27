@@ -205,7 +205,7 @@ ASSEMBLED_TEMPLATES = frozenset({
     "territory_expansion", "satellite_zoom", "heatmap",
     "classified_file", "newspaper_wall", "crime_scene_diagram",
     "construction_sequence", "molecular_diagram",
-    "hud_overlay", "holographic_panel", "before_after",
+    "before_after",
     "layered_reveal", "object_labels",
 })
 

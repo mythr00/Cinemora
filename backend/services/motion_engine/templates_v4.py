@@ -18,8 +18,10 @@ Families:
                    (classified_file lives with its base template
                    in v1, as the Wave 1 map variants do).
   F5 technical   — construction_sequence, molecular_diagram.
-  F7/F8 overlays — hud_overlay, holographic_panel, before_after,
-                   layered_reveal, object_labels.
+  F7/F8 overlays — before_after, layered_reveal, object_labels.
+                   (hud_overlay / holographic_panel were decorative
+                   impostors of the advanced family — REMOVED by
+                   the Phase 6-7 programme, audit G2.)
 """
 
 import math
@@ -1271,184 +1273,6 @@ def molecular_diagram(data, style, out_path, duration=5.0, sentence_index=None, 
 
 
 # ---------------------------------------------------------------------------
-# F7. HUD overlay — recorded readouts over a recorded photo (the
-# full-frame graphic form of the scan_grid aesthetic)
-# ---------------------------------------------------------------------------
-
-def hud_overlay(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
-    style_name, tokens = resolve_style(style)
-    data = data or {}
-    photo = _load_image(data.get("photo") or data.get("image"))
-    if photo is None:
-        return None, {"reason": "no_photo"}
-    readouts = []
-    for entry in data.get("readouts") or []:
-        if not isinstance(entry, dict):
-            continue
-        label = _clean(entry.get("label"))
-        value = _clean(entry.get("value") or entry.get("display"))
-        if label and value:
-            readouts.append({"label": label, "value": value})
-    if not readouts:
-        return None, {"reason": "no_readouts"}
-    readouts = readouts[:5]
-    title = _clean(data.get("title"))
-    bg_img = _dark_photo(data.get("photo") or data.get("image"),
-                         darkness=0.62)
-    fonts = {
-        "title": load_font(tokens["font_bold"], 34),
-        "label": load_font(tokens["font_bold"], 21),
-        "value": load_font(tokens["font_bold"], 32),
-    }
-    bg_rgba = bg_img.convert("RGBA")
-    accent = tokens["accent2"]
-
-    def _bracket(d, x, y, w, h, arm, fill, width=4):
-        d.line([x, y, x + arm, y], fill=fill, width=width)
-        d.line([x, y, x, y + arm], fill=fill, width=width)
-        d.line([x + w, y, x + w - arm, y], fill=fill, width=width)
-        d.line([x + w, y, x + w, y + arm], fill=fill, width=width)
-        d.line([x, y + h, x + arm, y + h], fill=fill, width=width)
-        d.line([x, y + h, x, y + h - arm], fill=fill, width=width)
-        d.line([x + w, y + h, x + w - arm, y + h], fill=fill, width=width)
-        d.line([x + w, y + h, x + w, y + h - arm], fill=fill, width=width)
-
-    def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
-        base = canvas.new_layer("bg")
-        base.image = bg_rgba.copy()
-        layer = canvas.new_layer("hud")
-        d = ImageDraw.Draw(layer.image, "RGBA")
-        fade = ease_out(clamp01(progress * 1.6))
-        alpha = int(235 * fade)
-        _bracket(d, 54, 54, WIDTH - 108, HEIGHT - 108, 46,
-                 accent + (alpha,))
-        # Sweep line: a soft horizontal scan crossing the frame.
-        sweep_y = 80 + (HEIGHT - 160) * ((t * 0.14) % 1.0)
-        d.line([70, sweep_y, WIDTH - 70, sweep_y], fill=accent + (36,),
-               width=10)
-        if title:
-            d.text((96, 84), title.upper()[:52], font=fonts["title"],
-                   fill=tokens["text"] + (alpha,))
-        # Reticle at the frame's centre-left.
-        rcx, rcy = 620, 560
-        rr = 92 + 8 * math.sin(t * 2.2)
-        d.ellipse([rcx - rr, rcy - rr, rcx + rr, rcy + rr],
-                  outline=accent + (alpha,), width=3)
-        d.line([rcx - rr - 26, rcy, rcx - rr + 30, rcy],
-               fill=accent + (alpha,), width=3)
-        d.line([rcx + rr - 30, rcy, rcx + rr + 26, rcy],
-               fill=accent + (alpha,), width=3)
-        d.line([rcx, rcy - rr - 26, rcx, rcy - rr + 30],
-               fill=accent + (alpha,), width=3)
-        d.line([rcx, rcy + rr - 30, rcx, rcy + rr + 26],
-               fill=accent + (alpha,), width=3)
-        # Readout stack at the right, each row ticked to a leader.
-        rx = 1290
-        ry = 250
-        for i, readout in enumerate(readouts):
-            local = ease_out(clamp01(progress * 2.2 - 0.3 - i * 0.3))
-            if local <= 0:
-                continue
-            d.rectangle([rx, ry, rx + 470, ry + 96],
-                        fill=(6, 10, 14, int(150 * local)))
-            d.rectangle([rx, ry, rx + 6, ry + 96],
-                        fill=accent + (int(255 * local),))
-            d.text((rx + 26, ry + 12), readout["label"].upper()[:26],
-                   font=fonts["label"], fill=tokens["muted"] + (alpha,))
-            d.text((rx + 26, ry + 42), readout["value"][:24],
-                   font=fonts["value"], fill=tokens["text"] + (alpha,))
-            ry += 122
-        _footer(d, tokens)
-        return canvas.composite()
-
-    path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta("hud_overlay", style_name, duration,
-                       sentence_index, scene_number,
-                       {"photo": True, "readouts": len(readouts),
-                        "title": bool(title)})
-
-
-# ---------------------------------------------------------------------------
-# F7. Holographic panel — recorded items on a translucent 2.5D
-# panel (scan_grid / cinematic_data aesthetic, layered parallax)
-# ---------------------------------------------------------------------------
-
-def holographic_panel(data, style, out_path, duration=5.0, sentence_index=None, scene_number=None):
-    style_name, tokens = resolve_style(style)
-    data = data or {}
-    items = []
-    for entry in data.get("items") or data.get("stats") or []:
-        if not isinstance(entry, dict):
-            continue
-        label = _clean(entry.get("label"))
-        value = _clean(entry.get("value") or entry.get("display"))
-        if isinstance(entry.get("value"), (int, float)) and not value:
-            value = _fmt(entry["value"])
-        if label and value:
-            items.append({"label": label, "value": value})
-    if len(items) < 2:
-        return None, {"reason": "insufficient_items"}
-    items = items[:6]
-    title = _clean(data.get("title"))
-    bg = _textured_dark((WIDTH, HEIGHT), tokens["bg"], seed=137)
-    fonts = {
-        "title": load_font(tokens["font_bold"], 40),
-        "label": load_font(tokens["font_bold"], 23),
-        "value": load_font(tokens["font_bold"], 34),
-    }
-    panel = (330, 190, WIDTH - 330, HEIGHT - 170)
-    accent = tokens["accent2"]
-
-    def draw_frame(t, progress):
-        canvas = core.Canvas(bg=tokens["bg"], pattern=tokens.get("background_pattern"), pattern_color=tokens.get("pattern_color"))
-        base = canvas.new_layer("bg", parallax=0.25)
-        base.image = bg.convert("RGBA")
-        glow = canvas.new_layer("glow", parallax=0.55)
-        gd = ImageDraw.Draw(glow.image, "RGBA")
-        fade = ease_out(clamp01(progress * 1.5))
-        # Wireframe ring motif behind the panel (hologram base).
-        rcx, rcy = WIDTH // 2, (panel[1] + panel[3]) // 2
-        for k, rr in enumerate((330, 262, 196)):
-            gd.ellipse([rcx - rr, rcy - rr * 0.36, rcx + rr, rcy + rr * 0.36],
-                       outline=accent + (int(50 * fade),), width=2)
-        layer = canvas.new_layer("panel", parallax=0.8)
-        d = ImageDraw.Draw(layer.image, "RGBA")
-        d.rectangle(panel, fill=accent + (int(26 * fade),))
-        d.rectangle(panel, outline=accent + (int(220 * fade),), width=3)
-        # Scanlines across the panel.
-        for sy in range(panel[1] + 8, panel[3], 9):
-            d.line([panel[0], sy, panel[2], sy], fill=accent + (14,),
-                   width=1)
-        if title:
-            d.text((panel[0] + 44, panel[1] + 34), title.upper()[:48],
-                   font=fonts["title"], fill=tokens["text"] + (255,))
-            d.line([panel[0] + 44, panel[1] + 96, panel[2] - 44,
-                    panel[1] + 96], fill=accent + (160,), width=2)
-        y = panel[1] + 132
-        for i, item in enumerate(items):
-            local = ease_out(clamp01(progress * 2.0 - 0.25 - i * 0.24))
-            if local <= 0:
-                continue
-            alpha = int(255 * local)
-            d.text((panel[0] + 44, y), item["label"].upper()[:30],
-                   font=fonts["label"], fill=tokens["muted"] + (alpha,))
-            vw = d.textlength(item["value"][:24], font=fonts["value"])
-            d.text((panel[2] - 44 - vw, y - 8), item["value"][:24],
-                   font=fonts["value"], fill=tokens["text"] + (alpha,))
-            y += 74
-        camera = {"scale": 1.0 + 0.03 * progress,
-                  "x": -14 + 28 * progress}
-        frame = canvas.composite(camera=camera)
-        return frame
-
-    path = core.render_template(draw_frame, out_path, duration=duration)
-    return path, _meta("holographic_panel", style_name, duration,
-                       sentence_index, scene_number,
-                       {"items": len(items), "title": bool(title)})
-
-
-# ---------------------------------------------------------------------------
 # F8. Before-and-after — a wipe across a recorded pair of images
 # ---------------------------------------------------------------------------
 
@@ -1803,8 +1627,6 @@ V4_TEMPLATES = {
     "crime_scene_diagram": crime_scene_diagram,
     "construction_sequence": construction_sequence,
     "molecular_diagram": molecular_diagram,
-    "hud_overlay": hud_overlay,
-    "holographic_panel": holographic_panel,
     "before_after": before_after,
     "layered_reveal": layered_reveal,
     "object_labels": object_labels,

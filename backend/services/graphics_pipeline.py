@@ -3250,70 +3250,6 @@ def build_motion_graphics_assets(
             or short_title_for(target),
         }
 
-    def _assemble_hud_overlay(target):
-        _asset, path = _first_scene_photo(target)
-        if path is None:
-            return None
-        readouts = []
-        number = target.get("sentence_number")
-        # UV-01/UV-12: the shared intake — production dict shape
-        # unwrapped, conflicted facts excluded, unit derived from
-        # the display when the fact records none.
-        for fact in _usable_quantity_facts():
-            if number is not None and fact.get(
-                    "sentence_number") not in (None, number):
-                continue
-            display = clean_text(fact.get("display") or "")
-            _value, unit = _quantity_value_unit(fact)
-            # No placeholder labels: a readout without a real
-            # unit label is not presented (the historical "VALUE"
-            # fallback burned a placeholder word into the frame).
-            if display and unit:
-                readouts.append({
-                    "label": unit,
-                    "value": display,
-                })
-        if not readouts:
-            for point in _series_from_text(target["text"]) or []:
-                # MG-08: a point's label IS its display (value) —
-                # a readout named by its own value is meaningless;
-                # name it by the quantity's unit instead, and skip
-                # points that carry neither.
-                label = clean_text(point.get("label") or "")
-                if label and label == clean_text(
-                    point.get("display") or ""
-                ):
-                    label = clean_text(point.get("unit") or "")
-                if label and point.get("display"):
-                    readouts.append({
-                        "label": label,
-                        "value": point.get("display") or "",
-                    })
-        readouts = [r for r in readouts if r["value"]][:5]
-        if not readouts:
-            return None
-        return {"photo": path, "readouts": readouts,
-                "title": short_title_for(target)}
-
-    def _assemble_holographic_panel(target):
-        items = []
-        for entry in extract_comparison(target["text"]) or []:
-            label = clean_text(entry.get("label") or "")
-            display = clean_text(entry.get("display") or "")
-            if label and display:
-                items.append({"label": label, "value": display})
-        if len(items) < 2:
-            grouped = _fact_quantities()
-            items = [
-                {"label": unit, "value": facts[0]["display"]}
-                for unit, facts in grouped.items()
-                if facts and facts[0]["display"]
-            ]
-        if len(items) < 2:
-            return None
-        return {"items": items[:6],
-                "title": short_title_for(target)}
-
     def _assemble_before_after(target):
         scenario = target.get("scenario") or {}
         # Phase 6–7 (B6-advanced): the recorded comparison
@@ -3419,7 +3355,7 @@ def build_motion_graphics_assets(
         # Director manifest entry, where the candidacy conditions
         # in visual_director are their recorded-evidence gate.
         "bubble_chart", "animated_dashboard",
-        "holographic_panel", "classified_file",
+        "classified_file",
         # Phase 5 core treatments (2026-11-27): the rebuilt
         # chronology / route / locator / relationship network
         # draw on the case-bible timeline, scenario place and
@@ -3481,8 +3417,6 @@ def build_motion_graphics_assets(
         "crime_scene_diagram": _assemble_crime_scene_diagram,
         "construction_sequence": _assemble_construction_sequence,
         "molecular_diagram": _assemble_molecular_diagram,
-        "hud_overlay": _assemble_hud_overlay,
-        "holographic_panel": _assemble_holographic_panel,
         "before_after": _assemble_before_after,
         "layered_reveal": _assemble_layered_reveal,
         "object_labels": _assemble_object_labels,
