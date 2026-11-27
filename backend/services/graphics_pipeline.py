@@ -2378,6 +2378,128 @@ def build_motion_graphics_assets(
             "highlight": quoted.group(1),
         }
 
+    # Phase 5 (A2): the archival_title KICKER fact-guard. The
+    # Coffee film's opening title carried the kicker "PRESENT
+    # DAY" over a film that begins in the Ethiopian highlands
+    # centuries ago — the kicker was taken verbatim from one
+    # recorded field and never checked against the beat's other
+    # recorded facts. The guard below: a kicker is produced ONLY
+    # from a recorded fact (the sentence record, its scenario,
+    # the target scenario, or the case bible), and a candidate
+    # is refused when the beat's OTHER recorded temporal facts
+    # contradict it. A kicker is never derived from the
+    # sentence's prose. When no recorded fact supports a kicker
+    # the title renders without one — unless the request made a
+    # kicker mandatory (scenario "kicker_required"), in which
+    # case the assembler declines outright.
+    _PRESENT_DAY_RE = re.compile(
+        r"present[\s-]?day|today|nowadays|contemporary|"
+        r"modern[\s-]?day|the present", re.IGNORECASE)
+    _CENTURY_RE = re.compile(
+        r"(\d{1,2})(?:st|nd|rd|th)[\s-]century", re.IGNORECASE)
+    _DECADE_RE = re.compile(r"\b(1[0-9]{3}|20[0-9]0)s\b")
+    _YEAR_RE = re.compile(r"\b(1[0-9]{3}|20[0-9]{2})\b")
+
+    def _era_ranges(text):
+        """Year ranges a recorded temporal string spans: exact
+        years, decades ("1960s" -> 1960-1969) and centuries
+        ("19th century" -> 1801-1900)."""
+        ranges = []
+        for match in _CENTURY_RE.finditer(text or ""):
+            start = (int(match.group(1)) - 1) * 100 + 1
+            ranges.append((start, start + 99))
+        for match in _DECADE_RE.finditer(text or ""):
+            start = int(match.group(1))
+            ranges.append((start, start + 9))
+        for match in _YEAR_RE.finditer(text or ""):
+            year = int(match.group(1))
+            if not any(lo <= year <= hi for lo, hi in ranges):
+                ranges.append((year, year))
+        return ranges
+
+    def _recorded_title_kicker(target, sentence):
+        """(kicker, source) from recorded facts only, or
+        ("", None) when no recorded fact supports one.
+
+        Candidates in priority order: the sentence record's era,
+        its first scenario's era, the target scenario's era, the
+        case bible's recorded period; then recorded section
+        labels from the same sources; then a recorded place.
+        Each candidate must survive corroboration against the
+        beat's other recorded temporal facts (sentence dates,
+        scenario date, bible period, the other era fields): a
+        present-day candidate is refused when the other facts
+        place the beat in the past and none supports the
+        present; a dated candidate is refused when its period
+        does not overlap any other recorded period."""
+        scenario = target.get("scenario") or {}
+        _scenarios = sentence.get("scenarios") or []
+        first = (
+            _scenarios[0]
+            if _scenarios and isinstance(_scenarios[0], dict)
+            else {}
+        )
+        era_fields = [
+            ("sentence", sentence.get("era")),
+            ("sentence_scenario", first.get("era")),
+            ("scenario", scenario.get("era")),
+            ("case_bible", case_bible.get("time_period")
+             or case_bible.get("era")),
+        ]
+        # The beat's recorded temporal facts (for corroboration):
+        # every era field plus the recorded dates. Values are
+        # (source, text) so a candidate is never corroborated
+        # solely by its own field.
+        temporal_facts = list(era_fields) + [
+            ("sentence_dates", value)
+            for value in (sentence.get("dates") or [])
+        ] + [("scenario_date", scenario.get("date"))]
+
+        def _corroborated(candidate, source):
+            others = [
+                clean_text(value) for src, value in temporal_facts
+                if src != source and clean_text(value or "")
+            ]
+            other_ranges = [
+                r for value in others for r in _era_ranges(value)
+            ]
+            if _PRESENT_DAY_RE.search(candidate):
+                past = any(hi < 1980 for _lo, hi in other_ranges)
+                present = any(
+                    _PRESENT_DAY_RE.search(value)
+                    or any(lo >= 1980 for lo, _hi in _era_ranges(value))
+                    for value in others
+                )
+                return not (past and not present)
+            ranges = _era_ranges(candidate)
+            if ranges and other_ranges:
+                return any(
+                    lo <= o_hi and o_lo <= hi
+                    for lo, hi in ranges
+                    for o_lo, o_hi in other_ranges
+                )
+            return True
+
+        candidates = list(era_fields) + [
+            ("sentence_scenario", first.get("section")),
+            ("scenario", scenario.get("section")),
+            ("case_bible", case_bible.get("section")),
+            ("sentence", (sentence.get("locations") or [None])[0]),
+            ("scenario", scenario.get("place")),
+            ("sentence_scenario", first.get("place")),
+        ]
+        for source, raw in candidates:
+            value = clean_text(raw or "")
+            if (
+                not value
+                or not is_short_payload(value)
+                or is_metadata_title(value)
+            ):
+                continue
+            if _corroborated(value, source):
+                return value, source
+        return "", None
+
     def _assemble_archival_title(target):
         # A title sequence belongs to the film's opening beat
         # only — first scene, first sentence.
@@ -2397,10 +2519,22 @@ def build_motion_graphics_assets(
             or detect_entity(target["text"]) or "")
         if not title:
             return None
+        sentence = _sentences_by_key.get(
+            (target["scene_number"], target["sentence_index"]), {})
+        kicker, kicker_source = _recorded_title_kicker(
+            target, sentence)
+        scenario = target.get("scenario") or {}
+        if not kicker and scenario.get("kicker_required"):
+            # The request made a kicker mandatory and no recorded
+            # fact supports one: decline rather than invent one.
+            return None
         return {
             "title": title,
-            "kicker": clean_text(
-                (target.get("scenario") or {}).get("era") or ""),
+            "kicker": kicker,
+            # Provenance of the kicker (which recorded field it
+            # came from) rides on the engine inputs / asset
+            # record — it is never drawn on the frame.
+            "kicker_source": kicker_source,
             "date_label": clean_text(
                 detect_date(target["text"]) or ""),
         }
