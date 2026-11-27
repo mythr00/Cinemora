@@ -159,6 +159,66 @@ def test_lower_third_on_video_only_base_keeps_exact_duration(tmp_path):
     assert abs(probe["duration_seconds"] - 2.0) < 0.06
 
 
+def test_lower_third_card_is_actually_visible_in_output(tmp_path):
+    """Regression (Phase 9 creative suite item 01, 2026-11-27):
+    apply_composition reported the lower-third layer "applied"
+    while the card never appeared in the output — the layer PNG
+    is a FULL-FRAME canvas with the card already drawn at the
+    layer position, and the overlay step applied the position a
+    second time, pushing the card below the frame. Success flags
+    do not prove visibility; this test reads actual pixels: the
+    card's surface colour must be present inside the recorded
+    card rectangle mid-window, and the frame region the card was
+    double-offset into must not exist (the card bottom stays
+    inside the frame)."""
+    from PIL import Image
+
+    base = _make_base_clip(tmp_path / "base.mp4", seconds=2)
+    layer = composition.lower_third_layer(
+        "Ocean Parkway", "Long Island, New York",
+        start=0.0, duration=2.0, theme="investigative",
+    )
+    plan = {"pattern": "lower_third_card", "layers": [layer]}
+    composition.validate_composition(plan, 2.0)
+    out = tmp_path / "composed.mp4"
+    ok, record = composition.apply_composition(
+        base, plan, out, tmp_path / "work",
+    )
+    assert ok is True, record
+    frame = tmp_path / "frame.png"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-ss", "1.0", "-i", str(out),
+         "-frames:v", "1", str(frame)],
+        check=True, capture_output=True,
+    )
+    image = Image.open(frame).convert("RGB")
+    pos = layer["position"]
+    # The card surface (theme surface colour) fills the card rect
+    # away from the text: sample the rect's right-hand interior.
+    # The bar is drawn at alpha 235 * layer opacity over the base
+    # clip's navy, so the expected pixel is that blend.
+    theme = themes.resolve_theme("investigative")
+    surface = tuple(theme["surface"])
+    alpha = 235 * float(layer.get("opacity") or 0.96) / 255.0
+    navy = (0, 0, 128)
+    expected = tuple(
+        round(alpha * s + (1 - alpha) * b)
+        for s, b in zip(surface, navy))
+    sample = image.getpixel(
+        (pos["x"] + pos["w"] - 40, pos["y"] + pos["h"] // 2))
+    assert all(abs(a - b) <= 16 for a, b in zip(sample, expected)), (
+        f"card surface not visible at card rect: sampled {sample}, "
+        f"expected ~{expected}")
+    # The accent rule runs down the card's left edge.
+    accent = tuple(theme["accent"])
+    edge = image.getpixel((pos["x"] + 5, pos["y"] + pos["h"] // 2))
+    assert all(abs(a - b) <= 24 for a, b in zip(edge, accent)), (
+        f"accent rule not visible at card edge: sampled {edge}, "
+        f"expected ~{accent}")
+    # Above the caption band and fully inside the frame.
+    assert pos["y"] + pos["h"] <= composition.FRAME_HEIGHT
+
+
 def test_failed_layer_keeps_base_and_records(tmp_path):
     base = _make_base_clip(tmp_path / "base.mp4", seconds=2)
     layer = composition.lower_third_layer(

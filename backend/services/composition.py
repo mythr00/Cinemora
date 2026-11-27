@@ -542,9 +542,20 @@ def apply_composition(base_clip, composition, out_path, work_dir):
             if out_dur > 0:
                 prep += f",fade=t=out:st={out_start}:d={out_dur}:alpha=1"
             pos = layer["position"]
+            if kind == "lower_third_card":
+                # render_lower_third_png returns a FULL-FRAME
+                # canvas with the card already drawn AT the layer
+                # position; overlaying that canvas at the position
+                # again double-applies the offset and pushes the
+                # card off the bottom of the frame — the step
+                # reported "applied" while no card was visible
+                # (Phase 9 creative suite item 01, 2026-11-27).
+                overlay_x, overlay_y = 0, 0
+            else:
+                overlay_x, overlay_y = int(pos["x"]), int(pos["y"])
             filter_complex = (
                 f"[1:v]{prep}[ov];"
-                f"[0:v][ov]overlay={int(pos['x'])}:{int(pos['y'])}"
+                f"[0:v][ov]overlay={overlay_x}:{overlay_y}"
                 f":enable='between(t,{start},{end})'[out]"
             )
             command = [
