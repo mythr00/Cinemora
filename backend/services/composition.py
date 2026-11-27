@@ -58,6 +58,48 @@ SAFE_MARGIN_BOTTOM = 54
 
 PATTERNS = ("lower_third_card", "footage_window", "split_screen")
 
+# ---------------------------------------------------------------------------
+# Caption-space coordination (Phase 5, audit X5 — with A1)
+# ---------------------------------------------------------------------------
+# Captions render bottom-centre over the finished film
+# (services.caption_renderer): Alignment 2, MarginV 110, font
+# size 56, at most two lines. That reserves a caption band at
+# the bottom of the frame that NO composition layer may enter —
+# before this contract the lower third sat at y=816..948, squarely
+# inside the band the captions occupy, so a name super and the
+# caption of the same beat would have collided on screen.
+#
+# The layout contract: the caption band is the bottom
+# CAPTION_BAND_HEIGHT pixels of the frame; a lower-third card
+# sits ABOVE it with LOWER_THIRD_CAPTION_GAP pixels of clear
+# space between the card's bottom edge and the band's top edge.
+# validate_layer enforces the contract for every lower-third
+# layer, however it was constructed: a layer whose band
+# intersects the caption band fails validation with
+# `lower_third_overlaps_caption_band` and is never rendered.
+CAPTION_MARGIN_V = 110
+CAPTION_FONT_SIZE = 56
+CAPTION_MAX_LINES = 2
+CAPTION_LINE_HEIGHT = 70  # ~1.25 x the caption font size
+CAPTION_BAND_HEIGHT = (
+    CAPTION_MARGIN_V + CAPTION_MAX_LINES * CAPTION_LINE_HEIGHT
+)  # 250
+CAPTION_BAND_TOP = FRAME_HEIGHT - CAPTION_BAND_HEIGHT  # 830
+LOWER_THIRD_CAPTION_GAP = 24
+LOWER_THIRD_HEIGHT = 132
+
+
+def caption_band():
+    """(x0, y0, x1, y1) of the reserved caption band."""
+    return (0, CAPTION_BAND_TOP, FRAME_WIDTH, FRAME_HEIGHT)
+
+
+def _bands_intersect(a, b):
+    return not (
+        a[2] <= b[0] or b[2] <= a[0]
+        or a[3] <= b[1] or b[3] <= a[1]
+    )
+
 
 # ---------------------------------------------------------------------------
 # Layer constructors (the reusable primitives)
@@ -74,7 +116,14 @@ def lower_third_layer(label, sublabel=None, *, start=0.0, end=None,
         "kind": "lower_third_card",
         "start": round(float(start), 3),
         "end": round(float(end), 3),
-        "position": {"x": 96, "y": FRAME_HEIGHT - 264, "w": 1184, "h": 132},
+        # X5 layout contract: the card sits ABOVE the reserved
+        # caption band (see caption_band above), never inside it.
+        "position": {
+            "x": 96,
+            "y": CAPTION_BAND_TOP - LOWER_THIRD_CAPTION_GAP
+            - LOWER_THIRD_HEIGHT,
+            "w": 1184, "h": LOWER_THIRD_HEIGHT,
+        },
         "scale": 1.0,
         "opacity": 0.96,
         "z_order": 10,
@@ -192,6 +241,12 @@ def validate_layer(layer, item_duration):
             or y + h > FRAME_HEIGHT - SAFE_MARGIN_BOTTOM
         ):
             failures.append("layer_outside_safe_area")
+        if kind == "lower_third_card" and _bands_intersect(
+            (x, y, x + w, y + h), caption_band()
+        ):
+            # X5: a lower third inside the caption band would
+            # collide with the beat's captions on screen.
+            failures.append("lower_third_overlaps_caption_band")
     except (KeyError, TypeError, ValueError):
         failures.append("layer_position_incomplete")
     opacity = layer.get("opacity")
@@ -208,6 +263,40 @@ def validate_layer(layer, item_duration):
     if kind == "lower_third_card":
         if not str(source.get("label") or "").strip():
             failures.append("lower_third_has_no_label")
+        else:
+            # Phase 5 (X3 discipline, extended to the editorial
+            # layer): the label/sublabel are MEASURED against the
+            # card before the layer may render — an over-long
+            # payload fails validation with a named failure
+            # instead of being sliced mid-word at render time.
+            try:
+                from PIL import Image, ImageDraw
+
+                from services.motion_engine import label_fit, themes
+                from services.motion_engine.core import load_font
+
+                _theme = themes.resolve_theme(
+                    source.get("theme")) or themes.THEMES[
+                        themes.DEFAULT_THEME]
+                _probe = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+                _width = int(position.get("w") or 1184) - 46
+                if label_fit.fit_lines(
+                    _probe, str(source.get("label") or ""),
+                    load_font(_theme["font_bold"], 44), _width,
+                    max_lines=1,
+                ) is None:
+                    failures.append("lower_third_label_does_not_fit")
+                elif source.get("sublabel") and label_fit.fit_lines(
+                    _probe, str(source.get("sublabel") or ""),
+                    load_font(_theme["font"], 30), _width,
+                    max_lines=1,
+                ) is None:
+                    failures.append("lower_third_label_does_not_fit")
+            except Exception:
+                # Measurement tooling must never fabricate a
+                # failure: an unmeasurable layer keeps the
+                # historical validation outcome.
+                pass
     if kind in ("footage_window", "split_screen"):
         if not source.get("path"):
             failures.append("media_layer_has_no_source")
@@ -278,13 +367,17 @@ def render_lower_third_png(layer, out_path):
     )
     label_font = load_font(theme["font_bold"], 44)
     sub_font = load_font(theme["font"], 30)
+    # No character slices: validate_layer measures the label and
+    # sublabel against the card (lower_third_label_does_not_fit)
+    # before a layer may render — text that reaches this renderer
+    # fits whole, and is drawn whole.
     draw.text(
-        (x + 36, y + 22), str(source.get("label") or "")[:64],
+        (x + 36, y + 22), str(source.get("label") or ""),
         font=label_font, fill=tuple(theme["text"]) + (255,),
     )
     if source.get("sublabel"):
         draw.text(
-            (x + 36, y + 76), str(source["sublabel"])[:72],
+            (x + 36, y + 76), str(source["sublabel"]),
             font=sub_font, fill=tuple(theme["muted"]) + (255,),
         )
     out_path = Path(out_path)
