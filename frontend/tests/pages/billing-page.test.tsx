@@ -144,20 +144,28 @@ describe("BillingPage with a configured provider", () => {
     expect(screen.getByText("25 available")).toBeInTheDocument();
   });
 
-  it("renders available plans with prices and included allowances", async () => {
+  it("renders available plans with allowances and NO prices (founder §3: no prices on the billing page)", async () => {
     render(<BillingPage />);
     const studioCard = (await screen.findByRole("heading", { name: "Studio" }))
       .closest("article")!;
-    expect(within(studioCard).getByText(/\$63\.00/)).toBeInTheDocument();
     expect(
       within(studioCard).getByText(/2325 video credits monthly/),
     ).toBeInTheDocument();
     expect(
-      within(studioCard).getByText(/5 credits\s+per finished minute/),
-    ).toBeInTheDocument();
-    expect(
       within(studioCard).getByText(/31 standard\s+15-minute documentaries \/ month/),
     ).toBeInTheDocument();
+    expect(
+      within(studioCard).getByText(/31 AI scripts ·\s+31 AI thumbnails included/),
+    ).toBeInTheDocument();
+    expect(
+      within(studioCard).getByText(/Same production engine and quality/),
+    ).toBeInTheDocument();
+    // No price, and no per-minute rate mathematics, anywhere on
+    // this page — prices live on the pricing page only.
+    expect(within(studioCard).queryByText(/\$/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/per finished minute/),
+    ).not.toBeInTheDocument();
   });
 
   it("marks the current plan and enables subscribing to another plan", async () => {
