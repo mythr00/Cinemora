@@ -71,7 +71,8 @@ def main():
     centre = (0, 0, total_h / 2)
     common.add_lighting("soft_top", colors, target=centre, scale=12.0)
     common.add_camera_rig(data.get("camera") or "crane", frames,
-                          target=centre, radius=max(width, depth) * 1.5,
+                          target=centre,
+                          radius=max(width, depth) * 2.3,
                           height=total_h * 0.55)
     common.setup_render(scene, payload, os.environ["CINEMORA_BLENDER_OUT"])
     common.render(scene)

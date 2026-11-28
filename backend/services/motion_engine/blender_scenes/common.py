@@ -211,11 +211,15 @@ def add_camera_rig(kind, frames, target=(0, 0, 1.0), radius=11.0,
     else:  # orbit
         positions = []
         for frac in (0.0, 0.5, 1.0):
-            ang = math.radians(-38 + 76 * frac)
+            # A ±30° arc (tightened from ±38° after the first
+            # mechanical evidence render: at the wider extreme
+            # the subject drifted high in frame as the camera
+            # dropped and swung).
+            ang = math.radians(-30 + 60 * frac)
             positions.append((
                 tx + radius * math.sin(ang) * 1.05,
                 ty - radius * math.cos(ang),
-                height * (1.0 - 0.18 * frac),
+                height * (1.0 - 0.10 * frac),
             ))
     n = len(positions)
     for i, pos in enumerate(positions):
