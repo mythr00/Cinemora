@@ -2528,6 +2528,39 @@ def build_motion_graphics_assets(
         data["variant"] = "classified"
         return data
 
+    def _assemble_document_examination(target):
+        # Animation Studio Expansion (§9): the examination rides
+        # on the SAME genuine document asset as
+        # document_presentation (identical gate — verified asset,
+        # recorded provenance, person-conflict check) PLUS the
+        # scenario's recorded ``examine`` contract (relative
+        # region + optional short label). Either missing -> None,
+        # and the beat falls back to the plain presentation.
+        data = _assemble_document_presentation(target)
+        if data is None:
+            return None
+        scenario = target.get("scenario") or {}
+        examine = scenario.get("examine")
+        if not isinstance(examine, dict):
+            return None
+        data = dict(data)
+        data["examine"] = examine
+        return data
+
+    def _assemble_title_sequence(target):
+        # Animation Studio Expansion (§9): the staged title
+        # sequence consumes the SAME fact-guarded title data as
+        # archival_title (the kicker fact-guard included), and is
+        # served only when the record carries staging material —
+        # a kicker or a date label. A bare title returns None and
+        # the opening beat keeps the archival_title card.
+        data = _assemble_archival_title(target)
+        if data is None:
+            return None
+        if not data.get("kicker") and not data.get("date_label"):
+            return None
+        return data
+
     # -----------------------------------------------------
     # Phase 5 core treatments (2026-11-27): the rebuilt
     # chronology, the editorial route/locator and the
@@ -2924,6 +2957,11 @@ def build_motion_graphics_assets(
         # they are reachable only through a Director manifest
         # entry whose candidacy is their recorded-evidence gate.
         "chronology", "route", "locator", "relationship_network",
+        # Animation Studio Expansion (2026-11-28): the document
+        # examination rides on a gated document asset + scenario
+        # contract; the title sequence rides on production-global
+        # title data — Director-only for the same reasons.
+        "document_examination", "title_sequence",
         # Phase 6–7 (D1): the labelled diagram is fed by the
         # scenario's recorded diagram contract — Director-only
         # for the same recorded-evidence reason.
@@ -2969,7 +3007,10 @@ def build_motion_graphics_assets(
         "text_overlay": _assemble_text_overlay,
         "text_highlight": _assemble_text_highlight,
         "archival_title": _assemble_archival_title,
+        # Animation Studio Expansion (2026-11-28).
+        "title_sequence": _assemble_title_sequence,
         "document_presentation": _assemble_document_presentation,
+        "document_examination": _assemble_document_examination,
         # Wave 2 (Motion Graphics Engine plan §C Wave 2).
         "bubble_chart": _assemble_bubble_chart,
         "population_pyramid": _assemble_population_pyramid,
@@ -3040,6 +3081,7 @@ def build_motion_graphics_assets(
             duration = _engine_duration_for(target)
         if template_name in (
             "document_presentation", "classified_file",
+            "document_examination",
         ) and not (
             isinstance(engine_data, dict)
             and engine_data.get("document_source")

@@ -141,7 +141,10 @@ PROBLEM_TREATMENT_PREFERENCE = {
         "crime_scene_diagram",
     ],
     "relationship": ["relationship_network"],
-    "evidence": ["document_presentation", "classified_file"],
+    "evidence": [
+        "document_presentation", "document_examination",
+        "classified_file",
+    ],
     "reconstruction": [],
     "rest": [],
 }
@@ -772,6 +775,13 @@ def _template_candidates(row, outcome, pack, bible=None, problem=None):
     # F4 investigation variants on their recorded material.
     if outcome.get("document_asset"):
         candidates.append("document_presentation")
+        # Animation Studio Expansion (§9): the examination of the
+        # same genuine document — proposed only when the scenario
+        # records an ``examine`` region contract; its assembler
+        # returns None without one and the chain falls through.
+        _examine = scenario.get("examine")
+        if isinstance(_examine, dict) and _examine:
+            candidates.append("document_examination")
         # Wave 2: the classified presentation of the same
         # genuine document — proposed only with it, gated
         # identically in the pipeline.
@@ -831,6 +841,12 @@ def _template_candidates(row, outcome, pack, bible=None, problem=None):
     if _recorded_relations(scenario, bible):
         candidates.append("relationship_network")
     if outcome.get("sentence_index") == 0:
+        # Animation Studio Expansion (§9): the staged title
+        # sequence is tried first on the opening beat — its
+        # assembler serves data only when the record carries
+        # staging material (fact-guarded kicker / date label);
+        # otherwise the beat falls through to the title card.
+        candidates.append("title_sequence")
         candidates.append("archival_title")
     if '"' in text or "“" in text:
         candidates.append("text_highlight")

@@ -19,6 +19,10 @@ from services.motion_engine import templates_v4 as _templates_v4  # noqa: E402,F
 # (chronology / route / locator / relationship_network)
 # self-registers into templates.TEMPLATES on import, like v2–v4.
 from services.motion_engine import templates_v5 as _templates_v5  # noqa: E402,F401
+# Animation Studio Expansion (2026-11-28): the v6 family
+# (document_examination / title_sequence) self-registers into
+# templates.TEMPLATES on import, like v2–v5.
+from services.motion_engine import templates_v6 as _templates_v6  # noqa: E402,F401
 # GitHub Skills Programme (2026-11-25): the Manim render engine's
 # templates self-register into templates.TEMPLATES on import. The
 # module never imports manim itself, so this stays cheap and safe
