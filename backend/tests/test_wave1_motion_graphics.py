@@ -157,7 +157,11 @@ def test_registry_covers_all_wave1_templates():
     # tracked_annotation (G2 bridge): 46.
     # Phase 9 final fix (2026-11-27): -1 mechanical_cutaway
     # (item-11 FAIL removal): 45.
-    assert len(engine_templates.TEMPLATES) == 45
+    # Animation Studio Expansion (2026-11-28): +11 — the v6
+    # family (document_examination / title_sequence /
+    # layered_photo_motion), the Blender department (5) and
+    # the web engine (3): 56.
+    assert len(engine_templates.TEMPLATES) == 56
 
 
 def test_wave1_templates_refuse_with_typed_reasons(tmp_path):
