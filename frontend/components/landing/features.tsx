@@ -3,8 +3,6 @@
 import { useEffect, useRef } from "react";
 import {
   Captions,
-  Film,
-  Image as ImageIcon,
   LineChart,
   Mic,
   Music,
@@ -12,19 +10,26 @@ import {
   ScrollText,
   TrendingUp,
   Users,
+  Image as ImageIcon,
 } from "lucide-react";
+import { CountUp } from "./count-up";
 
 /**
  * Landing feature demonstrations (presentation redesign,
- * founder directive 2026-11-28). Six capabilities, each
- * DEMONSTRATED by a designed motion panel instead of a
- * photograph, and each stated as one headline + one sentence
- * of customer benefit. No internal mechanics: nothing here
- * describes how the engine searches, selects or renders.
- * The animations are CSS-only, transform/opacity, flattened
- * by the global reduced-motion rule, and paused while the
- * grid is off-screen. Four further studio capabilities ride
- * below as a compact row — present, but not demonstrated.
+ * founder directive 2026-11-28; elevated by the design
+ * philosophy transformation). The craft capabilities —
+ * motion graphics, narration, captions, music, editing —
+ * each DEMONSTRATED by a designed motion panel and stated
+ * as one headline + one sentence of customer benefit. The
+ * story-level capabilities (script understanding, visual
+ * discovery, asset selection, visual planning) are
+ * demonstrated in the split sections above this grid
+ * (studio-demos.tsx); the plan-into-timeline panel that
+ * used to open this grid was superseded by them. No
+ * internal mechanics anywhere. Animations are CSS-only,
+ * transform/opacity, flattened by the global reduced-motion
+ * rule, and paused while the grid is off-screen. Four
+ * further studio capabilities ride below as a compact row.
  */
 
 function Kicker({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
@@ -33,12 +38,7 @@ function Kicker({ icon, children }: { icon: React.ReactNode; children: React.Rea
 
 const CAPTION_WORDS = "A ship could spend more time in port than it spent at sea.".split(" ");
 
-const PLAN_SLOTS = [
-  { label: "FOOTAGE", tone: "a" },
-  { label: "ARCHIVAL", tone: "b" },
-  { label: "GRAPHIC", tone: "c" },
-  { label: "FOOTAGE", tone: "a" },
-];
+const GFX_WORDS = ["MAPS", "CHARTS", "COUNTERS", "TITLES"];
 
 export function LandingFeatures() {
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -62,31 +62,21 @@ export function LandingFeatures() {
   return (
     <>
       <div className="feat-grid" ref={gridRef}>
-        {/* 1 — Visuals: elements settling into a timeline */}
+        {/* 1 — Motion graphics: a chart and a route drawing
+            themselves, kinetic type cycling, a counter rolling */}
         <article className="feat-card" data-reveal>
-          <div className="feat-demo feat-demo--plan" aria-hidden>
-            <div className="plan-stage">
-              {PLAN_SLOTS.map((slot, i) => (
-                <div className="plan-slot" key={i}>
-                  <span className={`plan-chip plan-chip--${slot.tone}`} style={{ animationDelay: `${i * 0.45}s` }}>
-                    {slot.label}
-                  </span>
-                  <span className="plan-slot-box" />
-                </div>
-              ))}
-            </div>
-            <span className="plan-track" />
-          </div>
-          <div className="feat-card-copy">
-            <Kicker icon={<Film size={14} strokeWidth={2} />}>VISUALS</Kicker>
-            <h3>The right visuals for every story</h3>
-            <p>Footage, archival imagery and custom graphics — brought together for the story you are telling.</p>
-          </div>
-        </article>
-
-        {/* 2 — Motion graphics: a chart and a route, drawing themselves */}
-        <article className="feat-card" data-reveal data-delay="80">
           <div className="feat-demo feat-demo--graphics" aria-hidden>
+            <div className="gfx-top">
+              <span className="gfx-words">
+                {GFX_WORDS.map((word, i) => (
+                  <span key={word} style={{ animationDelay: `${i * 1.5}s` }}>{word}</span>
+                ))}
+              </span>
+              <span className="gfx-counter">
+                <span className="roll"><span className="roll-strip roll-strip--5">{Array.from({ length: 10 }, (_, d) => <i key={d} />)}</span></span><span className="roll"><span className="roll-strip roll-strip--8">{Array.from({ length: 10 }, (_, d) => <i key={d} />)}</span></span>
+                <span className="gfx-counter-label">STEEL BOXES</span>
+              </span>
+            </div>
             <svg className="graphics-svg" viewBox="0 0 320 176">
               <defs>
                 <pattern id="feat-dots" width="18" height="18" patternUnits="userSpaceOnUse">
@@ -123,14 +113,14 @@ export function LandingFeatures() {
               ))}
             </div>
             <div className="narr-chips">
-              <span>54 VOICES</span>
-              <span>8 LANGUAGES</span>
+              <span><CountUp value={54} /> VOICES</span>
+              <span><CountUp value={8} /> LANGUAGES</span>
             </div>
           </div>
           <div className="feat-card-copy">
             <Kicker icon={<Mic size={14} strokeWidth={2} />}>NARRATION</Kicker>
             <h3>A voice that reads like a narrator</h3>
-            <p>54 studio voices across eight languages. Pick the one that sounds like your channel.</p>
+            <p>Pick the voice that sounds like your channel.</p>
           </div>
         </article>
 
@@ -150,7 +140,7 @@ export function LandingFeatures() {
           <div className="feat-card-copy">
             <Kicker icon={<Captions size={14} strokeWidth={2} />}>CAPTIONS</Kicker>
             <h3>Every word, perfectly in sync</h3>
-            <p>Word-timed captions, burned into the film and delivered as files alongside it.</p>
+            <p>Word-timed captions, burned in and delivered as files alongside the film.</p>
           </div>
         </article>
 
@@ -177,12 +167,13 @@ export function LandingFeatures() {
           <div className="feat-card-copy">
             <Kicker icon={<Music size={14} strokeWidth={2} />}>MUSIC</Kicker>
             <h3>A soundtrack that follows the story</h3>
-            <p>A cinematic bed mixed beneath the voice — present, never competing.</p>
+            <p>A cinematic bed beneath the voice — present, never competing.</p>
           </div>
         </article>
 
-        {/* 6 — Editing: clips rearranging on a timeline */}
-        <article className="feat-card" data-reveal data-delay="80">
+        {/* 5 — Editing: clips rearranging on a timeline (wide:
+            the timeline is the one demo that wants the full row) */}
+        <article className="feat-card feat-card--wide" data-reveal>
           <div className="feat-demo feat-demo--edit" aria-hidden>
             <div className="edit-track">
               <span className="edit-block edit-block--a">OPENING</span>
@@ -198,7 +189,7 @@ export function LandingFeatures() {
           <div className="feat-card-copy">
             <Kicker icon={<Scissors size={14} strokeWidth={2} />}>EDITING</Kicker>
             <h3>Finished isn&apos;t final</h3>
-            <p>Reopen any film, adjust it, and export a new revision. The original never changes.</p>
+            <p>Reopen any film, adjust it, export a new revision. The original never changes.</p>
           </div>
         </article>
       </div>
@@ -208,7 +199,7 @@ export function LandingFeatures() {
         <div className="also-items">
           <div className="also-item">
             <ScrollText size={17} strokeWidth={2} aria-hidden />
-            <div><strong>Script studio</strong><span>Develop the story before you produce it.</span></div>
+            <div><strong>Script studio</strong><span>Develop the story first.</span></div>
           </div>
           <div className="also-item">
             <ImageIcon size={17} strokeWidth={2} aria-hidden />
@@ -216,7 +207,7 @@ export function LandingFeatures() {
           </div>
           <div className="also-item">
             <TrendingUp size={17} strokeWidth={2} aria-hidden />
-            <div><strong>Channel research</strong><span>See what is working in your niche.</span></div>
+            <div><strong>Channel research</strong><span>See what&apos;s working in your niche.</span></div>
           </div>
           <div className="also-item">
             <Users size={17} strokeWidth={2} aria-hidden />

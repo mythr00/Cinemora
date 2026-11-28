@@ -1,15 +1,19 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
+import { ConvergeDemo } from "./studio-demos";
+import { Parallax } from "./parallax";
 
 /**
  * Finished results (presentation redesign, founder directive
- * 2026-11-28). A real Cinemora production, presented
- * outcome-only: the film's own frame at full bleed, its
- * title, and the facts a viewer cares about — runtime,
- * format, the script it came from. No delivery internals,
- * no evidence bundle, no process. This is the one place on
- * the page a real photograph appears, because here the
- * photograph IS the product: actual Cinemora output.
+ * 2026-11-28; design philosophy transformation). The section
+ * opens with an illustrative simulation — the parts of a
+ * production converging into one finished film — and then
+ * presents the real thing: an actual Cinemora production,
+ * outcome-only, its own frame at full bleed with a gentle
+ * parallax drift, its title, and the facts a viewer cares
+ * about. No delivery internals, no evidence bundle, no
+ * process. The photograph appears here because here the
+ * photograph IS the product.
  */
 export function FinishedFilm() {
   return (
@@ -24,10 +28,14 @@ export function FinishedFilm() {
           </Link>
         </div>
         <h2 id="finished-title" data-reveal>A real film, made with Cinemora.</h2>
+        <p className="programme-lede" data-reveal>Every part, in one finished film.</p>
+        <ConvergeDemo />
       </div>
       <figure className="programme-band" data-reveal>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/landing/containers.jpg" width={960} height={720} alt="A frame from the completed Cinemora production 'The Shipping Container': stacked shipping containers" />
+        <Parallax className="programme-parallax">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/landing/containers.jpg" width={960} height={720} alt="A frame from the completed Cinemora production 'The Shipping Container': stacked shipping containers" />
+        </Parallax>
         <figcaption>
           <span className="programme-film-title">“The Shipping Container”</span>
           <span className="programme-film-meta">COMPLETED PRODUCTION</span>

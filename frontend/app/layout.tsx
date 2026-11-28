@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { Fraunces, Inter } from "next/font/google";
 import "./globals.css";
 
 /* AUD-35: an explicit viewport export. Next's default meta is
@@ -24,6 +24,20 @@ const inter = Inter({
   display: "swap",
 });
 
+/* Design philosophy transformation (2026-11-28): Fraunces is the
+   landing page's display voice — an editorial serif with the
+   gravity of a film title, paired with Inter for all functional
+   text. Variable optical size + weight and italics, self-hosted
+   at build time like Inter, exposed as --font-fraunces and used
+   only by the landing layer in globals.css; app surfaces keep
+   the single-sans system untouched. */
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-fraunces",
+  display: "swap",
+  axes: ["opsz"],
+});
+
 export const metadata: Metadata = {
   title: {
     default: "Cinemora — Start with a script. Finish with a film.",
@@ -43,7 +57,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`h-full antialiased ${inter.variable}`}>
+    <html lang="en" className={`h-full antialiased ${inter.variable} ${fraunces.variable}`}>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );

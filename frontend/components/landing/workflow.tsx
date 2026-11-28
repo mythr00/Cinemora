@@ -26,19 +26,19 @@ const STAGES: Stage[] = [
     no: "01",
     label: "WRITE",
     title: "Bring your script",
-    note: "Paste it in — that is the only material you need to start.",
+    note: "Paste it in — the only material you need.",
   },
   {
     no: "02",
     label: "REVIEW",
     title: "Watch it take shape",
-    note: "See the film come together, and revise anything before you publish.",
+    note: "Revise anything before you publish.",
   },
   {
     no: "03",
     label: "PUBLISH",
     title: "Leave with a film",
-    note: "A full-HD MP4 with narration, captions and music — ready for your channel.",
+    note: "A full-HD MP4, ready for your channel.",
   },
 ];
 
