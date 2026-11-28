@@ -1,19 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Play } from "lucide-react";
 
 /**
- * Workflow sequence (premium frontend rebuild, 2026-11-28).
- *
- * The journey from script to finished film as a scroll-driven
- * sequence: a frame from the sample production stays pinned on
- * the left while the four production stages scroll past on the
- * right; the frame crossfades to the stage nearest the middle
- * of the viewport. The stills are the production's own
- * artefacts (public/landing/*). On narrow screens the sticky
- * frame gives way to a still inside each stage. The global
- * reduced-motion rule flattens the crossfade; the stage change
- * itself is a state swap, not an animation.
+ * Workflow sequence (presentation redesign, founder directive
+ * 2026-11-28). The journey from script to finished film as a
+ * designed progression — no production photographs. A panel
+ * stays pinned while three short steps scroll past: script
+ * lines, then clips assembling on a timeline, then the
+ * finished-film panel. The zone matching the step nearest the
+ * middle of the viewport lights up. On narrow screens the
+ * panel sits above the steps in normal flow.
  */
 
 type Stage = {
@@ -21,42 +19,26 @@ type Stage = {
   label: string;
   title: string;
   note: string;
-  img: string;
-  alt: string;
 };
 
 const STAGES: Stage[] = [
   {
     no: "01",
-    label: "STORY",
-    title: "Shape the narration",
-    note: "Bring a script into the production workspace and review its planned story beats.",
-    img: "/landing/film-frame.jpg",
-    alt: "Frames from the sample production, reviewed as the story takes shape",
+    label: "WRITE",
+    title: "Bring your script",
+    note: "Paste it in — that is the only material you need to start.",
   },
   {
     no: "02",
-    label: "VISUALS",
-    title: "Build the visual thread",
-    note: "Review researched media alongside the passage and scene it is meant to support.",
-    img: "/landing/terminal.jpg",
-    alt: "A container terminal still sourced for the sample production",
+    label: "REVIEW",
+    title: "Watch it take shape",
+    note: "See the film come together, and revise anything before you publish.",
   },
   {
     no: "03",
-    label: "VOICE",
-    title: "Narrate the story",
-    note: "Choose from 54 studio voices in eight languages, with captions timed to the narration word by word.",
-    img: "/landing/archival-1956.jpg",
-    alt: "Archival photograph from the sample production: Newark in the 1950s",
-  },
-  {
-    no: "04",
-    label: "FINISH",
-    title: "Review the finished cut",
-    note: "Follow production status and open the export when the project is complete.",
-    img: "/landing/carrier.jpg",
-    alt: "A straddle carrier moving a container across a terminal yard, from the sample production",
+    label: "PUBLISH",
+    title: "Leave with a film",
+    note: "A full-HD MP4 with narration, captions and music — ready for your channel.",
   },
 ];
 
@@ -81,24 +63,39 @@ export function Workflow() {
     return () => io.disconnect();
   }, []);
 
-  const stage = STAGES[active];
-
   return (
     <div className="workflow-seq">
-      <div className="workflow-visual" aria-hidden>
-        <div className="workflow-frame">
-          {STAGES.map((item, index) => (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              key={item.no}
-              src={item.img}
-              alt=""
-              className={index === active ? "is-active" : ""}
-            />
-          ))}
-          <span className="workflow-frame-caption">
-            {stage.no} · {stage.label} — “THE SHIPPING CONTAINER”
-          </span>
+      <div className="workflow-visual">
+        <div className="wf-panel" aria-hidden>
+          <div className={`wf-zone wf-zone--script ${active === 0 ? "is-active" : ""}`}>
+            <span className="wf-zone-label">THE SCRIPT</span>
+            <span className="wf-line wf-line--w92" />
+            <span className="wf-line wf-line--w78" />
+            <span className="wf-line wf-line--w85" />
+            <span className="wf-line wf-line--w60" />
+          </div>
+          <span className="wf-arrow" aria-hidden>→</span>
+          <div className={`wf-zone wf-zone--cut ${active === 1 ? "is-active" : ""}`}>
+            <span className="wf-zone-label">THE CUT</span>
+            <div className="wf-mini-track">
+              <span className="wf-block wf-block--a" />
+              <span className="wf-block wf-block--b" />
+              <span className="wf-block wf-block--c" />
+            </div>
+            <div className="wf-mini-wave">
+              {Array.from({ length: 24 }, (_, i) => (
+                <i key={i} style={{ height: `${20 + Math.round(55 * Math.abs(Math.sin(i * 1.4)))}%` }} />
+              ))}
+            </div>
+          </div>
+          <span className="wf-arrow" aria-hidden>→</span>
+          <div className={`wf-zone wf-zone--film ${active === 2 ? "is-active" : ""}`}>
+            <span className="wf-zone-label">THE FILM</span>
+            <div className="wf-film-frame">
+              <span className="wf-play"><Play size={16} strokeWidth={2.2} aria-hidden /></span>
+              <span className="wf-film-meta">documentary.mp4 · 1080p</span>
+            </div>
+          </div>
         </div>
         <div className="workflow-progress" aria-hidden>
           {STAGES.map((item, index) => (
@@ -116,10 +113,6 @@ export function Workflow() {
               stepRefs.current[index] = el;
             }}
           >
-            <figure className="workflow-step-media">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={item.img} alt={item.alt} />
-            </figure>
             <p className="workflow-step-no" aria-hidden>{item.no}</p>
             <p className="workflow-kicker">{item.label}</p>
             <h3>{item.title}</h3>

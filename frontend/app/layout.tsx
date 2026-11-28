@@ -29,10 +29,10 @@ export const metadata: Metadata = {
     default: "Cinemora — Start with a script. Finish with a film.",
     template: "%s | Cinemora",
   },
-  description: "Develop a documentary story, plan its visuals, choose narration and sound, and follow production through to an export in one connected studio.",
+  description: "Cinemora turns your script into a finished documentary — narration, visuals, captions and music included, delivered as a full-HD MP4 ready to publish.",
   openGraph: {
     title: "Cinemora — Start with a script. Finish with a film.",
-    description: "A connected workspace for documentary story development, visual research, narration, sound, and video production.",
+    description: "Start with a script. Finish with a film — a finished, narrated documentary, ready to publish.",
     type: "website",
   },
   icons: {

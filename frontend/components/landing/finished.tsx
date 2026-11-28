@@ -1,20 +1,15 @@
 import Link from "next/link";
-import { ArrowUpRight, BadgeCheck, FileText, ScrollText } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 
 /**
- * Finished results (premium frontend mission, 2026-11-28;
- * composition rebuilt 2026-11-28, premium frontend rebuild).
- *
- * Presents a completed production the way a film programme
- * presents a screening: a full-bleed frame from "The Shipping
- * Container", then the production's own delivery record as
- * credits — runtime, resolution, sentence and word counts,
- * and the bundle every export ships with (MP4, provenance
- * certificate, asset report, rights manifest). The same facts
- * the showcase and export row already publish; no invented
- * results, no fake player. The balance pass (2026-11-28)
- * sets the four facts in small cards under the frame; the
- * still itself stays full-bleed with its credits overlay.
+ * Finished results (presentation redesign, founder directive
+ * 2026-11-28). A real Cinemora production, presented
+ * outcome-only: the film's own frame at full bleed, its
+ * title, and the facts a viewer cares about — runtime,
+ * format, the script it came from. No delivery internals,
+ * no evidence bundle, no process. This is the one place on
+ * the page a real photograph appears, because here the
+ * photograph IS the product: actual Cinemora output.
  */
 export function FinishedFilm() {
   return (
@@ -28,7 +23,7 @@ export function FinishedFilm() {
             Browse delivered projects <ArrowUpRight size={14} strokeWidth={2} aria-hidden />
           </Link>
         </div>
-        <h2 id="finished-title" data-reveal>A finished film, with its papers.</h2>
+        <h2 id="finished-title" data-reveal>A real film, made with Cinemora.</h2>
       </div>
       <figure className="programme-band" data-reveal>
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -41,20 +36,11 @@ export function FinishedFilm() {
       <div className="l-wrap">
         <div className="programme-credits" data-reveal>
           <dl className="programme-facts">
+            <div><dt>TITLE</dt><dd>The Shipping Container</dd></div>
             <div><dt>RUNTIME</dt><dd>2:30</dd></div>
             <div><dt>FORMAT</dt><dd>1920×1080 MP4</dd></div>
-            <div><dt>SCRIPT</dt><dd>438 words · 21 sentences</dd></div>
-            <div><dt>DELIVERED AS</dt><dd>Film + evidence bundle</dd></div>
+            <div><dt>SCRIPT</dt><dd>438 words</dd></div>
           </dl>
-          <p className="programme-note">
-            Every production leaves the studio as a full-HD MP4 — and a record of
-            where every second came from, so the film can be checked, not just watched.
-          </p>
-          <ul className="programme-bundle">
-            <li><BadgeCheck size={14} strokeWidth={2} aria-hidden /> Provenance certificate</li>
-            <li><FileText size={14} strokeWidth={2} aria-hidden /> Asset report</li>
-            <li><ScrollText size={14} strokeWidth={2} aria-hidden /> Rights manifest</li>
-          </ul>
         </div>
       </div>
     </section>

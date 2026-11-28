@@ -93,11 +93,11 @@ const PLANS: Plan[] = [
 ];
 
 const SHARED = [
-  "The same production engine and quality on every plan",
-  "Per-sentence visual planning & plan review",
+  "The same studio and quality on every plan",
+  "Review the plan before anything renders",
   "Motion graphics, narration, word-synced captions & music",
   "Revision editing — the original is never overwritten",
-  "Provenance certificate & rights manifest per production",
+  "Delivered as a full-HD MP4, ready to publish",
 ];
 
 export function LandingPricing() {
