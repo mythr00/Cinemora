@@ -17,8 +17,12 @@
   --ink: #111827;
   --ink-strong: #111827;
   --ink-soft: #344054;
-  --ink-muted: #667085;
-  --muted: #667085;
+  /* Muted text darkened one step (premium frontend, 2026-11-28):
+     #667085 measured 4.29:1 on the --backdrop surface — below
+     the 4.5:1 body floor. #5f6d82 measures 5.25:1 on white and
+     4.54:1 on the backdrop. */
+  --ink-muted: #5f6d82;
+  --muted: #5f6d82;
   --line: #e4e7ec;
   --line-soft: #eaecf0;
   --line-deep: #d0d5dd;

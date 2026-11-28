@@ -27,7 +27,7 @@ export function FinishedFilm() {
       <article className="finished-card" data-reveal>
         <figure className="finished-media">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/landing/containers.jpg" alt="A frame from the completed Cinemora production 'The Shipping Container': stacked shipping containers" />
+          <img src="/landing/containers.jpg" width={960} height={720} alt="A frame from the completed Cinemora production 'The Shipping Container': stacked shipping containers" />
           <figcaption>“THE SHIPPING CONTAINER” · COMPLETED PRODUCTION</figcaption>
         </figure>
         <div className="finished-detail">
