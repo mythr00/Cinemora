@@ -197,3 +197,36 @@ def test_recipe_regeneration_renders_through_pipeline(tmp_path):
     assert rendered == str(out)
     assert meta["engine"] == "manim"
     _assert_house_format(out, 3.0)
+
+
+# ---------------------------------------------------------------------------
+# Animation Studio Expansion (mission §9): chart source-line
+# consistency — the recorded-data contract (units + source) now
+# binds this engine exactly as it binds the PIL family, and the
+# refusal lands BEFORE any subprocess starts.
+# ---------------------------------------------------------------------------
+
+def test_recorded_line_chart_without_source_refuses_typed(tmp_path):
+    data = dict(SERIES, recorded=True)
+    rendered, meta = manim_templates.manim_line_chart(
+        data, None, tmp_path / "x.mp4", duration=1.0
+    )
+    assert rendered is None and meta["reason"] == "chart_source_missing"
+
+
+def test_recorded_line_chart_without_units_refuses_typed(tmp_path):
+    data = dict(SERIES, recorded=True, source="Example Bureau")
+    data.pop("units", None)
+    data.pop("unit", None)
+    rendered, meta = manim_templates.manim_line_chart(
+        data, None, tmp_path / "x.mp4", duration=1.0
+    )
+    assert rendered is None and meta["reason"] == "chart_units_missing"
+
+
+def test_recorded_bar_chart_without_source_refuses_typed(tmp_path):
+    data = dict(COMPARISON, recorded=True, units="units")
+    rendered, meta = manim_templates.manim_bar_chart(
+        data, None, tmp_path / "x.mp4", duration=1.0
+    )
+    assert rendered is None and meta["reason"] == "chart_source_missing"

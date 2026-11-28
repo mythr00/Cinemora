@@ -115,3 +115,54 @@ def test_recipe_regeneration_renders(tmp_path):
     assert rendered is not None, meta
     info = media_probe.probe_video(out)
     assert info["width"] == 1920 and info["height"] == 1080
+
+
+# ---------------------------------------------------------------------------
+# Animation Studio Expansion (mission §9): chart source-line
+# consistency — the recorded-data contract (units + source) now
+# binds this engine exactly as it binds the PIL family.
+# ---------------------------------------------------------------------------
+
+def test_recorded_series_without_source_refuses_typed(tmp_path):
+    data = dict(SERIES, recorded=True)
+    rendered, meta = mpl_templates.mpl_line_chart(
+        data, None, tmp_path / "x.mp4", duration=1.0
+    )
+    assert rendered is None and meta["reason"] == "chart_source_missing"
+
+
+def test_recorded_series_without_units_refuses_typed(tmp_path):
+    data = dict(SERIES, recorded=True, source="Example Bureau")
+    del data["units"]
+    rendered, meta = mpl_templates.mpl_line_chart(
+        data, None, tmp_path / "x.mp4", duration=1.0
+    )
+    assert rendered is None and meta["reason"] == "chart_units_missing"
+
+
+def test_recorded_comparison_without_source_refuses_typed(tmp_path):
+    data = dict(COMPARISON, recorded=True, units="units")
+    rendered, meta = mpl_templates.mpl_bar_chart(
+        data, None, tmp_path / "x.mp4", duration=1.0
+    )
+    assert rendered is None and meta["reason"] == "chart_source_missing"
+
+
+def test_recorded_series_with_source_renders_house_format(tmp_path):
+    data = dict(SERIES, recorded=True, source="Example Bureau")
+    out = tmp_path / "recorded.mp4"
+    rendered, meta = mpl_templates.mpl_line_chart(
+        data, None, out, duration=1.0
+    )
+    assert rendered is not None
+    info = media_probe.probe_video(out)
+    assert info["width"] == 1920 and info["height"] == 1080
+
+
+def test_source_line_text_wording_and_estimated_label():
+    assert mpl_templates._source_line({}) == ""
+    assert mpl_templates._source_line({"source": "Example Bureau"}) == \
+        "Source — Example Bureau"
+    assert mpl_templates._source_line(
+        {"source": "Example Bureau", "estimated": True}
+    ) == "Source — Example Bureau · estimated"

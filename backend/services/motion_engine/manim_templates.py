@@ -81,6 +81,34 @@ def manim_available():
         return False
 
 
+def _recorded_chart_guard(data):
+    """The recorded-data chart contract (Phase 5 B5/B7), applied
+    identically in every chart engine (Animation Studio Expansion,
+    mission §9 — chart source-line consistency). A series the
+    pipeline assembled from recorded data (marked ``recorded``)
+    MUST carry recorded units and a recorded source: either
+    missing refuses with the PIL family's typed reasons BEFORE
+    any subprocess starts, never a unit-less or source-less
+    rendering. Returns the refusal tuple or None."""
+    if not data.get("recorded"):
+        return None
+    if not _clean(data.get("units") or data.get("unit")):
+        return None, {"reason": "chart_units_missing",
+                      "detail": "recorded series carries no units"}
+    if not _clean(data.get("source")):
+        return None, {"reason": "chart_source_missing",
+                      "detail": "recorded series carries no source"}
+    return None
+
+
+def _estimated_flag(data):
+    uncertainty = data.get("uncertainty")
+    return bool(
+        data.get("estimated")
+        or (isinstance(uncertainty, dict) and uncertainty.get("estimated"))
+    )
+
+
 def _manim_version():
     try:
         from importlib.metadata import version
@@ -121,6 +149,32 @@ def _title(text, size=40):
 def _label(text, size=22, color=None, bold=False):
     return Text(text, font=FONT, color=color or C["muted"], font_size=size,
                 weight=BOLD if bold else NORMAL)
+
+
+def _source_line(top=False):
+    """The small source line (chart source-line consistency,
+    mission §9): the recorded source of the data as data
+    attribution — never a file name or provider label; estimates
+    are labelled estimated. Same wording and 72-char cap as the
+    PIL/mpl chart families. None when no source is recorded.
+    Placement is per-scene: the bar chart's bottom is free once
+    its group lifts; the line chart's axes own its bottom edge,
+    so its line sits under the title block instead — presence and
+    wording are the consistency contract, not the corner."""
+    source = (DATA.get("source") or "").strip()
+    if not source:
+        return None
+    line = f"Source — {source}"
+    if DATA.get("estimated"):
+        line += " · estimated"
+    mob = _label(line[:72], size=18)
+    if top:
+        mob.to_edge(UP, buff=1.02)
+        mob.to_edge(LEFT, buff=0.9)
+    else:
+        mob.to_edge(DOWN, buff=0.32)
+        mob.to_edge(LEFT, buff=0.55)
+    return mob
 '''
 
 _LINE_CHART_SCENE = _SCENE_COMMON + '''
@@ -196,6 +250,7 @@ class CinemoraLineChart(Scene):
             lab.next_to(axes.c2p(i, values[i]), UP, buff=0.28)
             value_labels.add(lab)
 
+        source_mob = _source_line(top=True)
         self.play(FadeIn(title, shift=DOWN * 0.3), run_time=t_title)
         if DATA.get("series_label"):
             self.play(Create(axes), FadeIn(y_labels), FadeIn(x_labels),
@@ -203,6 +258,8 @@ class CinemoraLineChart(Scene):
         else:
             self.play(Create(axes), FadeIn(y_labels), FadeIn(x_labels),
                       run_time=t_axes)
+        if source_mob is not None:
+            self.add(source_mob)
         self.play(Create(graph["line_graph"]), run_time=t_line)
         self.play(FadeIn(graph["vertex_dots"]), FadeIn(value_labels),
                   run_time=t_marks)
@@ -244,7 +301,10 @@ class CinemoraBarChart(Scene):
             text = f"{y_top * frac:,.0f}" if float(
                 y_top * frac).is_integer() else f"{y_top * frac:,.1f}"
             lab = _label(text, size=19)
-            lab.next_to([-(chart_w / 2), y, 0], LEFT, buff=0.15)
+            # Inside the frame's left edge: anchored LEFT of the
+            # axis these labels ran off-frame and rendered clipped
+            # (leading digit cut — visible in rendered evidence).
+            lab.next_to([-7.0, y, 0], RIGHT, buff=0.1)
             grid.add(lab)
 
         n = len(items)
@@ -272,9 +332,18 @@ class CinemoraBarChart(Scene):
             clab.next_to([x, base_y, 0], DOWN, buff=0.24)
             cat_labels.add(clab)
 
+        source_mob = _source_line()
+        if source_mob is not None:
+            # Same clearance rule as the line chart: the category
+            # labels own the bottom — lift the chart group so the
+            # source line sits clear beneath them.
+            VGroup(axis, grid, bars, value_labels,
+                   cat_labels).shift(UP * 0.42)
         self.play(FadeIn(title, shift=DOWN * 0.3), run_time=t_title)
         self.play(Create(axis), FadeIn(grid), FadeIn(cat_labels),
                   run_time=t_axis)
+        if source_mob is not None:
+            self.add(source_mob)
         per_bar = t_bars / max(1, n)
         for bar, vlab in zip(bars, value_labels):
             self.play(GrowFromEdge(bar, DOWN), FadeIn(vlab, shift=UP * 0.2),
@@ -418,11 +487,16 @@ def manim_line_chart(data, style, out_path, duration=5.0,
         return None, {"reason": "insufficient_points"}
     if not manim_available():
         return None, {"reason": "manim_unavailable"}
+    guard = _recorded_chart_guard(data)
+    if guard is not None:
+        return guard
     points = points[:_MAX_SERIES_POINTS]
     payload = _payload(data, tokens, duration, {
         "title": _clean(data.get("title")),
         "units": _clean(data.get("units") or data.get("unit")),
         "series_label": _clean(data.get("series_label")),
+        "source": _clean(data.get("source")),
+        "estimated": _estimated_flag(data),
         "points": points,
     })
     ok, reason = _render_scene(
@@ -445,10 +519,15 @@ def manim_bar_chart(data, style, out_path, duration=5.0,
         return None, {"reason": "insufficient_items"}
     if not manim_available():
         return None, {"reason": "manim_unavailable"}
+    guard = _recorded_chart_guard(data)
+    if guard is not None:
+        return guard
     items = items[:_MAX_BAR_ITEMS]
     payload = _payload(data, tokens, duration, {
         "title": _clean(data.get("title")),
         "units": _clean(data.get("units") or data.get("unit")),
+        "source": _clean(data.get("source")),
+        "estimated": _estimated_flag(data),
         "items": items,
     })
     ok, reason = _render_scene(

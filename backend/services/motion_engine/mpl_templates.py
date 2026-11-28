@@ -37,6 +37,45 @@ def mpl_available() -> bool:
     return importlib.util.find_spec("matplotlib") is not None
 
 
+def _recorded_chart_guard(data, units):
+    """The recorded-data chart contract (Phase 5 B5/B7), applied
+    identically in every chart engine (Animation Studio Expansion,
+    mission §9 — chart source-line consistency). A series the
+    pipeline assembled from recorded data (marked ``recorded``)
+    MUST carry recorded units and a recorded source: either
+    missing refuses with the PIL family's typed reasons, never a
+    unit-less or source-less rendering. Returns the refusal tuple
+    or None."""
+    if not data.get("recorded"):
+        return None
+    if not units:
+        return None, {"reason": "chart_units_missing",
+                      "detail": "recorded series carries no units"}
+    if not _clean(data.get("source")):
+        return None, {"reason": "chart_source_missing",
+                      "detail": "recorded series carries no source"}
+    return None
+
+
+def _source_line(data):
+    """The small source line text, or "" — the recorded source of
+    the data, drawn as data attribution (never a file name or an
+    asset/provider label); estimates are labelled estimated. Same
+    wording and 72-char cap as the PIL chart family."""
+    source = _clean(data.get("source"))
+    if not source:
+        return ""
+    line = f"Source — {source}"
+    uncertainty = data.get("uncertainty")
+    estimated = bool(
+        data.get("estimated")
+        or (isinstance(uncertainty, dict) and uncertainty.get("estimated"))
+    )
+    if estimated:
+        line += " · estimated"
+    return line[:72]
+
+
 def _hex(rgb) -> str:
     return "#%02x%02x%02x" % tuple(int(c) for c in rgb[:3])
 
@@ -89,12 +128,19 @@ def mpl_line_chart(data, style, out_path, duration=5.0,
     points = points[:_MAX_POINTS]
     title = _clean(data.get("title"))
     units = _clean(data.get("units")) or _clean(data.get("unit"))
+    guard = _recorded_chart_guard(data, units)
+    if guard is not None:
+        return guard
     series_label = _clean(data.get("series_label")) or units
     labels = [p["label"] for p in points]
     values = [p["value"] for p in points]
     ease = motion_registry.easing_function("ease_out")
 
     plt, fig = _new_figure(tokens)
+    source_line = _source_line(data)
+    if source_line:
+        fig.text(0.09, 0.035, source_line, color=_hex(tokens["muted"]),
+                 fontsize=14)
     ax = fig.add_axes([0.09, 0.14, 0.87, 0.72])
     v_min, v_max = min(0.0, min(values)), max(values)
     pad = (v_max - v_min) * 0.12 or 1.0
@@ -152,12 +198,19 @@ def mpl_bar_chart(data, style, out_path, duration=5.0,
     items = items[:_MAX_BARS]
     title = _clean(data.get("title"))
     units = _clean(data.get("units")) or _clean(data.get("unit"))
+    guard = _recorded_chart_guard(data, units)
+    if guard is not None:
+        return guard
     labels = [p["label"] for p in items]
     values = [p["value"] for p in items]
     displays = [p["display"] for p in items]
     ease = motion_registry.easing_function("ease_out")
 
     plt, fig = _new_figure(tokens)
+    source_line = _source_line(data)
+    if source_line:
+        fig.text(0.09, 0.035, source_line, color=_hex(tokens["muted"]),
+                 fontsize=14)
     ax = fig.add_axes([0.09, 0.14, 0.87, 0.72])
     y_top = max(values) * 1.18 or 1.0
 
