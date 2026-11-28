@@ -122,7 +122,8 @@ PROBLEM_TREATMENT_PREFERENCE = {
     "identification": ["profile_reveal"],
     "location": [
         "locator", "route", "satellite_zoom", "territory_expansion",
-        "heatmap",
+        "heatmap", "lottie_route", "three_globe",
+        "blender_terrain", "blender_building",
     ],
     "chronology": ["chronology"],
     "comparison": [
@@ -139,6 +140,7 @@ PROBLEM_TREATMENT_PREFERENCE = {
         "blueprint_section",
         "construction_sequence", "checklist_graphic",
         "crime_scene_diagram",
+        "blender_exploded_view", "blender_mechanical",
     ],
     "relationship": ["relationship_network"],
     "evidence": [
@@ -834,12 +836,41 @@ def _template_candidates(row, outcome, pack, bible=None, problem=None):
     _place_names = _recorded_place_names(scenario)
     if len(_place_names) >= 2:
         candidates.append("route")
+        # Animation Studio Expansion (§5): the web engine's
+        # geography treatments on the same recorded places —
+        # the Three.js globe (real coastline geometry, recorded
+        # markers/arcs) and the Lottie draw-on route. Their
+        # assemblers resolve every place through the geography
+        # dataset and decline when a place cannot resolve.
+        candidates.append("three_globe")
+        candidates.append("lottie_route")
     elif len(_place_names) == 1:
         candidates.append("locator")
+        candidates.append("three_globe")
     # B6 relationship network: recorded relations with >= 2
     # entities and >= 1 recorded edge.
     if _recorded_relations(scenario, bible):
         candidates.append("relationship_network")
+    # Animation Studio Expansion (§4/§6): the Blender 3D
+    # department — candidacy ONLY on recorded scenario
+    # contracts (geometry / gears / structure / terrain). The
+    # scenes are illustrative visualisations of the recorded
+    # description; they never satisfy an evidence need and the
+    # factual-reconstruction decline is untouched. All five
+    # templates are Director-only in the pipeline (expensive,
+    # contract-fed).
+    _geometry = scenario.get("geometry") or scenario.get("parts")
+    if isinstance(_geometry, list) and len(_geometry) >= 2:
+        candidates.append("blender_exploded_view")
+    if isinstance(scenario.get("gears"), list) and scenario["gears"]:
+        candidates.append("blender_mechanical")
+    if isinstance(scenario.get("structure"), dict) \
+            and scenario["structure"]:
+        candidates.append("blender_building")
+    _terrain = scenario.get("terrain")
+    if isinstance(_terrain, dict) and isinstance(
+            _terrain.get("grid"), list) and len(_terrain["grid"]) >= 4:
+        candidates.append("blender_terrain")
     if outcome.get("sentence_index") == 0:
         # Animation Studio Expansion (§9): the staged title
         # sequence is tried first on the opening beat — its
@@ -848,8 +879,15 @@ def _template_candidates(row, outcome, pack, bible=None, problem=None):
         # otherwise the beat falls through to the title card.
         candidates.append("title_sequence")
         candidates.append("archival_title")
+        # The genuine-3D opener is the most expensive title
+        # treatment: proposed on the opening beat, ordered after
+        # the PIL titles by the preference/chain order.
+        candidates.append("blender_title_3d")
     if '"' in text or "“" in text:
         candidates.append("text_highlight")
+        # Animation Studio Expansion (§5): the GSAP kinetic
+        # treatment of the same recorded short quoted passage.
+        candidates.append("gsap_kinetic_type")
     # Dedupe, preserving feature order.
     candidates = list(dict.fromkeys(candidates))
 

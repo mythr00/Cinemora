@@ -2562,6 +2562,93 @@ def build_motion_graphics_assets(
         return data
 
     # -----------------------------------------------------
+    # Animation Studio Expansion (§4): the Blender 3D
+    # department's assemblers. Same contract discipline as every
+    # other family: engine data built ONLY from recorded
+    # scenario contracts (geometry / gears / structure /
+    # terrain) or the fact-guarded title record — or None. The
+    # engine module validates and cleans every field again
+    # before a scene is built. All five are Director-only (see
+    # _DIRECTOR_ONLY_ASSEMBLERS): genuine 3D renders are the
+    # most expensive treatments the studio owns.
+    # -----------------------------------------------------
+
+    def _assemble_blender_exploded(target):
+        scenario = target.get("scenario") or {}
+        parts = scenario.get("geometry") or scenario.get("parts")
+        if not isinstance(parts, list) or len(parts) < 2:
+            return None
+        return {"parts": parts, "camera": scenario.get("camera")}
+
+    def _assemble_blender_mechanical(target):
+        scenario = target.get("scenario") or {}
+        gears = scenario.get("gears")
+        if not isinstance(gears, list) or not gears:
+            return None
+        return {"gears": gears, "shafts": scenario.get("shafts"),
+                "camera": scenario.get("camera")}
+
+    def _assemble_blender_building(target):
+        scenario = target.get("scenario") or {}
+        structure = scenario.get("structure")
+        if not isinstance(structure, dict) or not structure:
+            return None
+        return {"structure": structure,
+                "camera": scenario.get("camera")}
+
+    def _assemble_blender_terrain(target):
+        scenario = target.get("scenario") or {}
+        terrain = scenario.get("terrain")
+        if not isinstance(terrain, dict):
+            return None
+        grid = terrain.get("grid")
+        if not isinstance(grid, list) or len(grid) < 4:
+            return None
+        return {"terrain": terrain, "camera": scenario.get("camera")}
+
+    def _assemble_blender_title(target):
+        # The 3D opener consumes the same fact-guarded title
+        # record as the PIL titles (opening beat only — the
+        # archival assembler enforces that).
+        return _assemble_archival_title(target)
+
+    # -----------------------------------------------------
+    # Animation Studio Expansion (§5): the web engine's
+    # assemblers. Places resolve through the geography
+    # dataset exactly as the PIL route's do (recorded
+    # coordinates, else the dataset country marker, else
+    # refusal — geography is never invented). The kinetic
+    # treatment consumes the SAME short-quoted-passage data
+    # as text_highlight.
+    # -----------------------------------------------------
+
+    def _resolved_recorded_places(target):
+        from services.motion_engine.templates_v5 import (
+            _resolve_place,
+        )
+        resolved = []
+        for place in _recorded_places(target):
+            one = _resolve_place(place)
+            if one is not None:
+                resolved.append(one)
+        return resolved
+
+    def _assemble_three_globe(target):
+        places = _resolved_recorded_places(target)
+        if not places:
+            return None
+        return {"places": places[:8]}
+
+    def _assemble_lottie_route(target):
+        places = _resolved_recorded_places(target)
+        if len(places) < 2:
+            return None
+        return {"places": places[:8]}
+
+    def _assemble_gsap_kinetic(target):
+        return _assemble_text_highlight(target)
+
+    # -----------------------------------------------------
     # Phase 5 core treatments (2026-11-27): the rebuilt
     # chronology, the editorial route/locator and the
     # relationship network. Same assembler contract as Wave 1/2:
@@ -2962,6 +3049,15 @@ def build_motion_graphics_assets(
         # contract; the title sequence rides on production-global
         # title data — Director-only for the same reasons.
         "document_examination", "title_sequence",
+        # Animation Studio Expansion (§4): the Blender
+        # department — contract-fed and the most expensive
+        # renders in the studio; Director-only.
+        "blender_exploded_view", "blender_mechanical",
+        "blender_building", "blender_terrain", "blender_title_3d",
+        # Animation Studio Expansion (§5): the web engine's
+        # geography treatments — contract-fed, browser-rendered;
+        # Director-only.
+        "three_globe", "lottie_route",
         # Phase 6–7 (D1): the labelled diagram is fed by the
         # scenario's recorded diagram contract — Director-only
         # for the same recorded-evidence reason.
@@ -3011,6 +3107,16 @@ def build_motion_graphics_assets(
         "title_sequence": _assemble_title_sequence,
         "document_presentation": _assemble_document_presentation,
         "document_examination": _assemble_document_examination,
+        # Animation Studio Expansion (§4): Blender department.
+        "blender_exploded_view": _assemble_blender_exploded,
+        "blender_mechanical": _assemble_blender_mechanical,
+        "blender_building": _assemble_blender_building,
+        "blender_terrain": _assemble_blender_terrain,
+        "blender_title_3d": _assemble_blender_title,
+        # Animation Studio Expansion (§5): web engine.
+        "three_globe": _assemble_three_globe,
+        "lottie_route": _assemble_lottie_route,
+        "gsap_kinetic_type": _assemble_gsap_kinetic,
         # Wave 2 (Motion Graphics Engine plan §C Wave 2).
         "bubble_chart": _assemble_bubble_chart,
         "population_pyramid": _assemble_population_pyramid,

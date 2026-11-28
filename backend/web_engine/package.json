@@ -1,0 +1,15 @@
+{
+  "name": "cinemora-web-engine",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cinemora Animation Studio web render engine: headless-Chromium scenes (Three.js globe, GSAP kinetic type, Lottie route) rendered frame-by-frame for the motion graphics pipeline. Install with: npm install (Puppeteer downloads its Chromium). Point CINEMORA_WEB_ENGINE_HOME at the install directory when it is not this folder.",
+  "dependencies": {
+    "gsap": "^3.12.5",
+    "lottie-web": "^5.12.2",
+    "puppeteer": "^23.0.0",
+    "three": "^0.170.0",
+    "topojson-client": "^3.1.0",
+    "world-atlas": "^2.0.2"
+  }
+}
