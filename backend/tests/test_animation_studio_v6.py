@@ -161,3 +161,60 @@ def test_director_proposes_title_sequence_on_opening_beat():
     later = _candidates(
         "The harbour opened in 1897.", outcome_extra={"sentence_index": 3})
     assert "title_sequence" not in later
+
+
+# ---------------------------------------------------------------------------
+# layered_photo_motion — the NEW 2.5D treatment (not the removed
+# photo_parallax: different name, different mechanism)
+# ---------------------------------------------------------------------------
+
+def _photo_fixture(path):
+    """A photo-like fixture: gradient sky, ground band, and a
+    strong central subject (a dark tower) for the separation."""
+    img = Image.new("RGB", (1280, 960))
+    d = ImageDraw.Draw(img)
+    for y in range(960):
+        if y < 640:
+            shade = 120 + int(60 * y / 640)
+            d.line([(0, y), (1280, y)], fill=(shade - 30, shade - 10, shade + 30))
+        else:
+            d.line([(0, y), (1280, y)], fill=(88, 80, 66))
+    d.rectangle([520, 180, 760, 660], fill=(38, 34, 30))
+    d.rectangle([520, 180, 760, 230], fill=(196, 162, 74))
+    for row in range(6):
+        for col in range(3):
+            x = 560 + col * 62
+            y = 280 + row * 58
+            d.rectangle([x, y, x + 30, y + 34], fill=(222, 196, 120))
+    img.save(path)
+    return str(path)
+
+
+def test_layered_photo_motion_registered_and_refuses():
+    assert templates.TEMPLATES["layered_photo_motion"] is \
+        templates_v6.layered_photo_motion
+    rendered, meta = templates_v6.layered_photo_motion(
+        {}, None, "unused.mp4", duration=1.0)
+    assert rendered is None and meta["reason"] == "photo_image_missing"
+
+
+def test_layered_photo_motion_renders_with_separation(tmp_path):
+    photo = _photo_fixture(tmp_path / "photo.png")
+    out = tmp_path / "motion.mp4"
+    rendered, meta = templates_v6.layered_photo_motion(
+        {"photo": photo}, None, out, duration=1.5)
+    assert rendered is not None, meta
+    _assert_house_format(out, 1.5)
+    fraction = meta["inputs"]["foreground_fraction"]
+    assert 0.02 < fraction < 0.85
+
+
+def test_director_proposes_layered_photo_only_on_intent():
+    base = _candidates("The tower stood over the harbour.",
+                       outcome_extra={"scene_photo_count": 2})
+    assert "layered_photo_motion" not in base
+    intended = _candidates(
+        "The tower stood over the harbour.",
+        scenario={"photo_motion": True},
+        outcome_extra={"scene_photo_count": 2})
+    assert "layered_photo_motion" in intended

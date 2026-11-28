@@ -25,11 +25,15 @@ the same discipline as the Manim engine:
 
 Render engine: Cycles CPU (EEVEE needs a system EGL the host
 class does not guarantee). Internal renders run at reduced
-resolution (default 1280x720) and 15 fps, conformed up —
-resolution-aware rendering per mission §10; slow camera moves
-carry the upsample invisibly. Switches: CINEMORA_BLENDER_ENABLED
-(0 disables), CINEMORA_BLENDER_BIN, CINEMORA_BLENDER_WIDTH /
-_HEIGHT / _SAMPLES / _FPS, CINEMORA_BLENDER_TIMEOUT.
+resolution (default 960x540) and 15 fps with OpenImageDenoise
+and capped light paths — measured on this host class
+(2026-11-28), where Blender's own factory-default cube scene
+needs ~8 s/frame at 640x360 — conformed up to the house
+format; resolution-aware rendering per mission §10, with the
+Director's contract-gating keeping these expensive treatments
+rare. Switches: CINEMORA_BLENDER_ENABLED (0 disables),
+CINEMORA_BLENDER_BIN, CINEMORA_BLENDER_WIDTH / _HEIGHT /
+_SAMPLES / _FPS, CINEMORA_BLENDER_TIMEOUT.
 """
 
 from __future__ import annotations
@@ -304,6 +308,7 @@ def _gears(data):
             "thickness": float(gear.get("thickness") or 0.5),
             "position": position,
             "speed": float(gear.get("speed") or 6.0),
+            "phase": float(gear.get("phase") or 0.0),
             "direction": -1 if float(gear.get("direction") or 1) < 0
             else 1,
             "material": (gear.get("material") if gear.get("material")

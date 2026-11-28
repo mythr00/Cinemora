@@ -805,6 +805,13 @@ def _template_candidates(row, outcome, pack, bible=None, problem=None):
         # this pair — template deleted completely. text_overlay
         # stays.)
         candidates += ["text_overlay"]
+        # Animation Studio Expansion (§9): the NEW 2.5D photo
+        # treatment (layered_photo_motion — layer separation +
+        # differential camera move; not the removed template)
+        # is proposed only on the scenario's recorded
+        # photo_motion intent.
+        if scenario.get("photo_motion"):
+            candidates.append("layered_photo_motion")
         # Wave 2 photo-backed breadth: object labels need the
         # scenario's recorded anchors; the satellite zoom needs
         # a recorded place (or focus) plus an aerial cue in the

@@ -310,7 +310,100 @@ def title_sequence(data, style, out_path, duration=5.0,
          "stages": 3})
 
 
+def layered_photo_motion(data, style, out_path, duration=5.0,
+                         sentence_index=None, scene_number=None):
+    """NEW 2.5D photo treatment (the removed photo_parallax is
+    NOT revived — different name, different mechanism): the
+    verified photograph is separated into a foreground subject
+    (OpenCV GrabCut with a centre-weighted prior) and an
+    inpainted background plate, and the two layers take
+    DIFFERENT camera moves — the background pushes in slowly
+    while the foreground scales further and drifts — so the
+    still acquires genuine parallax depth. A separation that
+    finds no meaningful foreground refuses typed rather than
+    faking depth. The visual verdict on the evidence render
+    decides whether this treatment stays (recorded in the
+    programme report)."""
+    import cv2
+    import numpy as np
+
+    from pathlib import Path
+
+    style_name, tokens = resolve_style(style)
+    data = data or {}
+    raw = data.get("image") or data.get("photo")
+    if not raw or not Path(str(raw)).exists():
+        return None, {"reason": "photo_image_missing"}
+    bgr = cv2.imread(str(raw), cv2.IMREAD_COLOR)
+    if bgr is None:
+        return None, {"reason": "photo_image_unreadable"}
+    # Fit-cover the photo to the house frame.
+    src_h, src_w = bgr.shape[:2]
+    scale = max(WIDTH / src_w, HEIGHT / src_h)
+    resized = cv2.resize(
+        bgr, (int(src_w * scale + 0.5), int(src_h * scale + 0.5)),
+        interpolation=cv2.INTER_AREA)
+    off_x = (resized.shape[1] - WIDTH) // 2
+    off_y = (resized.shape[0] - HEIGHT) // 2
+    photo = resized[off_y:off_y + HEIGHT, off_x:off_x + WIDTH]
+    # GrabCut separation with a centre-weighted prior rect.
+    mask = np.zeros((HEIGHT, WIDTH), np.uint8)
+    rect = (int(WIDTH * 0.19), int(HEIGHT * 0.14),
+            int(WIDTH * 0.62), int(HEIGHT * 0.72))
+    bg_model = np.zeros((1, 65), np.float64)
+    fg_model = np.zeros((1, 65), np.float64)
+    try:
+        cv2.grabCut(photo, mask, rect, bg_model, fg_model, 4,
+                    cv2.GC_INIT_WITH_RECT)
+    except cv2.error:
+        return None, {"reason": "photo_separation_failed"}
+    fg = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD),
+                  255, 0).astype(np.uint8)
+    fraction = float((fg > 0).mean())
+    if fraction < 0.02 or fraction > 0.85:
+        return None, {"reason": "photo_separation_failed"}
+    # Background plate: the photo with the foreground inpainted
+    # away, so the foreground's move never smears a ghost.
+    plate = cv2.inpaint(photo, fg, 7, cv2.INPAINT_TELEA)
+    fg_rgba = cv2.cvtColor(photo, cv2.COLOR_BGR2BGRA)
+    fg_rgba[:, :, 3] = cv2.GaussianBlur(fg, (0, 0), 2.0)
+
+    def _layer(base, scale_factor, dy):
+        w = int(WIDTH * scale_factor + 0.5)
+        h = int(HEIGHT * scale_factor + 0.5)
+        big = cv2.resize(base, (w, h),
+                         interpolation=cv2.INTER_LINEAR)
+        x0 = (w - WIDTH) // 2
+        y0 = (h - HEIGHT) // 2 + int(dy)
+        y0 = min(max(y0, 0), h - HEIGHT)
+        return big[y0:y0 + HEIGHT, x0:x0 + WIDTH]
+
+    def draw_frame(t, progress):
+        e = ease_in_out(min(1.0, max(0.0, progress)))
+        bg = _layer(plate, 1.00 + 0.06 * e, 0)
+        fg_big = _layer(fg_rgba, 1.00 + 0.14 * e, -12 * e)
+        alpha = fg_big[:, :, 3:4].astype(np.float32) / 255.0
+        blended = (fg_big[:, :, :3].astype(np.float32) * alpha
+                   + bg.astype(np.float32) * (1.0 - alpha))
+        frame_bgr = blended.astype(np.uint8)
+        return Image.fromarray(cv2.cvtColor(frame_bgr,
+                                            cv2.COLOR_BGR2RGB))
+
+    meta = _meta("layered_photo_motion", style_name, duration,
+                 sentence_index, scene_number, data)
+    meta["inputs"] = {
+        "image": True,
+        "foreground_fraction": round(fraction, 3),
+        "background_scale_end": 1.06,
+        "foreground_scale_end": 1.14,
+    }
+    path = core.render_template(draw_frame, out_path,
+                                duration=duration)
+    return path, meta
+
+
 TEMPLATES.update({
     "document_examination": document_examination,
     "title_sequence": title_sequence,
+    "layered_photo_motion": layered_photo_motion,
 })

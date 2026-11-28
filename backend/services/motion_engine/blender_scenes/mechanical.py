@@ -77,11 +77,17 @@ def _animate_rotation(obj, gear, frames, fps):
     speed = float(gear.get("speed") or 6.0)  # rpm
     direction = 1 if float(gear.get("direction") or 1) >= 0 else -1
     turns = speed / 60.0 * (frames / fps)
+    # The recorded phase (radians) offsets the gear's rest
+    # angle — half a tooth pitch on a meshing gear seats its
+    # teeth into the driver's gaps instead of interpenetrating.
+    phase = float(gear.get("phase") or 0.0)
+    obj.rotation_euler = (0.0, phase, 0.0)
     obj.keyframe_insert(data_path="rotation_euler", frame=1)
     # The gear stands in the XZ plane (mesh rotation baked in
     # _gear), so the axle — and the spin — is the Y axis.
     obj.rotation_euler = (0.0,
-                          direction * turns * 2 * math.pi, 0.0)
+                          phase + direction * turns * 2 * math.pi,
+                          0.0)
     obj.keyframe_insert(data_path="rotation_euler", frame=frames)
     if obj.animation_data and obj.animation_data.action:
         for layer in obj.animation_data.action.layers:
@@ -115,9 +121,21 @@ def main():
     for gear in data["gears"]:
         obj = _gear(gear, materials)
         _animate_rotation(obj, gear, frames, fps)
-    common.add_lighting("three_point", colors, target=(0, 0, 0),
-                        scale=10.0)
+    # Extent-aware framing (the first evidence render cropped
+    # the train at the fixed radius): centre on the gears'
+    # centroid and pull the camera back to cover their extent.
+    gears = data["gears"]
+    cx = sum(float(g["position"][0]) for g in gears) / len(gears)
+    cy = sum(float(g["position"][1]) for g in gears) / len(gears)
+    extent = max(
+        abs(float(g["position"][0]) - cx) + float(g["radius"]) * 1.35
+        for g in gears)
+    target = (cx, cy, 0)
+    common.add_lighting("three_point", colors, target=target,
+                        scale=max(10.0, extent * 2.2))
     common.add_camera_rig(data.get("camera") or "orbit", frames,
-                          target=(0, 0, 0), radius=11.0, height=3.4)
+                          target=target,
+                          radius=min(30.0, max(11.0, extent * 2.9)),
+                          height=3.4)
     common.setup_render(scene, payload, os.environ["CINEMORA_BLENDER_OUT"])
     common.render(scene)

@@ -2648,6 +2648,18 @@ def build_motion_graphics_assets(
     def _assemble_gsap_kinetic(target):
         return _assemble_text_highlight(target)
 
+    def _assemble_layered_photo_motion(target):
+        # Animation Studio Expansion (§9): the 2.5D photo
+        # treatment — a verified scene photo plus the scenario's
+        # recorded photo_motion intent. Either missing -> None.
+        scenario = target.get("scenario") or {}
+        if not scenario.get("photo_motion"):
+            return None
+        _asset, path = _first_scene_photo(target)
+        if path is None:
+            return None
+        return {"photo": path}
+
     # -----------------------------------------------------
     # Phase 5 core treatments (2026-11-27): the rebuilt
     # chronology, the editorial route/locator and the
@@ -3117,6 +3129,8 @@ def build_motion_graphics_assets(
         "three_globe": _assemble_three_globe,
         "lottie_route": _assemble_lottie_route,
         "gsap_kinetic_type": _assemble_gsap_kinetic,
+        # Animation Studio Expansion (§9): 2.5D photo treatment.
+        "layered_photo_motion": _assemble_layered_photo_motion,
         # Wave 2 (Motion Graphics Engine plan §C Wave 2).
         "bubble_chart": _assemble_bubble_chart,
         "population_pyramid": _assemble_population_pyramid,
