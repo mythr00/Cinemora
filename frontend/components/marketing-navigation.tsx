@@ -53,11 +53,11 @@ export function MarketingNavigation() {
         <div className={`marketing-links ${open ? "is-open" : ""}`} id="marketing-menu">
           {links.map(([href, label]) => href.startsWith("#") ? <a key={href} href={href} onClick={() => setOpen(false)}>{label}</a> : <Link key={href} href={href} onClick={() => setOpen(false)}>{label}</Link>)}
           {user !== undefined && (signedIn ? (
-            <Link href="/studio" onClick={() => setOpen(false)}>Open app</Link>
+            <Link className="marketing-menu-account" href="/studio" onClick={() => setOpen(false)}>Open app</Link>
           ) : (
             <>
-              <Link href="/login" onClick={() => setOpen(false)}>Sign in</Link>
-              <Link href="/register" onClick={() => setOpen(false)}>Create account</Link>
+              <Link className="marketing-menu-account" href="/login" onClick={() => setOpen(false)}>Sign in</Link>
+              <Link className="marketing-menu-account" href="/register" onClick={() => setOpen(false)}>Create account</Link>
             </>
           ))}
         </div>

@@ -84,6 +84,7 @@
      prefers-reduced-motion rule flattens all of it. */
   --dur-fast: 120ms;
   --dur-med: 200ms;
+  --dur-reveal: 700ms;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   /* Spacing / radius / layout (§2.4) */
@@ -3199,4 +3200,49 @@ body { min-height: 100dvh; }
 }
 .affiliate-title svg {
   flex: none;
+}
+
+/* ============================================================
+   PREMIUM FRONTEND PASS (2026-11-28): the landing motion system
+   and the desktop nav de-duplication. Last in the file so these
+   rules win the cascade at equal specificity.
+   ============================================================ */
+
+/* ---------- Scroll reveal (driven by ScrollReveal) ----------
+   Elements are hidden ONLY under html.reveal-on, which the
+   component adds after mount: without JS nothing is ever
+   hidden. The component removes data-reveal once an element's
+   reveal finishes, so the hover-lift transitions above own the
+   element again afterwards. The global reduced-motion rule
+   flattens these transitions like all others. */
+html.reveal-on [data-reveal] {
+  opacity: 0;
+  transform: translateY(22px);
+  transition:
+    opacity var(--dur-reveal) var(--ease-out),
+    transform var(--dur-reveal) var(--ease-out);
+}
+html.reveal-on [data-reveal].is-revealed {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------- Hero entrance: copy rises in, then the showcase -- */
+@keyframes hero-enter {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+.hero-copy > * { animation: hero-enter var(--dur-reveal) var(--ease-out) both; }
+.hero-copy > *:nth-child(2) { animation-delay: 70ms; }
+.hero-copy > *:nth-child(3) { animation-delay: 140ms; }
+.hero-copy > *:nth-child(4) { animation-delay: 210ms; }
+.hero-copy > *:nth-child(5) { animation-delay: 280ms; }
+.showcase { animation: hero-enter var(--dur-reveal) var(--ease-out) 240ms both; }
+
+/* ---------- Marketing nav: account actions live in the auth
+   cluster on desktop; the in-menu copies are for the mobile
+   menu only (below 641px the CTA is hidden and the menu is the
+   account surface). ---------- */
+@media (min-width: 641px) {
+  .marketing-links .marketing-menu-account { display: none; }
 }

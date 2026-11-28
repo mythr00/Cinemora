@@ -34,7 +34,7 @@ export function LandingFeatures() {
   return (
     <div className="feat-grid">
       {/* 1 — Production, wide film strip */}
-      <article className="feat-card feat-card--wide feat-production">
+      <article className="feat-card feat-card--wide feat-production" data-reveal data-delay="0">
         <div className="feat-copy">
           <Kicker icon={<Clapperboard size={14} strokeWidth={2} />}>THE PRODUCTION PATH</Kicker>
           <h3>One path from first draft to final cut</h3>
@@ -53,7 +53,7 @@ export function LandingFeatures() {
       </article>
 
       {/* 2 — Discovery */}
-      <article className="feat-card feat-discovery">
+      <article className="feat-card feat-discovery" data-reveal data-delay="0">
         <Kicker icon={<Search size={14} strokeWidth={2} />}>INTELLIGENT DISCOVERY</Kicker>
         <h3>Footage and images, searched per sentence</h3>
         <p>Every narration sentence becomes its own search — across moving footage and stills from every source Cinemora can reach, not one library.</p>
@@ -73,7 +73,7 @@ export function LandingFeatures() {
       </article>
 
       {/* 3 — Archival & stock */}
-      <article className="feat-card feat-archive">
+      <article className="feat-card feat-archive" data-reveal data-delay="90">
         <Kicker icon={<Archive size={14} strokeWidth={2} />}>ARCHIVAL &amp; STOCK MEDIA</Kicker>
         <h3>History, from the archives — with its papers</h3>
         <p>Archival photographs, historical footage and stock media are all in reach. Every asset keeps its source and licence in the production&apos;s rights manifest; unknown rights stay labelled unknown.</p>
@@ -85,7 +85,7 @@ export function LandingFeatures() {
       </article>
 
       {/* 4 — Visual selection / plan review */}
-      <article className="feat-card feat-card--wide feat-selection">
+      <article className="feat-card feat-card--wide feat-selection" data-reveal data-delay="0">
         <div className="feat-copy">
           <Kicker icon={<ListChecks size={14} strokeWidth={2} />}>INTELLIGENT VISUAL SELECTION</Kicker>
           <h3>Review the plan sentence by sentence — before rendering</h3>
@@ -99,7 +99,7 @@ export function LandingFeatures() {
       </article>
 
       {/* 5 — Motion graphics */}
-      <article className="feat-card feat-graphics">
+      <article className="feat-card feat-graphics" data-reveal data-delay="0">
         <Kicker icon={<LineChart size={14} strokeWidth={2} />}>MOTION GRAPHICS</Kicker>
         <h3>Explanations that animate the point</h3>
         <p>Charts, timelines, maps, evidence boards and diagrams are generated from the narration itself and placed where the script asks for them — never pasted over footage that already tells the story.</p>
@@ -111,7 +111,7 @@ export function LandingFeatures() {
       </article>
 
       {/* 6 — Narration */}
-      <article className="feat-card feat-narration">
+      <article className="feat-card feat-narration" data-reveal data-delay="90">
         <Kicker icon={<Mic size={14} strokeWidth={2} />}>PROFESSIONAL NARRATION</Kicker>
         <h3>A studio voice that reads it like a narrator</h3>
         <p>Pick from 54 studio voices across eight languages. Every reading is timed sentence by sentence, so each visual and caption lands on the words it belongs to.</p>
@@ -124,7 +124,7 @@ export function LandingFeatures() {
       </article>
 
       {/* 7 — Captions */}
-      <article className="feat-card feat-captions">
+      <article className="feat-card feat-captions" data-reveal data-delay="0">
         <Kicker icon={<Captions size={14} strokeWidth={2} />}>WORD-SYNCHRONISED CAPTIONS</Kicker>
         <h3>Karaoke captions, locked to the voice</h3>
         <p>Captions are timed to the narration word by word and exported with the film — burned in, and as caption files alongside the MP4.</p>
@@ -134,7 +134,7 @@ export function LandingFeatures() {
       </article>
 
       {/* 8 — Music & sound */}
-      <article className="feat-card feat-music">
+      <article className="feat-card feat-music" data-reveal data-delay="90">
         <Kicker icon={<Music size={14} strokeWidth={2} />}>BACKGROUND MUSIC &amp; SOUND</Kicker>
         <h3>A soundtrack that stays under the story</h3>
         <p>Where music is enabled, a bed is selected for the film&apos;s mood and mixed beneath the narration — present in the quiet, never competing with the voice.</p>
@@ -145,7 +145,7 @@ export function LandingFeatures() {
       </article>
 
       {/* 9 — Editing & revisions */}
-      <article className="feat-card feat-editing">
+      <article className="feat-card feat-editing" data-reveal data-delay="0">
         <Kicker icon={<History size={14} strokeWidth={2} />}>EDITING &amp; REVISIONS</Kicker>
         <h3>Finished is not final — revise without losing the original</h3>
         <p>Open a completed production in the studio editor and adjust footage, graphics, captions, narration and music. Every edit renders as a new revision; the original export never changes.</p>
@@ -159,7 +159,7 @@ export function LandingFeatures() {
       </article>
 
       {/* 10 — Render & export, wide */}
-      <article className="feat-card feat-card--wide feat-export">
+      <article className="feat-card feat-card--wide feat-export" data-reveal data-delay="0">
         <div className="feat-copy">
           <Kicker icon={<Download size={14} strokeWidth={2} />}>RENDERING &amp; EXPORT</Kicker>
           <h3>The final video, delivered as a real file</h3>
