@@ -36,8 +36,8 @@ export function LandingFeatures() {
       {/* 1 — Production, wide film strip */}
       <article className="feat-card feat-card--wide feat-production">
         <div className="feat-copy">
-          <Kicker icon={<Clapperboard size={14} strokeWidth={2} />}>AI DOCUMENTARY PRODUCTION</Kicker>
-          <h3>From script to finished film, one production path</h3>
+          <Kicker icon={<Clapperboard size={14} strokeWidth={2} />}>THE PRODUCTION PATH</Kicker>
+          <h3>One path from first draft to final cut</h3>
           <p>Bring a finished script. Cinemora analyses the story, plans every sentence&apos;s visuals, narrates, captions and renders — and shows you the plan before it spends a frame.</p>
           <Link className="text-link" href="/create">Start with your script <ArrowUpRight size={14} strokeWidth={2} aria-hidden /></Link>
         </div>
@@ -114,7 +114,7 @@ export function LandingFeatures() {
       <article className="feat-card feat-narration">
         <Kicker icon={<Mic size={14} strokeWidth={2} />}>PROFESSIONAL NARRATION</Kicker>
         <h3>A studio voice that reads it like a narrator</h3>
-        <p>Your script is narrated by the studio&apos;s built-in English voice, timed sentence by sentence so every visual and caption lands on the words it belongs to.</p>
+        <p>Pick from 54 studio voices across eight languages. Every reading is timed sentence by sentence, so each visual and caption lands on the words it belongs to.</p>
         <div className="waveform" aria-hidden>
           {Array.from({ length: 36 }, (_, i) => (
             <i key={i} style={{ height: `${18 + Math.round(30 * Math.abs(Math.sin(i * 1.7)))}px`, animationDelay: `${(i % 9) * 0.12}s` }} />

@@ -26,12 +26,12 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "Cinemora — Documentary production studio",
+    default: "Cinemora — Start with a script. Finish with a film.",
     template: "%s | Cinemora",
   },
   description: "Develop a documentary story, plan its visuals, choose narration and sound, and follow production through to an export in one connected studio.",
   openGraph: {
-    title: "Cinemora — Documentary production studio",
+    title: "Cinemora — Start with a script. Finish with a film.",
     description: "A connected workspace for documentary story development, visual research, narration, sound, and video production.",
     type: "website",
   },
