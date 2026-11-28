@@ -103,6 +103,6 @@ def main():
     frames = max(2, int(round(float(payload.get("duration") or 5.0) * fps)))
     common.add_lighting("sun", colors, target=(0, 0, 1.0))
     common.add_camera_rig(data.get("camera") or "orbit", frames,
-                          target=(0, 0, 0.8), radius=15.0, height=6.5)
+                          target=(0, 0, 0.8), radius=21.0, height=8.5)
     common.setup_render(scene, payload, os.environ["CINEMORA_BLENDER_OUT"])
     common.render(scene)
