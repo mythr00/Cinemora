@@ -78,8 +78,13 @@ def main():
     # Extent-aware framing: the camera radius covers the
     # exploded extent, so separated parts stay in frame (the
     # first evidence render cropped the lifted parts at the
-    # fixed radius).
+    # fixed radius). The aim point rides to the exploded
+    # stack's mid-height — with a tall explode the cap left
+    # the top of frame when the camera aimed at the base
+    # (second evidence render), so the vertical span is
+    # accounted separately from the horizontal reach.
     extent = 0.0
+    z_values = []
     for part in data["parts"]:
         pos = part.get("position") or [0, 0, 0]
         exp = part.get("explode") or [0, 0, 0]
@@ -87,11 +92,16 @@ def main():
         reach = max(
             abs(float(pos[i]) + float(exp[i])) for i in range(3))
         extent = max(extent, reach + max(float(s) for s in size))
-    radius = min(26.0, max(10.5, extent * 2.1))
-    common.add_lighting("three_point", colors, target=(0, 0, 0.9),
+        z_values.append(float(pos[2]))
+        z_values.append(float(pos[2]) + float(exp[2]))
+    z_mid = (min(z_values) + max(z_values)) / 2.0 if z_values else 0.9
+    z_span = (max(z_values) - min(z_values)) if z_values else 0.0
+    radius = min(30.0, max(10.5, extent * 2.1, z_span * 1.9))
+    target = (0, 0, max(0.4, z_mid))
+    common.add_lighting("three_point", colors, target=target,
                         scale=max(9.0, radius * 0.85))
     common.add_camera_rig(data.get("camera") or "orbit", frames,
-                          target=(0, 0, 0.9), radius=radius,
-                          height=4.6 + radius * 0.08)
+                          target=target, radius=radius,
+                          height=target[2] + 3.7 + radius * 0.08)
     common.setup_render(scene, payload, os.environ["CINEMORA_BLENDER_OUT"])
     common.render(scene)
