@@ -31,8 +31,10 @@ function SectionHead({ index, eyebrow, children }: { index: string; eyebrow: str
 // decided pricing, a finished production presented as a film
 // programme entry, FAQ, closing CTA. The composition is
 // full-bleed and editorial — oversized type, hairline rules,
-// numbered sections — with no page-in-a-card shell and no
-// card grids. Every claim still maps to a capability that
+// numbered sections — with no page-in-a-card shell; the
+// balance pass (2026-11-28, founder correction) returns cards
+// only where a card is the right container: the pricing
+// tiers, the showcase stage and the finished facts. Every claim still maps to a capability that
 // exists in this build; the showcase is a controlled
 // simulation built from a real production's own artefacts,
 // and says so on its face.

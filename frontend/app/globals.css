@@ -3626,3 +3626,75 @@ html.reveal-on [data-reveal].is-revealed {
   .landing-footer { width: calc(100% - 40px); }
   .section-head { margin-bottom: 28px; flex-wrap: wrap; }
 }
+
+/* ============================================================
+   PREMIUM FRONTEND BALANCE PASS (2026-11-28): the founder's
+   correction to the rebuild — the editorial composition was
+   right, but removing EVERY card overshot ("some things have
+   to be in card, some have to not be in cards"). Balance:
+   cards where a card is the right container — the pricing
+   tiers, the showcase stage, the finished production's
+   facts — and open editorial layout where it isn't: the
+   capabilities index, the workflow filmstrip, the FAQ rows,
+   the section markers and the closing CTA stay open. The
+   hero copy also returns to the centre, at the founder's
+   direction. Presentation only — every word of copy and
+   every pricing figure is unchanged. Last in the file so
+   these rules win the cascade at equal specificity.
+   ============================================================ */
+
+/* ---------- Hero: centred, deliberately -------------------- */
+.hero-copy { margin: 0 auto; text-align: center; }
+.hero-copy .eyebrow { justify-content: center; }
+.hero-deck { margin: 28px auto 0; }
+.hero-actions { justify-content: center; }
+.hero-proof { justify-content: center; }
+
+/* ---------- Showcase: one framed stage, no window chrome --- */
+.showcase {
+  padding: 8px 30px 26px; border: 1px solid var(--line-deep);
+  border-radius: var(--card-radius); background: var(--paper);
+  box-shadow: var(--shadow-card);
+}
+.showcase-head { border-top: 0; }
+
+/* ---------- Pricing: the tiers are cards again ------------- */
+.pricing-grid { gap: var(--card-gap); border-top: 0; border-bottom: 0; }
+.price-card {
+  padding: var(--card-pad-lg); border: 1px solid var(--line);
+  border-radius: var(--card-radius); background: var(--paper);
+  box-shadow: var(--shadow-card);
+}
+.pricing-grid .price-card + .price-card { border-left: 1px solid var(--line); }
+.pricing-grid .price-card + .price-card--popular { border-left: 1.5px solid var(--accent); }
+.pricing-grid .price-card--popular {
+  border: 1.5px solid var(--accent); background: var(--accent-soft);
+  box-shadow: var(--shadow-card-hover);
+}
+.pricing-grid .price-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
+.price-badge {
+  position: absolute; top: -13px; left: 50%; transform: translateX(-50%);
+  margin-bottom: 0; padding: 5px 13px; border-radius: 999px;
+  background: var(--accent); color: var(--on-accent);
+  box-shadow: var(--shadow-accent);
+}
+
+/* ---------- Finished facts: small cards -------------------- */
+.programme-facts { gap: 14px; }
+.programme-facts > div {
+  padding: 18px 20px; border: 1px solid var(--line);
+  border-radius: var(--card-radius-sm); background: var(--paper);
+  box-shadow: var(--shadow-card);
+}
+.programme-facts > div + div { padding-left: 20px; border-left: 1px solid var(--line); }
+
+/* ---------- Balance responsive steps ------------------------ */
+@media (max-width: 900px) {
+  .price-card { padding: 28px 24px 32px; }
+  .pricing-grid .price-card + .price-card { border-left: 1px solid var(--line); }
+  .pricing-grid .price-card + .price-card--popular { border-left: 1.5px solid var(--accent); }
+  .programme-facts > div + div { padding-left: 20px; border-left: 1px solid var(--line); }
+}
+@media (max-width: 640px) {
+  .showcase { padding: 4px 18px 20px; }
+}

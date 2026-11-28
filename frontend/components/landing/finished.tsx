@@ -12,7 +12,9 @@ import { ArrowUpRight, BadgeCheck, FileText, ScrollText } from "lucide-react";
  * and the bundle every export ships with (MP4, provenance
  * certificate, asset report, rights manifest). The same facts
  * the showcase and export row already publish; no invented
- * results, no fake player, no card.
+ * results, no fake player. The balance pass (2026-11-28)
+ * sets the four facts in small cards under the frame; the
+ * still itself stays full-bleed with its credits overlay.
  */
 export function FinishedFilm() {
   return (

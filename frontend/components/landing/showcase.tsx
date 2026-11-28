@@ -18,7 +18,10 @@ import { Music, Pause, Play } from "lucide-react";
  * The rebuild drops the fake browser-window chrome: the scenes
  * play as frames in a film programme — numbered narration rows
  * on the left, the frame itself on the right, subtitles on the
- * picture, and the production's facts as a credits line.
+ * picture, and the production's facts as a credits line. The
+ * balance pass (2026-11-28) frames the whole demonstration in
+ * one bordered stage panel — a product stage, still with no
+ * window chrome (no dots, no URL bar).
  */
 
 type Scene = {
